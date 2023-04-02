@@ -46,12 +46,12 @@ def dict_element_append(d: dict, key: str, value, unique=False) -> None:
   key = str(key)
   if isinstance(value, list):
     for v in value: dict_element_append(d, key, v, unique)
-  elif key not in d.keys(): d[key] = [value]
+  elif not d.get(key): d[key] = [value]
   elif isinstance(d[key], str): d[key] = [d[key], value]
   elif isinstance(d[key], list):
-    if unique and value in _: pass
+    if unique and value in d[key]: pass
     else: d[key] += [value]
-  else: raise Exception(f"Unrecognized type: {type(_)}")
+  else: raise Exception(f"Unrecognized type: {type(d[key])}")
 
 # def safe_add_unique(d: dict, key: str, value):
 #   """ To be used with dicts of lists. Function adds another element to the list stored in dict with key. """
@@ -166,7 +166,7 @@ TERMINAL_COLORS = {
     'GREEN':  '0;30;42'
 }
 
-def log_colored(msg, level=None, *args):
+def log_colored(msg, level=None, *args, **kwargs):
   msg = colorize_log(msg, level)
   print(msg)
   return msg
@@ -177,7 +177,7 @@ def colorize_log(msg, level=None, *args):
     if level in ['CRITICAL', 'ERROR']: color = 'RED'
     elif level in ['WARN']: color = 'YELLOW'
     elif level in ['INFO']: color = 'BLUE'
-    elif level in ['DEBUG']: color = 'NONE'
+    elif level in ['DEBUG']: color = 'DIM'
     else: color = 'NONE'
     msg = colorize(color, level) + ' ' + msg
   #else: raise ValueError(f"Invalid log_colored call: {msg} {level} {args}")
