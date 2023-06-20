@@ -108,9 +108,6 @@ def dict_to_yml(filename:str, data=None, as_is=True):
   yaml.add_representer(defaultdict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(set, yaml.representer.Representer.represent_list)
   yaml.add_representer(tuple, yaml.representer.Representer.represent_dict)
-  #yaml.add_representer(y2eid, yaml.representer.Representer.represent_str)
-  #yaml.add_representer(y2slug, yaml.representer.Representer.represent_str)
-  #yaml.add_representer(y2path, yaml.representer.Representer.represent_list)
   with open(filename,'w+') as f: 
     try: yaml.dump(redata, f)
     except Exception as err:
@@ -122,14 +119,8 @@ def dict_from_yml(filename:str):
   yaml.add_representer(defaultdict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(set, yaml.representer.Representer.represent_list)
   yaml.add_representer(tuple, yaml.representer.Representer.represent_dict)
-  #yaml.add_representer(y2eid, yaml.representer.Representer.represent_str)
-  #yaml.add_representer(y2slug, yaml.representer.Representer.represent_str)
 
-  try:
-    with open(filename) as f:
-      result = dict(yaml.load(f, Loader=yaml.FullLoader))
-  except: pass
-  return result 
+  with open(filename) as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
 
 """Logging"""
 def timestamp(): return datetime.now().strftime("%Y%m%d.%H%M%S")
