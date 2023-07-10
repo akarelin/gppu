@@ -1,6 +1,7 @@
 # General purpose python utilities
 import pprint
 import yaml
+from string import Template
 
 from collections import defaultdict
 from datetime import datetime
@@ -122,8 +123,26 @@ def dict_from_yml(filename:str):
 
   with open(filename) as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
 
+def template_populate(template, data):
+  if not template: result = None
+  elif isinstance(template, dict):
+    result = {}
+    for k, old in template.items():
+      new = template_populate(old, data)
+      result[k] = new
+  elif isinstance(template, list):
+    result = []
+    for old in template:
+      new = template_populate(old, data)
+      result.append(new)
+  elif isinstance(template, (int, bool, float)): result = template
+  else: result = Template(str(template)).safe_substitute(data)
+  return result
+
+
 """Logging"""
-def timestamp(): return datetime.now().strftime("%Y%m%d.%H%M%S")
+def now_str(): return datetime.now().strftime("%Y%m%d.%H%M%S")
+def now_ts(): return datetime.now().timestamp()
 def pretty_timedelta(ts):
   now = datetime.now().timestamp()
   delta = now - ts
