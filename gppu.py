@@ -99,6 +99,21 @@ def dict_sanitize(data, as_is=True):
   elif isinstance(data, (list, set)): return sanitize_list(data)
   else: raise ValueError(f"Unable to sanitize {data}")
 
+def dict_as_yaml(data={}):
+  redata = dict_sanitize(data)
+
+  #if timestampit: filename = timestamp() + " " + filename
+  yaml.add_representer(defaultdict, yaml.representer.Representer.represent_dict)
+  yaml.add_representer(set, yaml.representer.Representer.represent_list)
+  yaml.add_representer(tuple, yaml.representer.Representer.represent_dict)
+  try:
+    result = yaml.dump(redata)
+  except Exception as err:
+    raise RuntimeError(f"Error {err} in dict_as_yaml\n {type(err)}\n{pfy(redata)}\n\n")
+    #error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(redata)}\n\n"
+    #with open(filename+'_error.txt','w+') as ferr: ferr.write(error)
+  return result
+
 def dict_to_yml(filename:str, data=None, as_is=True):
   assert filename
   if not data: return
@@ -122,6 +137,20 @@ def dict_from_yml(filename:str):
   yaml.add_representer(tuple, yaml.representer.Representer.represent_dict)
 
   with open(filename) as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
+
+def dict_from_yaml_list(yaml_list, default=None) -> dict:
+  """
+  Convert YAML list like in the example to dict:
+
+    - binary_sensor.cellar_sensor@kaksi:
+        area: ['cellar']
+        purpose: ['occupancy','motion']
+        timeout: 180
+  """
+  if isinstance(yaml_list, dict): return yaml_list
+  assert isinstance(yaml_list, list)
+  _ = {(list(element.keys()))[0]: dict(list(element.values())[0]) for element in yaml_list}
+  return _ if _ else default
 
 def template_populate(template, data):
   if not template: result = None
