@@ -1,6 +1,8 @@
 # General purpose python utilities
 import pprint
 import yaml
+import re
+
 from string import Template
 
 from collections import defaultdict
@@ -149,8 +151,16 @@ def dict_from_yaml_list(yaml_list, default=None) -> dict:
   """
   if isinstance(yaml_list, dict): return yaml_list
   assert isinstance(yaml_list, list)
-  _ = {(list(element.keys()))[0]: dict(list(element.values())[0]) for element in yaml_list}
-  return _ if _ else default
+  result = {}
+  #_ = {(list(element.keys()))[0]: dict(list(element.values())[0]) for element in yaml_list}
+  for element in yaml_list:
+    if isinstance(element, str): result[element] = None
+    elif isinstance(element, dict): 
+      key = list(element.keys())[0]
+      value = list(element.values())[0]
+      result[key] = value
+  # _ = {list(e.keys())[0]: list(e.values())[0] for e in yaml_list}
+  return result if result else default
 
 def template_populate(template, data):
   if not template: result = None
@@ -189,6 +199,11 @@ def pretty_timedelta(ts):
     return '%ds' % (seconds,)
     
 def pfy(object) -> str: return "\n"+pprint.pformat(object, indent=4, width=40, compact=True)
+def slugify(o) -> str:
+  """Converts any object to string, then slugifies it"""
+  return re.sub(r'[^a-zA-Z0-9_]', '_', str(o).lower())
+
+def dargs(*args): print(log_colored(args))
 
 def _print_terminal_color_table():
   for b in "34":
