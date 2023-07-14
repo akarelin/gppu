@@ -1,6 +1,9 @@
 # General purpose python utilities
 import pprint
 import yaml
+import re
+
+from string import Template
 
 from collections import defaultdict
 from datetime import datetime
@@ -98,6 +101,21 @@ def dict_sanitize(data, as_is=True):
   elif isinstance(data, (list, set)): return sanitize_list(data)
   else: raise ValueError(f"Unable to sanitize {data}")
 
+def dict_as_yaml(data={}):
+  redata = dict_sanitize(data)
+
+  #if timestampit: filename = timestamp() + " " + filename
+  yaml.add_representer(defaultdict, yaml.representer.Representer.represent_dict)
+  yaml.add_representer(set, yaml.representer.Representer.represent_list)
+  yaml.add_representer(tuple, yaml.representer.Representer.represent_dict)
+  try:
+    result = yaml.dump(redata)
+  except Exception as err:
+    raise RuntimeError(f"Error {err} in dict_as_yaml\n {type(err)}\n{pfy(redata)}\n\n")
+    #error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(redata)}\n\n"
+    #with open(filename+'_error.txt','w+') as ferr: ferr.write(error)
+  return result
+
 def dict_to_yml(filename:str, data=None, as_is=True):
   assert filename
   if not data: return
@@ -122,10 +140,70 @@ def dict_from_yml(filename:str):
 
   with open(filename) as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
 
-"""Logging"""
-def timestamp(): return datetime.now().strftime("%Y%m%d.%H%M%S")
+def dict_from_yaml_list(yaml_list, default=None) -> dict:
+  """
+  Convert YAML list like in the example to dict:
 
+    - binary_sensor.cellar_sensor@kaksi:
+        area: ['cellar']
+        purpose: ['occupancy','motion']
+        timeout: 180
+  """
+  if isinstance(yaml_list, dict): return yaml_list
+  assert isinstance(yaml_list, list)
+  result = {}
+  #_ = {(list(element.keys()))[0]: dict(list(element.values())[0]) for element in yaml_list}
+  for element in yaml_list:
+    if isinstance(element, str): result[element] = None
+    elif isinstance(element, dict): 
+      key = list(element.keys())[0]
+      value = list(element.values())[0]
+      result[key] = value
+  # _ = {list(e.keys())[0]: list(e.values())[0] for e in yaml_list}
+  return result if result else default
+
+def template_populate(template, data):
+  if not template: result = None
+  elif isinstance(template, dict):
+    result = {}
+    for k, old in template.items():
+      new = template_populate(old, data)
+      result[k] = new
+  elif isinstance(template, list):
+    result = []
+    for old in template:
+      new = template_populate(old, data)
+      result.append(new)
+  elif isinstance(template, (int, bool, float)): result = template
+  else: result = Template(str(template)).safe_substitute(data)
+  return result
+
+
+"""Logging"""
+def now_str(): return datetime.now().strftime("%Y%m%d.%H%M%S")
+def now_ts(): return datetime.now().timestamp()
+def pretty_timedelta(ts):
+  now = datetime.now().timestamp()
+  delta = now - ts
+  seconds = int(delta)
+  days, seconds = divmod(seconds, 86400)
+  hours, seconds = divmod(seconds, 3600)
+  minutes, seconds = divmod(seconds, 60)
+  if days > 0:
+    return '%dd %dh %dm %ds' % (days, hours, minutes, seconds)
+  elif hours > 0:
+    return '%dh %dm %ds' % (hours, minutes, seconds)
+  elif minutes > 0:
+    return '%dm %ds' % (minutes, seconds)
+  else:
+    return '%ds' % (seconds,)
+    
 def pfy(object) -> str: return "\n"+pprint.pformat(object, indent=4, width=40, compact=True)
+def slugify(o) -> str:
+  """Converts any object to string, then slugifies it"""
+  return re.sub(r'[^a-zA-Z0-9_]', '_', str(o).lower())
+
+def dargs(*args): print(log_colored(args))
 
 def _print_terminal_color_table():
   for b in "34":
