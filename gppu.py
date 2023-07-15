@@ -2,6 +2,7 @@
 import pprint
 import yaml
 import re
+from glob import glob
 
 from string import Template
 
@@ -139,6 +140,17 @@ def dict_from_yml(filename:str):
   yaml.add_representer(tuple, yaml.representer.Representer.represent_dict)
 
   with open(filename) as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
+
+def dict_from_yml_directory(folder:str, prefix:str) -> dict:
+  """ Loads all yaml files from folder that start with prefix
+      merges all dicts from files using prefix as key
+  """
+  result = {}
+  pathname = f"{folder}/{prefix}_*.yaml"
+  for fname in glob(pathname):
+    key = fname.removeprefix(folder).removesuffix('.yaml').split('_')[1]
+    result[key] = dict_from_yml(fname)
+  return result
 
 def dict_from_yaml_list(yaml_list, default=None) -> dict:
   """
