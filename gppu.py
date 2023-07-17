@@ -167,11 +167,11 @@ def dict_from_yaml_list(yaml_list, default=None) -> dict:
   #_ = {(list(element.keys()))[0]: dict(list(element.values())[0]) for element in yaml_list}
   for element in yaml_list:
     if isinstance(element, str): result[element] = None
-    elif isinstance(element, dict): 
-      key = list(element.keys())[0]
-      value = list(element.values())[0]
-      result[key] = value
-  # _ = {list(e.keys())[0]: list(e.values())[0] for e in yaml_list}
+    elif isinstance(element, dict):
+      for key, value in element.items():
+        if key not in result: result[key] = value
+        elif isinstance(value, dict): result[key].update(value)
+        elif isinstance(value, list): result[key].append(value)
   return result if result else default
 
 def template_populate(template, data):
