@@ -6,7 +6,8 @@ from glob import glob
 
 from string import Template
 
-from collections import defaultdict
+from collections import defaultdict, UserList, UserDict
+#from collections.abc import Mapping, Sequence
 from datetime import datetime
 
 """Safe typecasting"""
@@ -77,29 +78,37 @@ def dict_all_paths(d: dict) -> list:
     else: result.append(key)
   return result
 
+def islist(o): return isinstance(o, (list, set, UserList))
+def isdict(o): return isinstance(o, (dict, defaultdict, UserDict))
+def isscalar(o): return isinstance(o, (float, int, str))
+
 def dict_sanitize(data, as_is=True):
   """Convert nested complex data types for json.dumps or yaml.dumps"""
-  def sanitize_list(l) -> list:
+  def sanitize_list(o) -> list:
     result = []
-    for e in l:
-      if isinstance(e, (dict, defaultdict)): _ = sanitize_dict(e)
-      elif isinstance(e, (list, set)): _ = sanitize_list(e)
+    if hasattr(o, 'data'): l = list(o.data)
+    else: l = list(o)
+    for e in list(l):
+      if isdict(e): _ = sanitize_dict(e)
+      elif islist(e): _ = sanitize_list(e)
       else: _ = str(e) if e else None
       if as_is or _: result.append(_)
     return result
 
-  def sanitize_dict(d) -> dict:
+  def sanitize_dict(o) -> dict:
     result = {}
-    for k, v in [(str(k), v) for k, v in d.items() if as_is or v]:
-      if isinstance(v, (dict, defaultdict)): _ = sanitize_dict(v)
-      elif isinstance(v, (list, set)): _ = sanitize_list(v)
-      elif isinstance(v, (float, int, str)): _ = v
+    if hasattr(o, 'data'): d = dict(o.data)
+    else: d = dict(o)
+    for k, v in [(str(k), v) for k, v in dict(d).items() if as_is or v]:
+      if isdict(v): _ = sanitize_dict(v)
+      elif islist(v): _ = sanitize_list(v)
+      elif isscalar(v): _ = v
       else: _ = str(v) if v else None
       if as_is or _: result[k] = _
     return result
 
-  if isinstance(data, (dict, defaultdict)): return sanitize_dict(data)
-  elif isinstance(data, (list, set)): return sanitize_list(data)
+  if isdict(data): return sanitize_dict(data)
+  elif islist(data): return sanitize_list(data)
   else: raise ValueError(f"Unable to sanitize {data}")
 
 def dict_as_yaml(data={}):
