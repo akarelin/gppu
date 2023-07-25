@@ -224,7 +224,7 @@ def slugify(o) -> str:
   """Converts any object to string, then slugifies it"""
   return re.sub(r'[^a-zA-Z0-9_]', '_', str(o).lower())
 
-def dargs(*args): print(log_colored(args))
+# def dargs(*args): print(log_colored(args))
 
 def _print_terminal_color_table():
   for b in "34":
@@ -256,10 +256,32 @@ TERMINAL_COLORS = {
     'GREEN':  '0;30;42'
 }
 
-def log_colored(msg, level=None, *args, **kwargs):
-  msg = colorize_log(msg, level)
-  print(msg)
-  return msg
+def pcp(*args, **kwargs) -> str:
+  """
+  Pretty colored print. Supports two kinds of input:
+    level, msg: compatible with default logger
+    [args]: used by self.Dargs to colorize output
+  Returns: colored string
+  
+  Parameters:
+    verbose: adds pfy(kwargs) to output
+    silent: suppresses local print output
+    
+  """
+  if len(args) == 1 and isinstance(args[0], tuple): args = list(args[0])
+  out = ""
+  verbose = kwargs.pop('verbose', False)
+  silent = kwargs.pop('silent', False)
+  if 'level' in kwargs:
+    level = kwargs.pop('level')
+    msg = kwargs.pop('msg')
+    out = colorize_log(msg=msg, level=level)
+    if args: out += colorize_list(args)
+  else:
+    out = colorize_list(args)
+  if kwargs and verbose: out += pfy(kwargs)
+  if not silent: print(out)
+  return out
 
 def colorize_log(msg, level=None, *args):
   if isinstance(msg, tuple): msg = colorize_list(msg)
@@ -273,21 +295,7 @@ def colorize_log(msg, level=None, *args):
   #else: raise ValueError(f"Invalid log_colored call: {msg} {level} {args}")
   return msg
 
-# def NONE(text, fmt=None): return colorpad('0m', text, fmt)
-# #def DIM(text, fmt=None): return colorpad('38;5;19', text, fmt)
-# def DIM(text, fmt=None): return colorpad('38;5;8;1', text, fmt) # 30;1 = brigth black or 37;1 = lightgrey
-# def BRIGHT(text, fmt=None): return colorpad('36;1', text, fmt) # 36;1 = bright magenta
-# def BW(text, fmt=None): return colorpad('38;5;7;1', text, fmt) # 36;1 = bright magenta
-# def BY(text, fmt=None): return colorpad('38;5;11;1', text, fmt) # 36;1 = bright magenta
-# def BG(text, fmt=None): return colorpad('38;5;10;1', text, fmt) # 36;1 = bright magenta
-# def INFO(text, fmt=None): return colorpad('34;1', text, fmt)
-# def WHITE(text, fmt=None): return colorpad('0;30;47', text, fmt)
-# def YELLOW(text, fmt=None): return colorpad('0;30;43', text, fmt)
-# def RED(text, fmt=None): return colorpad('0;37;41', text, fmt)
-# def BLUE(text, fmt=None): return colorpad('0;30;44', text, fmt)
-# def GREEN(text, fmt=None): return colorpad('0;37;42', text, fmt)
-
-def colorize_list(l:list):
+def colorize_list(l: list):
   result = []
   color = None
   for e in l:
