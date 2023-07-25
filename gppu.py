@@ -6,7 +6,8 @@ from glob import glob
 
 from string import Template
 
-from collections import defaultdict
+from collections import defaultdict, UserList, UserDict
+#from collections.abc import Mapping, Sequence
 from datetime import datetime
 
 """Safe typecasting"""
@@ -77,29 +78,37 @@ def dict_all_paths(d: dict) -> list:
     else: result.append(key)
   return result
 
+def islist(o): return isinstance(o, (list, set, UserList))
+def isdict(o): return isinstance(o, (dict, defaultdict, UserDict))
+def isscalar(o): return isinstance(o, (float, int, str))
+
 def dict_sanitize(data, as_is=True):
   """Convert nested complex data types for json.dumps or yaml.dumps"""
-  def sanitize_list(l) -> list:
+  def sanitize_list(o) -> list:
     result = []
-    for e in l:
-      if isinstance(e, (dict, defaultdict)): _ = sanitize_dict(e)
-      elif isinstance(e, (list, set)): _ = sanitize_list(e)
+    if hasattr(o, 'data'): l = list(o.data)
+    else: l = list(o)
+    for e in list(l):
+      if isdict(e): _ = sanitize_dict(e)
+      elif islist(e): _ = sanitize_list(e)
       else: _ = str(e) if e else None
       if as_is or _: result.append(_)
     return result
 
-  def sanitize_dict(d) -> dict:
+  def sanitize_dict(o) -> dict:
     result = {}
-    for k, v in [(str(k), v) for k, v in d.items() if as_is or v]:
-      if isinstance(v, (dict, defaultdict)): _ = sanitize_dict(v)
-      elif isinstance(v, (list, set)): _ = sanitize_list(v)
-      elif isinstance(v, (float, int, str)): _ = v
+    if hasattr(o, 'data'): d = dict(o.data)
+    else: d = dict(o)
+    for k, v in [(str(k), v) for k, v in dict(d).items() if as_is or v]:
+      if isdict(v): _ = sanitize_dict(v)
+      elif islist(v): _ = sanitize_list(v)
+      elif isscalar(v): _ = v
       else: _ = str(v) if v else None
       if as_is or _: result[k] = _
     return result
 
-  if isinstance(data, (dict, defaultdict)): return sanitize_dict(data)
-  elif isinstance(data, (list, set)): return sanitize_list(data)
+  if isdict(data): return sanitize_dict(data)
+  elif islist(data): return sanitize_list(data)
   else: raise ValueError(f"Unable to sanitize {data}")
 
 def dict_as_yaml(data={}):
@@ -167,11 +176,11 @@ def dict_from_yaml_list(yaml_list, default=None) -> dict:
   #_ = {(list(element.keys()))[0]: dict(list(element.values())[0]) for element in yaml_list}
   for element in yaml_list:
     if isinstance(element, str): result[element] = None
-    elif isinstance(element, dict): 
-      key = list(element.keys())[0]
-      value = list(element.values())[0]
-      result[key] = value
-  # _ = {list(e.keys())[0]: list(e.values())[0] for e in yaml_list}
+    elif isinstance(element, dict):
+      for key, value in element.items():
+        if key not in result: result[key] = value
+        elif isinstance(value, dict): result[key].update(value)
+        elif isinstance(value, list): result[key].append(value)
   return result if result else default
 
 def template_populate(template, data):
@@ -215,7 +224,7 @@ def slugify(o) -> str:
   """Converts any object to string, then slugifies it"""
   return re.sub(r'[^a-zA-Z0-9_]', '_', str(o).lower())
 
-def dargs(*args): print(log_colored(args))
+# def dargs(*args): print(log_colored(args))
 
 def _print_terminal_color_table():
   for b in "34":
@@ -247,10 +256,32 @@ TERMINAL_COLORS = {
     'GREEN':  '0;30;42'
 }
 
-def log_colored(msg, level=None, *args, **kwargs):
-  msg = colorize_log(msg, level)
-  print(msg)
-  return msg
+def pcp(*args, **kwargs) -> str:
+  """
+  Pretty colored print. Supports two kinds of input:
+    level, msg: compatible with default logger
+    [args]: used by self.Dargs to colorize output
+  Returns: colored string
+  
+  Parameters:
+    verbose: adds pfy(kwargs) to output
+    silent: suppresses local print output
+    
+  """
+  if len(args) == 1 and isinstance(args[0], tuple): args = list(args[0])
+  out = ""
+  verbose = kwargs.pop('verbose', False)
+  silent = kwargs.pop('silent', False)
+  if 'level' in kwargs:
+    level = kwargs.pop('level')
+    msg = kwargs.pop('msg')
+    out = colorize_log(msg=msg, level=level)
+    if args: out += colorize_list(args)
+  else:
+    out = colorize_list(args)
+  if kwargs and verbose: out += pfy(kwargs)
+  if not silent: print(out)
+  return out
 
 def colorize_log(msg, level=None, *args):
   if isinstance(msg, tuple): msg = colorize_list(msg)
@@ -264,21 +295,7 @@ def colorize_log(msg, level=None, *args):
   #else: raise ValueError(f"Invalid log_colored call: {msg} {level} {args}")
   return msg
 
-# def NONE(text, fmt=None): return colorpad('0m', text, fmt)
-# #def DIM(text, fmt=None): return colorpad('38;5;19', text, fmt)
-# def DIM(text, fmt=None): return colorpad('38;5;8;1', text, fmt) # 30;1 = brigth black or 37;1 = lightgrey
-# def BRIGHT(text, fmt=None): return colorpad('36;1', text, fmt) # 36;1 = bright magenta
-# def BW(text, fmt=None): return colorpad('38;5;7;1', text, fmt) # 36;1 = bright magenta
-# def BY(text, fmt=None): return colorpad('38;5;11;1', text, fmt) # 36;1 = bright magenta
-# def BG(text, fmt=None): return colorpad('38;5;10;1', text, fmt) # 36;1 = bright magenta
-# def INFO(text, fmt=None): return colorpad('34;1', text, fmt)
-# def WHITE(text, fmt=None): return colorpad('0;30;47', text, fmt)
-# def YELLOW(text, fmt=None): return colorpad('0;30;43', text, fmt)
-# def RED(text, fmt=None): return colorpad('0;37;41', text, fmt)
-# def BLUE(text, fmt=None): return colorpad('0;30;44', text, fmt)
-# def GREEN(text, fmt=None): return colorpad('0;37;42', text, fmt)
-
-def colorize_list(l:list):
+def colorize_list(l: list):
   result = []
   color = None
   for e in l:
