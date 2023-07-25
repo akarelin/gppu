@@ -78,9 +78,11 @@ def dict_all_paths(d: dict) -> list:
     else: result.append(key)
   return result
 
-def islist(o): return isinstance(o, (list, set, UserList))
+def islist(o): return isinstance(o, (list, set))
 def isdict(o): return isinstance(o, (dict, defaultdict, UserDict))
-def isscalar(o): return isinstance(o, (float, int, str))
+def isscalar(o): 
+  
+  return isinstance(o, (float, int, str))
 
 def dict_sanitize(data, as_is=True):
   """Convert nested complex data types for json.dumps or yaml.dumps"""
