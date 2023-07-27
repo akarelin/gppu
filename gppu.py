@@ -78,9 +78,12 @@ def dict_all_paths(d: dict) -> list:
     else: result.append(key)
   return result
 
-def islist(o): return isinstance(o, (list, set, UserList))
+def islist(o): return isinstance(o, (list, set))
 def isdict(o): return isinstance(o, (dict, defaultdict, UserDict))
-def isscalar(o): return isinstance(o, (float, int, str))
+def isnumber(o): return isinstance(o, (float, int))
+def isstring(o): 
+  parents = {type(o).__name__} | {b.__name__ for b in o.__class__.__bases__}
+  return any({'y2list', 'str', 'y2topic', 'y2path'} & parents)
 
 def dict_sanitize(data, as_is=True):
   """Convert nested complex data types for json.dumps or yaml.dumps"""
@@ -100,9 +103,10 @@ def dict_sanitize(data, as_is=True):
     if hasattr(o, 'data'): d = dict(o.data)
     else: d = dict(o)
     for k, v in [(str(k), v) for k, v in dict(d).items() if as_is or v]:
-      if isdict(v): _ = sanitize_dict(v)
+      if isstring(v): _ = str(v)
+      elif isdict(v): _ = sanitize_dict(v)
       elif islist(v): _ = sanitize_list(v)
-      elif isscalar(v): _ = v
+      elif isnumber(v): _ = v
       else: _ = str(v) if v else None
       if as_is or _: result[k] = _
     return result
