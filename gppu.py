@@ -252,6 +252,7 @@ TERMINAL_COLORS = {
     'BW':     '38;5;7;1',
     'BY':     '38;5;11;1',
     'BG':     '38;5;10;1',
+    'BB':     '3;30;44',
     'INFO':   '34;1',
     'WHITE':  '0;30;47',
     'YELLOW': '0;30;43',
@@ -276,9 +277,9 @@ def pcp(*args, **kwargs) -> str:
   out = ""
   verbose = kwargs.pop('verbose', False)
   silent = kwargs.pop('silent', False)
-  if 'level' in kwargs:
-    level = kwargs.pop('level')
-    msg = kwargs.pop('msg')
+  level = kwargs.pop('level', None)
+  if 'msg' in kwargs:
+    msg = kwargs.get('msg')
     out = colorize_log(msg=msg, level=level)
     if args: out += colorize_list(args)
   else:
@@ -290,12 +291,12 @@ def pcp(*args, **kwargs) -> str:
 def colorize_log(msg, level=None, *args):
   if isinstance(msg, tuple): msg = colorize_list(msg)
   elif level:
-    if level in ['CRITICAL', 'ERROR']: color = 'RED'
-    elif level in ['WARN']: color = 'YELLOW'
-    elif level in ['INFO']: color = 'BLUE'
-    elif level in ['DEBUG']: color = 'DIM'
-    else: color = 'NONE'
-    msg = colorize(color, level) + ' ' + msg
+    if level in ['CRITICAL', 'ERROR']: c1, c2 = 'BR', 'BRIGHT'
+    elif level in ['WARN', 'WARNING']: c1, c2 = 'BY', 'BRIGHT'
+    elif level in ['INFO']: c1, c2 = 'BLUE', 'INFO'
+    elif level in ['DEBUG']: c1, c2 = 'DIM', 'DIM'
+    else: c1, c2 = 'DIM', 'INFO'
+    msg = colorize_list(c1, level, c2, msg, **args)
   #else: raise ValueError(f"Invalid log_colored call: {msg} {level} {args}")
   return msg
 
