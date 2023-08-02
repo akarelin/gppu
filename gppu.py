@@ -233,16 +233,16 @@ def slugify(o) -> str:
 def _print_terminal_color_table():
   for b in "34":
     s = ""
-    for f in "01234567": s += colorpad(f+b+';1', f"{f+b+';1'}") + "  "
+    for f in "01234567": s += colorize_list(f+b+';1', f"{f+b+';1'}") + "  "
     print(s)
 
   for f in range(0, 15):
-    s = colorpad(f"38;5;{f};1", f"38;5;{f};1")+"  "
+    s = colorize_list(f"38;5;{f};1", f"38;5;{f};1")+"  "
     print(s)
 
   for b in range(0, 1):
     s = ""
-    for f in range(0, 15): s += colorpad(f"38;5;{f};1", f"38;5;{f};1")+"  "
+    for f in range(0, 15): s += colorize_list(f"38;5;{f};1", f"38;5;{f};1")+"  "
     print(s)
 
 TERMINAL_COLORS = {
@@ -296,7 +296,8 @@ def colorize_log(msg, level=None, *args):
     elif level in ['INFO']: c1, c2 = 'BLUE', 'INFO'
     elif level in ['DEBUG']: c1, c2 = 'DIM', 'DIM'
     else: c1, c2 = 'DIM', 'INFO'
-    msg = colorize_list(c1, level, c2, msg, **args)
+    msg_list = [c1, level, c2, msg] + list(args)
+    msg = colorize_list(msg_list)
   #else: raise ValueError(f"Invalid log_colored call: {msg} {level} {args}")
   return msg
 
