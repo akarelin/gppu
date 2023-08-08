@@ -1,6 +1,6 @@
-# General purpose python utilities
 import pprint
 import yaml
+
 import re
 from glob import glob
 
@@ -10,7 +10,7 @@ from collections import defaultdict, UserList, UserDict
 #from collections.abc import Mapping, Sequence
 from datetime import datetime
 
-"""Safe typecasting"""
+# region Safe typecasting
 def safe_list(o) -> list:
   result = []
   if isinstance(o, str): result = [o]
@@ -29,8 +29,9 @@ def safe_float(o, default=-1.0) -> float:
   try: v = float(o)
   except: v = default
   return v
+# endregion
 
-"""Deep, dict and yaml utils"""
+# region Dict utils: deepget, dict_all_paths
 deepdict = lambda: defaultdict(deepdict)
 def deepget(path: str, d: dict, default=None):
   if '/' in path and path not in d.keys():
@@ -58,15 +59,6 @@ def dict_element_append(d: dict, key: str, value, unique=False) -> None:
     else: d[key] += [value]
   else: raise Exception(f"Unrecognized type: {type(d[key])}")
 
-# def safe_add_unique(d: dict, key: str, value):
-#   """ To be used with dicts of lists. Function adds another element to the list stored in dict with key. """
-#   try: _ = set(d[key])
-#   except: _ = set()
-#   if isinstance(_, str): result = set([_, value])
-#   elif isinstance(_, (set, list)): result = _.add(value)
-#   else: raise TypeError(f"Unsafe unique: {type(_)}")
-#   d[key] = result
-
 def dict_all_paths(d: dict) -> list:
   """Returns all paths in a dict as a list of strings"""
   result: list = []
@@ -77,16 +69,20 @@ def dict_all_paths(d: dict) -> list:
       for innerkey in new_keys: result.append(f'{key}/{innerkey}')
     else: result.append(key)
   return result
+# endregion
 
-def islist(o): return isinstance(o, (list, set))
-def isdict(o): return isinstance(o, (dict, defaultdict, UserDict))
-def isnumber(o): return isinstance(o, (float, int))
-def isstring(o): 
-  parents = {type(o).__name__} | {b.__name__ for b in o.__class__.__bases__}
-  return any({'y2list', 'str', 'y2topic', 'y2path'} & parents)
-
+# region working with yaml files: dict_to_yml, dict_from_yml, dict_sanitize
 def dict_sanitize(data, as_is=True):
   """Convert nested complex data types for json.dumps or yaml.dumps"""
+  # region internal utils for dict_sanitize
+  def islist(o): return isinstance(o, (list, set))
+  def isdict(o): return isinstance(o, (dict, defaultdict, UserDict))
+  def isnumber(o): return isinstance(o, (float, int))
+  def isstring(o): 
+    parents = {type(o).__name__} | {b.__name__ for b in o.__class__.__bases__}
+    return any({'y2list', 'str', 'y2topic', 'y2path'} & parents)
+  # endregion
+
   def sanitize_list(o) -> list:
     result = []
     if hasattr(o, 'data'): l = list(o.data)
@@ -115,33 +111,21 @@ def dict_sanitize(data, as_is=True):
   elif islist(data): return sanitize_list(data)
   else: raise ValueError(f"Unable to sanitize {data}")
 
-def dict_as_yaml(data={}):
-  redata = dict_sanitize(data)
-
-  #if timestampit: filename = timestamp() + " " + filename
-  yaml.add_representer(defaultdict, yaml.representer.Representer.represent_dict)
-  yaml.add_representer(set, yaml.representer.Representer.represent_list)
-  yaml.add_representer(tuple, yaml.representer.Representer.represent_dict)
-  try:
-    result = yaml.dump(redata)
-  except Exception as err:
-    raise RuntimeError(f"Error {err} in dict_as_yaml\n {type(err)}\n{pfy(redata)}\n\n")
-    #error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(redata)}\n\n"
-    #with open(filename+'_error.txt','w+') as ferr: ferr.write(error)
-  return result
-
 def dict_to_yml(filename:str, data=None, as_is=True):
+  class IndentedListDumper(yaml.Dumper):
+    def increase_indent(self, flow=False, indentless=False):
+      return super(IndentedListDumper, self).increase_indent(flow, False)
+
   assert filename
   if not data: return
 
   redata = dict_sanitize(data)
 
-  #if timestampit: filename = timestamp() + " " + filename
   yaml.add_representer(defaultdict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(set, yaml.representer.Representer.represent_list)
   yaml.add_representer(tuple, yaml.representer.Representer.represent_dict)
   with open(filename,'w+') as f: 
-    try: yaml.dump(redata, f)
+    try: yaml.dump(redata, f, indent=2, Dumper=IndentedListDumper, sort_keys=False)
     except Exception as err:
       error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(redata)}\n\n"
       with open(filename+'_error.txt','w+') as ferr: ferr.write(error)
@@ -186,24 +170,54 @@ def dict_from_yaml_list(yaml_list, default=None) -> dict:
         elif isinstance(value, dict): result[key].update(value)
         elif isinstance(value, list): result[key].append(value)
   return result if result else default
+# endregion
 
-def template_populate(template, data):
-  if not template: result = None
-  elif isinstance(template, dict):
-    result = {}
-    for k, old in template.items():
-      new = template_populate(old, data)
-      result[k] = new
-  elif isinstance(template, list):
-    result = []
-    for old in template:
-      new = template_populate(old, data)
-      result.append(new)
-  elif isinstance(template, (int, bool, float)): result = template
-  else: result = Template(str(template)).safe_substitute(data)
+# region Templates
+# def template_populate(template: dict, data: dict):
+#   raise DeprecationWarning("Use dict_template_populate instead")
+#   """ Replaces all ${key} in template with data[key] """
+#   if not template: result = None
+#   elif isinstance(template, dict):
+#     result = {}
+#     for k, old in template.items():
+#       new = template_populate(old, data)
+#       result[k] = new
+#   elif isinstance(template, list):
+#     result = []
+#     for old in template:
+#       new = template_populate(old, data)
+#       result.append(new)
+#   elif isinstance(template, (int, bool, float)): result = template
+#   else: result = Template(str(template)).safe_substitute(data)
+#   return result
+
+def dict_template_populate(o, data: dict = {}):
+  """ Returns new dictionary, copy of o with all templatable elements filled-in from data """
+  def __tp(o, data: dict):
+    if not o: result = None
+    elif isinstance(o, dict):
+      result = {}
+      for k, old in o.items():
+        new = __tp(old, o | data)
+        result[k] = new
+    elif isinstance(o, list):
+      result = []
+      for old in o:
+        new = __tp(old, data)
+        result.append(new)
+    elif isinstance(o, (int, bool, float)): result = o
+    else:
+      o = str(o)
+      if '$' in o: result = Template(o).safe_substitute(data)
+      else: result = o
+    return result
+
+  #result = __tp(o, o | data)
+  result = __tp(o, data)
   return result
+# endregion
 
-
+# region Loggin and Time helpers: now_ts, now_str
 """Logging"""
 def now_str(): return datetime.now().strftime("%Y%m%d.%H%M%S")
 def now_ts(): return datetime.now().timestamp()
@@ -227,9 +241,9 @@ def pfy(object) -> str: return "\n"+pprint.pformat(object, indent=4, width=40, c
 def slugify(o) -> str:
   """Converts any object to string, then slugifies it"""
   return re.sub(r'[^a-zA-Z0-9_]', '_', str(o).lower())
+# endregion
 
-# def dargs(*args): print(log_colored(args))
-
+# region PCP - Pretty Colored Print and colorize - utility
 def _print_terminal_color_table():
   for b in "34":
     s = ""
@@ -343,3 +357,4 @@ def colorize(color:str, text:str, fmt=None):
 
   text = color + text + NOP
   return pad + text if right else text + pad
+# endregion
