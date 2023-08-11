@@ -6,9 +6,12 @@ from glob import glob
 
 from string import Template
 
-from collections import defaultdict, UserList, UserDict
-#from collections.abc import Mapping, Sequence
+from collections import defaultdict, UserDict
 from datetime import datetime
+
+VER_GPPU_BASE = '2.1.0'
+VER_GPPU_BUILD = '230810'
+VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region Safe typecasting
 def safe_list(o) -> list:
@@ -72,7 +75,7 @@ def dict_all_paths(d: dict) -> list:
 # endregion
 
 # region working with yaml files: dict_to_yml, dict_from_yml, dict_sanitize
-def dict_sanitize(data, as_is=True):
+def dict_sanitize(data, verbose=False):
   """Convert nested complex data types for json.dumps or yaml.dumps"""
   # region internal utils for dict_sanitize
   def islist(o): return isinstance(o, (list, set))
@@ -87,31 +90,34 @@ def dict_sanitize(data, as_is=True):
     result = []
     if hasattr(o, 'data'): l = list(o.data)
     else: l = list(o)
-    for e in list(l):
-      if isdict(e): _ = sanitize_dict(e)
-      elif islist(e): _ = sanitize_list(e)
+    for e in l:
+      if islist(e): _ = sanitize_list(e)
+      elif isdict(e): _ = sanitize_dict(e)
+      elif hasattr(e, 'asdict'): _ = sanitize_dict(e.asdict())
       else: _ = str(e) if e else None
-      if as_is or _: result.append(_)
+      if verbose or _: result.append(_)
     return result
 
   def sanitize_dict(o) -> dict:
     result = {}
     if hasattr(o, 'data'): d = dict(o.data)
     else: d = dict(o)
-    for k, v in [(str(k), v) for k, v in dict(d).items() if as_is or v]:
+    for k, v in [(str(k), v) for k, v in dict(d).items() if v and k[0] not in "_"]:
       if isstring(v): _ = str(v)
-      elif isdict(v): _ = sanitize_dict(v)
       elif islist(v): _ = sanitize_list(v)
       elif isnumber(v): _ = v
+      elif hasattr(v, 'asdict'): _ = sanitize_dict(v.asdict())
+      elif isdict(v): _ = sanitize_dict(v)
       else: _ = str(v) if v else None
-      if as_is or _: result[k] = _
+      if verbose or _: result[k] = _
     return result
 
-  if isdict(data): return sanitize_dict(data)
-  elif islist(data): return sanitize_list(data)
+  if islist(data): return sanitize_list(data)
+  elif isdict(data): return sanitize_dict(data)
+  elif hasattr(data, 'asdict'): return sanitize_dict(data.asdict())
   else: raise ValueError(f"Unable to sanitize {data}")
 
-def dict_to_yml(filename:str, data=None, as_is=True):
+def dict_to_yml(filename:str, data=None, verbose=False):
   class IndentedListDumper(yaml.Dumper):
     def increase_indent(self, flow=False, indentless=False):
       return super(IndentedListDumper, self).increase_indent(flow, False)
@@ -119,7 +125,7 @@ def dict_to_yml(filename:str, data=None, as_is=True):
   assert filename
   if not data: return
 
-  redata = dict_sanitize(data)
+  redata = dict_sanitize(data, verbose=verbose)
 
   yaml.add_representer(defaultdict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(set, yaml.representer.Representer.represent_list)
@@ -137,60 +143,9 @@ def dict_from_yml(filename:str):
   yaml.add_representer(tuple, yaml.representer.Representer.represent_dict)
 
   with open(filename) as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
-
-def dict_from_yml_directory(folder:str, prefix:str) -> dict:
-  """ Loads all yaml files from folder that start with prefix
-      merges all dicts from files using prefix as key
-  """
-  result = {}
-  pathname = f"{folder}/{prefix}_*.yaml"
-  for fname in glob(pathname):
-    key = fname.removeprefix(folder).removesuffix('.yaml').split('_')[1]
-    result[key] = dict_from_yml(fname)
-  return result
-
-def dict_from_yaml_list(yaml_list, default=None) -> dict:
-  """
-  Convert YAML list like in the example to dict:
-
-    - binary_sensor.cellar_sensor@kaksi:
-        area: ['cellar']
-        purpose: ['occupancy','motion']
-        timeout: 180
-  """
-  if isinstance(yaml_list, dict): return yaml_list
-  assert isinstance(yaml_list, list)
-  result = {}
-  #_ = {(list(element.keys()))[0]: dict(list(element.values())[0]) for element in yaml_list}
-  for element in yaml_list:
-    if isinstance(element, str): result[element] = None
-    elif isinstance(element, dict):
-      for key, value in element.items():
-        if key not in result: result[key] = value
-        elif isinstance(value, dict): result[key].update(value)
-        elif isinstance(value, list): result[key].append(value)
-  return result if result else default
 # endregion
 
 # region Templates
-# def template_populate(template: dict, data: dict):
-#   raise DeprecationWarning("Use dict_template_populate instead")
-#   """ Replaces all ${key} in template with data[key] """
-#   if not template: result = None
-#   elif isinstance(template, dict):
-#     result = {}
-#     for k, old in template.items():
-#       new = template_populate(old, data)
-#       result[k] = new
-#   elif isinstance(template, list):
-#     result = []
-#     for old in template:
-#       new = template_populate(old, data)
-#       result.append(new)
-#   elif isinstance(template, (int, bool, float)): result = template
-#   else: result = Template(str(template)).safe_substitute(data)
-#   return result
-
 def dict_template_populate(o, data: dict = {}):
   """ Returns new dictionary, copy of o with all templatable elements filled-in from data """
   def __tp(o, data: dict):
@@ -208,11 +163,11 @@ def dict_template_populate(o, data: dict = {}):
     elif isinstance(o, (int, bool, float)): result = o
     else:
       o = str(o)
-      if '$' in o: result = Template(o).safe_substitute(data)
+      if o == 'DEL': result = None
+      elif '$' in o: result = Template(o).safe_substitute(data)
       else: result = o
     return result
 
-  #result = __tp(o, o | data)
   result = __tp(o, data)
   return result
 # endregion
@@ -247,16 +202,16 @@ def slugify(o) -> str:
 def _print_terminal_color_table():
   for b in "34":
     s = ""
-    for f in "01234567": s += colorize_list(f+b+';1', f"{f+b+';1'}") + "  "
+    for f in "01234567": s += _colorize_list(f+b+';1', f"{f+b+';1'}") + "  "
     print(s)
 
   for f in range(0, 15):
-    s = colorize_list(f"38;5;{f};1", f"38;5;{f};1")+"  "
+    s = _colorize_list(f"38;5;{f};1", f"38;5;{f};1")+"  "
     print(s)
 
   for b in range(0, 1):
     s = ""
-    for f in range(0, 15): s += colorize_list(f"38;5;{f};1", f"38;5;{f};1")+"  "
+    for f in range(0, 15): s += _colorize_list(f"38;5;{f};1", f"38;5;{f};1")+"  "
     print(s)
 
 TERMINAL_COLORS = {
@@ -294,16 +249,16 @@ def pcp(*args, **kwargs) -> str:
   level = kwargs.pop('level', None)
   if 'msg' in kwargs:
     msg = kwargs.get('msg')
-    out = colorize_log(msg=msg, level=level)
-    if args: out += colorize_list(args)
+    out = _colorize_log(msg=msg, level=level)
+    if args: out += _colorize_list(args)
   else:
-    out = colorize_list(args)
+    out = _colorize_list(args)
   if kwargs and verbose: out += pfy(kwargs)
   if not silent: print(out)
   return out
 
-def colorize_log(msg, level=None, *args):
-  if isinstance(msg, tuple): msg = colorize_list(msg)
+def _colorize_log(msg, level=None, *args):
+  if isinstance(msg, tuple): msg = _colorize_list(msg)
   elif level:
     if level in ['CRITICAL', 'ERROR']: c1, c2 = 'BR', 'BRIGHT'
     elif level in ['WARN', 'WARNING']: c1, c2 = 'BY', 'BRIGHT'
@@ -311,20 +266,20 @@ def colorize_log(msg, level=None, *args):
     elif level in ['DEBUG']: c1, c2 = 'DIM', 'DIM'
     else: c1, c2 = 'DIM', 'INFO'
     msg_list = [c1, level, c2, msg] + list(args)
-    msg = colorize_list(msg_list)
+    msg = _colorize_list(msg_list)
   #else: raise ValueError(f"Invalid log_colored call: {msg} {level} {args}")
   return msg
 
-def colorize_list(l: list):
+def _colorize_list(l: list):
   result = []
   color = None
   for e in l:
     if str(e) in TERMINAL_COLORS: color = e
-    elif color: result.append(colorize(color, str(e)))
+    elif color: result.append(_colorize(color, str(e)))
     else: result.append(str(e))
   return ' '.join(result)
 
-def colorize(color:str, text:str, fmt=None):
+def _colorize(color:str, text:str, fmt=None):
   """
   # Print a string in a given color, right-justified or left-justified
   # to a given length.  The color is optional.
