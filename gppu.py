@@ -9,8 +9,8 @@ from string import Template
 from collections import defaultdict, UserDict
 from datetime import datetime
 
-VER_GPPU_BASE = '2.1.0'
-VER_GPPU_BUILD = '230810'
+VER_GPPU_BASE = '2.1.7'
+VER_GPPU_BUILD = '230813'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region Safe typecasting
@@ -92,8 +92,8 @@ def dict_sanitize(data, verbose=False):
     else: l = list(o)
     for e in l:
       if islist(e): _ = sanitize_list(e)
+      elif hasattr(e, 'asdict'): _ = dict(e.asdict())
       elif isdict(e): _ = sanitize_dict(e)
-      elif hasattr(e, 'asdict'): _ = sanitize_dict(e.asdict())
       else: _ = str(e) if e else None
       if verbose or _: result.append(_)
     return result
@@ -106,15 +106,15 @@ def dict_sanitize(data, verbose=False):
       if isstring(v): _ = str(v)
       elif islist(v): _ = sanitize_list(v)
       elif isnumber(v): _ = v
-      elif hasattr(v, 'asdict'): _ = sanitize_dict(v.asdict())
+      elif hasattr(v, 'asdict'): _ = dict(v.asdict())
       elif isdict(v): _ = sanitize_dict(v)
       else: _ = str(v) if v else None
       if verbose or _: result[k] = _
     return result
 
   if islist(data): return sanitize_list(data)
+  elif hasattr(data, 'asdict'): return sanitize_dict(data.data)
   elif isdict(data): return sanitize_dict(data)
-  elif hasattr(data, 'asdict'): return sanitize_dict(data.asdict())
   else: raise ValueError(f"Unable to sanitize {data}")
 
 def dict_to_yml(filename:str, data=None, verbose=False):
@@ -128,6 +128,7 @@ def dict_to_yml(filename:str, data=None, verbose=False):
   redata = dict_sanitize(data, verbose=verbose)
 
   yaml.add_representer(defaultdict, yaml.representer.Representer.represent_dict)
+  yaml.add_representer(UserDict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(set, yaml.representer.Representer.represent_list)
   yaml.add_representer(tuple, yaml.representer.Representer.represent_dict)
   with open(filename,'w+') as f: 
@@ -135,25 +136,44 @@ def dict_to_yml(filename:str, data=None, verbose=False):
     except Exception as err:
       error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(redata)}\n\n"
       with open(filename+'_error.txt','w+') as ferr: ferr.write(error)
-     
+
+
 def dict_from_yml(filename:str):
-  result = {}
+  yml_root = filename.rsplit('/', 1)[0]
+
+  def yml_include(loader, node):
+    filename = yml_root+'/'+node.value
+    with open(filename, "r") as f: return yaml.load(f, Loader=yaml.FullLoader)
+
   yaml.add_representer(defaultdict, yaml.representer.Representer.represent_dict)
+  yaml.add_representer(UserDict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(set, yaml.representer.Representer.represent_list)
   yaml.add_representer(tuple, yaml.representer.Representer.represent_dict)
+  yaml.add_constructor("!include", yml_include, Loader=yaml.FullLoader)
 
   with open(filename) as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
 # endregion
 
 # region Templates
-def dict_template_populate(o, data: dict = {}):
-  """ Returns new dictionary, copy of o with all templatable elements filled-in from data """
+def dict_template_populate(o, data: dict = {}, excludes:list = []):
+  """ 
+    Returns new dictionary, copy of o with all templatable elements filled-in from data 
+    
+    This function is recursive
+
+    Keys with value == 'DEL' are removed from result
+    Keys with '$' in value are treated as templates and filled-in from data
+  """
   def __tp(o, data: dict):
+    if not data: data = {}
     if not o: result = None
     elif isinstance(o, dict):
       result = {}
       for k, old in o.items():
-        new = __tp(old, o | data)
+        if k in excludes: 
+          new = old
+        else:
+          new = __tp(old, o | data)
         result[k] = new
     elif isinstance(o, list):
       result = []
@@ -166,9 +186,11 @@ def dict_template_populate(o, data: dict = {}):
       if o == 'DEL': result = None
       elif '$' in o: result = Template(o).safe_substitute(data)
       else: result = o
+    # print(f"__tp {o} {data} {result}")
     return result
 
-  result = __tp(o, data)
+  _ = o.get('data') or o
+  result = __tp(_, data)
   return result
 # endregion
 
