@@ -5,6 +5,7 @@ import re
 from glob import glob
 
 from string import Template
+from copy import copy, deepcopy
 
 from collections import defaultdict, UserDict
 from datetime import datetime
@@ -164,8 +165,14 @@ def dict_template_populate(o, data: dict = {}, excludes:list = []):
     Keys with value == 'DEL' are removed from result
     Keys with '$' in value are treated as templates and filled-in from data
   """
+  def flatcopy(data):
+    redata = {k: v for k, v in data.items() if isinstance(v, (str, int, float, bool, list)) and k not in excludes}
+    return redata
+
   def __tp(o, data: dict):
     if not data: data = {}
+    data = flatcopy(data)
+
     if not o: result = None
     elif isinstance(o, dict):
       result = {}
@@ -184,12 +191,24 @@ def dict_template_populate(o, data: dict = {}, excludes:list = []):
     else:
       o = str(o)
       if o == 'DEL': result = None
-      elif '$' in o: result = Template(o).safe_substitute(data)
+      elif '$' in o: 
+        _ = Template(o).safe_substitute(data)
+        if _[0] == '[' and _[-1] == ']':
+          result = []
+          _ = _[1:-1]
+          for element in _.split(','):
+            element = element.strip()
+            if element.isdecimal(): element = int(element)
+            elif element.isnumeric(): element = float(element)
+            result.append(element)
+        else: result = _
       else: result = o
-    # print(f"__tp {o} {data} {result}")
     return result
 
-  _ = o.get('data') or o
+  if isinstance(o, dict):
+    _ = o.get('data') or o
+  else:
+    _ = str(o)
   result = __tp(_, data)
   return result
 # endregion
