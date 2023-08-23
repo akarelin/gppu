@@ -10,8 +10,8 @@ from copy import copy, deepcopy
 from collections import defaultdict, UserDict
 from datetime import datetime
 
-VER_GPPU_BASE = '2.2.0'
-VER_GPPU_BUILD = '230817'
+VER_GPPU_BASE = '2.2.4'
+VER_GPPU_BUILD = '230823'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region Safe typecasting
@@ -76,49 +76,46 @@ def dict_all_paths(d: dict) -> list:
 # endregion
 
 # region working with yaml files: dict_to_yml, dict_from_yml, dict_sanitize
-def dict_sanitize(data, verbose=False):
+def dict_sanitize(data):
   """Convert nested complex data types for json.dumps or yaml.dumps"""
   # region internal utils for dict_sanitize
   def islist(o): return isinstance(o, (list, set))
-  def isdict(o): return isinstance(o, (dict, defaultdict, UserDict))
+  def isdict(o): return isinstance(o, (dict, defaultdict, UserDict)) or hasattr(o, 'as_dict')
   def isnumber(o): return isinstance(o, (float, int))
-  def isstring(o): 
-    parents = {type(o).__name__} | {b.__name__ for b in o.__class__.__bases__}
-    return any({'y2list', 'str', 'y2topic', 'y2path'} & parents)
+  def isstring(o) -> bool: 
+    relatives = {type(o).__qualname__}
+    relatives |= {c.__qualname__ for c in o.__class__.__mro__}
+    return bool({'y2list', 'str', 'y2topic', 'y2path', 'ADBase', 'YEntity'} & relatives)
   # endregion
 
   def sanitize_list(o) -> list:
     result = []
-    if hasattr(o, 'data'): l = list(o.data)
-    else: l = list(o)
-    for e in l:
-      if islist(e): _ = sanitize_list(e)
-      elif hasattr(e, 'asdict'): _ = dict(e.asdict())
-      elif isdict(e): _ = sanitize_dict(e)
+    for e in o:
+      if isdict(e): _ = sanitize_dict(e)
+      elif islist(e): _ = sanitize_list(e)
+      elif isnumber(e): _ = e
       else: _ = str(e) if e else None
-      if verbose or _: result.append(_)
+      result.append(_)
     return result
 
   def sanitize_dict(o) -> dict:
     result = {}
-    if hasattr(o, 'data'): d = dict(o.data)
+    if hasattr(o, 'as_dict'): d = o.as_dict()
     else: d = dict(o)
-    for k, v in [(str(k), v) for k, v in dict(d).items() if v and k[0] not in "_"]:
-      if isstring(v): _ = str(v)
+    #for k, v in [(str(k), v) for k, v in dict(d).items() if v and k[0] not in "_"]:
+    for k, v in [(str(k), v) for k, v in d.items()]:
+      if isdict(v): _ = sanitize_dict(v)
       elif islist(v): _ = sanitize_list(v)
       elif isnumber(v): _ = v
-      elif hasattr(v, 'asdict'): _ = dict(v.asdict())
-      elif isdict(v): _ = sanitize_dict(v)
       else: _ = str(v) if v else None
-      if verbose or _: result[k] = _
+      result[k] = _
     return result
 
   if islist(data): return sanitize_list(data)
-  elif hasattr(data, 'asdict'): return sanitize_dict(data.data)
   elif isdict(data): return sanitize_dict(data)
   else: raise ValueError(f"Unable to sanitize {data}")
 
-def dict_to_yml(filename:str, data=None, verbose=False):
+def dict_to_yml(filename:str, data=None):
   class IndentedListDumper(yaml.Dumper):
     def increase_indent(self, flow=False, indentless=False):
       return super(IndentedListDumper, self).increase_indent(flow, False)
@@ -126,7 +123,7 @@ def dict_to_yml(filename:str, data=None, verbose=False):
   assert filename
   if not data: return
 
-  redata = dict_sanitize(data, verbose=verbose)
+  redata = dict_sanitize(data)
 
   yaml.add_representer(defaultdict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(UserDict, yaml.representer.Representer.represent_dict)
@@ -180,6 +177,8 @@ def dict_template_populate(o, data: dict = {}, excludes:list = []):
         if k in excludes: 
           new = old
         else:
+          # !!! data | o   
+          # !!! o | data
           new = __tp(old, o | data)
         result[k] = new
     elif isinstance(o, list):
@@ -259,10 +258,24 @@ TERMINAL_COLORS = {
     'NONE':   '0m',
     'DIM':    '38;5;8;1',
     'BRIGHT': '36;1',
-    'BW':     '38;5;7;1',
-    'BY':     '38;5;11;1',
-    'BG':     '38;5;10;1',
-    'BB':     '3;30;44',
+    'BW':     '38;5;15;1', # White
+    'DW':    '38;5;7;1', # Dark White (7)
+
+    'BY':     '38;5;11;1', # Yellow
+    'DY':     '38;5;3;1', # Dark Yellow (3)
+    'BG':     '38;5;10;1', # Green
+    'DG':     '38;5;2;1', # Dark Green (2)
+
+    'BB':     '3;30;44', # Blue
+    'DB':     '38;5;4;1', # Dark Blue (4)
+
+    'BC':     '38;5;6;1', # Cyan
+    'DC':     '38;5;14;1', # Dark Cyan (6)
+    'BM':     '38;5;13;1', # Magenta
+    'DM':     '38;5;5;1', # Dark Magenta (5)
+    'BR':     '38;5;9;1', # Red
+    'DR':     '38;5;1;1', # Dark Red (1)
+
     'INFO':   '34;1',
     'WHITE':  '0;30;47',
     'YELLOW': '0;30;43',
