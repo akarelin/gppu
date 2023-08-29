@@ -1,8 +1,10 @@
 import pprint
 import yaml
-
 import re
+import inspect
 from glob import glob
+
+from typing import TypeVar, Union, get_origin, get_args, Callable, Any
 
 from string import Template
 from copy import copy, deepcopy
@@ -10,8 +12,8 @@ from copy import copy, deepcopy
 from collections import defaultdict, UserDict
 from datetime import datetime
 
-VER_GPPU_BASE = '2.2.4'
-VER_GPPU_BUILD = '230823'
+VER_GPPU_BASE = '2.3.2'
+VER_GPPU_BUILD = '230825'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region Safe typecasting
@@ -33,6 +35,15 @@ def safe_float(o, default=-1.0) -> float:
   try: v = float(o)
   except: v = default
   return v
+def safe_isinstance(o: object, typ: type, default: bool = False) -> bool:
+  """ Safe version of isinstance. Use with default=True to be more permissive """
+  if typ in {Any}: return True
+  problematic = {Union, TypeVar}
+  safe = {int, float, str, dict, list}
+  if typ in problematic: return default 
+  if set(get_args(typ)) - safe: return default # ! Unsafe type detected
+  if get_origin(typ) in problematic: return default
+  return isinstance(o, typ)
 # endregion
 
 # region Dict utils: deepget, dict_all_paths
@@ -76,41 +87,49 @@ def dict_all_paths(d: dict) -> list:
 # endregion
 
 # region working with yaml files: dict_to_yml, dict_from_yml, dict_sanitize
+KEYS_FORCE_STRING = ['parent']
+KEYS_DROP = ['api', 'adapi']
+KEYS_FIRST = ['name', 'path']
+
+def isstring(o) -> bool:
+  relatives = {type(o).__qualname__}
+  relatives |= {c.__qualname__ for c in o.__class__.__mro__}
+  return bool({'y2list', 'str', 'y2topic', 'y2path', 'ADBase', 'YEntity'} & relatives)
+islist = lambda o: not isstring(o) and isinstance(o, (list, set))
+isdict = lambda o: not isstring(o) and (isinstance(o, (dict, defaultdict, UserDict)) or hasattr(o, 'as_dict') or (hasattr(o, 'data') and isinstance(o.data, dict)))
+isnumber = lambda o: isinstance(o, (float, int))
+
+def sanitize_list(o) -> list:
+  result = []
+  for e in o:
+    if isdict(e): _ = sanitize_dict(e)
+    elif islist(e): _ = sanitize_list(e)
+    elif isnumber(e): _ = e
+    else: _ = str(e) if e else None
+    result.append(_)
+  return result
+
+def sanitize_dict(o) -> dict:
+  result = {}
+  if hasattr(o, 'as_dict'): d = o.as_dict()
+  elif hasattr(o, 'data') and isinstance(o.data, dict): d = o.data
+  else: d = dict(o)
+
+  ordered_keys = [k for k in KEYS_FIRST if k in d]
+  ordered_keys += [k for k in d.keys() if k not in KEYS_FIRST and k not in KEYS_DROP]
+  for k in ordered_keys:
+    v = d[k]
+    if k in KEYS_DROP: continue
+    elif k in KEYS_FORCE_STRING: _ = str(v)
+    elif isdict(v): _ = sanitize_dict(v)
+    elif islist(v): _ = sanitize_list(v)
+    elif isnumber(v): _ = v
+    else: _ = str(v) if v else None
+    result[k] = _
+  return result
+
 def dict_sanitize(data):
   """Convert nested complex data types for json.dumps or yaml.dumps"""
-  # region internal utils for dict_sanitize
-  def islist(o): return isinstance(o, (list, set))
-  def isdict(o): return isinstance(o, (dict, defaultdict, UserDict)) or hasattr(o, 'as_dict')
-  def isnumber(o): return isinstance(o, (float, int))
-  def isstring(o) -> bool: 
-    relatives = {type(o).__qualname__}
-    relatives |= {c.__qualname__ for c in o.__class__.__mro__}
-    return bool({'y2list', 'str', 'y2topic', 'y2path', 'ADBase', 'YEntity'} & relatives)
-  # endregion
-
-  def sanitize_list(o) -> list:
-    result = []
-    for e in o:
-      if isdict(e): _ = sanitize_dict(e)
-      elif islist(e): _ = sanitize_list(e)
-      elif isnumber(e): _ = e
-      else: _ = str(e) if e else None
-      result.append(_)
-    return result
-
-  def sanitize_dict(o) -> dict:
-    result = {}
-    if hasattr(o, 'as_dict'): d = o.as_dict()
-    else: d = dict(o)
-    #for k, v in [(str(k), v) for k, v in dict(d).items() if v and k[0] not in "_"]:
-    for k, v in [(str(k), v) for k, v in d.items()]:
-      if isdict(v): _ = sanitize_dict(v)
-      elif islist(v): _ = sanitize_list(v)
-      elif isnumber(v): _ = v
-      else: _ = str(v) if v else None
-      result[k] = _
-    return result
-
   if islist(data): return sanitize_list(data)
   elif isdict(data): return sanitize_dict(data)
   else: raise ValueError(f"Unable to sanitize {data}")
@@ -174,7 +193,7 @@ def dict_template_populate(o, data: dict = {}, excludes:list = []):
     elif isinstance(o, dict):
       result = {}
       for k, old in o.items():
-        if k in excludes: 
+        if k in excludes or inspect.isfunction(old): 
           new = old
         else:
           # !!! data | o   
@@ -187,10 +206,10 @@ def dict_template_populate(o, data: dict = {}, excludes:list = []):
         new = __tp(old, data)
         result.append(new)
     elif isinstance(o, (int, bool, float)): result = o
+    elif inspect.isfunction(o): result = o
     else:
-      o = str(o)
-      if o == 'DEL': result = None
-      elif '$' in o: 
+      if str(o) == 'DEL': result = None
+      elif '$' in str(o): 
         _ = Template(o).safe_substitute(data)
         if _[0] == '[' and _[-1] == ']':
           result = []
@@ -260,6 +279,12 @@ TERMINAL_COLORS = {
     'BRIGHT': '36;1',
     'BW':     '38;5;15;1', # White
     'DW':    '38;5;7;1', # Dark White (7)
+
+    'GRAY1':  '38;5;234', # Gray
+    'GRAY2':  '38;5;240', # Gray
+    'GRAY3':  '38;5;246', # Gray
+    'GRAY4':  '38;5;252', # Gray
+
 
     'BY':     '38;5;11;1', # Yellow
     'DY':     '38;5;3;1', # Dark Yellow (3)
