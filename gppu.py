@@ -12,8 +12,8 @@ from copy import copy, deepcopy
 from collections import defaultdict, UserDict
 from datetime import datetime
 
-VER_GPPU_BASE = '2.3.2'
-VER_GPPU_BUILD = '230825'
+VER_GPPU_BASE = '2.3.3'
+VER_GPPU_BUILD = '230829'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region Safe typecasting
@@ -181,13 +181,13 @@ def dict_template_populate(o, data: dict = {}, excludes:list = []):
     Keys with value == 'DEL' are removed from result
     Keys with '$' in value are treated as templates and filled-in from data
   """
-  def flatcopy(data):
-    redata = {k: v for k, v in data.items() if isinstance(v, (str, int, float, bool, list)) and k not in excludes}
-    return redata
+  # def flatcopy(data):
+  #   redata = {k: v for k, v in data.items() if isinstance(v, (str, int, float, bool, list)) and k not in excludes}
+  #   return redata
 
   def __tp(o, data: dict):
     if not data: data = {}
-    data = flatcopy(data)
+    # data = flatcopy(data)
 
     if not o: result = None
     elif isinstance(o, dict):
