@@ -12,7 +12,7 @@ from copy import copy, deepcopy
 from collections import defaultdict, UserDict
 from datetime import datetime
 
-VER_GPPU_BASE = '2.3.5'
+VER_GPPU_BASE = '2.3.6'
 VER_GPPU_BUILD = '230902'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
