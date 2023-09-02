@@ -12,8 +12,8 @@ from copy import copy, deepcopy
 from collections import defaultdict, UserDict
 from datetime import datetime
 
-VER_GPPU_BASE = '2.3.3'
-VER_GPPU_BUILD = '230829'
+VER_GPPU_BASE = '2.3.5'
+VER_GPPU_BUILD = '230902'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region Safe typecasting
@@ -94,7 +94,7 @@ KEYS_FIRST = ['name', 'path']
 def isstring(o) -> bool:
   relatives = {type(o).__qualname__}
   relatives |= {c.__qualname__ for c in o.__class__.__mro__}
-  return bool({'y2list', 'str', 'y2topic', 'y2path', 'ADBase', 'YEntity'} & relatives)
+  return bool({'y2list', 'str', 'y2topic', 'y2path', 'ADBase'} & relatives)
 islist = lambda o: not isstring(o) and isinstance(o, (list, set))
 isdict = lambda o: not isstring(o) and (isinstance(o, (dict, defaultdict, UserDict)) or hasattr(o, 'as_dict') or (hasattr(o, 'data') and isinstance(o.data, dict)))
 isnumber = lambda o: isinstance(o, (float, int))
@@ -125,7 +125,7 @@ def sanitize_dict(o) -> dict:
     elif islist(v): _ = sanitize_list(v)
     elif isnumber(v): _ = v
     else: _ = str(v) if v else None
-    result[k] = _
+    result[str(k)] = _
   return result
 
 def dict_sanitize(data):
@@ -171,7 +171,7 @@ def dict_from_yml(filename:str):
   with open(filename) as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
 # endregion
 
-# region Templates
+# 2Do Templates
 def dict_template_populate(o, data: dict = {}, excludes:list = []):
   """ 
     Returns new dictionary, copy of o with all templatable elements filled-in from data 
@@ -210,7 +210,7 @@ def dict_template_populate(o, data: dict = {}, excludes:list = []):
     else:
       if str(o) == 'DEL': result = None
       elif '$' in str(o): 
-        _ = Template(o).safe_substitute(data)
+        _ = Template(str(o)).safe_substitute(data)
         if _[0] == '[' and _[-1] == ']':
           result = []
           _ = _[1:-1]
@@ -229,7 +229,6 @@ def dict_template_populate(o, data: dict = {}, excludes:list = []):
     _ = str(o)
   result = __tp(_, data)
   return result
-# endregion
 
 # region Loggin and Time helpers: now_ts, now_str
 """Logging"""
@@ -255,6 +254,28 @@ def pfy(object) -> str: return "\n"+pprint.pformat(object, indent=4, width=40, c
 def slugify(o) -> str:
   """Converts any object to string, then slugifies it"""
   return re.sub(r'[^a-zA-Z0-9_]', '_', str(o).lower())
+# endregion
+
+# region Tracing decorators
+TA_BEFORE = 'before'
+TA_AFTER = 'after'
+TA_INSTEAD = 'instead'
+TAs = [TA_BEFORE, TA_AFTER, TA_INSTEAD]
+def _tracer(tracer: Callable = None, action: str = None) -> Callable:
+  def decorator(method: Callable):
+    def wrapper(self, *a, **kw):
+      if not tracer: return method(self, *a, **kw)
+      if action == TA_BEFORE:
+        tracer(self, *a, **kw)
+        return method(self, *a, **kw)
+      if action == TA_AFTER:
+        _ = method(self, *a, **kw)
+        tracer(self, *a, **kw)
+        return _
+      if action == TA_INSTEAD:
+        return tracer(self, *a, **kw)
+    return wrapper
+
 # endregion
 
 # region PCP - Pretty Colored Print and colorize - utility
