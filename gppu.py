@@ -1,3 +1,4 @@
+from functools import partial
 import pprint
 import yaml
 import re
@@ -12,8 +13,8 @@ from copy import copy, deepcopy
 from collections import defaultdict, UserDict
 from datetime import datetime
 
-VER_GPPU_BASE = '2.3.6'
-VER_GPPU_BUILD = '230902'
+VER_GPPU_BASE = '2.4.0'
+VER_GPPU_BUILD = '230904'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region Safe typecasting
@@ -330,7 +331,7 @@ TERMINAL_COLORS = {
     'GREEN':  '0;30;42'
 }
 
-def pcp(*args, **kwargs) -> str:
+def pcp(*a, **kw) -> str:
   """
   Pretty colored print. Supports two kinds of input:
     level, msg: compatible with default logger
@@ -342,20 +343,53 @@ def pcp(*args, **kwargs) -> str:
     silent: suppresses local print output
     
   """
-  if len(args) == 1 and isinstance(args[0], tuple): args = list(args[0])
+  if len(a) == 1 and isinstance(a[0], tuple): a = list(a[0])
   out = ""
-  verbose = kwargs.pop('verbose', False)
-  silent = kwargs.pop('silent', False)
-  level = kwargs.pop('level', None)
-  if 'msg' in kwargs:
-    msg = kwargs.get('msg')
+  verbose = kw.pop('verbose', False)
+  silent = kw.pop('silent', False)
+  level = kw.pop('level', None)
+  if 'msg' in kw:
+    msg = kw.get('msg')
     out = _colorize_log(msg=msg, level=level)
-    if args: out += _colorize_list(args)
+    if a: out += _colorize_list(a)
   else:
-    out = _colorize_list(args)
-  if kwargs and verbose: out += pfy(kwargs)
+    out = _colorize_list(a)
+  if kw and verbose: out += pfy(kw)
   if not silent: print(out)
   return out
+
+remove_prefixes = lambda s, prefixes: next((s.removeprefix(prefix) for prefix in prefixes if s.startswith(prefix)), s)
+SHORTEN_BY_PREFIX = ['process_', '_cb_']
+IGNORE_FUNCTIONS = ['dpcp', 'trace', 'pcp', 'Trace']
+def dpcp(*a, globdict=None, **kw) -> str:
+  """ Version of pcp that adds info on where it was called from """
+  def is_traced(name=None, globdict=None):
+    if not globdict: globdict = globals().get('traces', {})
+
+    if not name or name not in globdict: return globdict.get('all')
+    else: return globdict.get(name)
+
+  frame = inspect.currentframe().f_back
+
+  while frame.f_back:
+    frame = frame.f_back
+    filename, line_number, func_name, _, _ = inspect.getframeinfo(frame)
+    if func_name not in IGNORE_FUNCTIONS: break
+    func_name = remove_prefixes(func_name, SHORTEN_BY_PREFIX)
+
+  if not is_traced(func_name, globdict): return 
+  module = filename.rsplit('/', 1)[-1].rsplit('.', 1)[0]
+  if not is_traced(module, globdict): return
+  _ = []
+  #_ = ['GRAY1', module]
+
+  if 'self' in frame.f_locals: 
+    class_name = frame.f_locals["self"].__class__.__name__
+    if not is_traced(class_name, globdict): return
+    _ += ['GRAY2', f"{class_name}", 'GRAY3', f".{func_name}"]
+  else: _ += ['GRAY3', f".{func_name}"]
+  _ += list(a)
+  return pcp(*_) 
 
 def _colorize_log(msg, level=None, *args):
   if isinstance(msg, tuple): msg = _colorize_list(msg)
@@ -371,13 +405,19 @@ def _colorize_log(msg, level=None, *args):
   return msg
 
 def _colorize_list(l: list):
+  """ Colorizes list of strings. Strings separated with space unless start with . or / """
   result = []
   color = None
-  for e in l:
-    if str(e) in TERMINAL_COLORS: color = e
-    elif color: result.append(_colorize(color, str(e)))
-    else: result.append(str(e))
-  return ' '.join(result)
+  for e in [str(e) for e in l]:
+    e = str(e)
+    if e in TERMINAL_COLORS: color = e; continue
+    elif color: elem = _colorize(color, str(e))
+    else: elem = str(e)
+
+    if e[0] in "./" and result: result += [elem]
+    elif not result: result += [elem]
+    else: result += [' '+elem]
+  return ''.join(result)
 
 def _colorize(color:str, text:str, fmt=None):
   """
