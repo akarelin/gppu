@@ -13,8 +13,8 @@ from copy import copy, deepcopy
 from collections import defaultdict, UserDict
 from datetime import datetime
 
-VER_GPPU_BASE = '2.4.1'
-VER_GPPU_BUILD = '230905'
+VER_GPPU_BASE = '2.4.2'
+VER_GPPU_BUILD = '230909'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region Safe typecasting
