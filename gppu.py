@@ -13,8 +13,8 @@ from copy import copy, deepcopy
 from collections import defaultdict, UserDict
 from datetime import datetime
 
-VER_GPPU_BASE = '2.4.0'
-VER_GPPU_BUILD = '230904'
+VER_GPPU_BASE = '2.4.2'
+VER_GPPU_BUILD = '230909'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region Safe typecasting
@@ -296,40 +296,91 @@ def _print_terminal_color_table():
     print(s)
 
 TERMINAL_COLORS = {
-    'NONE':   '0m',
-    'DIM':    '38;5;8;1',
-    'BRIGHT': '36;1',
-    'BW':     '38;5;15;1', # White
-    'DW':    '38;5;7;1', # Dark White (7)
+    'NONE':  '0m',             # No color (text)
+    'DIM':   '38;5;8;1',        # Dim gray (text)
+    'BRIGHT':'36;1',            # Bright cyan (text)
+    'BW':    '38;5;15;1',       # Bright white (text)
+    'DW':    '38;5;7;1',        # Dark white (text)
 
-    'GRAY1':  '38;5;234', # Gray
-    'GRAY2':  '38;5;240', # Gray
-    'GRAY3':  '38;5;246', # Gray
-    'GRAY4':  '38;5;252', # Gray
+    'GRAY1': '38;5;234',        # Darkest gray (text)
+    'GRAY2': '38;5;240',        # Gray (text)
+    'GRAY3': '38;5;246',        # Gray (text)
+    'GRAY4': '38;5;252',        # Lightest gray (text)
 
+    'BY':    '38;5;11;1',       # Bright yellow (text)
+    'DY':    '38;5;3;1',        # Dark yellow (text)
+    'BG':    '38;5;10;1',       # Bright green (text)
+    'DG':    '38;5;2;1',        # Dark green (text)
 
-    'BY':     '38;5;11;1', # Yellow
-    'DY':     '38;5;3;1', # Dark Yellow (3)
-    'BG':     '38;5;10;1', # Green
-    'DG':     '38;5;2;1', # Dark Green (2)
+    'BB':    '3;30;44',         # Black on Blue (background)
+    'DB':    '38;5;4;1',        # Dark blue (text)
 
-    'BB':     '3;30;44', # Blue
-    'DB':     '38;5;4;1', # Dark Blue (4)
+    'BC':    '38;5;6;1',        # Bright cyan (text)
+    'DC':    '38;5;14;1',       # Dark cyan (text)
+    'BM':    '38;5;13;1',       # Bright magenta (text)
+    'DM':    '38;5;5;1',        # Dark magenta (text)
+    'BR':    '38;5;9;1',        # Bright red (text)
+    'DR':    '38;5;1;1',        # Dark red (text)
 
-    'BC':     '38;5;6;1', # Cyan
-    'DC':     '38;5;14;1', # Dark Cyan (6)
-    'BM':     '38;5;13;1', # Magenta
-    'DM':     '38;5;5;1', # Dark Magenta (5)
-    'BR':     '38;5;9;1', # Red
-    'DR':     '38;5;1;1', # Dark Red (1)
+    'INFO':  '34;1',            # Bright blue (text, for info messages)
+    'WHITE': '0;30;47',         # Black on White (background)
+    'YELLOW':'0;30;43',         # Black on Yellow (background)
+    'RED':   '0;30;41',         # Black on Red (background)
+    'BLUE':  '0;30;44',         # Black on Blue (background)
+    'GREEN': '0;30;42',         # Black on Green (background)
 
-    'INFO':   '34;1',
-    'WHITE':  '0;30;47',
-    'YELLOW': '0;30;43',
-    'RED':    '0;30;41',
-    'BLUE':   '0;30;44',
-    'GREEN':  '0;30;42'
+    'ORANGE':'38;5;208;1',      # New: Bright orange (text)
+    'DO':    '38;5;130;1',      # New: Dark orange (text)
+    'PURPLE':'38;5;129;1',      # New: Bright purple (text)
+    'DP':    '38;5;90;1',       # New: Dark purple (text)
+    'PINK':  '38;5;200;1',      # New: Bright pink (text)
+    'DPINK': '38;5;132;1',      # New: Dark pink (text)
+    'BGOLD': '38;5;220;1',      # New: Bright gold (text)
+    'DGOLD': '38;5;178;1',      # New: Dark gold (text)
+    
+    'WRED':  '0;37;41',         # White on Red (background)
+    'WBLUE': '0;37;44',         # White on Blue (background)
+    'WGREEN':'0;37;42',         # White on Green (background)
+    'WGRAY': '0;30;47',         # Black on Light Gray (background)
+    'WPINK': '0;30;45',         # Black on Pink (background)
+    'WPURPLE':'0;37;45'         # White on Purple (background)
 }
+
+# TERMINAL_COLORS = {
+#     'NONE':   '0m',
+#     'DIM':    '38;5;8;1',
+#     'BRIGHT': '36;1',
+#     'BW':     '38;5;15;1', # White
+#     'DW':    '38;5;7;1', # Dark White (7)
+
+#     'GRAY1':  '38;5;234', # Gray
+#     'GRAY2':  '38;5;240', # Gray
+#     'GRAY3':  '38;5;246', # Gray
+#     'GRAY4':  '38;5;252', # Gray
+
+
+#     'BY':     '38;5;11;1', # Yellow
+#     'DY':     '38;5;3;1', # Dark Yellow (3)
+#     'BG':     '38;5;10;1', # Green
+#     'DG':     '38;5;2;1', # Dark Green (2)
+
+#     'BB':     '3;30;44', # Blue
+#     'DB':     '38;5;4;1', # Dark Blue (4)
+
+#     'BC':     '38;5;6;1', # Cyan
+#     'DC':     '38;5;14;1', # Dark Cyan (6)
+#     'BM':     '38;5;13;1', # Magenta
+#     'DM':     '38;5;5;1', # Dark Magenta (5)
+#     'BR':     '38;5;9;1', # Red
+#     'DR':     '38;5;1;1', # Dark Red (1)
+
+#     'INFO':   '34;1',
+#     'WHITE':  '0;30;47',
+#     'YELLOW': '0;30;43',
+#     'RED':    '0;30;41',
+#     'BLUE':   '0;30;44',
+#     'GREEN':  '0;30;42'
+# }
 
 def pcp(*a, **kw) -> str:
   """
