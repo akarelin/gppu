@@ -459,7 +459,7 @@ def _colorize_list(l: list):
   """ Colorizes list of strings. Strings separated with space unless start with . or / """
   result = []
   color = None
-  for e in [str(e) for e in l]:
+  for e in [str(e) for e in l if e]:
     e = str(e)
     if e in TERMINAL_COLORS: color = e; continue
     elif color: elem = _colorize(color, str(e))
