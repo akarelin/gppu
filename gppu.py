@@ -13,8 +13,8 @@ from copy import copy, deepcopy
 from collections import defaultdict, UserDict
 from datetime import datetime
 
-VER_GPPU_BASE = '2.4.2'
-VER_GPPU_BUILD = '230909'
+VER_GPPU_BASE = '2.4.5'
+VER_GPPU_BUILD = '230911'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region Safe typecasting
@@ -102,7 +102,8 @@ isnumber = lambda o: isinstance(o, (float, int))
 
 def sanitize_list(o) -> list:
   result = []
-  for e in o:
+ 
+  for e in sorted(o, key=lambda x: str(x)):
     if isdict(e): _ = sanitize_dict(e)
     elif islist(e): _ = sanitize_list(e)
     elif isnumber(e): _ = e
@@ -116,8 +117,8 @@ def sanitize_dict(o) -> dict:
   elif hasattr(o, 'data') and isinstance(o.data, dict): d = o.data
   else: d = dict(o)
 
-  ordered_keys = [k for k in KEYS_FIRST if k in d]
-  ordered_keys += [k for k in d.keys() if k not in KEYS_FIRST and k not in KEYS_DROP]
+  _ = [k for k in KEYS_FIRST if k in d]
+  ordered_keys = _ + sorted([k for k in d.keys() if k not in KEYS_FIRST and k not in KEYS_DROP])
   for k in ordered_keys:
     v = d[k]
     if k in KEYS_DROP: continue
@@ -129,13 +130,13 @@ def sanitize_dict(o) -> dict:
     result[str(k)] = _
   return result
 
-def dict_sanitize(data):
+def dict_sanitize(data: dict, sort_keys=False) -> dict:
   """Convert nested complex data types for json.dumps or yaml.dumps"""
   if islist(data): return sanitize_list(data)
   elif isdict(data): return sanitize_dict(data)
   else: raise ValueError(f"Unable to sanitize {data}")
 
-def dict_to_yml(filename:str, data=None):
+def dict_to_yml(filename:str, data=None, sort_keys=False):
   class IndentedListDumper(yaml.Dumper):
     def increase_indent(self, flow=False, indentless=False):
       return super(IndentedListDumper, self).increase_indent(flow, False)
@@ -143,7 +144,7 @@ def dict_to_yml(filename:str, data=None):
   assert filename
   if not data: return
 
-  redata = dict_sanitize(data)
+  redata = dict_sanitize(data, sort_keys=sort_keys)
 
   yaml.add_representer(defaultdict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(UserDict, yaml.representer.Representer.represent_dict)
