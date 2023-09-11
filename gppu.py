@@ -415,7 +415,7 @@ IGNORE_FUNCTIONS = ['dpcp', 'trace', 'pcp', 'Trace']
 def dpcp(*a, globdict=None, **kw) -> str:
   """ Version of pcp that adds info on where it was called from """
   def is_traced(name=None, globdict=None):
-    if not globdict: globdict = globals().get('traces', {})
+    if not globdict: globdict = globals().get('_TRACES', {})
 
     if not name or name not in globdict: return globdict.get('all')
     else: return globdict.get(name)
@@ -431,14 +431,11 @@ def dpcp(*a, globdict=None, **kw) -> str:
   if not is_traced(func_name, globdict): return 
   module = filename.rsplit('/', 1)[-1].rsplit('.', 1)[0]
   if not is_traced(module, globdict): return
-  _ = []
-  #_ = ['GRAY1', module]
-
   if 'self' in frame.f_locals: 
-    class_name = frame.f_locals["self"].__class__.__name__
-    if not is_traced(class_name, globdict): return
-    _ += ['GRAY2', f"{class_name}", 'GRAY3', f".{func_name}"]
-  else: _ += ['GRAY3', f".{func_name}"]
+    if not is_traced(class_name := frame.f_locals["self"].__class__.__name__, globdict): return
+    _ = ['GRAY2', f"{class_name}", 'GRAY3', f".{func_name}"]
+  else: _ = ['GRAY3', f".{func_name}"]
+
   _ += list(a)
   return pcp(*_) 
 
