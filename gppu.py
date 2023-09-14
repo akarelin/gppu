@@ -13,8 +13,8 @@ from copy import copy, deepcopy
 from collections import defaultdict, UserDict
 from datetime import datetime
 
-VER_GPPU_BASE = '2.4.2'
-VER_GPPU_BUILD = '230909'
+VER_GPPU_BASE = '2.4.5'
+VER_GPPU_BUILD = '230911'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region Safe typecasting
@@ -102,7 +102,8 @@ isnumber = lambda o: isinstance(o, (float, int))
 
 def sanitize_list(o) -> list:
   result = []
-  for e in o:
+ 
+  for e in sorted(o, key=lambda x: str(x)):
     if isdict(e): _ = sanitize_dict(e)
     elif islist(e): _ = sanitize_list(e)
     elif isnumber(e): _ = e
@@ -116,8 +117,8 @@ def sanitize_dict(o) -> dict:
   elif hasattr(o, 'data') and isinstance(o.data, dict): d = o.data
   else: d = dict(o)
 
-  ordered_keys = [k for k in KEYS_FIRST if k in d]
-  ordered_keys += [k for k in d.keys() if k not in KEYS_FIRST and k not in KEYS_DROP]
+  _ = [k for k in KEYS_FIRST if k in d]
+  ordered_keys = _ + sorted([k for k in d.keys() if k not in KEYS_FIRST and k not in KEYS_DROP])
   for k in ordered_keys:
     v = d[k]
     if k in KEYS_DROP: continue
@@ -129,13 +130,13 @@ def sanitize_dict(o) -> dict:
     result[str(k)] = _
   return result
 
-def dict_sanitize(data):
+def dict_sanitize(data: dict, sort_keys=False) -> dict:
   """Convert nested complex data types for json.dumps or yaml.dumps"""
   if islist(data): return sanitize_list(data)
   elif isdict(data): return sanitize_dict(data)
   else: raise ValueError(f"Unable to sanitize {data}")
 
-def dict_to_yml(filename:str, data=None):
+def dict_to_yml(filename:str, data=None, sort_keys=False):
   class IndentedListDumper(yaml.Dumper):
     def increase_indent(self, flow=False, indentless=False):
       return super(IndentedListDumper, self).increase_indent(flow, False)
@@ -143,7 +144,7 @@ def dict_to_yml(filename:str, data=None):
   assert filename
   if not data: return
 
-  redata = dict_sanitize(data)
+  redata = dict_sanitize(data, sort_keys=sort_keys)
 
   yaml.add_representer(defaultdict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(UserDict, yaml.representer.Representer.represent_dict)
@@ -415,7 +416,7 @@ IGNORE_FUNCTIONS = ['dpcp', 'trace', 'pcp', 'Trace']
 def dpcp(*a, globdict=None, **kw) -> str:
   """ Version of pcp that adds info on where it was called from """
   def is_traced(name=None, globdict=None):
-    if not globdict: globdict = globals().get('traces', {})
+    if not globdict: globdict = globals().get('_TRACES', {})
 
     if not name or name not in globdict: return globdict.get('all')
     else: return globdict.get(name)
@@ -431,14 +432,11 @@ def dpcp(*a, globdict=None, **kw) -> str:
   if not is_traced(func_name, globdict): return 
   module = filename.rsplit('/', 1)[-1].rsplit('.', 1)[0]
   if not is_traced(module, globdict): return
-  _ = []
-  #_ = ['GRAY1', module]
-
   if 'self' in frame.f_locals: 
-    class_name = frame.f_locals["self"].__class__.__name__
-    if not is_traced(class_name, globdict): return
-    _ += ['GRAY2', f"{class_name}", 'GRAY3', f".{func_name}"]
-  else: _ += ['GRAY3', f".{func_name}"]
+    if not is_traced(class_name := frame.f_locals["self"].__class__.__name__, globdict): return
+    _ = ['GRAY2', f"{class_name}", 'GRAY3', f".{func_name}"]
+  else: _ = ['GRAY3', f".{func_name}"]
+
   _ += list(a)
   return pcp(*_) 
 
@@ -459,7 +457,7 @@ def _colorize_list(l: list):
   """ Colorizes list of strings. Strings separated with space unless start with . or / """
   result = []
   color = None
-  for e in [str(e) for e in l]:
+  for e in [str(e) for e in l if e]:
     e = str(e)
     if e in TERMINAL_COLORS: color = e; continue
     elif color: elem = _colorize(color, str(e))
