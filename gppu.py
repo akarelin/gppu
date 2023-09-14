@@ -13,8 +13,8 @@ from copy import copy, deepcopy
 from collections import defaultdict, UserDict
 from datetime import datetime
 
-VER_GPPU_BASE = '2.4.5'
-VER_GPPU_BUILD = '230911'
+VER_GPPU_BASE = '2.4.6'
+VER_GPPU_BUILD = '230914'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region Safe typecasting
@@ -151,7 +151,7 @@ def dict_to_yml(filename:str, data=None, sort_keys=False):
   yaml.add_representer(set, yaml.representer.Representer.represent_list)
   yaml.add_representer(tuple, yaml.representer.Representer.represent_dict)
   with open(filename,'w+') as f: 
-    try: yaml.dump(redata, f, indent=2, Dumper=IndentedListDumper, sort_keys=False)
+    try: yaml.dump(redata, f, indent=2, Dumper=IndentedListDumper, sort_keys=False, width=2147483647)
     except Exception as err:
       error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(redata)}\n\n"
       with open(filename+'_error.txt','w+') as ferr: ferr.write(error)
