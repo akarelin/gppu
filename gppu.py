@@ -118,9 +118,12 @@ def sanitize_dict(o) -> dict:
   else: d = dict(o)
 
   _ = [k for k in KEYS_FIRST if k in d]
-  ordered_keys = _ + sorted([k for k in d.keys() if k not in KEYS_FIRST and k not in KEYS_DROP])
+  # ! Support for Null keys is not finished and its unclear if it is needed anymore
+  ordered_keys = _ + sorted([str(k) if k else '?' for k in d.keys() if k not in KEYS_FIRST and k not in KEYS_DROP])
   for k in ordered_keys:
-    v = d[k]
+    if k == '?': v = d.get(None)
+    else: v = d.get(k)
+    
     if k in KEYS_DROP: continue
     elif k in KEYS_FORCE_STRING: _ = str(v)
     elif isdict(v): _ = sanitize_dict(v)
@@ -150,7 +153,7 @@ def dict_to_yml(filename:str, data=None, sort_keys=False):
   yaml.add_representer(UserDict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(set, yaml.representer.Representer.represent_list)
   yaml.add_representer(tuple, yaml.representer.Representer.represent_dict)
-  with open(filename,'w+') as f: 
+  with open(filename,'w+') as f:
     try: yaml.dump(redata, f, indent=2, Dumper=IndentedListDumper, sort_keys=False, width=2147483647)
     except Exception as err:
       error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(redata)}\n\n"
