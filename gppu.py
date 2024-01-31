@@ -3,6 +3,9 @@ import pprint
 import yaml
 import re
 import inspect
+from pathlib import Path
+
+
 from glob import glob
 
 from typing import TypeVar, Union, get_origin, get_args, Callable, Any
@@ -13,8 +16,8 @@ from copy import copy, deepcopy
 from collections import defaultdict, UserDict
 from datetime import datetime
 
-VER_GPPU_BASE = '2.4.6'
-VER_GPPU_BUILD = '230914'
+VER_GPPU_BASE = '2.4.7'
+VER_GPPU_BUILD = '240130'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region Safe typecasting
@@ -164,7 +167,10 @@ def dict_from_yml(filename:str):
   yml_root = filename.rsplit('/', 1)[0]
 
   def yml_include(loader, node):
-    filename = yml_root+'/'+node.value
+    if node.value[0] == '/':
+      filename = node.value
+    else: 
+      filename = yml_root+'/'+node.value
     with open(filename, "r") as f: return yaml.load(f, Loader=yaml.FullLoader)
 
   yaml.add_representer(defaultdict, yaml.representer.Representer.represent_dict)
