@@ -136,11 +136,13 @@ def sanitize_dict(o) -> dict:
     result[str(k)] = _
   return result
 
+
 def dict_sanitize(data: dict, sort_keys=False) -> dict:
   """Convert nested complex data types for json.dumps or yaml.dumps"""
   if islist(data): return sanitize_list(data)
   elif isdict(data): return sanitize_dict(data)
   else: raise ValueError(f"Unable to sanitize {data}")
+
 
 def dict_to_yml(filename:str, data=None, sort_keys=False):
   class IndentedListDumper(yaml.Dumper):
