@@ -5,19 +5,15 @@ import re
 import inspect
 from pathlib import Path
 
-
-from glob import glob
-
 from typing import TypeVar, Union, get_origin, get_args, Callable, Any
 
 from string import Template
-from copy import copy, deepcopy
 
 from collections import defaultdict, UserDict
 from datetime import datetime
 
-VER_GPPU_BASE = '2.4.7'
-VER_GPPU_BUILD = '240130'
+VER_GPPU_BASE = '2.5.0'
+VER_GPPU_BUILD = '240207'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region Safe typecasting
@@ -424,14 +420,15 @@ def pcp(*a, **kw) -> str:
 remove_prefixes = lambda s, prefixes: next((s.removeprefix(prefix) for prefix in prefixes if s.startswith(prefix)), s)
 SHORTEN_BY_PREFIX = ['process_', '_cb_']
 IGNORE_FUNCTIONS = ['dpcp', 'trace', 'pcp', 'Trace']
-def dpcp(*a, globdict=None, **kw) -> str:
+def dpcp(*a, conditional=None, globdict=None, **kw) -> str:
   """ Version of pcp that adds info on where it was called from """
   def is_traced(name=None, globdict=None):
-    if not globdict: globdict = globals().get('_TRACES', {})
+    if not conditional: return True
 
     if not name or name not in globdict: return globdict.get('all')
     else: return globdict.get(name)
 
+  if not conditional and globdict: conditional = True
   frame = inspect.currentframe().f_back
 
   while frame.f_back:
@@ -449,7 +446,7 @@ def dpcp(*a, globdict=None, **kw) -> str:
   else: _ = ['GRAY3', f".{func_name}"]
 
   _ += list(a)
-  return pcp(*_) 
+  return pcp(*_, **kw)
 
 def _colorize_log(msg, level=None, *args):
   if isinstance(msg, tuple): msg = _colorize_list(msg)
