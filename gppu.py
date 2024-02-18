@@ -3,6 +3,7 @@ import pprint
 import yaml
 import re
 import inspect
+import logging
 from pathlib import Path
 
 from typing import TypeVar, Union, get_origin, get_args, Callable, Any
@@ -12,8 +13,8 @@ from string import Template
 from collections import defaultdict, UserDict
 from datetime import datetime
 
-VER_GPPU_BASE = '2.5.0'
-VER_GPPU_BUILD = '240207'
+VER_GPPU_BASE = '2.7.0'
+VER_GPPU_BUILD = '240217'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region Safe typecasting
@@ -56,6 +57,21 @@ def deepget(path: str, d: dict, default=None):
       if not _: break
     return _ if _ else default
   return d.get(path, default)
+
+def deepget_int(path: str, d: dict, default=None) -> int:
+  """ Returns int at path, or default if not found """
+  _ = deepget(path, d, default)
+  return _ if isinstance(_, int) else default
+
+def deepget_list(path: str, d: dict, default=None) -> list:
+  """ Returns list at path, or default if not found """
+  _ = deepget(path, d, default)
+  return _ if isinstance(_, list) else default
+
+def deepget_dict(path: str, d: dict, default=None) -> dict:
+  """ Returns dict at path, or default if not found """
+  _ = deepget(path, d, default)
+  return _ if isinstance(_, dict) else default
 
 def dict_sort_keylen(d, reverse: bool = True) -> dict:
   if not isinstance(d,dict): return {}
@@ -288,106 +304,132 @@ def _tracer(tracer: Callable = None, action: str = None) -> Callable:
 # endregion
 
 # region PCP - Pretty Colored Print and colorize - utility
-def _print_terminal_color_table():
-  for b in "34":
-    s = ""
-    for f in "01234567": s += _colorize_list(f+b+';1', f"{f+b+';1'}") + "  "
-    print(s)
+# def _print_terminal_color_table():
+#   for b in "34":
+#     s = ""
+#     for f in "01234567": s += _colorize_list(f+b+';1', f"{f+b+';1'}") + "  "
+#     print(s)
 
-  for f in range(0, 15):
-    s = _colorize_list(f"38;5;{f};1", f"38;5;{f};1")+"  "
-    print(s)
+#   for f in range(0, 15):
+#     s = _colorize_list(f"38;5;{f};1", f"38;5;{f};1")+"  "
+#     print(s)
 
-  for b in range(0, 1):
-    s = ""
-    for f in range(0, 15): s += _colorize_list(f"38;5;{f};1", f"38;5;{f};1")+"  "
-    print(s)
+#   for b in range(0, 1):
+#     s = ""
+#     for f in range(0, 15): s += _colorize_list(f"38;5;{f};1", f"38;5;{f};1")+"  "
+#     print(s)
 
-TERMINAL_COLORS = {
-    'NONE':  '0m',             # No color (text)
-    'DIM':   '38;5;8;1',        # Dim gray (text)
-    'BRIGHT':'36;1',            # Bright cyan (text)
-    'BW':    '38;5;15;1',       # Bright white (text)
-    'DW':    '38;5;7;1',        # Dark white (text)
+class _TColorHack(type):
+  def __getitem__(cls, key): return getattr(cls, str(key), None)
+  def __contains__(cls, key): return hasattr(cls, str(key))
 
-    'GRAY1': '38;5;234',        # Darkest gray (text)
-    'GRAY2': '38;5;240',        # Gray (text)
-    'GRAY3': '38;5;246',        # Gray (text)
-    'GRAY4': '38;5;252',        # Lightest gray (text)
+  def print(cls):
+    l = []
+    for name, colorcode in cls.dir(): l.append(colorcode, name)
+    print(_colorize_list(l))
 
-    'BY':    '38;5;11;1',       # Bright yellow (text)
-    'DY':    '38;5;3;1',        # Dark yellow (text)
-    'BG':    '38;5;10;1',       # Bright green (text)
-    'DG':    '38;5;2;1',        # Dark green (text)
+class TColor(metaclass=_TColorHack):
+  NONE = '0m'             # No color (text)
+  DIM = '38;5;8;1'        # Dim gray (text)
+  BRIGHT = '36;1'         # Bright cyan (text)
+  BW = '38;5;15;1'        # Bright white (text)
+  DW = '38;5;7;1'         # Dark white (text)
 
-    'BB':    '3;30;44',         # Black on Blue (background)
-    'DB':    '38;5;4;1',        # Dark blue (text)
+  GRAY1 = '38;5;234'      # Darkest gray (text)
+  GRAY2 = '38;5;240'      # Gray (text)
+  GRAY3 = '38;5;246'      # Gray (text)
+  GRAY4 = '38;5;252'      # Lightest gray (text)
 
-    'BC':    '38;5;6;1',        # Bright cyan (text)
-    'DC':    '38;5;14;1',       # Dark cyan (text)
-    'BM':    '38;5;13;1',       # Bright magenta (text)
-    'DM':    '38;5;5;1',        # Dark magenta (text)
-    'BR':    '38;5;9;1',        # Bright red (text)
-    'DR':    '38;5;1;1',        # Dark red (text)
+  BY = '38;5;11;1'        # Bright yellow (text)
+  DY = '38;5;3;1'         # Dark yellow (text)
+  BG = '38;5;10;1'        # Bright green (text)
+  DG = '38;5;2;1'         # Dark green (text)
+ 
+  # BB = '3;30;44'          # Black on Blue (background)
+  DB = '38;5;4;1'         # Dark blue (text)
 
-    'INFO':  '34;1',            # Bright blue (text, for info messages)
-    'WHITE': '0;30;47',         # Black on White (background)
-    'YELLOW':'0;30;43',         # Black on Yellow (background)
-    'RED':   '0;30;41',         # Black on Red (background)
-    'BLUE':  '0;30;44',         # Black on Blue (background)
-    'GREEN': '0;30;42',         # Black on Green (background)
+  BC = '38;5;6;1'         # Bright cyan (text)
+  DC = '38;5;14;1'        # Dark cyan (text)
+  BM = '38;5;13;1'        # Bright magenta (text)
+  DM = '38;5;5;1'         # Dark magenta (text)
+  BR = '38;5;9;1'         # Bright red (text)
+  DR = '38;5;1;1'         # Dark red (text)
+  BP = '38;5;129;1'       # New: Bright purple (text)
+  DP = '38;5;90;1'        # New: Dark purple (text)
+  BO = '38;5;130;1'       # New: Bright orange (text)
+  DO = '38;5;130;1'       # New: Dark orange (text)
+  PINK = '38;5;200;1'     # New: Bright pink (text)
+  DPINK = '38;5;132;1'    # New: Dark pink (text)
+  BGOLD = '38;5;220;1'    # New: Bright gold (text)
+  DGOLD = '38;5;178;1'    # New: Dark gold (text)
 
-    'ORANGE':'38;5;208;1',      # New: Bright orange (text)
-    'DO':    '38;5;130;1',      # New: Dark orange (text)
-    'PURPLE':'38;5;129;1',      # New: Bright purple (text)
-    'DP':    '38;5;90;1',       # New: Dark purple (text)
-    'PINK':  '38;5;200;1',      # New: Bright pink (text)
-    'DPINK': '38;5;132;1',      # New: Dark pink (text)
-    'BGOLD': '38;5;220;1',      # New: Bright gold (text)
-    'DGOLD': '38;5;178;1',      # New: Dark gold (text)
-    
-    'WRED':  '0;37;41',         # White on Red (background)
-    'WBLUE': '0;37;44',         # White on Blue (background)
-    'WGREEN':'0;37;42',         # White on Green (background)
-    'WGRAY': '0;30;47',         # Black on Light Gray (background)
-    'WPINK': '0;30;45',         # Black on Pink (background)
-    'WPURPLE':'0;37;45'         # White on Purple (background)
-}
+  ORANGE = BO   # New: Bright orange (text)
+  PURPLE = BP   # New: Bright purple (text)
+
+  INFO = '34;1'           # Bright blue (text, for info messages)
+  WHITE = '0;30;47'       # Black on White (background)
+  YELLOW = '0;30;43'      # Black on Yellow (background)
+  RED = '0;30;41'         # Black on Red (background)
+  BLUE = '0;30;44'        # Black on Blue (background)
+  GREEN = '0;30;42'       # Black on Green (background)
+
+  WRED = '0;37;41'        # White on Red (background)
+  WBLUE = '0;37;44'       # White on Blue (background)
+  WGREEN = '0;37;42'      # White on Green (background)
+  WGRAY = '0;30;47'       # Black on Light Gray (background)
+  WPINK = '0;30;45'       # Black on Pink (background)
+  WPURPLE = '0;37;45'     # White on Purple (background)
+  WYELLOW = '0;37;43'     # White on Yellow (background)
 
 # TERMINAL_COLORS = {
-#     'NONE':   '0m',
-#     'DIM':    '38;5;8;1',
-#     'BRIGHT': '36;1',
-#     'BW':     '38;5;15;1', # White
-#     'DW':    '38;5;7;1', # Dark White (7)
+#     'NONE':  '0m',             # No color (text)
+#     'DIM':   '38;5;8;1',        # Dim gray (text)
+#     'BRIGHT':'36;1',            # Bright cyan (text)
+#     'BW':    '38;5;15;1',       # Bright white (text)
+#     'DW':    '38;5;7;1',        # Dark white (text)
 
-#     'GRAY1':  '38;5;234', # Gray
-#     'GRAY2':  '38;5;240', # Gray
-#     'GRAY3':  '38;5;246', # Gray
-#     'GRAY4':  '38;5;252', # Gray
+#     'GRAY1': '38;5;234',        # Darkest gray (text)
+#     'GRAY2': '38;5;240',        # Gray (text)
+#     'GRAY3': '38;5;246',        # Gray (text)
+#     'GRAY4': '38;5;252',        # Lightest gray (text)
 
+#     'BY':    '38;5;11;1',       # Bright yellow (text)
+#     'DY':    '38;5;3;1',        # Dark yellow (text)
+#     'BG':    '38;5;10;1',       # Bright green (text)
+#     'DG':    '38;5;2;1',        # Dark green (text)
 
-#     'BY':     '38;5;11;1', # Yellow
-#     'DY':     '38;5;3;1', # Dark Yellow (3)
-#     'BG':     '38;5;10;1', # Green
-#     'DG':     '38;5;2;1', # Dark Green (2)
+#     'BB':    '3;30;44',         # Black on Blue (background)
+#     'DB':    '38;5;4;1',        # Dark blue (text)
 
-#     'BB':     '3;30;44', # Blue
-#     'DB':     '38;5;4;1', # Dark Blue (4)
+#     'BC':    '38;5;6;1',        # Bright cyan (text)
+#     'DC':    '38;5;14;1',       # Dark cyan (text)
+#     'BM':    '38;5;13;1',       # Bright magenta (text)
+#     'DM':    '38;5;5;1',        # Dark magenta (text)
+#     'BR':    '38;5;9;1',        # Bright red (text)
+#     'DR':    '38;5;1;1',        # Dark red (text)
 
-#     'BC':     '38;5;6;1', # Cyan
-#     'DC':     '38;5;14;1', # Dark Cyan (6)
-#     'BM':     '38;5;13;1', # Magenta
-#     'DM':     '38;5;5;1', # Dark Magenta (5)
-#     'BR':     '38;5;9;1', # Red
-#     'DR':     '38;5;1;1', # Dark Red (1)
+#     'INFO':  '34;1',            # Bright blue (text, for info messages)
+#     'WHITE': '0;30;47',         # Black on White (background)
+#     'YELLOW':'0;30;43',         # Black on Yellow (background)
+#     'RED':   '0;30;41',         # Black on Red (background)
+#     'BLUE':  '0;30;44',         # Black on Blue (background)
+#     'GREEN': '0;30;42',         # Black on Green (background)
 
-#     'INFO':   '34;1',
-#     'WHITE':  '0;30;47',
-#     'YELLOW': '0;30;43',
-#     'RED':    '0;30;41',
-#     'BLUE':   '0;30;44',
-#     'GREEN':  '0;30;42'
+#     'ORANGE':'38;5;208;1',      # New: Bright orange (text)
+#     'DO':    '38;5;130;1',      # New: Dark orange (text)
+#     'PURPLE':'38;5;129;1',      # New: Bright purple (text)
+#     'DP':    '38;5;90;1',       # New: Dark purple (text)
+#     'PINK':  '38;5;200;1',      # New: Bright pink (text)
+#     'DPINK': '38;5;132;1',      # New: Dark pink (text)
+#     'BGOLD': '38;5;220;1',      # New: Bright gold (text)
+#     'DGOLD': '38;5;178;1',      # New: Dark gold (text)
+    
+#     'WRED':  '0;37;41',         # White on Red (background)
+#     'WBLUE': '0;37;44',         # White on Blue (background)
+#     'WGREEN':'0;37;42',         # White on Green (background)
+#     'WGRAY': '0;30;47',         # Black on Light Gray (background)
+#     'WPINK': '0;30;45',         # Black on Pink (background)
+#     'WPURPLE':'0;37;45'         # White on Purple (background)
 # }
 
 def pcp(*a, **kw) -> str:
@@ -420,15 +462,15 @@ def pcp(*a, **kw) -> str:
 remove_prefixes = lambda s, prefixes: next((s.removeprefix(prefix) for prefix in prefixes if s.startswith(prefix)), s)
 SHORTEN_BY_PREFIX = ['process_', '_cb_']
 IGNORE_FUNCTIONS = ['dpcp', 'trace', 'pcp', 'Trace']
-def dpcp(*a, conditional=None, globdict=None, **kw) -> str:
+def dpcp(*a, conditional=None, rules={}, **kw) -> str:
   """ Version of pcp that adds info on where it was called from """
-  def is_traced(name=None, globdict=None):
+  def is_traced(name=None):
     if not conditional: return True
 
-    if not name or name not in globdict: return globdict.get('all')
-    else: return globdict.get(name)
+    if not name or name not in rules: return rules.get('all')
+    else: return rules.get(name)
 
-  if not conditional and globdict: conditional = True
+  if not conditional and rules: conditional = True
   frame = inspect.currentframe().f_back
 
   while frame.f_back:
@@ -437,11 +479,11 @@ def dpcp(*a, conditional=None, globdict=None, **kw) -> str:
     if func_name not in IGNORE_FUNCTIONS: break
     func_name = remove_prefixes(func_name, SHORTEN_BY_PREFIX)
 
-  if not is_traced(func_name, globdict): return 
+  if not is_traced(func_name): return 
   module = filename.rsplit('/', 1)[-1].rsplit('.', 1)[0]
-  if not is_traced(module, globdict): return
+  if not is_traced(module): return
   if 'self' in frame.f_locals: 
-    if not is_traced(class_name := frame.f_locals["self"].__class__.__name__, globdict): return
+    if not is_traced(class_name := frame.f_locals["self"].__class__.__name__): return
     _ = ['GRAY2', f"{class_name}", 'GRAY3', f".{func_name}"]
   else: _ = ['GRAY3', f".{func_name}"]
 
@@ -464,11 +506,12 @@ def _colorize_log(msg, level=None, *args):
 def _colorize_list(l: list):
   """ Colorizes list of strings. Strings separated with space unless start with . or / """
   result = []
-  color = None
-  for e in [str(e) for e in l if e]:
+  colorcode = None
+  for e in [e for e in l if e]:
+    if isinstance(e, TColor): colorcode = e; continue
     e = str(e)
-    if e in TERMINAL_COLORS: color = e; continue
-    elif color: elem = _colorize(color, str(e))
+    if TColor[e]: colorcode = TColor[e]; continue
+    elif colorcode: elem = _colorize(text=str(e), colorcode=colorcode)
     else: elem = str(e)
 
     if e[0] in "./" and result: result += [elem]
@@ -476,7 +519,7 @@ def _colorize_list(l: list):
     else: result += [' '+elem]
   return ''.join(result)
 
-def _colorize(color:str, text:str, fmt=None):
+def _colorize(text:str, colorcode:str, fmt=None):
   """
   # Print a string in a given color, right-justified or left-justified
   # to a given length.  The color is optional.
@@ -488,13 +531,13 @@ def _colorize(color:str, text:str, fmt=None):
   #           left or right justification character.  If no number
   #           is given, the number is assumed to be 0.
   """
-  if color in TERMINAL_COLORS: color = TERMINAL_COLORS[color]
   ESC = '\u001b'
   NOP = ESC + '[0m'
-  if color:
+  if (color := colorcode):
     if color[0] == ESC and color[1] == '[': pass
     elif color[0] == ESC: color = ESC + '[' + color[1:]
     else: color = ESC + '[' + color
+
     if color[-1] == 'm': pass
     else: color += 'm'
   else: color = NOP
@@ -509,4 +552,34 @@ def _colorize(color:str, text:str, fmt=None):
 
   text = color + text + NOP
   return pad + text if right else text + pad
+
+
+class PrettyColoredFormatter(logging.Formatter):
+  def format(self, record):
+    """
+    Override the default formatter to provide pretty and colored output.
+    """
+    # Extract custom attributes if present
+    verbose = getattr(record, 'verbose', False)
+    level = record.levelname
+    msg = super().format(record)  # Default formatting for the message
+
+    # Apply colorization
+    out = _colorize_log(msg=msg, level=level)
+    if hasattr(record, 'args') and record.args:
+      out += _colorize_list(record.args)
+    if verbose and hasattr(record, 'kwargs'):
+      out += pfy(record.kwargs)  # Assuming pfy is a pretty print function for kwargs
+
+    return out
+    
+class PrettyColoredHandler(logging.StreamHandler):
+  def emit(self, record):
+    silent = getattr(record, 'silent', False)
+    if not silent:
+      super().emit(record)
+
+# logger = logging.getLogger(__name__)
+# logger.addHandler(logging.FileHandler(f"{__name__}.log"))
+# logger.addHandler(logging.StreamHandler())
 # endregion
