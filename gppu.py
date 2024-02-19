@@ -249,7 +249,8 @@ def dict_template_populate(o, data: dict = {}, excludes:list = []):
     return result
 
   if isinstance(o, dict):
-    _ = o.get('data') or o
+    #_ = o.get('data') or o
+    _ = o.get('data', {}) | o
   else:
     _ = str(o)
   result = __tp(_, data)
