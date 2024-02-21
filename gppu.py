@@ -13,8 +13,8 @@ from string import Template
 from collections import defaultdict, UserDict
 from datetime import datetime
 
-VER_GPPU_BASE = '2.7.0'
-VER_GPPU_BUILD = '240217'
+VER_GPPU_BASE = '2.7.1'
+VER_GPPU_BUILD = '240220'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region Safe typecasting
@@ -380,7 +380,8 @@ class TColor(metaclass=_TColorHack):
   WGRAY = '0;30;47'       # Black on Light Gray (background)
   WPINK = '0;30;45'       # Black on Pink (background)
   WPURPLE = '0;37;45'     # White on Purple (background)
-  WYELLOW = '0;37;43'     # White on Yellow (background)
+  #WYELLOW = '0;37;43'     # White on Yellow (background)
+  WYELLOW = '7;49;93'     # White on Yellow (background)
 
 # TERMINAL_COLORS = {
 #     'NONE':  '0m',             # No color (text)
@@ -483,8 +484,11 @@ def dpcp(*a, conditional=None, rules={}, **kw) -> str:
   if not is_traced(func_name): return 
   module = filename.rsplit('/', 1)[-1].rsplit('.', 1)[0]
   if not is_traced(module): return
+  if not is_traced(f"{module}.{func_name}"): return
+
   if 'self' in frame.f_locals: 
     if not is_traced(class_name := frame.f_locals["self"].__class__.__name__): return
+    if not is_traced(f"{class_name}.{func_name}"): return
     _ = ['GRAY2', f"{class_name}", 'GRAY3', f".{func_name}"]
   else: _ = ['GRAY3', f".{func_name}"]
 
