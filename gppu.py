@@ -1,10 +1,8 @@
-from functools import partial
 import pprint
 import yaml
 import re
 import inspect
 import logging
-from pathlib import Path
 
 from typing import TypeVar, Union, get_origin, get_args, Callable, Any
 
@@ -13,8 +11,8 @@ from string import Template
 from collections import defaultdict, UserDict
 from datetime import datetime
 
-VER_GPPU_BASE = '2.7.1'
-VER_GPPU_BUILD = '240220'
+VER_GPPU_BASE = '2.7.3'
+VER_GPPU_BUILD = '240301'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region Safe typecasting
@@ -47,6 +45,7 @@ def safe_isinstance(o: object, typ: type, default: bool = False) -> bool:
   return isinstance(o, typ)
 # endregion
 
+
 # region Dict utils: deepget, dict_all_paths
 deepdict = lambda: defaultdict(deepdict)
 def deepget(path: str, d: dict, default=None):
@@ -58,24 +57,29 @@ def deepget(path: str, d: dict, default=None):
     return _ if _ else default
   return d.get(path, default)
 
+
 def deepget_int(path: str, d: dict, default=None) -> int:
   """ Returns int at path, or default if not found """
   _ = deepget(path, d, default)
   return _ if isinstance(_, int) else default
+
 
 def deepget_list(path: str, d: dict, default=None) -> list:
   """ Returns list at path, or default if not found """
   _ = deepget(path, d, default)
   return _ if isinstance(_, list) else default
 
+
 def deepget_dict(path: str, d: dict, default=None) -> dict:
   """ Returns dict at path, or default if not found """
   _ = deepget(path, d, default)
   return _ if isinstance(_, dict) else default
 
+
 def dict_sort_keylen(d, reverse: bool = True) -> dict:
   if not isinstance(d,dict): return {}
   return dict(sorted(d.items(), key=lambda key: len(key[0]), reverse=reverse))
+
 
 def dict_element_append(d: dict, key: str, value, unique=False) -> None:
   """ coerces key value in dict to list, than appends value to it
@@ -90,6 +94,7 @@ def dict_element_append(d: dict, key: str, value, unique=False) -> None:
     else: d[key] += [value]
   else: raise Exception(f"Unrecognized type: {type(d[key])}")
 
+
 def dict_all_paths(d: dict) -> list:
   """Returns all paths in a dict as a list of strings"""
   result: list = []
@@ -101,6 +106,7 @@ def dict_all_paths(d: dict) -> list:
     else: result.append(key)
   return result
 # endregion
+
 
 # region working with yaml files: dict_to_yml, dict_from_yml, dict_sanitize
 KEYS_FORCE_STRING = ['parent']
@@ -256,6 +262,7 @@ def dict_template_populate(o, data: dict = {}, excludes:list = []):
   result = __tp(_, data)
   return result
 
+
 # region Loggin and Time helpers: now_ts, now_str
 """Logging"""
 def now_str(): return datetime.now().strftime("%Y%m%d.%H%M%S")
@@ -282,6 +289,7 @@ def slugify(o) -> str:
   return re.sub(r'[^a-zA-Z0-9_]', '_', str(o).lower())
 # endregion
 
+
 # region Tracing decorators
 TA_BEFORE = 'before'
 TA_AFTER = 'after'
@@ -304,21 +312,8 @@ def _tracer(tracer: Callable = None, action: str = None) -> Callable:
 
 # endregion
 
+
 # region PCP - Pretty Colored Print and colorize - utility
-# def _print_terminal_color_table():
-#   for b in "34":
-#     s = ""
-#     for f in "01234567": s += _colorize_list(f+b+';1', f"{f+b+';1'}") + "  "
-#     print(s)
-
-#   for f in range(0, 15):
-#     s = _colorize_list(f"38;5;{f};1", f"38;5;{f};1")+"  "
-#     print(s)
-
-#   for b in range(0, 1):
-#     s = ""
-#     for f in range(0, 15): s += _colorize_list(f"38;5;{f};1", f"38;5;{f};1")+"  "
-#     print(s)
 
 class _TColorHack(type):
   def __getitem__(cls, key): return getattr(cls, str(key), None)
