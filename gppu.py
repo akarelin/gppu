@@ -11,8 +11,8 @@ from string import Template
 from collections import defaultdict, UserDict
 from datetime import datetime
 
-VER_GPPU_BASE = '2.7.3'
-VER_GPPU_BUILD = '240301'
+VER_GPPU_BASE = '2.7.4'
+VER_GPPU_BUILD = '240308'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region Safe typecasting
