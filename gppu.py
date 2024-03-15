@@ -8,12 +8,13 @@ from typing import TypeVar, Union, get_origin, get_args, Callable, Any
 
 from string import Template
 
-from collections import defaultdict, UserDict
+from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
-VER_GPPU_BASE = '2.7.4'
-VER_GPPU_BUILD = '240308'
+VER_GPPU_BASE = '2.8.0'
+VER_GPPU_BUILD = '240313'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
+
 
 # region Safe typecasting
 def safe_list(o) -> list:
@@ -202,7 +203,8 @@ def dict_from_yml(filename:str):
   with open(filename) as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
 # endregion
 
-# 2Do Templates
+
+# region Templates
 def dict_template_populate(o, data: dict = {}, excludes:list = []):
   """ 
     Returns new dictionary, copy of o with all templatable elements filled-in from data 
@@ -261,6 +263,7 @@ def dict_template_populate(o, data: dict = {}, excludes:list = []):
     _ = str(o)
   result = __tp(_, data)
   return result
+# endregion
 
 
 # region Loggin and Time helpers: now_ts, now_str
@@ -311,6 +314,162 @@ def _tracer(tracer: Callable = None, action: str = None) -> Callable:
     return wrapper
 
 # endregion
+
+
+# region y2xxx
+# xx                                                                                        
+# xx y2list, y2path and y2slug                                                              
+# xx                                                                                        
+""" y2list-based: y2path, y2slug"""
+def any2list(o, token: str = None) -> list:
+  result = []
+  if o:
+    if hasattr(o, 'data'): o = o.data
+    if isinstance(o, (list, tuple)): result = [_ for _ in o if _]
+    elif token: result = str(o).split(token)
+    else: result = re.findall('[a-zA-Z0-9]+', str(o))
+  return result
+
+
+class y2list(UserList):
+  def __init__(self, o=None):
+    self.data = any2list(o)
+    self.token = ""
+
+
+  def __str__(self): return self.token.join(self.data)
+  def __repr__(self): return self.token.join(self.data)
+  def __hash__(self): return hash(str(self))
+  def __eq__(self, other):
+    if hasattr(other, 'data'): return self.data == other.data
+    else: return str(self) == str(other)
+
+
+  def upper(self): return str(self).upper()
+  def lower(self): return str(self).lower()
+  def encode(self, encoding='utf-8', errors='strict'): return str(self.data).encode(encoding, errors)
+  def iadd(self, o): self.data += any2list(o)
+  def to_json(self): return str(self)
+
+
+  @property
+  def head(self) -> str: return self.data[0] if len(self.data) > 0 else None
+  @property
+  def tail(self) -> str: return self.data[-1] if len(self.data) > 0 else None
+
+
+  def endswith(self, ix) -> bool:
+    slow = str(self).lower()
+    if isinstance(ix, list): 
+      for element in ix: 
+        if slow.endswith(element.lower()): return True
+      return False
+    if '_' in ix: six = ix.replace('_',self.token)
+    elif '/' in ix: six = ix.replace('/',self.token)
+    else: six = ix.lower()
+    return slow.endswith(six)
+
+
+  def startswith(self, ix) -> bool:
+    slow = str(self).lower()
+    if isinstance(ix, list): 
+      for element in ix:
+        if slow.startswith(element.lower()): return True
+      return False
+    if '_' in ix: six = ix.replace('_', self.token)
+    elif '/' in ix: six = ix.replace('/', self.token)
+    else: six = ix.lower()
+    return slow.startswith(six)
+
+
+  def extract(self, s:str, default=None):
+    """
+    Removes element by value and returns it or default
+    ! modifies self.data
+    """
+    if s in self.data: return self.data.pop(self.data.index(s))
+    return default
+
+
+  def discard(self, element): self.data = [e for e in self.data if not e == element]
+  def pophead(self) -> str: return self.data.pop(0) if len(self.data) > 0 else None
+  def poptail(self) -> str: return self.data.pop(-1) if len(self.data) > 0 else None
+
+
+  def popsuffix(self, ix):
+    if self.endswith(ix):
+      if '_' in ix and self.token != '_': ix = ix.replace('_',self.token)
+      elif '/' in ix and self.token != '/': ix = ix.replace('/',self.token)
+      self.data = any2list(str(self).replace(ix, ''))
+      return self.token.join(any2list(ix))
+
+
+  def popprefix(self, ix):
+    if self.startswith(ix):
+      if '_' in ix and self.token != '_': ix = ix.replace('_', self.token)
+      elif '/' in ix and self.token != '/': ix = ix.replace('/', self.token)
+      self.data = any2list(str(self).replace(ix, ''))
+      return self.token.join(any2list(ix))
+
+
+  def popxfix(self, ix): return self.popsuffix(ix) or self.popprefix(ix)
+
+
+class y2path(y2list):
+  def __init__(self, *args):
+    data = []
+    for a in args: data += any2list(a)
+    self.data = any2list(data)
+    self.token = '/'
+
+
+class y2topic(y2path):
+  def is_wildcard(self) -> bool: return self.data & "#+"
+
+
+class y2slug(y2list):
+  def __init__(self, o=None): 
+    if '@' in str(o): o = str(o).split('@')[0]
+    self.data = any2list(o, '_')
+    self.token = '_'
+
+
+class y2eid:
+  def __init__(self, o=None, ns=None, **kwargs):
+    if not o: return
+    if isinstance(o, y2eid): s = str(o)
+    elif isinstance(o, dict): s = str(o.get('entity_id',""))
+    elif isinstance(o, str): s = o
+    elif hasattr(o, 'entity_id') and hasattr(o, 'namespace'): s = f"{o.entity_id}@{o.namespace}"
+    else: raise ValueError
+
+    self.ns = ns
+    if '.' in s: self.domain, s = s.split('.',1)
+    if '@' in s: s, self.ns = s.rsplit('@',1)
+    self.slug = y2slug(s)
+    for k in ['tail', 'head']: setattr(self, k, getattr(self.slug, k))
+
+
+  def __str__(self):
+    s = str(self.slug)
+    if self.domain: s = self.domain + '.' + s
+    if self.ns: s += '@' + self.ns
+    return s
+  def __repr__(self): return str(self)
+  def __hash__(self): return hash(str(self))
+  def __eq__(self,other): return str(self) == str(other)
+  def __lt__(self,other): return str(self) < str(other)
+
+
+  def endswith(self, ix) -> bool: return self.slug.endswith(ix)
+  def startswith(self, ix) -> bool: return self.slug.endswith(ix)
+  @property
+  def entity_id(self) -> str: return f"{self.domain}.{self.slug}"
+  @property
+  def eid(self) -> str: return str(self)
+
+# endregion
+
 
 
 # region PCP - Pretty Colored Print and colorize - utility
