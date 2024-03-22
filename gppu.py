@@ -11,8 +11,8 @@ from string import Template
 from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
-VER_GPPU_BASE = '2.8.0'
-VER_GPPU_BUILD = '240313'
+VER_GPPU_BASE = '2.9.0'
+VER_GPPU_BUILD = '240321'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 
@@ -441,6 +441,8 @@ class y2eid:
     elif isinstance(o, dict): s = str(o.get('entity_id',""))
     elif isinstance(o, str): s = o
     elif hasattr(o, 'entity_id') and hasattr(o, 'namespace'): s = f"{o.entity_id}@{o.namespace}"
+    elif hasattr(o, 'entity_id') and hasattr(o, 'ns'): s = f"{o.entity_id}@{o.ns}"
+    elif hasattr(o, 'seid'): s = o.seid
     else: raise ValueError
 
     self.ns = ns
@@ -618,7 +620,7 @@ def pcp(*a, **kw) -> str:
 remove_prefixes = lambda s, prefixes: next((s.removeprefix(prefix) for prefix in prefixes if s.startswith(prefix)), s)
 SHORTEN_BY_PREFIX = ['process_', '_cb_']
 IGNORE_FUNCTIONS = ['dpcp', 'trace', 'pcp', 'Trace']
-def dpcp(*a, conditional=None, rules={}, **kw) -> str:
+def dpcp(*a, conditional=None, rules={}, no_prefix=False, **kw) -> str:
   """ Version of pcp that adds info on where it was called from """
   def is_traced(name=None):
     if not conditional: return True
@@ -646,7 +648,9 @@ def dpcp(*a, conditional=None, rules={}, **kw) -> str:
     _ = ['GRAY2', f"{class_name}", 'GRAY3', f".{func_name}"]
   else: _ = ['GRAY3', f".{func_name}"]
 
-  _ += list(a)
+  if no_prefix: _ = list(a)
+  else: _ += list(a)
+  
   return pcp(*_, **kw)
 
 def _colorize_log(msg, level=None, *args):
