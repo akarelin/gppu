@@ -11,8 +11,8 @@ from string import Template
 from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
-VER_GPPU_BASE = '2.9.0'
-VER_GPPU_BUILD = '240321'
+VER_GPPU_BASE = '2.9.2'
+VER_GPPU_BUILD = '240322'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 
@@ -214,10 +214,6 @@ def dict_template_populate(o, data: dict = {}, excludes:list = []):
     Keys with value == 'DEL' are removed from result
     Keys with '$' in value are treated as templates and filled-in from data
   """
-  # def flatcopy(data):
-  #   redata = {k: v for k, v in data.items() if isinstance(v, (str, int, float, bool, list)) and k not in excludes}
-  #   return redata
-
   def __tp(o, data: dict):
     if not data: data = {}
     # data = flatcopy(data)
@@ -473,7 +469,6 @@ class y2eid:
 # endregion
 
 
-
 # region PCP - Pretty Colored Print and colorize - utility
 
 class _TColorHack(type):
@@ -484,6 +479,7 @@ class _TColorHack(type):
     l = []
     for name, colorcode in cls.dir(): l.append(colorcode, name)
     print(_colorize_list(l))
+
 
 class TColor(metaclass=_TColorHack):
   NONE = '0m'             # No color (text)
@@ -539,56 +535,6 @@ class TColor(metaclass=_TColorHack):
   #WYELLOW = '0;37;43'     # White on Yellow (background)
   WYELLOW = '7;49;93'     # White on Yellow (background)
 
-# TERMINAL_COLORS = {
-#     'NONE':  '0m',             # No color (text)
-#     'DIM':   '38;5;8;1',        # Dim gray (text)
-#     'BRIGHT':'36;1',            # Bright cyan (text)
-#     'BW':    '38;5;15;1',       # Bright white (text)
-#     'DW':    '38;5;7;1',        # Dark white (text)
-
-#     'GRAY1': '38;5;234',        # Darkest gray (text)
-#     'GRAY2': '38;5;240',        # Gray (text)
-#     'GRAY3': '38;5;246',        # Gray (text)
-#     'GRAY4': '38;5;252',        # Lightest gray (text)
-
-#     'BY':    '38;5;11;1',       # Bright yellow (text)
-#     'DY':    '38;5;3;1',        # Dark yellow (text)
-#     'BG':    '38;5;10;1',       # Bright green (text)
-#     'DG':    '38;5;2;1',        # Dark green (text)
-
-#     'BB':    '3;30;44',         # Black on Blue (background)
-#     'DB':    '38;5;4;1',        # Dark blue (text)
-
-#     'BC':    '38;5;6;1',        # Bright cyan (text)
-#     'DC':    '38;5;14;1',       # Dark cyan (text)
-#     'BM':    '38;5;13;1',       # Bright magenta (text)
-#     'DM':    '38;5;5;1',        # Dark magenta (text)
-#     'BR':    '38;5;9;1',        # Bright red (text)
-#     'DR':    '38;5;1;1',        # Dark red (text)
-
-#     'INFO':  '34;1',            # Bright blue (text, for info messages)
-#     'WHITE': '0;30;47',         # Black on White (background)
-#     'YELLOW':'0;30;43',         # Black on Yellow (background)
-#     'RED':   '0;30;41',         # Black on Red (background)
-#     'BLUE':  '0;30;44',         # Black on Blue (background)
-#     'GREEN': '0;30;42',         # Black on Green (background)
-
-#     'ORANGE':'38;5;208;1',      # New: Bright orange (text)
-#     'DO':    '38;5;130;1',      # New: Dark orange (text)
-#     'PURPLE':'38;5;129;1',      # New: Bright purple (text)
-#     'DP':    '38;5;90;1',       # New: Dark purple (text)
-#     'PINK':  '38;5;200;1',      # New: Bright pink (text)
-#     'DPINK': '38;5;132;1',      # New: Dark pink (text)
-#     'BGOLD': '38;5;220;1',      # New: Bright gold (text)
-#     'DGOLD': '38;5;178;1',      # New: Dark gold (text)
-    
-#     'WRED':  '0;37;41',         # White on Red (background)
-#     'WBLUE': '0;37;44',         # White on Blue (background)
-#     'WGREEN':'0;37;42',         # White on Green (background)
-#     'WGRAY': '0;30;47',         # Black on Light Gray (background)
-#     'WPINK': '0;30;45',         # Black on Pink (background)
-#     'WPURPLE':'0;37;45'         # White on Purple (background)
-# }
 
 def pcp(*a, **kw) -> str:
   """
@@ -620,7 +566,8 @@ def pcp(*a, **kw) -> str:
 remove_prefixes = lambda s, prefixes: next((s.removeprefix(prefix) for prefix in prefixes if s.startswith(prefix)), s)
 SHORTEN_BY_PREFIX = ['process_', '_cb_']
 IGNORE_FUNCTIONS = ['dpcp', 'trace', 'pcp', 'Trace']
-def dpcp(*a, conditional=None, rules={}, no_prefix=False, **kw) -> str:
+SEVERITY_COLORS = {'Error': 'WRED', 'Warn': 'WYELLOW', 'Info': 'WBLUE', 'Debug': 'GRAY4', None: 'WPURPLE'}
+def dpcp(*a, conditional=None, rules={}, no_prefix: bool=False, severity=None, **kw) -> str:
   """ Version of pcp that adds info on where it was called from """
   def is_traced(name=None):
     if not conditional: return True
@@ -648,10 +595,14 @@ def dpcp(*a, conditional=None, rules={}, no_prefix=False, **kw) -> str:
     _ = ['GRAY2', f"{class_name}", 'GRAY3', f".{func_name}"]
   else: _ = ['GRAY3', f".{func_name}"]
 
+  if severity: 
+    _ = [SEVERITY_COLORS.get(severity, SEVERITY_COLORS[None]), severity] + _
+
   if no_prefix: _ = list(a)
   else: _ += list(a)
-  
+
   return pcp(*_, **kw)
+
 
 def _colorize_log(msg, level=None, *args):
   if isinstance(msg, tuple): msg = _colorize_list(msg)
