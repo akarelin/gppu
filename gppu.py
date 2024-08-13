@@ -155,7 +155,6 @@ def sanitize_dict(o) -> dict:
     result[str(k)] = _
   return result
 
-
 def dict_sanitize(data: dict, sort_keys=False) -> dict:
   """Convert nested complex data types for json.dumps or yaml.dumps"""
   if islist(data): return sanitize_list(data)
@@ -273,15 +272,11 @@ def pretty_timedelta(ts):
   days, seconds = divmod(seconds, 86400)
   hours, seconds = divmod(seconds, 3600)
   minutes, seconds = divmod(seconds, 60)
-  if days > 0:
-    return '%dd %dh %dm %ds' % (days, hours, minutes, seconds)
-  elif hours > 0:
-    return '%dh %dm %ds' % (hours, minutes, seconds)
-  elif minutes > 0:
-    return '%dm %ds' % (minutes, seconds)
-  else:
-    return '%ds' % (seconds,)
-    
+  if days > 0: return '%dd %dh %dm %ds' % (days, hours, minutes, seconds)
+  elif hours > 0: return '%dh %dm %ds' % (hours, minutes, seconds)
+  elif minutes > 0: return '%dm %ds' % (minutes, seconds)
+  else: return '%ds' % (seconds,)
+
 def pfy(object) -> str: return "\n"+pprint.pformat(object, indent=4, width=40, compact=True)
 def slugify(o) -> str:
   """Converts any object to string, then slugifies it"""
