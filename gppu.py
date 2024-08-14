@@ -11,9 +11,13 @@ from string import Template
 from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
-VER_GPPU_BASE = '2.9.2'
-VER_GPPU_BUILD = '240322'
+VER_GPPU_BASE = '2.10.1'
+VER_GPPU_BUILD = '240813'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
+
+GPPU_TRACER_ENABLED = False
+
+if GPPU_TRACER_ENABLED: from gppu_tracer import wrap_module # ! module is wrapped in last line
 
 
 # region Safe typecasting
@@ -215,18 +219,13 @@ def dict_template_populate(o, data: dict = {}, excludes:list = []):
   """
   def __tp(o, data: dict):
     if not data: data = {}
-    # data = flatcopy(data)
 
     if not o: result = None
     elif isinstance(o, dict):
       result = {}
       for k, old in o.items():
-        if k in excludes or inspect.isfunction(old): 
-          new = old
-        else:
-          # !!! data | o   
-          # !!! o | data
-          new = __tp(old, o | data)
+        if k in excludes or inspect.isfunction(old): new = old
+        else: new = __tp(old, o | data)
         result[k] = new
     elif isinstance(o, list):
       result = []
@@ -251,11 +250,8 @@ def dict_template_populate(o, data: dict = {}, excludes:list = []):
       else: result = o
     return result
 
-  if isinstance(o, dict):
-    #_ = o.get('data') or o
-    _ = o.get('data', {}) | o
-  else:
-    _ = str(o)
+  if isinstance(o, dict): _ = o.get('data', {}) | o
+  else: _ = str(o)
   result = __tp(_, data)
   return result
 # endregion
@@ -692,3 +688,5 @@ class PrettyColoredHandler(logging.StreamHandler):
 # logger.addHandler(logging.FileHandler(f"{__name__}.log"))
 # logger.addHandler(logging.StreamHandler())
 # endregion
+
+if GPPU_TRACER_ENABLED: wrapped_module = wrap_module(__name__)
