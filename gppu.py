@@ -4,7 +4,14 @@ import re
 import inspect
 import logging
 
-from typing import TypeVar, Union, get_origin, get_args, Callable, Any
+from typing import TypeVar, TypeAlias, Union, Callable, Any, Literal, List, Optional, Tuple
+from typing import overload, get_origin, get_args
+
+olist: TypeAlias = list | None
+oint: TypeAlias = int | None
+odict: TypeAlias = dict | None
+ostr: TypeAlias = str | None
+T = TypeVar('T')
 
 from string import Template
 
@@ -58,19 +65,19 @@ def deepget(path: str, d: dict, default=None):
   return d.get(path, default)
 
 
-def deepget_int(path: str, d: dict, default=None) -> int:
+def deepget_int(path: str, d: dict, default: oint = None) -> oint:
   """ Returns int at path, or default if not found """
   _ = deepget(path, d, default)
   return _ if isinstance(_, int) else default
 
 
-def deepget_list(path: str, d: dict, default=None) -> list:
+def deepget_list(path: str, d: dict, default: olist = None) -> olist:
   """ Returns list at path, or default if not found """
   _ = deepget(path, d, default)
   return _ if isinstance(_, list) else default
 
 
-def deepget_dict(path: str, d: dict, default=None) -> dict:
+def deepget_dict(path: str, d: dict, default: odict = None) -> odict:
   """ Returns dict at path, or default if not found """
   _ = deepget(path, d, default)
   return _ if isinstance(_, dict) else default
@@ -154,12 +161,16 @@ def sanitize_dict(o) -> dict:
     result[str(k)] = _
   return result
 
-def dict_sanitize(data: dict, sort_keys=False) -> dict:
+def dict_sanitize(data: dict, sort_keys=False) -> dict | list:
   """Convert nested complex data types for json.dumps or yaml.dumps"""
   if islist(data): return sanitize_list(data)
   elif isdict(data): return sanitize_dict(data)
   else: raise ValueError(f"Unable to sanitize {data}")
 
+
+def _tuple_representer(dumper: yaml.Dumper, data: tuple) -> yaml.nodes.Node:
+  return dumper.represent_dict(dict(enumerate(data)))
+  
 
 def dict_to_yml(filename:str, data=None, sort_keys=False):
   class IndentedListDumper(yaml.Dumper):
@@ -174,7 +185,7 @@ def dict_to_yml(filename:str, data=None, sort_keys=False):
   yaml.add_representer(defaultdict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(UserDict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(set, yaml.representer.Representer.represent_list)
-  yaml.add_representer(tuple, yaml.representer.Representer.represent_dict)
+  yaml.add_representer(tuple, _tuple_representer)
   with open(filename,'w+') as f:
     try: yaml.dump(redata, f, indent=2, Dumper=IndentedListDumper, sort_keys=False, width=2147483647)
     except Exception as err:
@@ -195,7 +206,7 @@ def dict_from_yml(filename:str):
   yaml.add_representer(defaultdict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(UserDict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(set, yaml.representer.Representer.represent_list)
-  yaml.add_representer(tuple, yaml.representer.Representer.represent_dict)
+  yaml.add_representer(tuple, _tuple_representer)
   yaml.add_constructor("!include", yml_include, Loader=yaml.FullLoader)
 
   with open(filename) as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
@@ -203,7 +214,7 @@ def dict_from_yml(filename:str):
 
 
 # region Templates
-def dict_template_populate(o, data: dict = {}, excludes:list = []):
+def dict_template_populate(o, data: dict = {}, excludes:list = []) -> Any:
   """ 
     Returns new dictionary, copy of o with all templatable elements filled-in from data 
     
@@ -212,7 +223,7 @@ def dict_template_populate(o, data: dict = {}, excludes:list = []):
     Keys with value == 'DEL' are removed from result
     Keys with '$' in value are treated as templates and filled-in from data
   """
-  def __tp(o, data: dict):
+  def __tp(o, data: dict) -> Any:
     if not data: data = {}
 
     if not o: result = None
@@ -276,11 +287,15 @@ def slugify(o) -> str:
 
 
 # region Tracing decorators
-TA_BEFORE = 'before'
-TA_AFTER = 'after'
-TA_INSTEAD = 'instead'
-TAs = [TA_BEFORE, TA_AFTER, TA_INSTEAD]
-def _tracer(tracer: Callable = None, action: str = None) -> Callable:
+TracerAction: TypeAlias = Literal['before', 'after', 'instead']
+
+TA_BEFORE: TracerAction = 'before'
+TA_AFTER: TracerAction = 'after'
+TA_INSTEAD: TracerAction = 'instead'
+TAs: list[TracerAction] = [TA_BEFORE, TA_AFTER, TA_INSTEAD]
+
+
+def _tracer(tracer: Callable[..., Any] | None = None, action: TracerAction | None = None) -> Callable:
   def decorator(method: Callable):
     def wrapper(self, *a, **kw):
       if not tracer: return method(self, *a, **kw)
@@ -303,7 +318,7 @@ def _tracer(tracer: Callable = None, action: str = None) -> Callable:
 # xx y2list, y2path and y2slug                                                              
 # xx                                                                                        
 """ y2list-based: y2path, y2slug"""
-def any2list(o, token: str = None) -> list:
+def any2list(o, token: ostr = None) -> list:
   result = []
   if o:
     if hasattr(o, 'data'): o = o.data
@@ -314,7 +329,11 @@ def any2list(o, token: str = None) -> list:
 
 
 class y2list(UserList):
-  def __init__(self, o=None):
+  data: List[Any]
+  token: str
+
+  def __init__(self, o: Optional[Any] = None) -> None:
+    super().__init__()
     self.data = any2list(o)
     self.token = ""
 
@@ -322,7 +341,7 @@ class y2list(UserList):
   def __str__(self): return self.token.join(self.data)
   def __repr__(self): return self.token.join(self.data)
   def __hash__(self): return hash(str(self))
-  def __eq__(self, other):
+  def __eq__(self, other: Any) -> bool:
     if hasattr(other, 'data'): return self.data == other.data
     else: return str(self) == str(other)
 
@@ -335,9 +354,9 @@ class y2list(UserList):
 
 
   @property
-  def head(self) -> str: return self.data[0] if len(self.data) > 0 else None
+  def head(self) -> ostr: return self.data[0] if len(self.data) > 0 else None
   @property
-  def tail(self) -> str: return self.data[-1] if len(self.data) > 0 else None
+  def tail(self) -> ostr: return self.data[-1] if len(self.data) > 0 else None
 
 
   def endswith(self, ix) -> bool:
@@ -374,8 +393,8 @@ class y2list(UserList):
 
 
   def discard(self, element): self.data = [e for e in self.data if not e == element]
-  def pophead(self) -> str: return self.data.pop(0) if len(self.data) > 0 else None
-  def poptail(self) -> str: return self.data.pop(-1) if len(self.data) > 0 else None
+  def pophead(self) -> ostr: return self.data.pop(0) if len(self.data) > 0 else None
+  def poptail(self) -> ostr: return self.data.pop(-1) if len(self.data) > 0 else None
 
 
   def popsuffix(self, ix):
@@ -406,7 +425,7 @@ class y2path(y2list):
 
 
 class y2topic(y2path):
-  def is_wildcard(self) -> bool: return self.data & "#+"
+  def is_wildcard(self) -> bool: return bool(set(self.data) & {"#", "+"})
 
 
 class y2slug(y2list):
@@ -522,7 +541,7 @@ class TColor(metaclass=_TColorHack):
   WYELLOW = '7;49;93'     # White on Yellow (background)
 
 
-def pcp(*a, **kw) -> str:
+def pcp(*a: Union[str, list, Tuple, Any], **kw: Any) -> str:
   """
   Pretty colored print. Supports two kinds of input:
     level, msg: compatible with default logger
@@ -534,7 +553,7 @@ def pcp(*a, **kw) -> str:
     silent: suppresses local print output
     
   """
-  if len(a) == 1 and isinstance(a[0], tuple): a = list(a[0])
+  if len(a) == 1 and isinstance(a[0], tuple): a = tuple(list(a[0]))
   out = ""
   verbose = kw.pop('verbose', False)
   silent = kw.pop('silent', False)
@@ -548,6 +567,7 @@ def pcp(*a, **kw) -> str:
   if kw and verbose: out += pfy(kw)
   if not silent: print(out)
   return out
+
 
 remove_prefixes = lambda s, prefixes: next((s.removeprefix(prefix) for prefix in prefixes if s.startswith(prefix)), s)
 SHORTEN_BY_PREFIX = ['process_', '_cb_']
@@ -605,7 +625,7 @@ def _colorize_log(msg, level=None, *args):
 
 def _colorize_list(l: list):
   """ Colorizes list of strings. Strings separated with space unless start with . or / """
-  result = []
+  result: List[str] = []
   colorcode = None
   for e in [e for e in l if e]:
     if isinstance(e, TColor): colorcode = e; continue
