@@ -4,7 +4,7 @@ import re
 import inspect
 import logging
 
-from typing import TypeVar, TypeAlias, Union, Callable, Any, Literal, List, Optional, Tuple
+from typing import TypeVar, TypeAlias, Union, Callable, Any, Literal, List, Optional, Tuple, Dict
 from typing import overload, get_origin, get_args
 
 olist: TypeAlias = list | None
@@ -295,8 +295,9 @@ TA_INSTEAD: TracerAction = 'instead'
 TAs: list[TracerAction] = [TA_BEFORE, TA_AFTER, TA_INSTEAD]
 
 
-def _tracer(tracer: Callable[..., Any] | None = None, action: TracerAction | None = None) -> Callable:
-  def decorator(method: Callable):
+# def _tracer(tracer: Callable[..., Any] | None = None, action: TracerAction | None = None) -> Callable:
+def _tracer(tracer: Optional[Callable[..., Any]] = None, action: Optional[TracerAction] = None) -> Callable:
+  def decorator(method: Callable) -> Callable:
     def wrapper(self, *a, **kw):
       if not tracer: return method(self, *a, **kw)
       if action == TA_BEFORE:
@@ -309,6 +310,7 @@ def _tracer(tracer: Callable[..., Any] | None = None, action: TracerAction | Non
       if action == TA_INSTEAD:
         return tracer(self, *a, **kw)
     return wrapper
+  return decorator
 
 # endregion
 
@@ -482,7 +484,10 @@ class _TColorHack(type):
 
   def print(cls):
     l = []
-    for name, colorcode in cls.dir(): l.append(colorcode, name)
+    for name in dir(cls):
+      colorcode = getattr(cls, name)
+      if isinstance(colorcode, str): l.append(colorcode)
+      l.append(name)
     print(_colorize_list(l))
 
 
@@ -541,7 +546,7 @@ class TColor(metaclass=_TColorHack):
   WYELLOW = '7;49;93'     # White on Yellow (background)
 
 
-def pcp(*a: Union[str, list, Tuple, Any], **kw: Any) -> str:
+def pcp(*a: Union[str, List[Any], Tuple[Any, ...]], **kw: Any) -> str:
   """
   Pretty colored print. Supports two kinds of input:
     level, msg: compatible with default logger
@@ -553,7 +558,7 @@ def pcp(*a: Union[str, list, Tuple, Any], **kw: Any) -> str:
     silent: suppresses local print output
     
   """
-  if len(a) == 1 and isinstance(a[0], tuple): a = tuple(list(a[0]))
+  if len(a) == 1 and isinstance(a[0], tuple): a = tuple(a[0])
   out = ""
   verbose = kw.pop('verbose', False)
   silent = kw.pop('silent', False)
@@ -561,9 +566,9 @@ def pcp(*a: Union[str, list, Tuple, Any], **kw: Any) -> str:
   if 'msg' in kw:
     msg = kw.get('msg')
     out = _colorize_log(msg=msg, level=level)
-    if a: out += _colorize_list(a)
+    if a: out += _colorize_list(a) # type: ignore
   else:
-    out = _colorize_list(a)
+    out = _colorize_list(a) # type: ignore
   if kw and verbose: out += pfy(kw)
   if not silent: print(out)
   return out
@@ -573,27 +578,37 @@ remove_prefixes = lambda s, prefixes: next((s.removeprefix(prefix) for prefix in
 SHORTEN_BY_PREFIX = ['process_', '_cb_']
 IGNORE_FUNCTIONS = ['dpcp', 'trace', 'pcp', 'Trace']
 SEVERITY_COLORS = {'Error': 'WRED', 'Warn': 'WYELLOW', 'Info': 'WBLUE', 'Debug': 'GRAY4', None: 'WPURPLE'}
-def dpcp(*a, conditional=None, rules={}, no_prefix: bool=False, severity=None, **kw) -> str:
+def dpcp(*a: Any, 
+         conditional: Optional[bool] = None, 
+         rules: Dict[str, bool] = {}, 
+         no_prefix: bool=False, 
+         severity: Optional[str] = None, **kw: Any) -> Optional[str]:
   """ Version of pcp that adds info on where it was called from """
-  def is_traced(name=None):
+  def is_traced(name : Optional[str] = None) -> bool:
     if not conditional: return True
 
-    if not name or name not in rules: return rules.get('all')
-    else: return rules.get(name)
+    if not name or name not in rules: return rules.get('all', False)
+    else: return rules.get(name, False)
 
   if not conditional and rules: conditional = True
-  frame = inspect.currentframe().f_back
+  frame = inspect.currentframe()
+  if frame is None: return
 
-  while frame.f_back:
+  frame = frame.f_back
+  while frame and frame.f_back:
     frame = frame.f_back
-    filename, line_number, func_name, _, _ = inspect.getframeinfo(frame)
+    frame_info = inspect.getframeinfo(frame)
+    filename = frame_info.filename
+    func_name = frame_info.function
+
     if func_name not in IGNORE_FUNCTIONS: break
     func_name = remove_prefixes(func_name, SHORTEN_BY_PREFIX)
 
+  if frame is None: return
+
   if not is_traced(func_name): return 
   module = filename.rsplit('/', 1)[-1].rsplit('.', 1)[0]
-  if not is_traced(module): return
-  if not is_traced(f"{module}.{func_name}"): return
+  if not is_traced(module) or not is_traced(f"{module}.{func_name}"): return
 
   if 'self' in frame.f_locals: 
     if not is_traced(class_name := frame.f_locals["self"].__class__.__name__): return
@@ -611,7 +626,7 @@ def dpcp(*a, conditional=None, rules={}, no_prefix: bool=False, severity=None, *
 
 
 def _colorize_log(msg, level=None, *args):
-  if isinstance(msg, tuple): msg = _colorize_list(msg)
+  if isinstance(msg, tuple): msg = _colorize_list(msg) # type: ignore
   elif level:
     if level in ['CRITICAL', 'ERROR']: c1, c2 = 'BR', 'BRIGHT'
     elif level in ['WARN', 'WARNING']: c1, c2 = 'BY', 'BRIGHT'
@@ -623,15 +638,16 @@ def _colorize_log(msg, level=None, *args):
   #else: raise ValueError(f"Invalid log_colored call: {msg} {level} {args}")
   return msg
 
-def _colorize_list(l: list):
+def _colorize_list(l: List[Union[str, TColor]]) -> str:
   """ Colorizes list of strings. Strings separated with space unless start with . or / """
   result: List[str] = []
   colorcode = None
+
   for e in [e for e in l if e]:
     if isinstance(e, TColor): colorcode = e; continue
     e = str(e)
     if TColor[e]: colorcode = TColor[e]; continue
-    elif colorcode: elem = _colorize(text=str(e), colorcode=colorcode)
+    elif colorcode: elem = _colorize(text=str(e), colorcode=colorcode) # type: ignore
     else: elem = str(e)
 
     if e[0] in "./" and result: result += [elem]
@@ -687,12 +703,15 @@ class PrettyColoredFormatter(logging.Formatter):
     # Apply colorization
     out = _colorize_log(msg=msg, level=level)
     if hasattr(record, 'args') and record.args:
-      out += _colorize_list(record.args)
-    if verbose and hasattr(record, 'kwargs'):
-      out += pfy(record.kwargs)  # Assuming pfy is a pretty print function for kwargs
+      args = list(record.args) if not isinstance(record.args, list) else record.args
+      out += _colorize_list(args) # type: ignore
+
+    kwargs = getattr(record, 'kwargs', None)
+    if verbose and isinstance(kwargs, dict): out += pfy(kwargs)
 
     return out
-    
+
+
 class PrettyColoredHandler(logging.StreamHandler):
   def emit(self, record):
     silent = getattr(record, 'silent', False)
