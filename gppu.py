@@ -29,11 +29,11 @@ def safe_list(o) -> list:
   elif isinstance(o, list): result = [element for element in o if element]
   elif isinstance(o, dict): result = list(o.keys())
   return result
-def safe_int(o, default=0) -> int:
+def safe_int(o, default: int | None = 0) -> int | None:
   v = safe_float(o, default)
   if v: return int(v)
   else: return default
-def safe_float(o, default=-1.0) -> float:
+def safe_float(o, default: float | None = -1.0) -> float | None:
   if o is None: return default
   if isinstance(o, str):
     o = o.removesuffix("°c")
