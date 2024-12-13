@@ -29,11 +29,11 @@ def safe_list(o) -> list:
   elif isinstance(o, list): result = [element for element in o if element]
   elif isinstance(o, dict): result = list(o.keys())
   return result
-def safe_int(o, default: int | None = 0) -> int | None:
+def safe_int(o, default: int = 0) -> int:
   v = safe_float(o, default)
   if v: return int(v)
   else: return default
-def safe_float(o, default: float | None = -1.0) -> float | None:
+def safe_float(o, default: float  = -1.0) -> float:
   if o is None: return default
   if isinstance(o, str):
     o = o.removesuffix("°c")
@@ -472,6 +472,8 @@ class y2eid:
   def entity_id(self) -> str: return f"{self.domain}.{self.slug}"
   @property
   def eid(self) -> str: return str(self)
+  @property
+  def seid(self): return str(self)
 
 # endregion
 
