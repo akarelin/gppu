@@ -18,8 +18,8 @@ from string import Template
 from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
-VER_GPPU_BASE = '2.10.3'
-VER_GPPU_BUILD = '241213'
+VER_GPPU_BASE = '2.10.4'
+VER_GPPU_BUILD = '241231'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region Safe typecasting
@@ -648,13 +648,16 @@ def _colorize_list(l: List[Union[str, TColor]]) -> str:
   for e in [e for e in l if e]:
     if isinstance(e, TColor): colorcode = e; continue
     e = str(e)
+    if e[0] in "./": separator = ''; e = e[1:]
+    else: separator = ' '
+
     if TColor[e]: colorcode = TColor[e]; continue
     elif colorcode: elem = _colorize(text=str(e), colorcode=colorcode) # type: ignore
     else: elem = str(e)
 
     if e[0] in "./" and result: result += [elem]
     elif not result: result += [elem]
-    else: result += [' '+elem]
+    else: result += [separator+elem]
   return ''.join(result)
 
 def _colorize(text:str, colorcode:str, fmt=None):
