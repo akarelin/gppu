@@ -18,8 +18,8 @@ from string import Template
 from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
-VER_GPPU_BASE = '2.10.4'
-VER_GPPU_BUILD = '241231'
+VER_GPPU_BASE = '2.11.0'
+VER_GPPU_BUILD = '250116'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region Safe typecasting
@@ -161,7 +161,7 @@ def sanitize_dict(o) -> dict:
     result[str(k)] = _
   return result
 
-def dict_sanitize(data: dict, sort_keys=False) -> dict | list:
+def dict_sanitize(data: dict | list, sort_keys=False) -> dict | list:
   """Convert nested complex data types for json.dumps or yaml.dumps"""
   if islist(data): return sanitize_list(data)
   elif isdict(data): return sanitize_dict(data)
