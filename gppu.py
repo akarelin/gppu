@@ -18,8 +18,8 @@ from string import Template
 from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
-VER_GPPU_BASE = '2.11.1'
-VER_GPPU_BUILD = '250116'
+VER_GPPU_BASE = '2.12.0'
+VER_GPPU_BUILD = '250117'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region Safe typecasting
@@ -500,10 +500,11 @@ class TColor(metaclass=_TColorHack):
   BW = '38;5;15;1'        # Bright white (text)
   DW = '38;5;7;1'         # Dark white (text)
 
-  GRAY1 = '38;5;234'      # Darkest gray (text)
-  GRAY2 = '38;5;240'      # Gray (text)
+  GRAY1 = '38;5;237'      # Darkest gray (text)
+  GRAY2 = '38;5;239'      # Gray (text)
+  GRAY2 = '38;5;243'      # Gray (text)
   GRAY3 = '38;5;246'      # Gray (text)
-  GRAY4 = '38;5;252'      # Lightest gray (text)
+  GRAY4 = '38;5;249'      # Lightest gray (text)
 
   BY = '38;5;11;1'        # Bright yellow (text)
   DY = '38;5;3;1'         # Dark yellow (text)
@@ -615,8 +616,8 @@ def dpcp(*a: Any,
   if 'self' in frame.f_locals: 
     if not is_traced(class_name := frame.f_locals["self"].__class__.__name__): return
     if not is_traced(f"{class_name}.{func_name}"): return
-    _ = ['GRAY1', f"{class_name}", 'GRAY3', f".{func_name}"]
-  else: _ = ['GRAY3', f".{func_name}"]
+    _ = ['GRAY1', f"{class_name}.", 'GRAY2', f".{func_name}"]
+  else: _ = ['GRAY2', f".{func_name}"]
 
   if severity: 
     _ = [SEVERITY_COLORS.get(severity, SEVERITY_COLORS[None]), severity] + _
