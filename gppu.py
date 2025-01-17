@@ -18,7 +18,7 @@ from string import Template
 from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
-VER_GPPU_BASE = '2.11.0'
+VER_GPPU_BASE = '2.11.1'
 VER_GPPU_BUILD = '250116'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
@@ -615,7 +615,7 @@ def dpcp(*a: Any,
   if 'self' in frame.f_locals: 
     if not is_traced(class_name := frame.f_locals["self"].__class__.__name__): return
     if not is_traced(f"{class_name}.{func_name}"): return
-    _ = ['GRAY2', f"{class_name}", 'GRAY3', f".{func_name}"]
+    _ = ['GRAY1', f"{class_name}", 'GRAY3', f".{func_name}"]
   else: _ = ['GRAY3', f".{func_name}"]
 
   if severity: 
