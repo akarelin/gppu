@@ -18,7 +18,7 @@ from string import Template
 from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
-VER_GPPU_BASE = '2.12.2'
+VER_GPPU_BASE = '2.13.0'
 VER_GPPU_BUILD = '250213'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
@@ -33,7 +33,7 @@ def safe_int(o, default: int = 0) -> int:
   v = safe_float(o, default)
   if v: return int(v)
   else: return default
-def safe_float(o, default: float  = -1.0) -> float:
+def safe_float(o, default: Optional[float] = 0.0) -> Optional[float]:
   if o is None: return default
   if isinstance(o, str):
     o = o.removesuffix("°c")
