@@ -310,6 +310,78 @@ def _tracer(tracer: Optional[Callable[..., Any]] = None, action: Optional[Tracer
     return wrapper
   return decorator
 
+
+logger: logging.Logger
+
+logger = logging.getLogger('gppu')
+ch = logging.StreamHandler()
+ch.setLevel(logging.DEBUG)
+fmt = logging.Formatter('%(message)s')
+ch.setFormatter(fmt)
+logger.addHandler(ch)
+
+# def init_default_logger():
+#   global default_logger
+#   if not default_logger:
+  
+#   global logger
+#   if not logger:
+#     logger = default_logger
+
+# init_default_logger()
+
+def Info(*a, **kw): logger.info(dpcp(*a, conditional=False, severity='Info', **kw), **kw)
+def Error(*a, **kw): logger.error(msg=dpcp(*a, conditional=False, severity='Error', **kw), **kw)
+def Warn(*a, **kw): logger.warning(msg=dpcp(*a, conditional=False, severity='Warn', **kw), **kw)
+def Debug(*a, **kw): logger.debug(msg=dpcp(*a, conditional=False, severity='Debug', **kw), **kw)
+def Trace(*a, **kw): logger.debug(dpcp(*a, rules={}, **kw), **kw)
+
+# = logging.getLogger('gppu')
+
+class Logger:
+  trace_folder = ''
+  log_folder = ''
+
+  trace_rules: dict = {}
+  logger = logger
+
+  # @staticmethod
+  # def Trace(*a, logger=logger, **kw): 
+  #   global TRACE_RULES
+  #   rules = TRACE_RULES or {}
+  #   logger.debug(dpcp(*a, rules=TRACE_RULES, **kw), **kw)
+
+  @staticmethod
+  def Trace(*a, logger=logger, **kw): logger.debug(dpcp(*a, rules={}, **kw), **kw)
+
+
+  @staticmethod
+  def Info(*a, logger=logger, **kw): logger.info(dpcp(*a, conditional=False, severity='Info', **kw), **kw)
+
+
+  @staticmethod
+  def Error(*a, logger=logger, **kw): logger.error(msg=dpcp(*a, conditional=False, severity='Error', **kw), **kw)
+
+
+  @staticmethod
+  def Warn(*a, logger=logger, **kw): logger.warning(msg=dpcp(*a, conditional=False, severity='Warn', **kw), **kw)
+
+
+  @staticmethod
+  def Debug(*a, logger=logger, **kw): logger.debug(msg=dpcp(*a, conditional=False, severity='Debug', **kw), **kw)
+
+
+  @staticmethod
+  def Dump(filename, data={}):
+    """ Saves data object to yml file in trace folder """
+    if '.' not in filename or not filename.endswith('.yml'): filename += '.yml'  
+    if '/' not in filename: filename = Logger.trace_folder + '/' + filename
+    dict_to_yml(filename=filename, data=data)
+
+
+  # def create_logger(self, name): return self.logger.getChild(name)
+
+
 # endregion
 
 
