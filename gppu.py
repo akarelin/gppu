@@ -7,11 +7,9 @@ import logging
 from typing import TypeVar, TypeAlias, Union, Callable, Any, Literal, List, Optional, Tuple, Dict
 from typing import overload, get_origin, get_args
 
-olist: TypeAlias = list | None
-oint: TypeAlias = int | None
-odict: TypeAlias = dict | None
-ostr: TypeAlias = str | None
-T = TypeVar('T')
+# T = TypeVar('T')
+# KT = TypeVar('KT')
+# VT = TypeVar('VT')
 
 from string import Template
 
@@ -33,7 +31,7 @@ def safe_int(o, default: int = 0) -> int:
   v = safe_float(o, default)
   if v: return int(v)
   else: return default
-def safe_float(o, default: Optional[float] = 0.0) -> Optional[float]:
+def safe_float(o, default: float = 0.0) -> float:
   if o is None: return default
   if isinstance(o, str):
     o = o.removesuffix("°c")
@@ -55,7 +53,7 @@ def safe_isinstance(o: object, typ: type, default: bool = False) -> bool:
 
 # region Dict utils: deepget, dict_all_paths
 deepdict = lambda: defaultdict(deepdict)
-def deepget(path: str, d: dict, default=None):
+def deepget(path: str, d: dict, default: Any = None) -> Any:
   if '/' in path and path not in d.keys():
     _ = dict(d)
     for pp in path.split('/'):
@@ -65,19 +63,19 @@ def deepget(path: str, d: dict, default=None):
   return d.get(path, default)
 
 
-def deepget_int(path: str, d: dict, default: oint = None) -> oint:
+def deepget_int(path: str, d: dict, default: Optional[int]) -> Optional[int]:
   """ Returns int at path, or default if not found """
   _ = deepget(path, d, default)
   return _ if isinstance(_, int) else default
 
 
-def deepget_list(path: str, d: dict, default: olist = None) -> olist:
+def deepget_list(path: str, d: dict, default: list = []) -> list:
   """ Returns list at path, or default if not found """
   _ = deepget(path, d, default)
   return _ if isinstance(_, list) else default
 
 
-def deepget_dict(path: str, d: dict, default: odict = None) -> odict:
+def deepget_dict(path: str, d: dict, default: dict = {}) -> dict:
   """ Returns dict at path, or default if not found """
   _ = deepget(path, d, default)
   return _ if isinstance(_, dict) else default
@@ -320,7 +318,7 @@ def _tracer(tracer: Optional[Callable[..., Any]] = None, action: Optional[Tracer
 # xx y2list, y2path and y2slug                                                              
 # xx                                                                                        
 """ y2list-based: y2path, y2slug"""
-def any2list(o, token: ostr = None) -> list:
+def any2list(o, token: Optional[str] = None) -> list:
   result = []
   if o:
     if hasattr(o, 'data'): o = o.data
@@ -356,9 +354,9 @@ class y2list(UserList):
 
 
   @property
-  def head(self) -> ostr: return self.data[0] if len(self.data) > 0 else None
+  def head(self) -> Optional[str]: return self.data[0] if len(self.data) > 0 else None
   @property
-  def tail(self) -> ostr: return self.data[-1] if len(self.data) > 0 else None
+  def tail(self) -> Optional[str]: return self.data[-1] if len(self.data) > 0 else None
 
 
   def endswith(self, ix) -> bool:
@@ -395,8 +393,8 @@ class y2list(UserList):
 
 
   def discard(self, element): self.data = [e for e in self.data if not e == element]
-  def pophead(self) -> ostr: return self.data.pop(0) if len(self.data) > 0 else None
-  def poptail(self) -> ostr: return self.data.pop(-1) if len(self.data) > 0 else None
+  def pophead(self) -> Optional[str]: return self.data.pop(0) if len(self.data) > 0 else None
+  def poptail(self) -> Optional[str]: return self.data.pop(-1) if len(self.data) > 0 else None
 
 
   def popsuffix(self, ix):
@@ -438,7 +436,9 @@ class y2slug(y2list):
 
 
 class y2eid:
-  def __init__(self, o=None, ns=None, **kwargs):
+  ns: str
+
+  def __init__(self, o=None, ns: Optional[str] = None, **kwargs):
     if not o: return
     if isinstance(o, y2eid): s = str(o)
     elif isinstance(o, dict): s = str(o.get('entity_id',""))
@@ -448,9 +448,15 @@ class y2eid:
     elif hasattr(o, 'seid'): s = o.seid
     else: raise ValueError
 
-    self.ns = ns
     if '.' in s: self.domain, s = s.split('.',1)
-    if '@' in s: s, self.ns = s.rsplit('@',1)
+    if '@' in s: 
+      if ns: raise ValueError(f"Cannot set ns twice: {self.ns} {s}")
+      s, self.ns = s.rsplit('@',1)
+
+    if not self.ns:
+      if ns: self.ns = ns
+      else: raise ValueError(f"Missing namespace: {o} {ns}")
+
     self.slug = y2slug(s)
     for k in ['tail', 'head']: setattr(self, k, getattr(self.slug, k))
 
