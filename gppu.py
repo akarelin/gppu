@@ -352,7 +352,7 @@ class Logger:
   #   logger.debug(dpcp(*a, rules=TRACE_RULES, **kw), **kw)
 
   @staticmethod
-  def Trace(*a, logger=logger, **kw): logger.debug(dpcp(*a, rules={}, **kw), **kw)
+  def Trace(*a, logger=logger, **kw): logger.debug(dpcp(*a, rules=Logger.trace_rules, **kw), **kw)
 
 
   @staticmethod
