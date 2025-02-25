@@ -16,7 +16,7 @@ from string import Template
 from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
-VER_GPPU_BASE = '2.13.0'
+VER_GPPU_BASE = '2.5.0'
 VER_GPPU_BUILD = '250213'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
@@ -211,6 +211,50 @@ def dict_from_yml(filename:str):
 # endregion
 
 
+# region YData
+PROHIBITED_ATTRS = ['data']
+ALLOWED_ATTRS = []
+PROHIBITED_TYPES = [Callable]
+def _get_all_annotations(cls): return [(n, t) for c in cls.mro() if hasattr(c,'__annotations__') for n, t in c.__annotations__.items() if n not in PROHIBITED_ATTRS and t not in PROHIBITED_TYPES]
+
+# ==                              YData                                           
+class YData(UserDict):
+  """
+  YData is a dict that allows access to dict elements as properties.
+  Only elements returned by _get_all_annotations cam be used as properties. 
+  YData dynamically adds getter and setter for annotated properties that point to main dict.
+  """
+
+  def __init_subclass__(cls, **kw) -> None:
+    super().__init_subclass__(**kw)
+    mro = [(n, t) for n, t in _get_all_annotations(cls) \
+            if n in ALLOWED_ATTRS or \
+              (n[0] not in "_" and n not in PROHIBITED_ATTRS and t not in PROHIBITED_TYPES)]
+    for aname, atype in mro:
+      def getter(self, name=aname): 
+        if not (result := self.data.get(name)):
+          if atype == 'str': result = ''
+          elif atype == 'list': result = []
+          elif atype == 'dict': result = {}
+          elif atype == 'set': result = set()
+        return result
+      def setter(self, value, name=aname, type_hint=atype):
+        if value and not safe_isinstance(value, type_hint, default=True): 
+          raise TypeError(f"Expected type {type_hint} for {name}, got {type(value)} instead.")
+        
+        if not hasattr(self, 'data'): self.data = {}
+        self.data[name] = value
+      setattr(cls, aname, property(getter, setter))
+
+
+  def __init__(self, *a, **kw):
+    data = kw.pop('data', {})
+    if isinstance(data, str): data = {'data': data}
+    self.data = kw | data
+
+
+# endregion
+
 # region Templates
 def dict_template_populate(o, data: dict = {}, excludes:list = []) -> Any:
   """ 
@@ -338,6 +382,7 @@ def Trace(*a, **kw): logger.debug(dpcp(*a, rules={}, **kw), **kw)
 
 # = logging.getLogger('gppu')
 
+# >>          Static Logger               
 class Logger:
   trace_folder = ''
   log_folder = ''
@@ -381,6 +426,34 @@ class Logger:
 
   # def create_logger(self, name): return self.logger.getChild(name)
 
+# ]]           Logger as mixin        
+class _Logger:
+  _logger: logging.Logger
+  _trace_rules: dict
+  _trace_folder: str
+
+
+  def Trace(self, *a, **kw): self._logger.debug(dpcp(*a, rules=self._trace_rules, **kw), **kw)
+  def Debug(self, *a, **kw): self._logger.debug(msg=dpcp(*a, conditional=False, severity='Debug', **kw), **kw)
+  def Info(self, *a, **kw): self._logger.info(dpcp(*a, conditional=False, severity='Info', **kw), **kw)
+  def Warn(self, *a, **kw): self._logger.warning(msg=dpcp(*a, conditional=False, severity='Warn', **kw), **kw)
+  def Error(self, *a, **kw): self._logger.error(msg=dpcp(*a, conditional=False, severity='Error', **kw), **kw)
+
+
+  async def Dump(self, filename: str, data: dict = {}):
+    """ Saves data object to yml file in trace folder """
+    if '.' not in filename or not filename.endswith('.yml'): filename += '.yml'  
+    if '/' not in filename: filename = Logger.trace_folder + '/' + filename
+    dict_to_yml(filename=filename, data=data)
+
+
+  def __init__(self, *a, **kw) -> None:
+    name = kw.get('name', 'gppu_default')
+    logger = kw.get('logging', Logger.logger)
+    self._logger = logger.getChild(name)
+
+    self._trace_rules = kw.get('trace_rules', {})
+    self._trace_folder = kw.get('trace_folder', Logger.trace_folder)
 
 # endregion
 
