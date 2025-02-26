@@ -20,6 +20,13 @@ VER_GPPU_BASE = '2.5.0'
 VER_GPPU_BUILD = '250213'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
+# region async
+import asyncio
+EVENT_LOOP = asyncio.new_event_loop()
+asyncio.set_event_loop(EVENT_LOOP)
+# endregion
+
+
 # region Safe typecasting
 def safe_list(o) -> list:
   result = []
@@ -39,15 +46,19 @@ def safe_float(o, default: float = 0.0) -> float:
   try: v = float(o)
   except: v = default
   return v
-def safe_isinstance(o: object, typ: type, default: bool = False) -> bool:
+def safe_isinstance(o: object, typ: type | str, default: bool = False) -> bool:
   """ Safe version of isinstance. Use with default=True to be more permissive """
-  if typ in {Any}: return True
-  problematic = {Union, TypeVar}
-  safe = {int, float, str, dict, list}
-  if typ in problematic: return default 
-  if set(get_args(typ)) - safe: return default # ! Unsafe type detected
-  if get_origin(typ) in problematic: return default
-  return isinstance(o, typ)
+  if isinstance(typ, str):
+    otype = str(type(o)).split("'")[1].rpartition('.')[2]
+    return otype == typ
+  else:
+    if typ in {Any}: return True
+    problematic = {Union, TypeVar}
+    safe = {int, float, str, dict, list}
+    if typ in problematic: return default 
+    if set(get_args(typ)) - safe: return default # ! Unsafe type detected
+    if get_origin(typ) in problematic: return default
+    return isinstance(o, typ)
 # endregion
 
 
@@ -212,7 +223,7 @@ def dict_from_yml(filename:str):
 
 
 # region YData
-PROHIBITED_ATTRS = ['data']
+PROHIBITED_ATTRS = ['data', 'AD', 'yapi', 'adapi', 'app']
 ALLOWED_ATTRS = []
 PROHIBITED_TYPES = [Callable]
 def _get_all_annotations(cls): return [(n, t) for c in cls.mro() if hasattr(c,'__annotations__') for n, t in c.__annotations__.items() if n not in PROHIBITED_ATTRS and t not in PROHIBITED_TYPES]
@@ -251,6 +262,7 @@ class YData(UserDict):
     data = kw.pop('data', {})
     if isinstance(data, str): data = {'data': data}
     self.data = kw | data
+    # print(f"YData __init__ finished: {self.data}")
 
 
 # endregion
@@ -440,7 +452,7 @@ class _Logger:
   def Error(self, *a, **kw): self._logger.error(msg=dpcp(*a, conditional=False, severity='Error', **kw), **kw)
 
 
-  async def Dump(self, filename: str, data: dict = {}):
+  async def Dump(self, filename: str, data: dict | list):
     """ Saves data object to yml file in trace folder """
     if '.' not in filename or not filename.endswith('.yml'): filename += '.yml'  
     if '/' not in filename: filename = Logger.trace_folder + '/' + filename
@@ -448,6 +460,8 @@ class _Logger:
 
 
   def __init__(self, *a, **kw) -> None:
+    # print(f"_Logger __init__ called: {a} {kw}")
+
     name = kw.get('name', 'gppu_default')
     logger = kw.get('logging', Logger.logger)
     self._logger = logger.getChild(name)
@@ -779,7 +793,7 @@ def dpcp(*a: Any,
   return pcp(*_, **kw)
 
 
-def _colorize_log(msg, level=None, *args):
+def _colorize_log(msg, level=None, *args) -> str:
   if isinstance(msg, tuple): msg = _colorize_list(msg) # type: ignore
   elif level:
     if level in ['CRITICAL', 'ERROR']: c1, c2 = 'BR', 'BRIGHT'
