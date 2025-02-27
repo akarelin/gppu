@@ -402,12 +402,6 @@ class Logger:
   trace_rules: dict = {}
   logger = logger
 
-  # @staticmethod
-  # def Trace(*a, logger=logger, **kw): 
-  #   global TRACE_RULES
-  #   rules = TRACE_RULES or {}
-  #   logger.debug(dpcp(*a, rules=TRACE_RULES, **kw), **kw)
-
   @staticmethod
   def Trace(*a, logger=logger, **kw): logger.debug(dpcp(*a, rules=Logger.trace_rules, **kw), **kw)
 
@@ -436,8 +430,6 @@ class Logger:
     dict_to_yml(filename=filename, data=data)
 
 
-  # def create_logger(self, name): return self.logger.getChild(name)
-
 # ]]           Logger as mixin        
 class _Logger:
   _logger: logging.Logger
@@ -460,8 +452,6 @@ class _Logger:
 
 
   def __init__(self, *a, **kw) -> None:
-    # print(f"_Logger __init__ called: {a} {kw}")
-
     name = kw.get('name', 'gppu_default')
     logger = kw.get('logging', Logger.logger)
     self._logger = logger.getChild(name)
