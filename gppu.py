@@ -4,7 +4,7 @@ import re
 import inspect
 import logging
 
-from typing import TypeVar, TypeAlias, Union, Callable, Any, Literal, List, Optional, Tuple, Dict
+from typing import TypeVar, TypeAlias, Union, Callable, Any, Literal, List, Optional, Tuple, Dict, Protocol
 from typing import overload, get_origin, get_args
 
 # T = TypeVar('T')
@@ -258,10 +258,25 @@ class YData(UserDict):
       setattr(cls, aname, property(getter, setter))
 
 
-  def __init__(self, *a, **kw):
-    data = kw.pop('data', {})
+  def from_dict(self, data: dict | str) -> None:
     if isinstance(data, str): data = {'data': data}
-    self.data = kw | data
+    self.data.update(data)
+
+  # def from_dict(self, data: dict, 
+  #               prohibited_attrs: list[str] = PROHIBITED_ATTRS, 
+  #               allowed_attrs: list[str] = ALLOWED_ATTRS,
+  #               prohibited_types: list = PROHIBITED_TYPES) -> None:
+  #   self._prohibited_attrs = prohibited_attrs
+  #   self._allowed_attrs = allowed_attrs
+  #   self._prohibited_types = prohibited_types
+
+  def __init__(self, *a, **kw):
+    if 'data' in kw: self.from_dict(kw['data'])
+    elif kw: self.from_dict(kw)
+    else: raise ValueError("No data provided to YData")
+    # data = kw.pop('data', {})
+    # if isinstance(data, str): data = {'data': data}
+    # self.data = kw | data
     # print(f"YData __init__ finished: {self.data}")
 
 
@@ -431,7 +446,21 @@ class Logger:
 
 
 # ]]           Logger as mixin        
-class _Logger:
+class _proto_Logger(Protocol):
+  _logger: logging.Logger
+  _trace_rules: dict
+  _trace_folder: str
+
+  def Trace(self, *a, **kw): ...
+  def Debug(self, *a, **kw): ...
+  def Info(self, *a, **kw): ...
+  def Warn(self, *a, **kw): ...
+  def Error(self, *a, **kw): ...
+
+  async def Dump(self, data: dict | list, filename: str): ...    
+
+
+class _Logger(_proto_Logger):
   _logger: logging.Logger
   _trace_rules: dict
   _trace_folder: str
@@ -444,7 +473,7 @@ class _Logger:
   def Error(self, *a, **kw): self._logger.error(msg=dpcp(*a, conditional=False, severity='Error', **kw), **kw)
 
 
-  async def Dump(self, filename: str, data: dict | list):
+  async def Dump(self, data: dict | list, filename: str):
     """ Saves data object to yml file in trace folder """
     if '.' not in filename or not filename.endswith('.yml'): filename += '.yml'  
     if '/' not in filename: filename = Logger.trace_folder + '/' + filename
@@ -458,6 +487,8 @@ class _Logger:
 
     self._trace_rules = kw.get('trace_rules', {})
     self._trace_folder = kw.get('trace_folder', Logger.trace_folder)
+
+
 
 # endregion
 
