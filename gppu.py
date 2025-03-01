@@ -260,7 +260,11 @@ class YData(UserDict):
 
   def from_dict(self, data: dict | str) -> None:
     if isinstance(data, str): data = {'data': data}
-    self.data.update(data)
+    if isinstance(getattr(self, 'data', None), dict): 
+      self.data.update(data)
+    else: 
+      self.data = data
+    
 
   # def from_dict(self, data: dict, 
   #               prohibited_attrs: list[str] = PROHIBITED_ATTRS, 
