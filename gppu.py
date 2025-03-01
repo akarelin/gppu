@@ -16,8 +16,8 @@ from string import Template
 from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
-VER_GPPU_BASE = '2.5.0'
-VER_GPPU_BUILD = '250213'
+VER_GPPU_BASE = '2.5.1'
+VER_GPPU_BUILD = '250301'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region async
@@ -258,12 +258,16 @@ class YData(UserDict):
       setattr(cls, aname, property(getter, setter))
 
 
-  def from_dict(self, data: dict | str) -> None:
+  def from_dict(self, data: dict | str = {}) -> None:
     if isinstance(data, str): data = {'data': data}
-    if isinstance(getattr(self, 'data', None), dict): 
-      self.data.update(data)
-    else: 
-      self.data = data
+    UserDict.__init__(self, data)
+
+    # if hasattr(self, 'data'): 
+    #   if isinstance(self.data, dict):
+    #     self.data.update(data)
+
+  
+#    self.data = data
     
 
   # def from_dict(self, data: dict, 
@@ -277,7 +281,7 @@ class YData(UserDict):
   def __init__(self, *a, **kw):
     if 'data' in kw: self.from_dict(kw['data'])
     elif kw: self.from_dict(kw)
-    else: raise ValueError("No data provided to YData")
+    else: self.from_dict(data={})
     # data = kw.pop('data', {})
     # if isinstance(data, str): data = {'data': data}
     # self.data = kw | data
