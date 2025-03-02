@@ -1,3 +1,4 @@
+from __future__ import annotations
 import pprint
 import yaml
 import re
@@ -5,7 +6,7 @@ import inspect
 import logging
 
 from typing import TypeVar, TypeAlias, Union, Callable, Any, Literal, List, Optional, Tuple, Dict, Protocol
-from typing import overload, get_origin, get_args
+from typing import overload, get_origin, get_args, get_type_hints
 
 # T = TypeVar('T')
 # KT = TypeVar('KT')
@@ -16,7 +17,7 @@ from string import Template
 from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
-VER_GPPU_BASE = '2.5.1'
+VER_GPPU_BASE = '2.5.2'
 VER_GPPU_BUILD = '250301'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
@@ -222,73 +223,6 @@ def dict_from_yml(filename:str):
 # endregion
 
 
-# region YData
-PROHIBITED_ATTRS = ['data', 'AD', 'yapi', 'adapi', 'app']
-ALLOWED_ATTRS = []
-PROHIBITED_TYPES = [Callable]
-def _get_all_annotations(cls): return [(n, t) for c in cls.mro() if hasattr(c,'__annotations__') for n, t in c.__annotations__.items() if n not in PROHIBITED_ATTRS and t not in PROHIBITED_TYPES]
-
-# ==                              YData                                           
-class YData(UserDict):
-  """
-  YData is a dict that allows access to dict elements as properties.
-  Only elements returned by _get_all_annotations cam be used as properties. 
-  YData dynamically adds getter and setter for annotated properties that point to main dict.
-  """
-
-  def __init_subclass__(cls, **kw) -> None:
-    super().__init_subclass__(**kw)
-    mro = [(n, t) for n, t in _get_all_annotations(cls) \
-            if n in ALLOWED_ATTRS or \
-              (n[0] not in "_" and n not in PROHIBITED_ATTRS and t not in PROHIBITED_TYPES)]
-    for aname, atype in mro:
-      def getter(self, name=aname): 
-        if not (result := self.data.get(name)):
-          if atype == 'str': result = ''
-          elif atype == 'list': result = []
-          elif atype == 'dict': result = {}
-          elif atype == 'set': result = set()
-        return result
-      def setter(self, value, name=aname, type_hint=atype):
-        if value and not safe_isinstance(value, type_hint, default=True): 
-          raise TypeError(f"Expected type {type_hint} for {name}, got {type(value)} instead.")
-        
-        if not hasattr(self, 'data'): self.data = {}
-        self.data[name] = value
-      setattr(cls, aname, property(getter, setter))
-
-
-  def from_dict(self, data: dict | str = {}) -> None:
-    if isinstance(data, str): data = {'data': data}
-    UserDict.__init__(self, data)
-
-    # if hasattr(self, 'data'): 
-    #   if isinstance(self.data, dict):
-    #     self.data.update(data)
-
-  
-#    self.data = data
-    
-
-  # def from_dict(self, data: dict, 
-  #               prohibited_attrs: list[str] = PROHIBITED_ATTRS, 
-  #               allowed_attrs: list[str] = ALLOWED_ATTRS,
-  #               prohibited_types: list = PROHIBITED_TYPES) -> None:
-  #   self._prohibited_attrs = prohibited_attrs
-  #   self._allowed_attrs = allowed_attrs
-  #   self._prohibited_types = prohibited_types
-
-  def __init__(self, *a, **kw):
-    if 'data' in kw: self.from_dict(kw['data'])
-    elif kw: self.from_dict(kw)
-    else: self.from_dict(data={})
-    # data = kw.pop('data', {})
-    # if isinstance(data, str): data = {'data': data}
-    # self.data = kw | data
-    # print(f"YData __init__ finished: {self.data}")
-
-
-# endregion
 
 # region Templates
 def dict_template_populate(o, data: dict = {}, excludes:list = []) -> Any:
@@ -921,4 +855,101 @@ class PrettyColoredHandler(logging.StreamHandler):
 # logger = logging.getLogger(__name__)
 # logger.addHandler(logging.FileHandler(f"{__name__}.log"))
 # logger.addHandler(logging.StreamHandler())
+# endregion
+
+
+# region YData
+PROHIBITED_ATTRS = ['data', 'AD', 'yapi', 'adapi', 'app']
+ALLOWED_ATTRS = ['parent']
+ALLOWED_TYPES = {str, int, float, bool, dict, list, set, y2eid, y2topic}
+PROHIBITED_TYPES = {Callable}
+PROHIBITED_TYPE_NAMES = ['_Phase']
+
+# stringify_typehints = lambda s: [s] if '|' not in s and '[' not in s else s.strip('[]').split('|') if '[' in s else s.split('|')
+# check_attr = lambda n, t:  
+#  (n in ALLOWED_ATTRS or n not in PROHIBITED_ATTRS and n[0] not in "_" and 
+#                             (t in ALLOWED_TYPES or t in {t.__name__ for t in ALLOWED_TYPES}))
+# t: n in ALLOWED_ATTRS or n not in PROHIBITED_TYPES or (n[0] not in "_" and n not in PROHIBITED_ATTRS) and (t in ALLOWED_TYPES or t in {t.__name__ for t in ALLOWED_TYPES})
+# check_type = lambda t: t.__name__ if isinstance(t, type) and t in ALLOWED_TYPES else t
+
+
+# def _get_all_annotations(cls) -> list: return [(n, t) for n, t in get_type_hints(cls).items() if check_attr(n, t)]  
+def _get_all_annotations(cls) -> list:
+  def check_attr(n, t) -> bool:
+    if n in ALLOWED_ATTRS: return True
+    if n in PROHIBITED_ATTRS or n[0] == '_': return False
+    if t in ALLOWED_TYPES: return True
+    if t in {t.__name__ for t in ALLOWED_TYPES}: return True
+    if getattr(t, '__name__', None) in ALLOWED_TYPES: return True
+    return False
+
+  _ = [(n, t) for c in cls.mro() if hasattr(c,'__annotations__') for n, t in c.__annotations__.items() if check_attr(n, t)]
+  # _t2 = [(n, t) for n, t in _t1 if set(t) & {t.__name__ for t in ALLOWED_TYPES}]
+  return _
+
+
+# ==                              YData                                           
+class YData(UserDict):
+  """
+  YData is a dict that allows access to dict elements as properties.
+  Only elements returned by _get_all_annotations cam be used as properties. 
+  YData dynamically adds getter and setter for annotated properties that point to main dict.
+  """
+
+  _mro: list[tuple[str, str]]
+  def __init_subclass__(cls, **kw) -> None:
+    super().__init_subclass__(**kw)
+    # mro = [(n, t) for n, t in _get_all_annotations(cls) \
+    #         if n in ALLOWED_ATTRS or \
+    #           (n[0] not in "_" and n not in PROHIBITED_ATTRS and t not in PROHIBITED_TYPES)]
+    mro = _get_all_annotations(cls)
+    cls._mro = mro
+    print(f"\n{cls.__name__} {mro}\n")
+    for aname, atype in mro:
+      def getter(self, name=aname, type_hint=atype): 
+        if not hasattr(self, 'data'): raise RuntimeError(f"YData object {name} {type_hint} not initialized'")
+        if not (result := self.data.get(name)):
+          if type_hint == 'str': result = ''
+          elif type_hint == 'list': result = []
+          elif type_hint == 'dict': result = {}
+          elif type_hint == 'set': result = set()
+        return result
+      def setter(self, value, name=aname, type_hint=atype):
+        if not hasattr(self, 'data'): 
+          raise RuntimeError(f"YData object not initialized'")
+
+        if value and not safe_isinstance(value, type_hint, default=True): 
+          raise TypeError(f"Expected type {type_hint} for {name}, got {type(value)} instead.")
+        
+        self.data[name] = value
+      setattr(cls, aname, property(getter, setter))
+
+
+  def from_dict(self, data: dict | str = {}) -> None:
+    if isinstance(data, str): data = {'data': data}
+    self.data = data
+    # UserDict.__init__(self, data)
+
+    # if hasattr(self, 'data'): 
+    #   if isinstance(self.data, dict):
+    #     self.data.update(data)
+
+  
+#    self.data = data
+    
+
+  # def from_dict(self, data: dict, 
+  #               prohibited_attrs: list[str] = PROHIBITED_ATTRS, 
+  #               allowed_attrs: list[str] = ALLOWED_ATTRS,
+  #               prohibited_types: list = PROHIBITED_TYPES) -> None:
+  #   self._prohibited_attrs = prohibited_attrs
+  #   self._allowed_attrs = allowed_attrs
+  #   self._prohibited_types = prohibited_types
+
+  def __init__(self, *a, **kw):
+    if 'data' in kw: self.from_dict(kw['data'])
+    elif kw: self.from_dict(kw)
+    else: self.from_dict(data={})
+
+
 # endregion
