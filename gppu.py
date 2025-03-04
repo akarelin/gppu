@@ -5,7 +5,8 @@ import re
 import inspect
 import logging
 
-from typing import TypeVar, TypeAlias, Union, Callable, Any, Literal, List, Optional, Tuple, Dict, Protocol
+from typing import Union, Callable, Any, Literal, List, Optional, Tuple, Dict, Protocol, DefaultDict, NoReturn
+from typing import TypeVar, TypeAlias
 from typing import overload, get_origin, get_args, get_type_hints
 
 # T = TypeVar('T')
@@ -17,8 +18,8 @@ from string import Template
 from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
-VER_GPPU_BASE = '2.5.2'
-VER_GPPU_BUILD = '250301'
+VER_GPPU_BASE = '2.5.3'
+VER_GPPU_BUILD = '250304'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region async
@@ -64,7 +65,9 @@ def safe_isinstance(o: object, typ: type | str, default: bool = False) -> bool:
 
 
 # region Dict utils: deepget, dict_all_paths
-deepdict = lambda: defaultdict(deepdict)
+DeepDict = DefaultDict[str, "DeepDict"]
+deepdict: Callable[[], DeepDict] = lambda: defaultdict(deepdict)
+# deepdict = lambda: defaultdict(deepdict)
 def deepget(path: str, d: dict, default: Any = None) -> Any:
   if '/' in path and path not in d.keys():
     _ = dict(d)
@@ -109,7 +112,7 @@ def dict_element_append(d: dict, key: str, value, unique=False) -> None:
   elif isinstance(d[key], list):
     if unique and value in d[key]: pass
     else: d[key] += [value]
-  else: raise Exception(f"Unrecognized type: {type(d[key])}")
+  else: raise ValueError(f"Unrecognized type: {type(d[key])}")
 
 
 def dict_all_paths(d: dict) -> list:
@@ -196,9 +199,9 @@ def dict_to_yml(filename:str, data=None, sort_keys=False):
   yaml.add_representer(UserDict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(set, yaml.representer.Representer.represent_list)
   yaml.add_representer(tuple, _tuple_representer)
-  with open(filename,'w+') as f:
+  with open(filename, 'w+') as f:
     try: yaml.dump(redata, f, indent=2, Dumper=IndentedListDumper, sort_keys=False, width=2147483647)
-    except Exception as err:
+    except RuntimeError as err:
       error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(redata)}\n\n"
       with open(filename+'_error.txt','w+') as ferr: ferr.write(error)
 
@@ -388,7 +391,7 @@ class Logger:
 
 
 # ]]           Logger as mixin        
-class _proto_Logger(Protocol):
+class _proto_Logger():
   _logger: logging.Logger
   _trace_rules: dict
   _trace_folder: str
@@ -399,7 +402,7 @@ class _proto_Logger(Protocol):
   def Warn(self, *a, **kw): ...
   def Error(self, *a, **kw): ...
 
-  async def Dump(self, data: dict | list, filename: str): ...    
+  async def Dump(self, data: dict | list, filename: str): ...   
 
 
 class _Logger(_proto_Logger):
@@ -439,8 +442,8 @@ class _Logger(_proto_Logger):
 # xx                                                                                        
 # xx y2list, y2path and y2slug                                                              
 # xx                                                                                        
-""" y2list-based: y2path, y2slug"""
 def any2list(o, token: Optional[str] = None) -> list:
+  """ y2list-based: y2path, y2slug"""
   result = []
   if o:
     if hasattr(o, 'data'): o = o.data
@@ -723,7 +726,7 @@ def dpcp(*a: Any,
 
   if not conditional and rules: conditional = True
   frame = inspect.currentframe()
-  if frame is None: return
+  if frame is None: return None
 
   frame = frame.f_back
   while frame and frame.f_back:
@@ -862,6 +865,7 @@ class PrettyColoredHandler(logging.StreamHandler):
 PROHIBITED_ATTRS = ['data', 'AD', 'yapi', 'adapi', 'app']
 ALLOWED_ATTRS = ['parent']
 ALLOWED_TYPES = {str, int, float, bool, dict, list, set, y2eid, y2topic}
+ALLOWED_TYPES_STR = {t.__name__ for t in ALLOWED_TYPES}
 PROHIBITED_TYPES = {Callable}
 PROHIBITED_TYPE_NAMES = ['_Phase']
 
@@ -879,12 +883,11 @@ def _get_all_annotations(cls) -> list:
     if n in ALLOWED_ATTRS: return True
     if n in PROHIBITED_ATTRS or n[0] == '_': return False
     if t in ALLOWED_TYPES: return True
-    if t in {t.__name__ for t in ALLOWED_TYPES}: return True
-    if getattr(t, '__name__', None) in ALLOWED_TYPES: return True
+    if t in ALLOWED_TYPES_STR: return True
+    if getattr(t, '__name__', None) in ALLOWED_TYPES_STR: return True
     return False
 
   _ = [(n, t) for c in cls.mro() if hasattr(c,'__annotations__') for n, t in c.__annotations__.items() if check_attr(n, t)]
-  # _t2 = [(n, t) for n, t in _t1 if set(t) & {t.__name__ for t in ALLOWED_TYPES}]
   return _
 
 
@@ -904,8 +907,11 @@ class YData(UserDict):
     #           (n[0] not in "_" and n not in PROHIBITED_ATTRS and t not in PROHIBITED_TYPES)]
     mro = _get_all_annotations(cls)
     cls._mro = mro
-    print(f"\n{cls.__name__} {mro}\n")
+    # Trace("DG", f"\n{cls.__name__} {mro}\n")
+    global Trace
+    Trace("DG", cls.__name__, 'DIM', mro)
     for aname, atype in mro:
+      if isinstance(getattr(cls, aname, None), property): continue
       def getter(self, name=aname, type_hint=atype): 
         if not hasattr(self, 'data'): raise RuntimeError(f"YData object {name} {type_hint} not initialized'")
         if not (result := self.data.get(name)):
@@ -915,8 +921,7 @@ class YData(UserDict):
           elif type_hint == 'set': result = set()
         return result
       def setter(self, value, name=aname, type_hint=atype):
-        if not hasattr(self, 'data'): 
-          raise RuntimeError(f"YData object not initialized'")
+        if not hasattr(self, 'data'): raise RuntimeError(f"YData {cls} object not initialized'")
 
         if value and not safe_isinstance(value, type_hint, default=True): 
           raise TypeError(f"Expected type {type_hint} for {name}, got {type(value)} instead.")
@@ -927,8 +932,8 @@ class YData(UserDict):
 
   def from_dict(self, data: dict | str = {}) -> None:
     if isinstance(data, str): data = {'data': data}
-    self.data = data
-    # UserDict.__init__(self, data)
+    # self.data = data
+    UserDict.__init__(self, data)
 
     # if hasattr(self, 'data'): 
     #   if isinstance(self.data, dict):
