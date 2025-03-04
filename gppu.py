@@ -391,7 +391,7 @@ class Logger:
 
 
 # ]]           Logger as mixin        
-class _proto_Logger():
+class _proto_Logger(Protocol):
   _logger: logging.Logger
   _trace_rules: dict
   _trace_folder: str
@@ -708,16 +708,16 @@ def pcp(*a: Union[str, List[Any], Tuple[Any, ...]], **kw: Any) -> str:
   return out
 
 
-remove_prefixes = lambda s, prefixes: next((s.removeprefix(prefix) for prefix in prefixes if s.startswith(prefix)), s)
 SHORTEN_BY_PREFIX = ['process_', '_cb_']
 IGNORE_FUNCTIONS = ['dpcp', 'trace', 'pcp', 'Trace']
 SEVERITY_COLORS = {'Error': 'WRED', 'Warn': 'WYELLOW', 'Info': 'WBLUE', 'Debug': 'GRAY4', None: 'WPURPLE'}
-def dpcp(*a: Any, 
-         conditional: Optional[bool] = None, 
-         rules: Dict[str, bool] = {}, 
-         no_prefix: bool=False, 
-         severity: Optional[str] = None, **kw: Any) -> Optional[str]:
+def dpcp(*a: Any,
+          conditional: Optional[bool] = None, 
+          rules: Dict[str, bool] = {}, 
+          no_prefix: bool=False, 
+          severity: Optional[str] = None, **kw: Any) -> Optional[str]:
   """ Version of pcp that adds info on where it was called from """
+  remove_prefixes = lambda s, prefixes: next((s.removeprefix(prefix) for prefix in prefixes if s.startswith(prefix)), s)  
   def is_traced(name : Optional[str] = None) -> bool:
     if not conditional: return True
 
@@ -738,15 +738,15 @@ def dpcp(*a: Any,
     if func_name not in IGNORE_FUNCTIONS: break
     func_name = remove_prefixes(func_name, SHORTEN_BY_PREFIX)
 
-  if frame is None: return
+  if frame is None: return None
 
-  if not is_traced(func_name): return 
+  if not is_traced(func_name): return None
   module = filename.rsplit('/', 1)[-1].rsplit('.', 1)[0]
-  if not is_traced(module) or not is_traced(f"{module}.{func_name}"): return
+  if not is_traced(module) or not is_traced(f"{module}.{func_name}"): return None
 
   if 'self' in frame.f_locals: 
-    if not is_traced(class_name := frame.f_locals["self"].__class__.__name__): return
-    if not is_traced(f"{class_name}.{func_name}"): return
+    if not is_traced(class_name := frame.f_locals["self"].__class__.__name__): return None
+    if not is_traced(f"{class_name}.{func_name}"): return None
     _ = ['GRAY1', f"{class_name}.", 'GRAY2', f".{func_name}"]
   else: _ = ['GRAY2', f".{func_name}"]
 
