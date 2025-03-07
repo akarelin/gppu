@@ -424,7 +424,7 @@ class _Logger(_proto_Logger):
     dict_to_yml(filename=filename, data=data)
 
 
-  def __init__(self, /, **kw) -> None:
+  def __init__(self, *a, **kw) -> None:
     name = kw.get('name', 'gppu_default')
     lgr = kw.get('logging', Logger.logger)
     self._logger = lgr.getChild(name)
@@ -890,9 +890,6 @@ class YData(UserDict):
   _mro: list[tuple[str, str]]
   def __init_subclass__(cls, **kw) -> None:
     super().__init_subclass__(**kw)
-    # mro = [(n, t) for n, t in _get_all_annotations(cls) \
-    #         if n in ALLOWED_ATTRS or \
-    #           (n[0] not in "_" and n not in PROHIBITED_ATTRS and t not in PROHIBITED_TYPES)]
     mro = _get_all_annotations(cls)
     cls._mro = mro
     Trace("DG", cls.__name__, 'DIM', mro)
