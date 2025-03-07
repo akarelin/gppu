@@ -875,7 +875,12 @@ def _get_all_annotations(cls) -> list:
     if getattr(t, '__name__', None) in ALLOWED_TYPES_STR: return True
     return False
 
-  _ = [(n, t) for c in cls.mro() if hasattr(c,'__annotations__') for n, t in c.__annotations__.items() if check_attr(n, t)]
+  def type_to_str(t):
+    if isinstance(t, str): return t
+    elif hasattr(t, '__name__'): return t.__name__
+    else: return str(t)
+
+  _ = [(n, type_to_str(t)) for c in cls.mro() if hasattr(c,'__annotations__') for n, t in c.__annotations__.items() if check_attr(n, t)]
   return _
 
 
@@ -892,7 +897,7 @@ class YData(UserDict):
     super().__init_subclass__(**kw)
     mro = _get_all_annotations(cls)
     cls._mro = mro
-    Trace("DG", cls.__name__, 'DIM', mro)
+    Trace("DG", cls.__name__, *[x for tup in mro for x in ['DIM', tup[1] + ':', 'INFO', tup[0]]])
     for aname, atype in mro:
       if isinstance(getattr(cls, aname, None), property): continue
       def getter(self, name=aname, type_hint=atype):
@@ -913,13 +918,9 @@ class YData(UserDict):
       setattr(cls, aname, property(getter, setter))
 
 
-  def from_dict(self, data: dict | str = {}) -> None:
-    if isinstance(data, str): data = {'data': data}
-    UserDict.__init__(self, data)
-
-
-  def __init__(self, /, **kw):
-    UserDict.__init__(**kw)
-
+  def __init__(self, *a, **kw):
+    super().__init__(kw.get('data', {}))
+  
+  
 
 # endregion
