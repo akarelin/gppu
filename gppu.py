@@ -7,6 +7,7 @@ import asyncio
 from typing import Union, Callable, Any, Literal, List, Optional, Tuple, Dict, Protocol, DefaultDict, NoReturn
 from typing import TypeVar, TypeAlias
 from typing import overload, get_origin, get_args, get_type_hints
+from typing import get_origin, get_args, Annotated
 from string import Template
 from collections import defaultdict, UserDict, UserList
 from datetime import datetime
@@ -14,8 +15,8 @@ from datetime import datetime
 import pprint
 import yaml
 
-VER_GPPU_BASE = '2.6.0'
-VER_GPPU_BUILD = '250304'
+VER_GPPU_BASE = '2.6.2'
+VER_GPPU_BUILD = '250309'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region async
@@ -675,6 +676,7 @@ class TColor(metaclass=_TColorHack):
   #WYELLOW = '0;37;43'     # White on Yellow (background)
   WYELLOW = '7;49;93'     # White on Yellow (background)
 
+COLORS = {k:v for k, v in TColor.__dict__.items() if k[0] != '_'}
 
 def pcp(*a: Union[str, List[Any], Tuple[Any, ...]], **kw: Any) -> str:
   """
@@ -775,12 +777,14 @@ def _colorize_list(l: List[Union[str, TColor]]) -> str:
   colorcode = None
 
   for e in [e for e in l if e]:
-    if isinstance(e, TColor): colorcode = e; continue
+    if str(e) in COLORS: colorcode = COLORS[e]; continue
+    # if isinstance(e, TColor): colorcode = TColor[e]; continue
     e = str(e)
     if e[0] in "./": separator = ''; e = e[1:]
     else: separator = ' '
 
-    if TColor[e]: colorcode = TColor[e]; continue
+    # if TColor[e]: colorcode = TColor[e]; continue
+    if e in COLORS: colorcode = COLORS[e]; continue
     elif colorcode: elem = _colorize(text=str(e), colorcode=colorcode) # type: ignore
     else: elem = str(e)
 
@@ -859,29 +863,29 @@ class PrettyColoredHandler(logging.StreamHandler):
 
 
 # region YData
-PROHIBITED_ATTRS = ['data', 'AD', 'yapi', 'adapi', 'app']
-ALLOWED_ATTRS = ['parent']
-ALLOWED_TYPES = {str, int, float, bool, dict, list, set, y2eid, y2topic}
-ALLOWED_TYPES_STR = {t.__name__ for t in ALLOWED_TYPES}
-PROHIBITED_TYPES = {Callable}
-PROHIBITED_TYPE_NAMES = ['Phase']
+# PROHIBITED_ATTRS = ['data', 'AD', 'yapi', 'adapi', 'parent']
+# # ALLOWED_ATTRS = []
+# ALLOWED_TYPES = {str, int, float, bool, dict, list, set, y2eid, y2topic}
+# ALLOWED_TYPES_STR = {t.__name__ for t in ALLOWED_TYPES}
+# PROHIBITED_TYPES = {Callable}
+# PROHIBITED_TYPE_NAMES = ['Phase']
 
-def _get_all_annotations(cls) -> list:
-  def check_attr(n, t) -> bool:
-    if n in ALLOWED_ATTRS: return True
-    if n in PROHIBITED_ATTRS or n[0] == '_': return False
-    if t in ALLOWED_TYPES: return True
-    if t in ALLOWED_TYPES_STR: return True
-    if getattr(t, '__name__', None) in ALLOWED_TYPES_STR: return True
-    return False
+# def _get_all_annotations(cls) -> list:
+#   def check_attr(n, t) -> bool:
+#     # if n in ALLOWED_ATTRS: return True
+#     if n in PROHIBITED_ATTRS or n[0] == '_': return False
+#     if t in ALLOWED_TYPES: return True
+#     if t in ALLOWED_TYPES_STR: return True
+#     if getattr(t, '__name__', None) in ALLOWED_TYPES_STR: return True
+#     return False
 
-  def type_to_str(t):
-    if isinstance(t, str): return t
-    elif hasattr(t, '__name__'): return t.__name__
-    else: return str(t)
+#   def type_to_str(t):
+#     if isinstance(t, str): return t
+#     elif hasattr(t, '__name__'): return t.__name__
+#     else: return str(t)
 
-  _ = [(n, type_to_str(t)) for c in cls.mro() if hasattr(c,'__annotations__') for n, t in c.__annotations__.items() if check_attr(n, t)]
-  return _
+#   _ = [(n, type_to_str(t)) for c in cls.mro() if hasattr(c,'__annotations__') for n, t in c.__annotations__.items() if check_attr(n, t)]
+#   return _
 
 
 # ==                              YData                                           
@@ -892,10 +896,44 @@ class YData(UserDict):
   YData dynamically adds getter and setter for annotated properties that point to main dict.
   """
 
+  PROHIBITED_ATTRS = ['data', 'AD', 'yapi', 'adapi']
+  ALLOWED_ATTRS = []
+  # ALLOWED_ATTRS = ['parent']
+  ALLOWED_TYPES = {str, int, float, bool, dict, list, set, y2eid, y2topic}
+  # ALLOWED_TYPES_STR = {t.__name__ for t in ALLOWED_TYPES}
+  PROHIBITED_TYPES = {Callable}
+  PROHIBITED_TYPE_NAMES = ['Phase']
+
+  @classmethod
+  def _get_all_annotations(cls) -> list:
+    """Return list of annotations that are allowed to be used as properties"""
+    def check_attr(n, t) -> bool:
+      if get_origin(t) is Annotated:
+        metadata = get_args(t)[1:]
+        if 'YData.ignore' in metadata:
+          return False
+        t = get_args(t)[0]      
+      if n in cls.ALLOWED_ATTRS: return True
+      if n in cls.PROHIBITED_ATTRS or n[0] == '_': return False
+      if t in cls.ALLOWED_TYPES: return True
+      if t in {t.__name__ for t in cls.ALLOWED_TYPES}: return True
+      if getattr(t, '__name__', None) in {t.__name__ for t in cls.ALLOWED_TYPES}: return True
+      return False
+
+    def type_to_str(t):
+      if isinstance(t, str): return t
+      elif hasattr(t, '__name__'): return t.__name__
+      else: return str(t)
+
+    _ = [(n, type_to_str(t)) for c in cls.mro() if hasattr(c,'__annotations__') 
+      for n, t in c.__annotations__.items() if check_attr(n, t)]
+
+    return _
+
   _mro: list[tuple[str, str]]
   def __init_subclass__(cls, **kw) -> None:
     super().__init_subclass__(**kw)
-    mro = _get_all_annotations(cls)
+    mro = cls._get_all_annotations()
     cls._mro = mro
     Trace("DG", cls.__name__, *[x for tup in mro for x in ['DIM', tup[1] + ':', 'INFO', tup[0]]])
     for aname, atype in mro:
@@ -919,7 +957,7 @@ class YData(UserDict):
 
 
   def __init__(self, *a, **kw):
-    super().__init__(kw.get('data', {}))
+    UserDict.__init__(kw.get('data', {}))
   
   
 
