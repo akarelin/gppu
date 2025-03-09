@@ -15,7 +15,7 @@ from datetime import datetime
 import pprint
 import yaml
 
-VER_GPPU_BASE = '2.6.2'
+VER_GPPU_BASE = '2.6.3'
 VER_GPPU_BUILD = '250309'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
@@ -889,6 +889,7 @@ class PrettyColoredHandler(logging.StreamHandler):
 
 
 # ==                              YData                                           
+import builtins
 class YData(UserDict):
   """
   YData is a dict that allows access to dict elements as properties.
@@ -940,12 +941,31 @@ class YData(UserDict):
       if isinstance(getattr(cls, aname, None), property): continue
       def getter(self, name=aname, type_hint=atype):
         if not hasattr(self, 'data'): raise RuntimeError(f"YData object {name} {type_hint} not initialized'")
-        if not (result := self.data.get(name)):
-          if type_hint == 'str': result = ''
-          elif type_hint == 'list': result = []
-          elif type_hint == 'dict': result = {}
-          elif type_hint == 'set': result = set()
-        return result
+        conv = getattr(builtins, type_hint, None) or globals().get(type_hint, None)
+        if conv is None: raise TypeError(f"Failed to get default for {name} of type {type_hint}: {e}")
+        if name not in self.data:
+          try:
+            default = conv()
+            self.data[name] = default
+            return default
+          except Exception as e:
+            raise TypeError(f"Failed to get default for {name} of type {type_hint}: {e}")
+        value = self.data[name]
+        if not isinstance(value, conv):
+          try:
+            converted = conv(value)
+            self.data[name] = converted
+            return converted
+          except Exception as e:
+            raise TypeError(f"Failed to convert {name} to {type_hint}: {e}")
+        return value
+        # if not (result := self.data.get(name, None)):
+        #   if type_hint == 'str': result = ''
+        #   elif type_hint == 'list': result = []
+        #   elif type_hint == 'dict': result = {}
+        #   elif type_hint == 'set': result = set()
+        #   self.data[name] = result
+        # return result
       def setter(self, value, name=aname, type_hint=atype):
         if not hasattr(self, 'data'): raise RuntimeError(f"YData {cls} object not initialized'")
 
@@ -958,6 +978,16 @@ class YData(UserDict):
 
   def __init__(self, *a, **kw):
     UserDict.__init__(kw.get('data', {}))
+    import builtins
+    for n, t in self._mro:
+      if n in self.data:
+        resolved = getattr(builtins, t, None) or globals().get(t, None)
+        if resolved is None:
+          raise TypeError(f"Type {t} for {n} is not defined")
+        try:
+          self.data[n] = resolved(self.data[n])
+        except Exception as e:
+          raise TypeError(f"Failed to convert {n} to {t}: {e}")      
   
   
 
