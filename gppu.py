@@ -974,7 +974,7 @@ class YData(UserDict):
           if isinstance(value, conv): break
         else:
           try:
-            converted = conv[0](value)
+            converted = convs[0](value)
             self.data[name] = converted
             return converted
           except Exception as e:
