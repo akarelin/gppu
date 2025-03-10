@@ -44,7 +44,7 @@ def safe_float(o, default: float = 0.0) -> float:
   try: v = float(o)
   except: v = default
   return v
-def safe_isinstance(o: object, typ: type | str | list, default: bool = False) -> bool:
+def safe_isinstance(o: object, typ: type | str | list[str], default: bool = False) -> bool: # type: ignore[return]
   """ Safe version of isinstance. Use with default=True to be more permissive """
   if not isinstance(typ, list): typ = list[typ]
   result = None
@@ -898,6 +898,47 @@ class PrettyColoredHandler(logging.StreamHandler):
 
 # ==                              YData                                           
 import builtins
+_TMRO = list[tuple[str, list[str]]]
+
+def _get_all_annotations(cls) -> _TMRO:
+  """Return list of annotations that are allowed to be used as properties"""
+  PROHIBITED_ATTRS = ['data', 'AD', 'yapi', 'adapi']
+  ALLOWED_ATTRS: list[str] = []
+  # ALLOWED_ATTRS = ['parent']
+  ALLOWED_TYPES = {str, int, float, bool, dict, list, set, y2eid, y2topic}
+  # ALLOWED_TYPES_STR = {t.__name__ for t in ALLOWED_TYPES}
+  PROHIBITED_TYPES = {Callable}
+  PROHIBITED_TYPE_NAMES = ['Phase']
+
+  def check_attr(n, t) -> bool:
+    if get_origin(t) is Annotated:
+      metadata = get_args(t)[1:]
+      if 'YData.ignore' in metadata:
+        return False
+      t = get_args(t)[0]      
+    if n in ALLOWED_ATTRS: return True
+    if n in PROHIBITED_ATTRS or n[0] == '_': return False
+    if t in ALLOWED_TYPES: return True
+    if t in {t.__name__ for t in ALLOWED_TYPES}: return True
+    if getattr(t, '__name__', None) in {t.__name__ for t in ALLOWED_TYPES}: return True
+    return False
+
+  def type_to_slist(t) -> list[str]:
+    if hasattr(t, '__name__'): t = t.__name__
+    if '|' in t:
+      result = [x.strip() for x in t.split('|')]
+    else:
+      result = [t]
+    return result
+
+  _ = [(n, ts) for c in cls.mro() if hasattr(c, '__annotations__')
+        for n, t in c.__annotations__.items()
+        for ts in [type_to_slist(t)]
+        if any(check_attr(n, t_str) for t_str in ts)]
+
+  return _
+
+
 class YData(UserDict):
   """
   YData is a dict that allows access to dict elements as properties.
@@ -905,49 +946,10 @@ class YData(UserDict):
   YData dynamically adds getter and setter for annotated properties that point to main dict.
   """
 
-  PROHIBITED_ATTRS = ['data', 'AD', 'yapi', 'adapi']
-  ALLOWED_ATTRS = []
-  # ALLOWED_ATTRS = ['parent']
-  ALLOWED_TYPES = {str, int, float, bool, dict, list, set, y2eid, y2topic}
-  # ALLOWED_TYPES_STR = {t.__name__ for t in ALLOWED_TYPES}
-  PROHIBITED_TYPES = {Callable}
-  PROHIBITED_TYPE_NAMES = ['Phase']
-
-  @classmethod
-  def _get_all_annotations(cls) -> list[tuple[str, list[str]]]:
-    """Return list of annotations that are allowed to be used as properties"""
-    def check_attr(n, t) -> bool:
-      if get_origin(t) is Annotated:
-        metadata = get_args(t)[1:]
-        if 'YData.ignore' in metadata:
-          return False
-        t = get_args(t)[0]      
-      if n in cls.ALLOWED_ATTRS: return True
-      if n in cls.PROHIBITED_ATTRS or n[0] == '_': return False
-      if t in cls.ALLOWED_TYPES: return True
-      if t in {t.__name__ for t in cls.ALLOWED_TYPES}: return True
-      if getattr(t, '__name__', None) in {t.__name__ for t in cls.ALLOWED_TYPES}: return True
-      return False
-
-    def type_to_slist(t) -> list[str]:
-      if hasattr(t, '__name__'): t = t.__name__
-      if '|' in t:
-        result = [x.strip() for x in t.split('|')]
-      else:
-        result = [t]
-      return result
-
-    _ = [(n, ts) for c in cls.mro() if hasattr(c, '__annotations__')
-          for n, t in c.__annotations__.items()
-          for ts in [type_to_slist(t)]
-          if any(check_attr(n, t_str) for t_str in ts)]
-
-    return _
-
-  _mro: list[tuple[str, str]]
+  _mro: _TMRO
   def __init_subclass__(cls, **kw) -> None:
     super().__init_subclass__(**kw)
-    mro = cls._get_all_annotations()
+    mro = _get_all_annotations(cls)
     cls._mro = mro
     Trace("DG", cls.__name__, *[x for tup in mro for x in ['DIM', '|'.join(tup[1]) + ':', 'INFO', tup[0]]])
     for aname, atype in mro:
@@ -981,13 +983,6 @@ class YData(UserDict):
             raise TypeError(f"Failed to convert {name} to {type_hint}: {e}")
 
         return value
-        # if not (result := self.data.get(name, None)):
-        #   if type_hint == 'str': result = ''
-        #   elif type_hint == 'list': result = []
-        #   elif type_hint == 'dict': result = {}
-        #   elif type_hint == 'set': result = set()
-        #   self.data[name] = result
-        # return result
       def setter(self, value, name=aname, type_hint=atype):
         if not hasattr(self, 'data'): raise RuntimeError(f"YData {cls} object not initialized'")
 
@@ -1012,5 +1007,5 @@ class YData(UserDict):
           raise TypeError(f"Failed to convert {n} to {t}: {e}")      
   
   
-
+  def __hash__(self): return hash(str(self).lower())
 # endregion
