@@ -15,8 +15,8 @@ from datetime import datetime
 import pprint
 import yaml
 
-VER_GPPU_BASE = '2.6.3'
-VER_GPPU_BUILD = '250309'
+VER_GPPU_BASE = '2.6.4'
+VER_GPPU_BUILD = '250310'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 # region async
