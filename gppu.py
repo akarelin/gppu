@@ -44,19 +44,27 @@ def safe_float(o, default: float = 0.0) -> float:
   try: v = float(o)
   except: v = default
   return v
-def safe_isinstance(o: object, typ: type | str, default: bool = False) -> bool:
+def safe_isinstance(o: object, typ: type | str | list, default: bool = False) -> bool:
   """ Safe version of isinstance. Use with default=True to be more permissive """
-  if isinstance(typ, str):
-    otype = str(type(o)).split("'")[1].rpartition('.')[2]
-    return otype == typ
-  else:
-    if typ in {Any}: return True
-    problematic = {Union, TypeVar}
-    safe = {int, float, str, dict, list}
-    if typ in problematic: return default 
-    if set(get_args(typ)) - safe: return default # ! Unsafe type detected
-    if get_origin(typ) in problematic: return default
-    return isinstance(o, typ)
+  if not isinstance(typ, list): typ = list[typ]
+  result = None
+  for t in typ:
+    if isinstance(t, str):
+      otype = str(type(o)).split("'")[1].rpartition('.')[2]
+      if result is None:
+        result = bool(otype == t)
+    else:
+      if t in {Any}: return True
+      problematic = {Union, TypeVar}
+      safe = {int, float, str, dict, list}
+      if t in problematic: continue 
+      if set(get_args(t)) - safe: continue # ! Unsafe type detected
+      if get_origin(t) in problematic: continue
+      if result is None:
+        result = isinstance(o, t)
+    if result is not None: return result
+  if result is None: return default
+
 # endregion
 
 
@@ -906,7 +914,7 @@ class YData(UserDict):
   PROHIBITED_TYPE_NAMES = ['Phase']
 
   @classmethod
-  def _get_all_annotations(cls) -> list:
+  def _get_all_annotations(cls) -> list[tuple[str, list[str]]]:
     """Return list of annotations that are allowed to be used as properties"""
     def check_attr(n, t) -> bool:
       if get_origin(t) is Annotated:
@@ -921,13 +929,18 @@ class YData(UserDict):
       if getattr(t, '__name__', None) in {t.__name__ for t in cls.ALLOWED_TYPES}: return True
       return False
 
-    def type_to_str(t):
-      if isinstance(t, str): return t
-      elif hasattr(t, '__name__'): return t.__name__
-      else: return str(t)
+    def type_to_slist(t) -> list[str]:
+      if hasattr(t, '__name__'): t = t.__name__
+      if '|' in t:
+        result = [x.strip() for x in t.split('|')]
+      else:
+        result = [t]
+      return result
 
-    _ = [(n, type_to_str(t)) for c in cls.mro() if hasattr(c,'__annotations__') 
-      for n, t in c.__annotations__.items() if check_attr(n, t)]
+    _ = [(n, ts) for c in cls.mro() if hasattr(c, '__annotations__')
+          for n, t in c.__annotations__.items()
+          for ts in [type_to_slist(t)]
+          if any(check_attr(n, t_str) for t_str in ts)]
 
     return _
 
@@ -936,28 +949,37 @@ class YData(UserDict):
     super().__init_subclass__(**kw)
     mro = cls._get_all_annotations()
     cls._mro = mro
-    Trace("DG", cls.__name__, *[x for tup in mro for x in ['DIM', tup[1] + ':', 'INFO', tup[0]]])
+    Trace("DG", cls.__name__, *[x for tup in mro for x in ['DIM', '|'.join(tup[1]) + ':', 'INFO', tup[0]]])
     for aname, atype in mro:
       if isinstance(getattr(cls, aname, None), property): continue
       def getter(self, name=aname, type_hint=atype):
         if not hasattr(self, 'data'): raise RuntimeError(f"YData object {name} {type_hint} not initialized'")
-        conv = getattr(builtins, type_hint, None) or globals().get(type_hint, None)
-        if conv is None: raise TypeError(f"Failed to get default for {name} of type {type_hint}: {e}")
-        if name not in self.data:
+        convs = []
+        for th in type_hint:
+          _ = getattr(builtins, th, None) or globals().get(th, None)
+          if _: convs.append(_)
+
+        # conv = getattr(builtins, type_hint, None) or globals().get(type_hint, None)
+        # if conv is None: raise TypeError(f"Failed to get default for {name} of type {type_hint}: {e}")
+        if not self.data.get(name, None):
           try:
-            default = conv()
+            default = convs[0]()
             self.data[name] = default
             return default
           except Exception as e:
             raise TypeError(f"Failed to get default for {name} of type {type_hint}: {e}")
         value = self.data[name]
-        if not isinstance(value, conv):
+
+        for conv in convs:
+          if isinstance(value, conv): break
+        else:
           try:
-            converted = conv(value)
+            converted = conv[0](value)
             self.data[name] = converted
             return converted
           except Exception as e:
             raise TypeError(f"Failed to convert {name} to {type_hint}: {e}")
+
         return value
         # if not (result := self.data.get(name, None)):
         #   if type_hint == 'str': result = ''
