@@ -1,26 +1,29 @@
-import pprint
-import yaml
+from __future__ import annotations
 import re
 import inspect
 import logging
+import asyncio
 
-from typing import TypeVar, TypeAlias, Union, Callable, Any, Literal, List, Optional, Tuple, Dict
-from typing import overload, get_origin, get_args
-
-olist: TypeAlias = list | None
-oint: TypeAlias = int | None
-odict: TypeAlias = dict | None
-ostr: TypeAlias = str | None
-T = TypeVar('T')
-
+from typing import Union, Callable, Any, Literal, List, Optional, Tuple, Dict, Protocol, DefaultDict, NoReturn
+from typing import TypeVar, TypeAlias
+from typing import overload, get_origin, get_args, get_type_hints
+from typing import get_origin, get_args, Annotated
 from string import Template
-
 from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
-VER_GPPU_BASE = '2.12.2'
-VER_GPPU_BUILD = '250213'
+import pprint
+import yaml
+
+VER_GPPU_BASE = '2.6.4'
+VER_GPPU_BUILD = '250310'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
+
+# region async
+EVENT_LOOP = asyncio.new_event_loop()
+asyncio.set_event_loop(EVENT_LOOP)
+# endregion
+
 
 # region Safe typecasting
 def safe_list(o) -> list:
@@ -33,7 +36,7 @@ def safe_int(o, default: int = 0) -> int:
   v = safe_float(o, default)
   if v: return int(v)
   else: return default
-def safe_float(o, default: float  = -1.0) -> float:
+def safe_float(o, default: float = 0.0) -> float:
   if o is None: return default
   if isinstance(o, str):
     o = o.removesuffix("°c")
@@ -41,21 +44,35 @@ def safe_float(o, default: float  = -1.0) -> float:
   try: v = float(o)
   except: v = default
   return v
-def safe_isinstance(o: object, typ: type, default: bool = False) -> bool:
+def safe_isinstance(o: object, typ: type | str | list[str], default: bool = False) -> bool: # type: ignore[return]
   """ Safe version of isinstance. Use with default=True to be more permissive """
-  if typ in {Any}: return True
-  problematic = {Union, TypeVar}
-  safe = {int, float, str, dict, list}
-  if typ in problematic: return default 
-  if set(get_args(typ)) - safe: return default # ! Unsafe type detected
-  if get_origin(typ) in problematic: return default
-  return isinstance(o, typ)
+  if not isinstance(typ, list): typ = list[typ]
+  result = None
+  for t in typ:
+    if isinstance(t, str):
+      otype = str(type(o)).split("'")[1].rpartition('.')[2]
+      if result is None:
+        result = bool(otype == t)
+    else:
+      if t in {Any}: return True
+      problematic = {Union, TypeVar}
+      safe = {int, float, str, dict, list}
+      if t in problematic: continue 
+      if set(get_args(t)) - safe: continue # ! Unsafe type detected
+      if get_origin(t) in problematic: continue
+      if result is None:
+        result = isinstance(o, t)
+    if result is not None: return result
+  if result is None: return default
+
 # endregion
 
 
 # region Dict utils: deepget, dict_all_paths
-deepdict = lambda: defaultdict(deepdict)
-def deepget(path: str, d: dict, default=None):
+DeepDict = DefaultDict[str, "DeepDict"]
+deepdict: Callable[[], DeepDict] = lambda: defaultdict(deepdict)
+# deepdict = lambda: defaultdict(deepdict)
+def deepget(path: str, d: dict, default: Any = None) -> Any:
   if '/' in path and path not in d.keys():
     _ = dict(d)
     for pp in path.split('/'):
@@ -65,19 +82,19 @@ def deepget(path: str, d: dict, default=None):
   return d.get(path, default)
 
 
-def deepget_int(path: str, d: dict, default: oint = None) -> oint:
+def deepget_int(path: str, d: dict, default: Optional[int]) -> Optional[int]:
   """ Returns int at path, or default if not found """
   _ = deepget(path, d, default)
   return _ if isinstance(_, int) else default
 
 
-def deepget_list(path: str, d: dict, default: olist = None) -> olist:
+def deepget_list(path: str, d: dict, default: list = []) -> list:
   """ Returns list at path, or default if not found """
   _ = deepget(path, d, default)
   return _ if isinstance(_, list) else default
 
 
-def deepget_dict(path: str, d: dict, default: odict = None) -> odict:
+def deepget_dict(path: str, d: dict, default: dict = {}) -> dict:
   """ Returns dict at path, or default if not found """
   _ = deepget(path, d, default)
   return _ if isinstance(_, dict) else default
@@ -99,7 +116,7 @@ def dict_element_append(d: dict, key: str, value, unique=False) -> None:
   elif isinstance(d[key], list):
     if unique and value in d[key]: pass
     else: d[key] += [value]
-  else: raise Exception(f"Unrecognized type: {type(d[key])}")
+  else: raise ValueError(f"Unrecognized type: {type(d[key])}")
 
 
 def dict_all_paths(d: dict) -> list:
@@ -120,13 +137,24 @@ KEYS_FORCE_STRING = ['parent']
 KEYS_DROP = ['api', 'adapi', 'AD']
 KEYS_FIRST = ['name', 'path']
 
-def isstring(o) -> bool:
+def isstring(o: Any) -> bool:
   relatives = {type(o).__qualname__}
   relatives |= {c.__qualname__ for c in o.__class__.__mro__}
   return bool({'y2list', 'str', 'y2topic', 'y2path', 'ADBase'} & relatives)
-islist = lambda o: not isstring(o) and isinstance(o, (list, set))
-isdict = lambda o: not isstring(o) and (isinstance(o, (dict, defaultdict, UserDict)) or hasattr(o, 'as_dict') or (hasattr(o, 'data') and isinstance(o.data, dict)))
-isnumber = lambda o: isinstance(o, (float, int))
+def islist(o: Any) -> bool:
+  if isstring(o): return False
+  if isinstance(o, (list, UserList)): return True
+  return False
+def isdict(o) -> bool:
+  if isstring(o): return False
+  if isinstance(o, (dict, defaultdict, UserDict)): return True
+  if hasattr(o, 'as_dict'): return True
+  if hasattr(o, 'data') and isinstance(o.data, dict): return True
+  return False
+def isnumber(o: Any) -> bool:
+  if isinstance(o, (float, int)): return True
+  return False
+
 
 def sanitize_list(o) -> list:
   result = []
@@ -161,7 +189,7 @@ def sanitize_dict(o) -> dict:
     result[str(k)] = _
   return result
 
-def dict_sanitize(data: dict | list, sort_keys=False) -> dict | list:
+def dict_sanitize(data: dict | list) -> dict | list:
   """Convert nested complex data types for json.dumps or yaml.dumps"""
   if islist(data): return sanitize_list(data)
   elif isdict(data): return sanitize_dict(data)
@@ -172,7 +200,7 @@ def _tuple_representer(dumper: yaml.Dumper, data: tuple) -> yaml.nodes.Node:
   return dumper.represent_dict(dict(enumerate(data)))
   
 
-def dict_to_yml(filename:str, data=None, sort_keys=False):
+def dict_to_yml(data: dict | list, filename:str):
   class IndentedListDumper(yaml.Dumper):
     def increase_indent(self, flow=False, indentless=False):
       return super(IndentedListDumper, self).increase_indent(flow, False)
@@ -180,15 +208,15 @@ def dict_to_yml(filename:str, data=None, sort_keys=False):
   assert filename
   if not data: return
 
-  redata = dict_sanitize(data, sort_keys=sort_keys)
+  redata = dict_sanitize(data)
 
   yaml.add_representer(defaultdict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(UserDict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(set, yaml.representer.Representer.represent_list)
   yaml.add_representer(tuple, _tuple_representer)
-  with open(filename,'w+') as f:
+  with open(filename, 'w+') as f:
     try: yaml.dump(redata, f, indent=2, Dumper=IndentedListDumper, sort_keys=False, width=2147483647)
-    except Exception as err:
+    except RuntimeError as err:
       error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(redata)}\n\n"
       with open(filename+'_error.txt','w+') as ferr: ferr.write(error)
 
@@ -213,6 +241,7 @@ def dict_from_yml(filename:str):
 # endregion
 
 
+
 # region Templates
 def dict_template_populate(o, data: dict = {}, excludes:list = []) -> Any:
   """ 
@@ -224,9 +253,9 @@ def dict_template_populate(o, data: dict = {}, excludes:list = []) -> Any:
     Keys with '$' in value are treated as templates and filled-in from data
   """
   def __tp(o, data: dict) -> Any:
+    result: Any = None
     if not data: data = {}
 
-    if not o: result = None
     elif isinstance(o, dict):
       result = {}
       for k, old in o.items():
@@ -242,7 +271,7 @@ def dict_template_populate(o, data: dict = {}, excludes:list = []) -> Any:
     elif inspect.isfunction(o): result = o
     else:
       if str(o) == 'DEL': result = None
-      elif '$' in str(o): 
+      elif '$' in str(o):
         _ = Template(str(o)).safe_substitute(data)
         if _[0] == '[' and _[-1] == ']':
           result = []
@@ -279,7 +308,7 @@ def pretty_timedelta(ts):
   elif minutes > 0: return '%dm %ds' % (minutes, seconds)
   else: return '%ds' % (seconds,)
 
-def pfy(object) -> str: return "\n"+pprint.pformat(object, indent=4, width=40, compact=True)
+def pfy(o: Any) -> str: return "\n"+pprint.pformat(o, indent=4, width=40, compact=True)
 def slugify(o) -> str:
   """Converts any object to string, then slugifies it"""
   return re.sub(r'[^a-zA-Z0-9_]', '_', str(o).lower())
@@ -312,6 +341,108 @@ def _tracer(tracer: Optional[Callable[..., Any]] = None, action: Optional[Tracer
     return wrapper
   return decorator
 
+
+def _init_default_logger():
+  l = logging.getLogger('gppu')
+  sh = logging.StreamHandler()
+  sh.setLevel(logging.DEBUG)
+  sh.setFormatter(logging.Formatter('%(message)s'))
+  l.addHandler(sh)
+  return l
+default_logger: logging.Logger = _init_default_logger()
+
+if 'logger' not in dir(): logger = default_logger
+if not isinstance(logger, logging.Logger): logger = default_logger
+
+def Info(*a, **kw): logger.info(dpcp(*a, conditional=False, severity='Info', **kw), **kw)
+def Error(*a, **kw): logger.error(msg=dpcp(*a, conditional=False, severity='Error', **kw), **kw)
+def Warn(*a, **kw): logger.warning(msg=dpcp(*a, conditional=False, severity='Warn', **kw), **kw)
+def Debug(*a, **kw): logger.debug(msg=dpcp(*a, conditional=False, severity='Debug', **kw), **kw)
+def Trace(*a, **kw): logger.debug(dpcp(*a, rules={}, **kw), **kw)
+
+# = logging.getLogger('gppu')
+
+# >>          Static Logger               
+class Logger:
+  trace_folder = ''
+  log_folder = ''
+
+  trace_rules: dict = {}
+  logger = logger
+
+  @staticmethod
+  def Trace(*a, logger=logger, **kw): logger.debug(dpcp(*a, rules=Logger.trace_rules, **kw), **kw)
+
+
+  @staticmethod
+  def Info(*a, logger=logger, **kw): logger.info(dpcp(*a, conditional=False, severity='Info', **kw), **kw)
+
+
+  @staticmethod
+  def Error(*a, logger=logger, **kw): logger.error(msg=dpcp(*a, conditional=False, severity='Error', **kw), **kw)
+
+
+  @staticmethod
+  def Warn(*a, logger=logger, **kw): logger.warning(msg=dpcp(*a, conditional=False, severity='Warn', **kw), **kw)
+
+
+  @staticmethod
+  def Debug(*a, logger=logger, **kw): logger.debug(msg=dpcp(*a, conditional=False, severity='Debug', **kw), **kw)
+
+
+  @staticmethod
+  def Dump(filename, data={}):
+    """ Saves data object to yml file in trace folder """
+    if '.' not in filename or not filename.endswith('.yml'): filename += '.yml'
+    if '/' not in filename: filename = Logger.trace_folder + '/' + filename
+    dict_to_yml(filename=filename, data=data)
+
+
+# ]]           Logger as mixin        
+class _proto_Logger(Protocol):
+  _logger: logging.Logger
+  _trace_rules: dict
+  _trace_folder: str
+
+  def Trace(self, *a, **kw): ...
+  def Debug(self, *a, **kw): ...
+  def Info(self, *a, **kw): ...
+  def Warn(self, *a, **kw): ...
+  def Error(self, *a, **kw): ...
+
+  async def Dump(self, data: dict | list, filename: str): ...
+
+
+class _Logger(_proto_Logger):
+  _logger: logging.Logger
+  _trace_rules: dict
+  _trace_folder: str
+
+
+  def Trace(self, *a, **kw): self._logger.debug(dpcp(*a, rules=self._trace_rules, **kw), **kw)
+  def Debug(self, *a, **kw): self._logger.debug(msg=dpcp(*a, conditional=False, severity='Debug', **kw), **kw)
+  def Info(self, *a, **kw): self._logger.info(dpcp(*a, conditional=False, severity='Info', **kw), **kw)
+  def Warn(self, *a, **kw): self._logger.warning(msg=dpcp(*a, conditional=False, severity='Warn', **kw), **kw)
+  def Error(self, *a, **kw): self._logger.error(msg=dpcp(*a, conditional=False, severity='Error', **kw), **kw)
+
+
+  async def Dump(self, data: dict | list, filename: str):
+    """ Saves data object to yml file in trace folder """
+    if '.' not in filename or not filename.endswith('.yml'): filename += '.yml'
+    if '/' not in filename: filename = Logger.trace_folder + '/' + filename
+    dict_to_yml(filename=filename, data=data)
+
+
+  def __init__(self, *a, **kw) -> None:
+    name = kw.get('name', 'gppu_default')
+    lgr = kw.get('logging', Logger.logger)
+    self._logger = lgr.getChild(name)
+
+    self._trace_rules = kw.get('trace_rules', {})
+    self._trace_folder = kw.get('trace_folder', Logger.trace_folder)
+
+
+
 # endregion
 
 
@@ -319,8 +450,8 @@ def _tracer(tracer: Optional[Callable[..., Any]] = None, action: Optional[Tracer
 # xx                                                                                        
 # xx y2list, y2path and y2slug                                                              
 # xx                                                                                        
-""" y2list-based: y2path, y2slug"""
-def any2list(o, token: ostr = None) -> list:
+def any2list(o, token: Optional[str] = None) -> list:
+  """ y2list-based: y2path, y2slug"""
   result = []
   if o:
     if hasattr(o, 'data'): o = o.data
@@ -334,10 +465,11 @@ class y2list(UserList):
   data: List[Any]
   token: str
 
-  def __init__(self, o: Optional[Any] = None) -> None:
+  def __init__(self, o: Optional[Any] = None, token: str = "") -> None:
     super().__init__()
-    self.data = any2list(o)
-    self.token = ""
+    self.token = token
+    self.data = any2list(o, self.token)
+
 
 
   def __str__(self): return self.token.join(self.data)
@@ -356,15 +488,15 @@ class y2list(UserList):
 
 
   @property
-  def head(self) -> ostr: return self.data[0] if len(self.data) > 0 else None
+  def head(self) -> Optional[str]: return self.data[0] if len(self.data) > 0 else None
   @property
-  def tail(self) -> ostr: return self.data[-1] if len(self.data) > 0 else None
+  def tail(self) -> Optional[str]: return self.data[-1] if len(self.data) > 0 else None
 
 
   def endswith(self, ix) -> bool:
     slow = str(self).lower()
-    if isinstance(ix, list): 
-      for element in ix: 
+    if isinstance(ix, list):
+      for element in ix:
         if slow.endswith(element.lower()): return True
       return False
     if '_' in ix: six = ix.replace('_',self.token)
@@ -375,7 +507,7 @@ class y2list(UserList):
 
   def startswith(self, ix) -> bool:
     slow = str(self).lower()
-    if isinstance(ix, list): 
+    if isinstance(ix, list):
       for element in ix:
         if slow.startswith(element.lower()): return True
       return False
@@ -395,8 +527,8 @@ class y2list(UserList):
 
 
   def discard(self, element): self.data = [e for e in self.data if not e == element]
-  def pophead(self) -> ostr: return self.data.pop(0) if len(self.data) > 0 else None
-  def poptail(self) -> ostr: return self.data.pop(-1) if len(self.data) > 0 else None
+  def pophead(self) -> Optional[str]: return self.data.pop(0) if len(self.data) > 0 else None
+  def poptail(self) -> Optional[str]: return self.data.pop(-1) if len(self.data) > 0 else None
 
 
   def popsuffix(self, ix):
@@ -419,11 +551,8 @@ class y2list(UserList):
 
 
 class y2path(y2list):
-  def __init__(self, *args):
-    data = []
-    for a in args: data += any2list(a)
-    self.data = any2list(data)
-    self.token = '/'
+  def __init__(self, *a):
+    y2list.__init__(self, o=a, token='/')
 
 
 class y2topic(y2path):
@@ -432,13 +561,14 @@ class y2topic(y2path):
 
 class y2slug(y2list):
   def __init__(self, o=None): 
-    if '@' in str(o): o = str(o).split('@')[0]
-    self.data = any2list(o, '_')
-    self.token = '_'
+    if '@' in str(o): o = str(o).split('@', 1)[0]
+    y2list.__init__(self, o, token='_')
 
 
 class y2eid:
-  def __init__(self, o=None, ns=None, **kwargs):
+  ns: str
+
+  def __init__(self, o=None, ns: Optional[str] = None):
     if not o: return
     if isinstance(o, y2eid): s = str(o)
     elif isinstance(o, dict): s = str(o.get('entity_id',""))
@@ -448,9 +578,15 @@ class y2eid:
     elif hasattr(o, 'seid'): s = o.seid
     else: raise ValueError
 
-    self.ns = ns
     if '.' in s: self.domain, s = s.split('.',1)
-    if '@' in s: s, self.ns = s.rsplit('@',1)
+    if '@' in s:
+      if ns: raise ValueError(f"Cannot set ns twice: {self.ns} {s}")
+      s, self.ns = s.rsplit('@',1)
+
+    if not self.ns:
+      if ns: self.ns = ns
+      else: raise ValueError(f"Missing namespace: {o} {ns}")
+
     self.slug = y2slug(s)
     for k in ['tail', 'head']: setattr(self, k, getattr(self.slug, k))
 
@@ -510,7 +646,7 @@ class TColor(metaclass=_TColorHack):
   DY = '38;5;3;1'         # Dark yellow (text)
   BG = '38;5;10;1'        # Bright green (text)
   DG = '38;5;2;1'         # Dark green (text)
- 
+
   # BB = '3;30;44'          # Black on Blue (background)
   DB = '38;5;4;1'         # Dark blue (text)
 
@@ -548,6 +684,7 @@ class TColor(metaclass=_TColorHack):
   #WYELLOW = '0;37;43'     # White on Yellow (background)
   WYELLOW = '7;49;93'     # White on Yellow (background)
 
+COLORS = {k:v for k, v in TColor.__dict__.items() if k[0] != '_'}
 
 def pcp(*a: Union[str, List[Any], Tuple[Any, ...]], **kw: Any) -> str:
   """
@@ -577,16 +714,17 @@ def pcp(*a: Union[str, List[Any], Tuple[Any, ...]], **kw: Any) -> str:
   return out
 
 
-remove_prefixes = lambda s, prefixes: next((s.removeprefix(prefix) for prefix in prefixes if s.startswith(prefix)), s)
 SHORTEN_BY_PREFIX = ['process_', '_cb_']
 IGNORE_FUNCTIONS = ['dpcp', 'trace', 'pcp', 'Trace']
 SEVERITY_COLORS = {'Error': 'WRED', 'Warn': 'WYELLOW', 'Info': 'WBLUE', 'Debug': 'GRAY4', None: 'WPURPLE'}
-def dpcp(*a: Any, 
-         conditional: Optional[bool] = None, 
-         rules: Dict[str, bool] = {}, 
-         no_prefix: bool=False, 
-         severity: Optional[str] = None, **kw: Any) -> Optional[str]:
+def dpcp(*a: Any,
+          conditional: Optional[bool] = None,
+          rules: Dict[str, bool] = {},
+          no_prefix: bool=False,
+          severity: Optional[str] = None, **kw: Any) -> Optional[str]:
   """ Version of pcp that adds info on where it was called from """
+  remove_prefixes = lambda s, prefixes: next((s.removeprefix(prefix) for prefix in prefixes if s.startswith(prefix)), s)
+
   def is_traced(name : Optional[str] = None) -> bool:
     if not conditional: return True
 
@@ -595,7 +733,7 @@ def dpcp(*a: Any,
 
   if not conditional and rules: conditional = True
   frame = inspect.currentframe()
-  if frame is None: return
+  if frame is None: return None
 
   frame = frame.f_back
   while frame and frame.f_back:
@@ -607,19 +745,19 @@ def dpcp(*a: Any,
     if func_name not in IGNORE_FUNCTIONS: break
     func_name = remove_prefixes(func_name, SHORTEN_BY_PREFIX)
 
-  if frame is None: return
+  if frame is None: return None
 
-  if not is_traced(func_name): return 
+  if not is_traced(func_name): return None
   module = filename.rsplit('/', 1)[-1].rsplit('.', 1)[0]
-  if not is_traced(module) or not is_traced(f"{module}.{func_name}"): return
+  if not is_traced(module) or not is_traced(f"{module}.{func_name}"): return None
 
-  if 'self' in frame.f_locals: 
-    if not is_traced(class_name := frame.f_locals["self"].__class__.__name__): return
-    if not is_traced(f"{class_name}.{func_name}"): return
+  if 'self' in frame.f_locals:
+    if not is_traced(class_name := frame.f_locals["self"].__class__.__name__): return None
+    if not is_traced(f"{class_name}.{func_name}"): return None
     _ = ['GRAY1', f"{class_name}.", 'GRAY2', f".{func_name}"]
   else: _ = ['GRAY2', f".{func_name}"]
 
-  if severity: 
+  if severity:
     _ = [SEVERITY_COLORS.get(severity, SEVERITY_COLORS[None]), severity] + _
 
   if no_prefix: _ = list(a)
@@ -628,7 +766,7 @@ def dpcp(*a: Any,
   return pcp(*_, **kw)
 
 
-def _colorize_log(msg, level=None, *args):
+def _colorize_log(msg, *a, level=None) -> str:
   if isinstance(msg, tuple): msg = _colorize_list(msg) # type: ignore
   elif level:
     if level in ['CRITICAL', 'ERROR']: c1, c2 = 'BR', 'BRIGHT'
@@ -636,7 +774,7 @@ def _colorize_log(msg, level=None, *args):
     elif level in ['INFO']: c1, c2 = 'BLUE', 'INFO'
     elif level in ['DEBUG']: c1, c2 = 'DIM', 'DIM'
     else: c1, c2 = 'DIM', 'INFO'
-    msg_list = [c1, level, c2, msg] + list(args)
+    msg_list = [c1, level, c2, msg] + list(a)
     msg = _colorize_list(msg_list)
   #else: raise ValueError(f"Invalid log_colored call: {msg} {level} {args}")
   return msg
@@ -647,12 +785,14 @@ def _colorize_list(l: List[Union[str, TColor]]) -> str:
   colorcode = None
 
   for e in [e for e in l if e]:
-    if isinstance(e, TColor): colorcode = e; continue
+    if str(e) in COLORS: colorcode = COLORS[e]; continue
+    # if isinstance(e, TColor): colorcode = TColor[e]; continue
     e = str(e)
     if e[0] in "./": separator = ''; e = e[1:]
     else: separator = ' '
 
-    if TColor[e]: colorcode = TColor[e]; continue
+    # if TColor[e]: colorcode = TColor[e]; continue
+    if e in COLORS: colorcode = COLORS[e]; continue
     elif colorcode: elem = _colorize(text=str(e), colorcode=colorcode) # type: ignore
     else: elem = str(e)
 
@@ -727,4 +867,145 @@ class PrettyColoredHandler(logging.StreamHandler):
 # logger = logging.getLogger(__name__)
 # logger.addHandler(logging.FileHandler(f"{__name__}.log"))
 # logger.addHandler(logging.StreamHandler())
+# endregion
+
+
+# region YData
+# PROHIBITED_ATTRS = ['data', 'AD', 'yapi', 'adapi', 'parent']
+# # ALLOWED_ATTRS = []
+# ALLOWED_TYPES = {str, int, float, bool, dict, list, set, y2eid, y2topic}
+# ALLOWED_TYPES_STR = {t.__name__ for t in ALLOWED_TYPES}
+# PROHIBITED_TYPES = {Callable}
+# PROHIBITED_TYPE_NAMES = ['Phase']
+
+# def _get_all_annotations(cls) -> list:
+#   def check_attr(n, t) -> bool:
+#     # if n in ALLOWED_ATTRS: return True
+#     if n in PROHIBITED_ATTRS or n[0] == '_': return False
+#     if t in ALLOWED_TYPES: return True
+#     if t in ALLOWED_TYPES_STR: return True
+#     if getattr(t, '__name__', None) in ALLOWED_TYPES_STR: return True
+#     return False
+
+#   def type_to_str(t):
+#     if isinstance(t, str): return t
+#     elif hasattr(t, '__name__'): return t.__name__
+#     else: return str(t)
+
+#   _ = [(n, type_to_str(t)) for c in cls.mro() if hasattr(c,'__annotations__') for n, t in c.__annotations__.items() if check_attr(n, t)]
+#   return _
+
+
+# ==                              YData                                           
+import builtins
+_TMRO = list[tuple[str, list[str]]]
+
+def _get_all_annotations(cls) -> _TMRO:
+  """Return list of annotations that are allowed to be used as properties"""
+  PROHIBITED_ATTRS = ['data', 'AD', 'yapi', 'adapi']
+  ALLOWED_ATTRS: list[str] = []
+  # ALLOWED_ATTRS = ['parent']
+  ALLOWED_TYPES = {str, int, float, bool, dict, list, set, y2eid, y2topic}
+  # ALLOWED_TYPES_STR = {t.__name__ for t in ALLOWED_TYPES}
+  PROHIBITED_TYPES = {Callable}
+  PROHIBITED_TYPE_NAMES = ['Phase']
+
+  def check_attr(n, t) -> bool:
+    if get_origin(t) is Annotated:
+      metadata = get_args(t)[1:]
+      if 'YData.ignore' in metadata:
+        return False
+      t = get_args(t)[0]      
+    if n in ALLOWED_ATTRS: return True
+    if n in PROHIBITED_ATTRS or n[0] == '_': return False
+    if t in ALLOWED_TYPES: return True
+    if t in {t.__name__ for t in ALLOWED_TYPES}: return True
+    if getattr(t, '__name__', None) in {t.__name__ for t in ALLOWED_TYPES}: return True
+    return False
+
+  def type_to_slist(t) -> list[str]:
+    if hasattr(t, '__name__'): t = t.__name__
+    if '|' in t:
+      result = [x.strip() for x in t.split('|')]
+    else:
+      result = [t]
+    return result
+
+  _ = [(n, ts) for c in cls.mro() if hasattr(c, '__annotations__')
+        for n, t in c.__annotations__.items()
+        for ts in [type_to_slist(t)]
+        if any(check_attr(n, t_str) for t_str in ts)]
+
+  return _
+
+
+class YData(UserDict):
+  """
+  YData is a dict that allows access to dict elements as properties.
+  Only elements returned by _get_all_annotations cam be used as properties. 
+  YData dynamically adds getter and setter for annotated properties that point to main dict.
+  """
+
+  _mro: _TMRO
+  def __init_subclass__(cls, **kw) -> None:
+    super().__init_subclass__(**kw)
+    mro = _get_all_annotations(cls)
+    cls._mro = mro
+    Trace("DG", cls.__name__, *[x for tup in mro for x in ['DIM', '|'.join(tup[1]) + ':', 'INFO', tup[0]]])
+    for aname, atype in mro:
+      if isinstance(getattr(cls, aname, None), property): continue
+      def getter(self, name=aname, type_hint=atype):
+        if not hasattr(self, 'data'): raise RuntimeError(f"YData object {name} {type_hint} not initialized'")
+        convs = []
+        for th in type_hint:
+          _ = getattr(builtins, th, None) or globals().get(th, None)
+          if _: convs.append(_)
+
+        # conv = getattr(builtins, type_hint, None) or globals().get(type_hint, None)
+        # if conv is None: raise TypeError(f"Failed to get default for {name} of type {type_hint}: {e}")
+        if not self.data.get(name, None):
+          try:
+            default = convs[0]()
+            self.data[name] = default
+            return default
+          except Exception as e:
+            raise TypeError(f"Failed to get default for {name} of type {type_hint}: {e}")
+        value = self.data[name]
+
+        for conv in convs:
+          if isinstance(value, conv): break
+        else:
+          try:
+            converted = convs[0](value)
+            self.data[name] = converted
+            return converted
+          except Exception as e:
+            raise TypeError(f"Failed to convert {name} to {type_hint}: {e}")
+
+        return value
+      def setter(self, value, name=aname, type_hint=atype):
+        if not hasattr(self, 'data'): raise RuntimeError(f"YData {cls} object not initialized'")
+
+        if value and not safe_isinstance(value, type_hint, default=True):
+          raise TypeError(f"Expected type {type_hint} for {name}, got {type(value)} instead.")
+
+        self.data[name] = value
+      setattr(cls, aname, property(getter, setter))
+
+
+  def __init__(self, *a, **kw):
+    UserDict.__init__(kw.get('data', {}))
+    import builtins
+    for n, t in self._mro:
+      if n in self.data:
+        resolved = getattr(builtins, t, None) or globals().get(t, None)
+        if resolved is None:
+          raise TypeError(f"Type {t} for {n} is not defined")
+        try:
+          self.data[n] = resolved(self.data[n])
+        except Exception as e:
+          raise TypeError(f"Failed to convert {n} to {t}: {e}")      
+  
+  
+  def __hash__(self): return hash(str(self).lower())
 # endregion
