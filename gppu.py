@@ -1,12 +1,111 @@
+import sys
+
 VER_GPPU_BASE = '3.0.0'
 VER_GPPU_BUILD = '250316'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 import yaml
+import logging
+import inspect
+import pprint
+from functools import partialmethod
+
 from pydantic import BaseModel
 from typing import Any, Dict, List, Union, Optional
 from collections import defaultdict, UserDict, UserList
 import os.path
+
+
+
+def format_args(*a, severity=None, **kw):
+  """Format args into a string message with optional severity prefix"""
+  parts = []
+
+  if severity: parts.append(f"[{severity}]")
+
+  for arg in a:
+    if isinstance(arg, (list, dict, tuple)): parts.append(pprint.pformat(arg, indent=2))
+    else: parts.append(str(arg))
+  for k, w in kw.items():
+    parts.append(f"{k}={w}")
+
+  return " ".join(parts)
+
+
+class Logger:
+  """
+  Core Logger class that implements all logging functionality
+  Can be used both globally and injected into classes
+  """
+
+  def __init__(self, name: str = "gppu", level: str = "INFO",trace_rules: Dict[str, bool] = None, trace_folder: str = "."):
+    self.name = name
+    self._logger = logging.getLogger(name)
+    self._trace_rules = trace_rules or {}
+    self._trace_folder = trace_folder
+
+    self._logger.setLevel(getattr(logging, level))
+
+  @staticmethod
+  def _should_trace(rules: Dict[str, bool]) -> bool:
+    if not rules: return True
+
+    frame = inspect.currentframe()
+    if frame is None: return False
+
+    frame = frame.f_back
+    if frame is None: return False
+
+    frame_info = inspect.getframeinfo(frame)
+    func_name = frame_info.function
+    filename = frame_info.filename
+    module = filename.rsplit('/', 1)[-1].rsplit('.', 1)[0]
+
+    if rules.get(func_name, False): return True
+    if rules.get(module, False): return True
+
+    if 'self' in frame.f_locals:
+      class_name = frame.f_locals["self"].__class__.__name__
+      if rules.get(f"{class_name}.{func_name}", False): return True
+      if rules.get(class_name, False): return True
+
+    return rules.get('all', False)
+
+  def _log(self, level, *a, **kw):
+    msg = format_args(*a, level=level, **kw)
+    self._logger.log(level, msg)
+
+  def Trace(self, *a, **kw):
+    if self._should_trace(self._trace_rules):
+      self._logger.debug(format_args(*a, **kw))
+
+  Info = partialmethod(_log, level=logging.INFO)
+  Debug = partialmethod(_log, level=logging.DEBUG)
+  Warning = partialmethod(_log, level=logging.WARNING)
+  Error = partialmethod(_log, level=logging.ERROR)
+
+  # def Dump(self, data, filename: str):
+  #   """Dump data to YAML file"""
+  #   if '.' not in filename or not filename.endswith('.yml'):
+  #     filename += '.yml'
+  #   if '/' not in filename:
+  #     filename = self._trace_folder + '/' + filename
+  #
+  #   # Use the existing dict_to_yml function
+  #   dict_to_yml(filename=filename, data=data)
+
+
+# def _init_default_logger():
+#   l = logging.getLogger('gppu')
+#   sh = logging.StreamHandler(stream=sys.stdout)
+#   sh.setLevel(logging.DEBUG)
+#   sh.setFormatter(logging.Formatter('%(message)s'))
+#   l.addHandler(sh)
+#   l.setLevel(logging.DEBUG)
+#   return l
+#
+# logger = _init_default_logger()
+#
 
 
 class YAMLConfig(BaseModel):
