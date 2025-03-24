@@ -1,8 +1,7 @@
-import sys
 from __future__ import annotations
 
 VER_GPPU_BASE = '3.0.0'
-VER_GPPU_BUILD = '18'
+VER_GPPU_BUILD = '23'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 import yaml
@@ -12,8 +11,8 @@ import pprint
 from functools import partialmethod
 
 from pydantic import BaseModel
-from typing import Any, Dict, List, Union, Optional, Callable
-from collections import defaultdict, UserDict, DefaultDict
+from typing import Any, Dict, List, Union, Optional, Callable, ClassVar
+from collections import defaultdict, UserDict
 import os.path
 
 
@@ -88,28 +87,22 @@ class Logger:
     self._log(logging.CRITICAL, msg)
     raise RuntimeError(msg)
 
-Debug: Callable = Logger.Debug 
-Info: Callable = Logger.Info
-Warn: Callable = Logger.Warn
-Error: Callable = Logger.Error
-Fatal: Callable = Logger.Fatal
 
-# Dump: Callable = Logger.Dump
-
-  # def Dump(self, data, filename: str):
-  #   """Dump data to YAML file"""
-  #   if '.' not in filename or not filename.endswith('.yml'):
-  #     filename += '.yml'
-  #   if '/' not in filename:
-  #     filename = self._trace_folder + '/' + filename
-  #
-  #   # Use the existing dict_to_yml function
-  #   dict_to_yml(filename=filename, data=data)
+_GLOBAL_LOGGER = Logger()
+# def Debug(*a, **kw): _GLOBAL_LOGGER.Debug(*a, **kw)
+# def Info(*a, **kw): _GLOBAL_LOGGER.Info
+# def Warn(*a, **kw): _GLOBAL_LOGGER.Warn
+# def Error(*a, **kw): _GLOBAL_LOGGER.Error
+# def Fatal(*a, **kw): _GLOBAL_LOGGER.Fatal(*a, **kw)
+    
+Debug: Callable = _GLOBAL_LOGGER.Debug 
+Info: Callable = _GLOBAL_LOGGER.Info
+Warn: Callable = _GLOBAL_LOGGER.Warn
+Error: Callable = _GLOBAL_LOGGER.Error
+Fatal: Callable = _GLOBAL_LOGGER.Fatal
 
 
 # region Dict utils: deepget, dict_all_paths
-# DeepDict = DefaultDict[str, "DeepDict"]
-# deepdict: Callable[[], DeepDict] = lambda: defaultdict(deepdict)
 deepdict = lambda: defaultdict(deepdict)
 def deepget(path: str, d: dict, default: Any = None) -> Any:
   if '/' in path and path not in d.keys():
@@ -195,11 +188,11 @@ def dict_to_yml(data: Union[Dict, List], filename: str, config: Optional[YAMLCon
   yaml.add_representer(tuple, _tuple_representer)
 
   try:
-    with open(filename, 'w+') as f:
+    with open(filename, 'w+', encoding="utf-8") as f:
       yaml.dump(data, f, indent=2, Dumper=IndentedDumper, sort_keys=False, width=2147483647)
   except Exception as err:
     error_msg = f"Error dumping {filename}: {err}"
-    with open(f"{filename}_error.txt", 'w+') as ferr:
+    with open(f"{filename}_error.txt", 'w+', encoding='utf-8') as ferr:
       ferr.write(error_msg)
     raise RuntimeError(error_msg)
 
@@ -225,117 +218,129 @@ def dict_from_yml(filename: str) -> Dict:
     if not include_path.startswith('/'):
       include_path = os.path.join(yml_root, include_path)
 
-    with open(include_path, "r") as f:
+    with open(include_path, "r", encoding='utf-8') as f:
       return yaml.safe_load(f)
 
   # Register custom constructors
   yaml.add_constructor("!include", yml_include, Loader=yaml.SafeLoader)
 
-  with open(filename, "r") as f:
-    return yaml.safe_load(f) or {}
+  try:
+    with open(filename, "r", encoding='utf-8') as f:
+      return yaml.safe_load(f) or {}
+  except UnicodeDecodeError as err:
+    with open(filename, "r", encoding="latin-1") as f:
+      return yaml.safe_load(f) or {}
 
+
+def dict_template_populate(o, data: dict = {}, excludes:list = []) -> Any:
+  """ 
+    Returns new dictionary, copy of o with all templatable elements filled-in from data 
+    
+    This function is recursive
+
+    Keys with value == 'DEL' are removed from result
+    Keys with '$' in value are treated as templates and filled-in from data
+  """
+  def __tp(o, data: dict) -> Any:
+    result: Any = None
+    if not data: data = {}
+
+    elif isinstance(o, dict):
+      result = {}
+      for k, old in o.items():
+        if k in excludes or inspect.isfunction(old): new = old
+        else: new = __tp(old, o | data)
+        result[k] = new
+    elif isinstance(o, list):
+      result = []
+      for old in o:
+        new = __tp(old, data)
+        result.append(new)
+    elif isinstance(o, (int, bool, float)): result = o
+    elif inspect.isfunction(o): result = o
+    else:
+      if str(o) == 'DEL': result = None
+      elif '$' in str(o):
+        _ = Template(str(o)).safe_substitute(data)
+        if _[0] == '[' and _[-1] == ']':
+          result = []
+          _ = _[1:-1]
+          for element in _.split(','):
+            element = element.strip()
+            if element.isdecimal(): element = int(element)
+            elif element.isnumeric(): element = float(element)
+            result.append(element)
+        else: result = _
+      else: result = o
+    return result
+
+  if isinstance(o, dict): _ = o.get('data', {}) | o
+  else: _ = str(o)
+  result = __tp(_, data)
+  return result
+# endregion
 
 
 from pydantic import BaseModel, Field, model_validator
 from typing import Dict, Any
 
-
-class PydanticYData(BaseModel):
-  """Dict-based YData implemented with Pydantic"""
-  __data: Dict[str, Any] = Field(default_factory=dict, alias="data")
+class YData(BaseModel, UserDict):
+  """Dictionary with Pydantic validation and deep access methods"""
+  
+  # UserDict needs a 'data' attribute
+  data: Dict[str, Any] = Field(default_factory=dict)
   
   model_config = {
     "arbitrary_types_allowed": True,
     "extra": "allow"
   }
   
-  @model_validator(mode='before')
-  @classmethod
-  def process_data(cls, data):
-    if isinstance(data, dict):
-      data_dict = data.get('data', {})
-      if isinstance(data_dict, dict):
-        for k, v in data_dict.items():
-          if k not in data:
-            data[k] = v
-    return data
+  def __init__(self, *args, **kwargs):
+    # Initialize both parent classes
+    BaseModel.__init__(self, **kwargs)
+    UserDict.__init__(self, self.data)
   
-
-  def __getitem__(self, key):
-    if hasattr(self, "model_fields_set") and key in self.model_fields_set:
-      return getattr(self, key)
-    if key in self.__data:
-      return self.__data[key]
-    raise KeyError(key)
-  
-
-  def __setitem__(self, key, value):
-    if hasattr(self.__class__, key) and isinstance(getattr(self.__class__, key), property):
-      setattr(self, key, value)
-    elif hasattr(self, "model_fields") and key in self.model_fields:
-      setattr(self, key, value)
-    else:
-      self.__data[key] = value
-  
-
   def get(self, path: str, default: Any = None) -> Any:
     """Returns value at path, or default if not found"""
-    return deepget(path, self.model_dump(), default)
+    return deepget(path, self.data, default)
   
   def get_int(self, path: str, default: Optional[int] = None) -> Optional[int]:
     """Returns int at path, or default if not found"""
-    return deepget_int(path, self.model_dump(), default)
+    return deepget_int(path, self.data, default)
   
-  def get_list(self, path: str, default: list = []) -> list:
+  def get_list(self, path: str, default: Optional[List] = None) -> List:
     """Returns list at path, or default if not found"""
-    return deepget_list(path, self.model_dump(), default)
+    if default is None:
+      default = []
+    return deepget_list(path, self.data, default)
   
-  def get_dict(self, path: str, default: dict = {}) -> dict:
+  def get_dict(self, path: str, default: Optional[Dict] = None) -> Dict:
     """Returns dict at path, or default if not found"""
-    return deepget_dict(path, self.model_dump(), default)
+    if default is None:
+      default = {}
+    return deepget_dict(path, self.data, default)
   
-  def items(self):
-    result = dict(self.__data)
-    if hasattr(self, "model_fields_set"):
-      for k in self.model_fields_set:
-        if k != 'data':
-          result[k] = getattr(self, k)
-    return result.items()
-  
-
-  def keys(self): return dict(self.items()).keys()
-  def values(self): return dict(self.items()).values()
-  
-
-  def __contains__(self, key): 
-    return (hasattr(self, "model_fields_set") and key in self.model_fields_set) or key in self.__data
-  
-
   def model_dump(self, *args, **kwargs):
+    """Return the model as a dictionary"""
+    # Start with the standard model dump
     result = super().model_dump(*args, **kwargs)
-    if 'data' in result:
-      for k, v in result['data'].items():
+    # Add any keys from UserDict not already in the model_dump
+    for k, v in self.data.items():
+      if k not in result:
         result[k] = v
-      del result['data']
     return result
-    
 
-  def __hash__(self): 
-    return hash(str(self).lower())
-  
 
-class Environment(PydanticYData):
+class Environment(YData):
   """Environment class that stores all global data"""
-  data: Dict[str, Any] = {}
-  initialized: bool = False
-  logger: Logger = Logger()
-  trace_folder: str = "."
-  trace_rules: Dict[str, bool] = {}
-  TRACE_RULES = trace_rules
-  
+  data: Dict[str, Any] = {}  # Use class variables with type annotations
+  initialized: ClassVar[bool] = False
+  logger: ClassVar[Logger] = Logger()
+  trace_folder: ClassVar[str] = "."
+  trace_rules: ClassVar[Dict[str, bool]] = {}  
 
-  @staticmethod
-  def from_yaml(filename: str) -> 'Environment':
+  @classmethod
+  def from_yaml(cls, filename: str) -> 'Environment':
     """Load environment from YAML file"""
     if Environment.initialized:
       return Environment
@@ -343,28 +348,25 @@ class Environment(PydanticYData):
     config = dict_from_yml(filename)
     
     if 'topology' in config:
-      config = Environment._from_topology(config)
+      config = cls._from_topology(config)
     
-    Environment.data = config
-    Environment.initialized = True
+    cls.data = config
+    cls.initialized = True
     
     if 'trace_folder' in config:
-      Environment.trace_folder = config['trace_folder']
+      cls.trace_folder = config['trace_folder']
     
     if 'trace_rules' in config:
-      Environment.trace_rules = config['trace_rules']
-      Environment.TRACE_RULES = config['trace_rules']
+      cls.trace_rules = config['trace_rules']
     
-    Environment.logger = Logger(name="Environment", 
+    cls.logger = Logger(name="Environment", 
                               level="INFO", 
-                              trace_rules=Environment.trace_rules,
-                              trace_folder=Environment.trace_folder)
+                              trace_rules=cls.trace_rules,
+                              trace_folder=cls.trace_folder)
     
-    return Environment
 
-
-  @staticmethod
-  def _from_topology(config: dict) -> dict:
+  @classmethod
+  def _from_topology(cls, config: dict) -> dict:
     config = dict(config)
     topology = config.pop('topology')
     result = dict_from_yml(topology)
@@ -375,37 +377,8 @@ class Environment(PydanticYData):
     return result
   
 
-  @staticmethod
-  def reset() -> None:
-    Environment.data = {}
-    Environment.initialized = False
-  
-
-  @staticmethod
-  def glob(path, default=None) -> Any:
-    return deepget(path, Environment.data, default=default)
-  
-
-  @staticmethod
-  def glob_int(path, default=None) -> Any:
-    return deepget_int(path, Environment.data, default=default)
-  
-
-  @staticmethod
-  def glob_list(path, default=None) -> Any:
-    if default is None:
-      default = []
-    return deepget_list(path, Environment.data, default=default)
-  
-
-  @staticmethod
-  def glob_dict(path, default=None) -> Any:
-    if default is None:
-      default = {}
-    return deepget_dict(path, Environment.data, default=default)
-  
-
-  @staticmethod
-  def dump():
-    Logger.Dump('Environment.data', Environment.data)
+  @classmethod
+  def reset(cls) -> None:
+    cls.data = {}
+    cls.initialized = False
   
