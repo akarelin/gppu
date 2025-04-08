@@ -30,7 +30,7 @@ class Logger:
   Can be used both globally and injected into classes
   """
 
-  def __init__(self, name: str = "gppu", level: str = "INFO", trace_rules: Dict[str, bool] = None, trace_folder: str = "."):
+  def __init__(self, name: str = "gppu", level: str = "INFO", trace_rules: Optional[Dict[str, bool]] = None, trace_folder: str = "."):
     self.name = name
     self._logger = logging.getLogger(name)
     self._trace_rules = trace_rules or {}
@@ -66,14 +66,17 @@ class Logger:
 
 
   @staticmethod
-  def _msg(*a, level=None, **kw) -> str:
+  def _msg(*a, level=None, **kw) -> Text:
     """Format args into a string message with optional severity prefix using rich"""
     # Create rich Text object
     result = Text()
     
     # Add severity prefix if provided
     if level:
-      result.append(f"[{level}]", style=SEVERITY_COLORS.get(level.lower(), ""))
+      if isinstance(level, int): level_str = logging.getLevelName(level)
+      else: level_str = str(level)
+              
+      result.append(f"[{level_str}]", style=SEVERITY_COLORS.get(level_str.lower() if isinstance(level_str, str) else "", ""))
       result.append(" ")
       
     # Add each argument with proper formatting
@@ -85,19 +88,24 @@ class Logger:
         # Add simple strings
         result.append(str(arg))
       result.append(" ")
+    
+    return result  # Return the formatted Text object
 
 
   def _log(self, level, *a, **kw):
-    msg = self._msg(*a, severity=level, **kw)
+    # Remove level from kw to avoid duplicate parameter
+    if 'level' in kw:
+      del kw['level']
+    msg = self._msg(*a, level=level, **kw)
     self._logger.log(level, msg)
 
 
   def Debug(self, *a, **kw):
     if self._is_debug(self._trace_rules):
       self._logger.debug(self._msg(*a, **kw))
-  Info = partialmethod(_log, level=logging.INFO)
-  Warn = partialmethod(_log, level=logging.WARNING)
-  Error = partialmethod(_log, level=logging.ERROR)
+  def Info(self, *a, **kw): self._log(logging.INFO, *a, **kw)
+  def Warn(self, *a, **kw): self._log(logging.WARNING, *a, **kw)
+  def Error(self, *a, **kw): self._log(logging.ERROR, *a, **kw)
   def Fatal(self, *a, **kw):
     msg = self._msg(*a, **kw)
     self._log(logging.CRITICAL, msg)
@@ -117,23 +125,9 @@ class LoggerMixin:
   def Warn(self, *a, **kw): self.logger.Warn(*a, **kw)
   def Error(self, *a, **kw): self.logger.Error(*a, **kw)
   def Fatal(self, *a, **kw): self.logger.Fatal(*a, **kw)
-  # def _log(self, level, *a, **kw):
-  #   self.logger._log(level, *a, **kw)
-
-
-  # Debug = lambda self, *a, **kw: self.logger.Debug(*a, **kw)
-  # Info = partialmethod(_log, level=logging.INFO)
-  # Warn = partialmethod(_log, level=logging.WARNING)
-  # Error = partialmethod(_log, level=logging.ERROR)
-  # Fatal = lambda self, *a, **kw: self.logger.Fatal(*a, **kw)
 
 
 _GLOBAL_LOGGER = Logger()
-# def Debug(*a, **kw): _GLOBAL_LOGGER.Debug(*a, **kw)
-# def Info(*a, **kw): _GLOBAL_LOGGER.Info
-# def Warn(*a, **kw): _GLOBAL_LOGGER.Warn
-# def Error(*a, **kw): _GLOBAL_LOGGER.Error
-# def Fatal(*a, **kw): _GLOBAL_LOGGER.Fatal(*a, **kw)
     
 Debug: Callable = _GLOBAL_LOGGER.Debug 
 Info: Callable = _GLOBAL_LOGGER.Info
@@ -567,7 +561,7 @@ class YData(UserDict):
           if t in problematic: continue 
           if set(get_args(t)) - safe: continue # ! Unsafe type detected
           if get_origin(t) in problematic: continue
-          if result is None:
+          if result is None: 
             result = isinstance(o, t)
         if result is not None: return result
       if result is None: return default
@@ -721,48 +715,51 @@ class Environment:
 rich_theme = Theme({
   "none": "",
   "dim": "dim",
-  "bright": "bold cyan",
-  "bw": "bold white",
-  "dw": "white",
+  "bright": "bold cyan",  # 36;1
+  "bw": "bold white",     # 38;5;15;1
+  "dw": "white",          # 38;5;7;1
+  
   # Grays
-  "gray1": "rgb(90,90,90)",
-  "gray2": "rgb(120,120,120)",
-  "gray3": "rgb(150,150,150)",
-  "gray4": "rgb(180,180,180)",
+  "gray1": "rgb(45,45,45)",    # 38;5;237
+  "gray2": "rgb(60,60,60)",    # 38;5;239/243
+  "gray3": "rgb(100,100,100)", # 38;5;246
+  "gray4": "rgb(140,140,140)", # 38;5;249
+  
   # Colors
-  "by": "bold yellow",
-  "dy": "yellow",
-  "bg": "bold green",
-  "dg": "green",
-  "db": "blue",
-  "bc": "bold cyan",
-  "dc": "cyan",
-  "bm": "bold magenta",
-  "dm": "magenta",
-  "br": "bold red",
-  "dr": "red",
-  "bp": "bold purple",
-  "dp": "purple",
-  "bo": "bold orange",
-  "do": "orange",
-  "pink": "bold rgb(255,105,180)",
-  "dpink": "rgb(255,105,180)",
-  "bgold": "bold rgb(255,215,0)",
-  "dgold": "rgb(255,215,0)",
+  "by": "bold yellow",    # 38;5;11;1
+  "dy": "yellow",         # 38;5;3;1
+  "bg": "bold green",     # 38;5;10;1
+  "dg": "green",          # 38;5;2;1
+  "db": "blue",           # 38;5;4;1
+  "bc": "bold cyan",      # 38;5;6;1
+  "dc": "cyan",           # 38;5;14;1
+  "bm": "bold magenta",   # 38;5;13;1
+  "dm": "magenta",        # 38;5;5;1
+  "br": "bold red",       # 38;5;9;1
+  "dr": "red",            # 38;5;1;1
+  "bp": "bold rgb(135,0,175)",  # 38;5;129;1
+  "dp": "rgb(90,0,135)",        # 38;5;90;1
+  "bo": "bold rgb(175,95,0)",   # 38;5;130;1
+  "do": "rgb(175,95,0)",        # 38;5;130;1
+  "pink": "bold rgb(255,0,175)",  # 38;5;200;1
+  "dpink": "rgb(175,95,135)",     # 38;5;132;1
+  "bgold": "bold rgb(255,175,0)",  # 38;5;220;1
+  "dgold": "rgb(215,135,0)",       # 38;5;178;1
+  
   # Special styles
-  "info": "bold blue",
-  "white": "black on white",
-  "yellow": "black on yellow",
-  "red": "black on red",
-  "blue": "black on blue",
-  "green": "black on green",
-  "wred": "white on red",
-  "wblue": "white on blue",
-  "wgreen": "white on green",
-  "wgray": "black on rgb(200,200,200)",
-  "wpink": "black on pink",
-  "wpurple": "white on purple",
-  "wyellow": "black on yellow",
+  "info": "bold blue",          # 34;1
+  "white": "black on white",    # 0;30;47
+  "yellow": "black on yellow",  # 0;30;43
+  "red": "black on red",        # 0;30;41
+  "blue": "black on blue",      # 0;30;44
+  "green": "black on green",    # 0;30;42
+  "wred": "white on red",       # 0;37;41
+  "wblue": "white on blue",     # 0;37;44
+  "wgreen": "white on green",   # 0;37;42
+  "wgray": "black on white",    # 0;30;47
+  "wpink": "black on magenta",  # 0;30;45
+  "wpurple": "white on purple", # 0;37;45
+  "wyellow": "reverse yellow",  # 7;49;93
 })
 
 console = Console(theme=rich_theme)
