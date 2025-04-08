@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 VER_GPPU_BASE = '3.0.0'
-VER_GPPU_BUILD = '24'
+VER_GPPU_BUILD = '26'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 import yaml
@@ -9,15 +9,20 @@ import re
 import logging
 import inspect
 import pprint
+import os.path
 from functools import partialmethod
 from string import Template
-
-from pydantic import BaseModel
 from typing import Any, Dict, List, Union, Optional, Callable, ClassVar
 from collections import defaultdict, UserDict, UserList
-import os.path
 
 
+from pydantic import BaseModel
+from rich.console import Console
+from rich.theme import Theme
+from rich.text import Text
+
+
+## @@                   Logging                                       
 # region Logging
 class Logger:
   """
@@ -32,6 +37,7 @@ class Logger:
     self._trace_folder = trace_folder
 
     self._logger.setLevel(getattr(logging, level))
+
 
   @staticmethod
   def _is_debug(rules: Dict[str, bool]) -> bool:
@@ -58,33 +64,40 @@ class Logger:
 
     return rules.get('all', False)
 
+
   @staticmethod
-  def _msg(*a, severity=None, **kw):
-    """Format args into a string message with optional severity prefix"""
-    parts = []
-
-    if severity: parts.append(f"[{severity}]")
-
+  def _msg(*a, level=None, **kw) -> str:
+    """Format args into a string message with optional severity prefix using rich"""
+    # Create rich Text object
+    result = Text()
+    
+    # Add severity prefix if provided
+    if level:
+      result.append(f"[{level}]", style=SEVERITY_COLORS.get(level.lower(), ""))
+      result.append(" ")
+      
+    # Add each argument with proper formatting
     for arg in a:
-      if isinstance(arg, (list, dict, tuple)): parts.append(pprint.pformat(arg, indent=2))
-      else: parts.append(str(arg))
-    for k, w in kw.items():
-      parts.append(f"{k}={w}")
+      if isinstance(arg, (list, dict, tuple)):
+        # Format complex objects using pprint
+        result.append(pprint.pformat(arg, indent=2))
+      else:
+        # Add simple strings
+        result.append(str(arg))
+      result.append(" ")
 
-    return " ".join(parts)
 
   def _log(self, level, *a, **kw):
     msg = self._msg(*a, severity=level, **kw)
     self._logger.log(level, msg)
 
+
   def Debug(self, *a, **kw):
     if self._is_debug(self._trace_rules):
       self._logger.debug(self._msg(*a, **kw))
-
   Info = partialmethod(_log, level=logging.INFO)
   Warn = partialmethod(_log, level=logging.WARNING)
   Error = partialmethod(_log, level=logging.ERROR)
-
   def Fatal(self, *a, **kw):
     msg = self._msg(*a, **kw)
     self._log(logging.CRITICAL, msg)
@@ -130,6 +143,7 @@ Fatal: Callable = _GLOBAL_LOGGER.Fatal
 # endregion
 
 
+## $$   Dict utils: deepget, dict_all_paths                           
 # region Dict utils: deepget, dict_all_paths
 deepdict = lambda: defaultdict(deepdict)
 def deepget(path: str, d: dict, default: Any = None) -> Any:
@@ -184,6 +198,8 @@ class Config:
   arbitrary_types_allowed = True
 
 
+# ##               YAML serializer/deserializer and template engine  
+# region YAML serializer/deserializer and template engine
 # Custom YAML representer for tuples
 def _tuple_representer(dumper: yaml.Dumper, data: tuple) -> yaml.nodes.Node:
   """Custom representer for tuples in YAML"""
@@ -310,6 +326,7 @@ def dict_template_populate(o, data: dict = {}, excludes:list = []) -> Any:
 # endregion
 
 
+# --                              y2list, y2eid, y2path, y2slug, y2topic   
 # region y2xxx
 # xx                                                                                        
 # xx y2list, y2path and y2slug                                                              
@@ -477,6 +494,7 @@ class y2eid:
 
 # endregion
 
+
 # ==                              YData                                           
 # region YData
 import builtins
@@ -625,6 +643,8 @@ class YData(UserDict):
 # endregion
 
 
+# __                              Environment                                     
+# region Environment
 class Environment:
   """Environment class that stores all global data"""
   # data: Dict[str, Any] = {}  # Use class variables with type annotations
@@ -635,10 +655,9 @@ class Environment:
   trace_rules: ClassVar[Dict[str, bool]] = {}  
 
   @classmethod
-  def from_yaml(cls, filename: str) -> 'Environment':
+  def from_yaml(cls, filename: str) -> None:
     """Load environment from YAML file"""
-    if Environment.initialized:
-      return Environment
+    if Environment.initialized: return
     
     config = dict_from_yml(filename)
     
@@ -693,4 +712,292 @@ class Environment:
   @classmethod
   def get_dict(cls, path: str, default: Optional[Dict] = {}) -> Dict:
     return deepget_dict(path, cls.data, default)
+# endregion
+
+
+# &&                              Colors                                          
+# region Colors
+# Create rich theme that maps to the old TColor styles
+rich_theme = Theme({
+  "none": "",
+  "dim": "dim",
+  "bright": "bold cyan",
+  "bw": "bold white",
+  "dw": "white",
+  # Grays
+  "gray1": "rgb(90,90,90)",
+  "gray2": "rgb(120,120,120)",
+  "gray3": "rgb(150,150,150)",
+  "gray4": "rgb(180,180,180)",
+  # Colors
+  "by": "bold yellow",
+  "dy": "yellow",
+  "bg": "bold green",
+  "dg": "green",
+  "db": "blue",
+  "bc": "bold cyan",
+  "dc": "cyan",
+  "bm": "bold magenta",
+  "dm": "magenta",
+  "br": "bold red",
+  "dr": "red",
+  "bp": "bold purple",
+  "dp": "purple",
+  "bo": "bold orange",
+  "do": "orange",
+  "pink": "bold rgb(255,105,180)",
+  "dpink": "rgb(255,105,180)",
+  "bgold": "bold rgb(255,215,0)",
+  "dgold": "rgb(255,215,0)",
+  # Special styles
+  "info": "bold blue",
+  "white": "black on white",
+  "yellow": "black on yellow",
+  "red": "black on red",
+  "blue": "black on blue",
+  "green": "black on green",
+  "wred": "white on red",
+  "wblue": "white on blue",
+  "wgreen": "white on green",
+  "wgray": "black on rgb(200,200,200)",
+  "wpink": "black on pink",
+  "wpurple": "white on purple",
+  "wyellow": "black on yellow",
+})
+
+console = Console(theme=rich_theme)
+
+class _TColorHack(type):
+  def __getitem__(cls, key): return getattr(cls, str(key), None)
+  def __contains__(cls, key): return hasattr(cls, str(key))
+
+  def print(cls):
+    for name in dir(cls):
+      if not name.startswith('_') and isinstance(getattr(cls, name), str):
+        console.print(f"[{name}]{name}[/]", end=" ")
+    console.print()
+
+class TColor(metaclass=_TColorHack):
+  NONE = "none"
+  DIM = "dim"
+  BRIGHT = "bright"
+  BW = "bw"
+  DW = "dw"
   
+  GRAY1 = "gray1"
+  GRAY2 = "gray2"
+  GRAY3 = "gray3"
+  GRAY4 = "gray4"
+  
+  BY = "by"
+  DY = "dy"
+  BG = "bg"
+  DG = "dg"
+  DB = "db"
+  BC = "bc"
+  DC = "dc"
+  BM = "bm"
+  DM = "dm"
+  BR = "br"
+  DR = "dr"
+  BP = "bp"
+  DP = "dp"
+  BO = "bo"
+  DO = "do"
+  PINK = "pink"
+  DPINK = "dpink"
+  BGOLD = "bgold"
+  DGOLD = "dgold"
+  
+  ORANGE = BO
+  PURPLE = BP
+  
+  INFO = "info"
+  WHITE = "white"
+  YELLOW = "yellow"
+  RED = "red"
+  BLUE = "blue"
+  GREEN = "green"
+  
+  WRED = "wred"
+  WBLUE = "wblue"
+  WGREEN = "wgreen"
+  WGRAY = "wgray"
+  WPINK = "wpink"
+  WPURPLE = "wpurple"
+  WYELLOW = "wyellow"
+
+COLORS = {k: v for k, v in TColor.__dict__.items() 
+          if not k.startswith('_') and isinstance(v, str)}
+
+def _colorize_list(items: List) -> Text:
+  """Colorizes list of strings using rich Text"""
+  result = Text()
+  current_style = None
+
+  for i, item in enumerate(items):
+    if not item:
+      continue
+      
+    # Check if this item is a color/style name
+    item_str = str(item)
+    if item_str in COLORS:
+      current_style = item_str
+      continue
+      
+    # Handle special prefixes like ./ that don't need spaces
+    needs_space = True
+    if item_str.startswith(".") or item_str.startswith("/"):
+      needs_space = False
+      item_str = item_str[1:]
+      
+    # Add a space if needed and not the first item
+    if i > 0 and needs_space and result.plain:
+      result.append(" ")
+      
+    # Add the text with current style
+    if current_style:
+      result.append(item_str, style=current_style)
+    else:
+      result.append(item_str)
+      
+  return result
+
+def pcp(*a: Union[str, List[Any], tuple], **kw: Any) -> str:
+  """
+  Pretty colored print using rich. Supports two kinds of input:
+    level, msg: compatible with default logger
+    [args]: used to colorize output
+  Returns: colored string
+  
+  Parameters:
+    verbose: adds pfy(kwargs) to output
+    silent: suppresses local print output
+  """
+  if len(a) == 1 and isinstance(a[0], tuple):
+    a = tuple(a[0])
+  
+  out = ""
+  verbose = kw.pop('verbose', False)
+  silent = kw.pop('silent', False)
+  level = kw.pop('level', None)
+  
+  # Create a rich Text object to build our output
+  result = Text()
+  
+  if 'msg' in kw:
+    msg = kw.get('msg')
+    if isinstance(msg, tuple):
+      result = _colorize_list(list(msg))
+    elif level:
+      if level in ['CRITICAL', 'ERROR']:
+        c1, c2 = 'br', 'bright'
+      elif level in ['WARN', 'WARNING']:
+        c1, c2 = 'by', 'bright'
+      elif level in ['INFO']:
+        c1, c2 = 'blue', 'info'
+      elif level in ['DEBUG']:
+        c1, c2 = 'dim', 'dim'
+      else:
+        c1, c2 = 'dim', 'info'
+      
+      level_text = Text(level, style=c1)
+      msg_text = Text(f" {msg}", style=c2)
+      result.append(level_text)
+      result.append(msg_text)
+    else:
+      result.append(Text(str(msg)))
+    
+    if a:
+      list_text = _colorize_list(list(a))
+      result.append(list_text)
+  else:
+    result = _colorize_list(list(a))
+  
+  if kw and verbose:
+    result.append(Text("\n" + pprint.pformat(kw, indent=4, width=40, compact=True)))
+  
+  # Print if not silent
+  if not silent:
+    console.print(result)
+  
+  # Return plain text representation for compatibility
+  return result.plain
+
+SHORTEN_BY_PREFIX = ['process_', '_cb_']
+IGNORE_FUNCTIONS = ['dpcp', 'trace', 'pcp', 'Trace']
+SEVERITY_COLORS = {
+  'Error': 'wred', 
+  'Warn': 'wyellow', 
+  'Info': 'wblue', 
+  'Debug': 'gray4', 
+  None: 'wpurple'
+}
+
+def dpcp(*a: Any, conditional: Optional[bool] = None, rules: Dict[str, bool] = {},
+       no_prefix: bool = False, severity: Optional[str] = None, **kw: Any) -> Optional[str]:
+  """Version of pcp that adds info on where it was called from"""
+  remove_prefixes = lambda s, prefixes: next((s.removeprefix(prefix) for prefix in prefixes if s.startswith(prefix)), s)
+
+  def is_traced(name: Optional[str] = None) -> bool:
+    if not conditional:
+      return True
+    if not name or name not in rules:
+      return rules.get('all', False)
+    else:
+      return rules.get(name, False)
+
+  if not conditional and rules:
+    conditional = True
+  
+  frame = inspect.currentframe()
+  if frame is None:
+    return None
+
+  frame = frame.f_back
+  while frame and frame.f_back:
+    frame = frame.f_back
+    frame_info = inspect.getframeinfo(frame)
+    filename = frame_info.filename
+    func_name = frame_info.function
+
+    if func_name not in IGNORE_FUNCTIONS:
+      break
+    func_name = remove_prefixes(func_name, SHORTEN_BY_PREFIX)
+
+  if frame is None:
+    return None
+
+  if not is_traced(func_name):
+    return None
+  
+  module = filename.rsplit('/', 1)[-1].rsplit('.', 1)[0]
+  if not is_traced(module) or not is_traced(f"{module}.{func_name}"):
+    return None
+
+  args_list = []
+  
+  if 'self' in frame.f_locals:
+    class_name = frame.f_locals["self"].__class__.__name__
+    if not is_traced(class_name):
+      return None
+    if not is_traced(f"{class_name}.{func_name}"):
+      return None
+    
+    if not no_prefix:
+      args_list.extend(['gray1', f"{class_name}.", 'gray2', f".{func_name}"])
+  else:
+    if not no_prefix:
+      args_list.extend(['gray2', f".{func_name}"])
+
+  if severity and not no_prefix:
+    color = SEVERITY_COLORS.get(severity, SEVERITY_COLORS[None])
+    args_list = [color, severity] + args_list
+
+  if no_prefix:
+    args_list = list(a)
+  else:
+    args_list.extend(list(a))
+
+  return pcp(*args_list, **kw)
+# endregion
