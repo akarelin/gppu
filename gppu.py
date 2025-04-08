@@ -25,7 +25,7 @@ class Logger:
   Can be used both globally and injected into classes
   """
 
-  def __init__(self, name: str = "gppu", level: str = "INFO",trace_rules: Dict[str, bool] = None, trace_folder: str = "."):
+  def __init__(self, name: str = "gppu", level: str = "INFO", trace_rules: Dict[str, bool] = None, trace_folder: str = "."):
     self.name = name
     self._logger = logging.getLogger(name)
     self._trace_rules = trace_rules or {}
@@ -74,7 +74,7 @@ class Logger:
     return " ".join(parts)
 
   def _log(self, level, *a, **kw):
-    msg = self._msg(*a, level=level, **kw)
+    msg = self._msg(*a, severity=level, **kw)
     self._logger.log(level, msg)
 
   def Debug(self, *a, **kw):
@@ -89,6 +89,30 @@ class Logger:
     msg = self._msg(*a, **kw)
     self._log(logging.CRITICAL, msg)
     raise RuntimeError(msg)
+
+
+class LoggerMixin:
+  logger: Logger
+
+  def __init__(self, *a, logger: Optional[Logger] = None, **kw):
+    self.logger = logger or Logger(self.__class__.__name__)
+    super().__init__(*a, **kw)
+ 
+
+  def Debug(self, *a, **kw): self.logger.Debug(*a, **kw)
+  def Info(self, *a, **kw): self.logger.Info(*a, **kw)
+  def Warn(self, *a, **kw): self.logger.Warn(*a, **kw)
+  def Error(self, *a, **kw): self.logger.Error(*a, **kw)
+  def Fatal(self, *a, **kw): self.logger.Fatal(*a, **kw)
+  # def _log(self, level, *a, **kw):
+  #   self.logger._log(level, *a, **kw)
+
+
+  # Debug = lambda self, *a, **kw: self.logger.Debug(*a, **kw)
+  # Info = partialmethod(_log, level=logging.INFO)
+  # Warn = partialmethod(_log, level=logging.WARNING)
+  # Error = partialmethod(_log, level=logging.ERROR)
+  # Fatal = lambda self, *a, **kw: self.logger.Fatal(*a, **kw)
 
 
 _GLOBAL_LOGGER = Logger()
@@ -453,60 +477,158 @@ class y2eid:
 
 # endregion
 
+# ==                              YData                                           
+# region YData
+import builtins
+from typing import get_origin, get_args
+from typing import Annotated, TypeVar
 
-from pydantic import BaseModel, Field, model_validator
-from typing import Dict, Any
+_TMRO = list[tuple[str, list[str]]]
 
-class YData(BaseModel, UserDict):
-  """Dictionary with Pydantic validation and deep access methods"""
-  
-  # UserDict needs a 'data' attribute
-  data: Dict[str, Any] = Field(default_factory=dict)
-  
-  model_config = {
-    "arbitrary_types_allowed": True,
-    "extra": "allow"
-  }
-  
-  def __init__(self, *args, **kwargs):
-    # Initialize both parent classes
-    BaseModel.__init__(self, **kwargs)
-    UserDict.__init__(self, self.data)
-  
-  def get(self, path: str, default: Any = None) -> Any:
-    """Returns value at path, or default if not found"""
-    return deepget(path, self.data, default)
-  
-  def get_int(self, path: str, default: Optional[int] = None) -> Optional[int]:
-    """Returns int at path, or default if not found"""
-    return deepget_int(path, self.data, default)
-  
-  def get_list(self, path: str, default: Optional[List] = None) -> List:
-    """Returns list at path, or default if not found"""
-    if default is None:
-      default = []
-    return deepget_list(path, self.data, default)
-  
-  def get_dict(self, path: str, default: Optional[Dict] = None) -> Dict:
-    """Returns dict at path, or default if not found"""
-    if default is None:
-      default = {}
-    return deepget_dict(path, self.data, default)
-  
-  def model_dump(self, *args, **kwargs):
-    """Return the model as a dictionary"""
-    # Start with the standard model dump
-    result = super().model_dump(*args, **kwargs)
-    # Add any keys from UserDict not already in the model_dump
-    for k, v in self.data.items():
-      if k not in result:
-        result[k] = v
+def _get_all_annotations(cls) -> _TMRO:
+  """Return list of annotations that are allowed to be used as properties"""
+  PROHIBITED_ATTRS = ['data', 'AD', 'yapi', 'adapi']
+  ALLOWED_ATTRS: list[str] = []
+  # ALLOWED_ATTRS = ['parent']
+  ALLOWED_TYPES = {str, int, float, bool, dict, list, set, y2eid, y2topic}
+  # ALLOWED_TYPES_STR = {t.__name__ for t in ALLOWED_TYPES}
+  PROHIBITED_TYPES = {Callable}
+  PROHIBITED_TYPE_NAMES = ['Phase']
+
+  def check_attr(n, t) -> bool:
+    if get_origin(t) is Annotated:
+      metadata = get_args(t)[1:]
+      if 'YData.ignore' in metadata:
+        return False
+      t = get_args(t)[0]      
+    if n in ALLOWED_ATTRS: return True
+    if n in PROHIBITED_ATTRS or n[0] == '_': return False
+    if t in ALLOWED_TYPES: return True
+    if t in {t.__name__ for t in ALLOWED_TYPES}: return True
+    if getattr(t, '__name__', None) in {t.__name__ for t in ALLOWED_TYPES}: return True
+    return False
+
+  def type_to_slist(t) -> list[str]:
+    if hasattr(t, '__name__'): t = t.__name__
+    if '|' in t:
+      result = [x.strip() for x in t.split('|')]
+    else:
+      result = [t]
     return result
 
+  _ = [(n, ts) for c in cls.mro() if hasattr(c, '__annotations__')
+        for n, t in c.__annotations__.items()
+        for ts in [type_to_slist(t)]
+        if any(check_attr(n, t_str) for t_str in ts)]
 
-class Environment(YData):
+  return _
+
+
+class YData(UserDict):
+  """
+  YData is a dict that allows access to dict elements as properties.
+  Only elements returned by _get_all_annotations cam be used as properties. 
+  YData dynamically adds getter and setter for annotated properties that point to main dict.
+  """
+
+  _mro: _TMRO
+  def __init_subclass__(cls, **kw) -> None:
+    def safe_isinstance(o: object, typ: type | str | list[str], default: bool = False) -> bool: # type: ignore[return]
+      """ Safe version of isinstance. Use with default=True to be more permissive """
+      if not isinstance(typ, list): typ = list[typ]
+      result = None
+      for t in typ:
+        if isinstance(t, str):
+          otype = str(type(o)).split("'")[1].rpartition('.')[2]
+          if result is None:
+            result = bool(otype == t)
+        else:
+          if t in {Any}: return True
+          problematic = {Union, TypeVar}
+          safe = {int, float, str, dict, list}
+          if t in problematic: continue 
+          if set(get_args(t)) - safe: continue # ! Unsafe type detected
+          if get_origin(t) in problematic: continue
+          if result is None:
+            result = isinstance(o, t)
+        if result is not None: return result
+      if result is None: return default
+
+
+
+    super().__init_subclass__(**kw)
+    mro = _get_all_annotations(cls)
+    cls._mro = mro
+    Debug("DG", cls.__name__, *[x for tup in mro for x in ['DIM', '|'.join(tup[1]) + ':', 'INFO', tup[0]]])
+    for aname, atype in mro:
+      if isinstance(getattr(cls, aname, None), property): continue
+      def getter(self, name=aname, type_hint=atype):
+        if not hasattr(self, 'data'): raise RuntimeError(f"YData object {name} {type_hint} not initialized'")
+        convs = []
+        for th in type_hint:
+          _ = getattr(builtins, th, None) or globals().get(th, None)
+          if _: convs.append(_)
+
+        # conv = getattr(builtins, type_hint, None) or globals().get(type_hint, None)
+        # if conv is None: raise TypeError(f"Failed to get default for {name} of type {type_hint}: {e}")
+        if not self.data.get(name, None):
+          try:
+            default = convs[0]()
+            self.data[name] = default
+            return default
+          except Exception as e:
+            raise TypeError(f"Failed to get default for {name} of type {type_hint}: {e}")
+        value = self.data[name]
+
+        for conv in convs:
+          if isinstance(value, conv): break
+        else:
+          try:
+            converted = convs[0](value)
+            self.data[name] = converted
+            return converted
+          except Exception as e:
+            raise TypeError(f"Failed to convert {name} to {type_hint}: {e}")
+
+        return value
+      def setter(self, value, name=aname, type_hint=atype):
+        if not hasattr(self, 'data'): raise RuntimeError(f"YData {cls} object not initialized'")
+
+        if value and not safe_isinstance(value, type_hint, default=True):
+          raise TypeError(f"Expected type {type_hint} for {name}, got {type(value)} instead.")
+
+        self.data[name] = value
+      setattr(cls, aname, property(getter, setter))
+
+
+  def __init__(self, *a, **kw):
+    UserDict.__init__(self, kw.pop('data', {}), **kw)
+    import builtins
+    for n, tlist in self._mro:
+      if n in self.data:
+        last_exception = None
+        for t in tlist:
+          resolved = getattr(builtins, t, None) or globals().get(t, None)
+          if resolved is None:
+            continue
+          try:
+            self.data[n] = resolved(self.data[n])
+            break
+          except Exception as e:
+            last_exception = e
+        else:
+          raise TypeError(f"Failed to convert {n} using {tlist}: {last_exception}")
+
+  
+  
+  def __hash__(self): return hash(str(self).lower())
+# endregion
+
+
+class Environment:
   """Environment class that stores all global data"""
-  data: Dict[str, Any] = {}  # Use class variables with type annotations
+  # data: Dict[str, Any] = {}  # Use class variables with type annotations
+  data: ClassVar[Dict[str, Any]] = {}  # Use class variables with type annotations
   initialized: ClassVar[bool] = False
   logger: ClassVar[Logger] = Logger()
   trace_folder: ClassVar[str] = "."
@@ -554,4 +676,21 @@ class Environment(YData):
   def reset(cls) -> None:
     cls.data = {}
     cls.initialized = False
+  
+
+  @classmethod
+  def get(cls, path: str, default: Any = None) -> Any:
+    return deepget(path, cls.data, default)
+  
+  @classmethod
+  def get_int(cls, path: str, default: Optional[int] = None) -> Optional[int]:
+    return deepget_int(path, cls.data, default)
+  
+  @classmethod
+  def get_list(cls, path: str, default: Optional[List] = []) -> List:
+    return deepget_list(path, cls.data, default)
+  
+  @classmethod
+  def get_dict(cls, path: str, default: Optional[Dict] = {}) -> Dict:
+    return deepget_dict(path, cls.data, default)
   
