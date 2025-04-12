@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 VER_GPPU_BASE = '3.0.0'
-VER_GPPU_BUILD = '24'
+VER_GPPU_BUILD = '25'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 import yaml
@@ -170,35 +170,22 @@ def _tuple_representer(dumper: yaml.Dumper, data: tuple) -> yaml.nodes.Node:
   return dumper.represent_dict(dict(enumerate(data)))
 
 
-def dict_to_yml(data: Union[Dict, List], filename: str, config: Optional[YAMLConfig] = None) -> None:
-  """
-  Save dictionary to YAML file with proper indentation and ordering
-T = TypeVar('T', Dict[Any, Any], List[Any])
-def dict_to_yml(data: Union[Dict[Any, Any], List[Any]], filename: str, config: Optional[YAMLConfig] = None) -> None:
-  """
-  Save dictionary to YAML file with proper indentation and ordering
 class YAMLConfig(BaseModel):
   keys_first: List[str] = ["name", "path"]
   keys_drop: List[str] = ["api", "adapi", "AD"]
   keys_force_string: List[str] = ["parent"]
   class Config:
     arbitrary_types_allowed = True
+
 # Custom YAML representer for tuples
 def _tuple_representer(dumper: yaml.Dumper, data: tuple) -> yaml.nodes.Node:
   """Custom representer for tuples in YAML"""
   return dumper.represent_dict(dict(enumerate(data)))
-T = TypeVar('T', Dict[Any, Any], List[Any])
+
 def dict_to_yml(data: Union[Dict[Any, Any], List[Any]], filename: str, config: Optional[YAMLConfig] = None) -> None:
   """
   Save dictionary to YAML file with proper indentation and ordering
 
-  Args:
-    data: Dictionary or list to serialize
-    filename: Output file path
-    config: Optional YAML configuration settings
-  """
-  if not data or not filename:
-    return
   Args:
     data: Dictionary or list to serialize
     filename: Output file path
@@ -258,9 +245,6 @@ def dict_to_yml(data: Union[Dict[Any, Any], List[Any]], filename: str, config: O
     raise RuntimeError(error_msg)
 
 
-def dict_from_yml(filename: str) -> Dict:
-  """
-  Load dictionary from YAML file with support for !include directive
 def dict_from_yml(filename: str) -> Dict[Any, Any]:
   """
   Load dictionary from YAML file with support for !include directive
@@ -269,8 +253,7 @@ def dict_from_yml(filename: str) -> Dict[Any, Any]:
     filename: Output file path
     config: Optional YAML configuration settings
   """
-  if not data or not filename:
-    return
+  if not filename: return
   if config is None:
     config = YAMLConfig()
   # Use custom dumper for proper indentation
@@ -290,27 +273,19 @@ def dict_from_yml(filename: str) -> Dict[Any, Any]:
     with open(f"{filename}_error.txt", 'w+') as ferr:
       ferr.write(error_msg)
     raise RuntimeError(error_msg)
+
 def dict_from_yml(filename: str) -> Dict[Any, Any]:
   """
   Load dictionary from YAML file with support for !include directive
 
   Args:
     filename: Path to YAML file
-  Args:
-    filename: Path to YAML file
-
-  Returns:
-    Dictionary loaded from YAML
-  """
-  if not os.path.exists(filename):
-    raise FileNotFoundError(f"YAML file not found: {filename}")
   Returns:
     Dictionary loaded from YAML
   """
   if not os.path.exists(filename):
     raise FileNotFoundError(f"YAML file not found: {filename}")
 
-  yml_root = os.path.dirname(filename)
   yml_root = os.path.dirname(filename)
 
   # Custom constructor for handling !include directive
