@@ -2,8 +2,6 @@
 
 A comprehensive utility library providing configuration loading, logging, data manipulation, and type safety utilities.
 
-Originally extracted from the RAN/appdaemon/_adev/Y2 environment loader pattern for use across multiple projects.
-
 ## Features
 
 ### 🔧 Configuration Management
@@ -124,10 +122,9 @@ class ConfigLoader:
 
 ## Branches
 
-- **master** (v2.19.0): Production-ready version used by RAN/appdaemon/_adev/Y2
-- **3.0** (v3.0.0.26): Modernized refactor with Pydantic BaseModel and rich text support
-- **ETLs**: Original v2.18.3 preserved as backup
-- **8-environment**: Merged into 3.0 branch
+- **master** (v2.19.0): Production version. Used by: dev of Y2, RAN, CRAP
+- **3.0** (v3.0.0.26): Unfinished, semi-abandoned refactor based on Pydantic and Rich. Used by: Y3
+- **LTS**: Original v2.18.3 preserved as backup. Used by master of Y2
 
 ## Version History
 
