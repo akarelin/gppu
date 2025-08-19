@@ -23,8 +23,8 @@ from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
 
-VER_GPPU_BASE = '2.18.3'
-VER_GPPU_BUILD = '250705'
+VER_GPPU_BASE = '2.19.0'
+VER_GPPU_BUILD = '250819'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 
