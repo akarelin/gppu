@@ -16,6 +16,9 @@ All notable changes to this project will be documented in this file.
 ### Added
 - gppu added as git submodule to /home/alex/CRAP/gppu
 
+### Removed
+- Deleted stale branches: 8-environment (merged), 121-better-base-class-hierarchy (outdated)
+
 ### Branch Structure
 - **master** (v2.19.0): Production version used by RAN/appdaemon/_adev/Y2
 - **3.0** (v3.0.0.26): Modernized refactor with Pydantic and Rich
