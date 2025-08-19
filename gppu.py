@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 VER_GPPU_BASE = '3.0.0'
-VER_GPPU_BUILD = '25'
+VER_GPPU_BUILD = '26'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 import yaml
@@ -9,15 +9,20 @@ import re
 import logging
 import inspect
 import pprint
+import os.path
 from functools import partialmethod
 from string import Template
-
-from pydantic import BaseModel
 from typing import Any, Dict, List, Union, Optional, Callable, ClassVar
 from collections import defaultdict, UserDict, UserList
-import os.path
 
 
+from pydantic import BaseModel
+from rich.console import Console
+from rich.theme import Theme
+from rich.text import Text
+
+
+## @@                   Logging                                       
 # region Logging
 class Logger:
   """
@@ -25,13 +30,14 @@ class Logger:
   Can be used both globally and injected into classes
   """
 
-  def __init__(self, name: str = "gppu", level: str = "INFO",trace_rules: Dict[str, bool] = None, trace_folder: str = "."):
+  def __init__(self, name: str = "gppu", level: str = "INFO", trace_rules: Optional[Dict[str, bool]] = None, trace_folder: str = "."):
     self.name = name
     self._logger = logging.getLogger(name)
     self._trace_rules = trace_rules or {}
     self._trace_folder = trace_folder
 
     self._logger.setLevel(getattr(logging, level))
+
 
   @staticmethod
   def _is_debug(rules: Dict[str, bool]) -> bool:
@@ -58,45 +64,70 @@ class Logger:
 
     return rules.get('all', False)
 
+
   @staticmethod
-  def _msg(*a, severity=None, **kw):
-    """Format args into a string message with optional severity prefix"""
-    parts = []
-
-    if severity: parts.append(f"[{severity}]")
-
+  def _msg(*a, level=None, **kw) -> Text:
+    """Format args into a string message with optional severity prefix using rich"""
+    # Create rich Text object
+    result = Text()
+    
+    # Add severity prefix if provided
+    if level:
+      if isinstance(level, int): level_str = logging.getLevelName(level)
+      else: level_str = str(level)
+              
+      result.append(f"[{level_str}]", style=SEVERITY_COLORS.get(level_str.lower() if isinstance(level_str, str) else "", ""))
+      result.append(" ")
+      
+    # Add each argument with proper formatting
     for arg in a:
-      if isinstance(arg, (list, dict, tuple)): parts.append(pprint.pformat(arg, indent=2))
-      else: parts.append(str(arg))
-    for k, w in kw.items():
-      parts.append(f"{k}={w}")
+      if isinstance(arg, (list, dict, tuple)):
+        # Format complex objects using pprint
+        result.append(pprint.pformat(arg, indent=2))
+      else:
+        # Add simple strings
+        result.append(str(arg))
+      result.append(" ")
+    
+    return result  # Return the formatted Text object
 
-    return " ".join(parts)
 
   def _log(self, level, *a, **kw):
+    # Remove level from kw to avoid duplicate parameter
+    if 'level' in kw:
+      del kw['level']
     msg = self._msg(*a, level=level, **kw)
     self._logger.log(level, msg)
+
 
   def Debug(self, *a, **kw):
     if self._is_debug(self._trace_rules):
       self._logger.debug(self._msg(*a, **kw))
-
-  Info = partialmethod(_log, level=logging.INFO)
-  Warn = partialmethod(_log, level=logging.WARNING)
-  Error = partialmethod(_log, level=logging.ERROR)
-
+  def Info(self, *a, **kw): self._log(logging.INFO, *a, **kw)
+  def Warn(self, *a, **kw): self._log(logging.WARNING, *a, **kw)
+  def Error(self, *a, **kw): self._log(logging.ERROR, *a, **kw)
   def Fatal(self, *a, **kw):
     msg = self._msg(*a, **kw)
     self._log(logging.CRITICAL, msg)
     raise RuntimeError(msg)
 
 
+class LoggerMixin:
+  logger: Logger
+
+  def __init__(self, *a, logger: Optional[Logger] = None, **kw):
+    self.logger = logger or Logger(self.__class__.__name__)
+    super().__init__(*a, **kw)
+ 
+
+  def Debug(self, *a, **kw): self.logger.Debug(*a, **kw)
+  def Info(self, *a, **kw): self.logger.Info(*a, **kw)
+  def Warn(self, *a, **kw): self.logger.Warn(*a, **kw)
+  def Error(self, *a, **kw): self.logger.Error(*a, **kw)
+  def Fatal(self, *a, **kw): self.logger.Fatal(*a, **kw)
+
+
 _GLOBAL_LOGGER = Logger()
-# def Debug(*a, **kw): _GLOBAL_LOGGER.Debug(*a, **kw)
-# def Info(*a, **kw): _GLOBAL_LOGGER.Info
-# def Warn(*a, **kw): _GLOBAL_LOGGER.Warn
-# def Error(*a, **kw): _GLOBAL_LOGGER.Error
-# def Fatal(*a, **kw): _GLOBAL_LOGGER.Fatal(*a, **kw)
     
 Debug: Callable = _GLOBAL_LOGGER.Debug 
 Info: Callable = _GLOBAL_LOGGER.Info
@@ -106,6 +137,7 @@ Fatal: Callable = _GLOBAL_LOGGER.Fatal
 # endregion
 
 
+## $$   Dict utils: deepget, dict_all_paths                           
 # region Dict utils: deepget, dict_all_paths
 deepdict = lambda: defaultdict(deepdict)
 def deepget(path: str, d: dict, default: Any = None) -> Any:
@@ -160,6 +192,8 @@ class Config:
   arbitrary_types_allowed = True
 
 
+# ##               YAML serializer/deserializer and template engine  
+# region YAML serializer/deserializer and template engine
 # Custom YAML representer for tuples
 def _tuple_representer(dumper: yaml.Dumper, data: tuple) -> yaml.nodes.Node:
   """Custom representer for tuples in YAML"""
@@ -355,6 +389,7 @@ def dict_template_populate(o, data: dict = {}, excludes:list = []) -> Any:
 # endregion
 
 
+# --                              y2list, y2eid, y2path, y2slug, y2topic   
 # region y2xxx
 # xx                                                                                        
 # xx y2list, y2path and y2slug                                                              
@@ -523,69 +558,169 @@ class y2eid:
 # endregion
 
 
-from pydantic import BaseModel, Field, model_validator
-from typing import Dict, Any
+# ==                              YData                                           
+# region YData
+import builtins
+from typing import get_origin, get_args
+from typing import Annotated, TypeVar
 
-class YData(BaseModel, UserDict):
-  """Dictionary with Pydantic validation and deep access methods"""
-  
-  # UserDict needs a 'data' attribute
-  data: Dict[str, Any] = Field(default_factory=dict)
-  
-  model_config = {
-    "arbitrary_types_allowed": True,
-    "extra": "allow"
-  }
-  
-  def __init__(self, *args, **kwargs):
-    # Initialize both parent classes
-    BaseModel.__init__(self, **kwargs)
-    UserDict.__init__(self, self.data)
-  
-  def get(self, path: str, default: Any = None) -> Any:
-    """Returns value at path, or default if not found"""
-    return deepget(path, self.data, default)
-  
-  def get_int(self, path: str, default: Optional[int] = None) -> Optional[int]:
-    """Returns int at path, or default if not found"""
-    return deepget_int(path, self.data, default)
-  
-  def get_list(self, path: str, default: Optional[List] = None) -> List:
-    """Returns list at path, or default if not found"""
-    if default is None:
-      default = []
-    return deepget_list(path, self.data, default)
-  
-  def get_dict(self, path: str, default: Optional[Dict] = None) -> Dict:
-    """Returns dict at path, or default if not found"""
-    if default is None:
-      default = {}
-    return deepget_dict(path, self.data, default)
-  
-  def model_dump(self, *args, **kwargs):
-    """Return the model as a dictionary"""
-    # Start with the standard model dump
-    result = super().model_dump(*args, **kwargs)
-    # Add any keys from UserDict not already in the model_dump
-    for k, v in self.data.items():
-      if k not in result:
-        result[k] = v
+_TMRO = list[tuple[str, list[str]]]
+
+def _get_all_annotations(cls) -> _TMRO:
+  """Return list of annotations that are allowed to be used as properties"""
+  PROHIBITED_ATTRS = ['data', 'AD', 'yapi', 'adapi']
+  ALLOWED_ATTRS: list[str] = []
+  # ALLOWED_ATTRS = ['parent']
+  ALLOWED_TYPES = {str, int, float, bool, dict, list, set, y2eid, y2topic}
+  # ALLOWED_TYPES_STR = {t.__name__ for t in ALLOWED_TYPES}
+  PROHIBITED_TYPES = {Callable}
+  PROHIBITED_TYPE_NAMES = ['Phase']
+
+  def check_attr(n, t) -> bool:
+    if get_origin(t) is Annotated:
+      metadata = get_args(t)[1:]
+      if 'YData.ignore' in metadata:
+        return False
+      t = get_args(t)[0]      
+    if n in ALLOWED_ATTRS: return True
+    if n in PROHIBITED_ATTRS or n[0] == '_': return False
+    if t in ALLOWED_TYPES: return True
+    if t in {t.__name__ for t in ALLOWED_TYPES}: return True
+    if getattr(t, '__name__', None) in {t.__name__ for t in ALLOWED_TYPES}: return True
+    return False
+
+  def type_to_slist(t) -> list[str]:
+    if hasattr(t, '__name__'): t = t.__name__
+    if '|' in t:
+      result = [x.strip() for x in t.split('|')]
+    else:
+      result = [t]
     return result
 
+  _ = [(n, ts) for c in cls.mro() if hasattr(c, '__annotations__')
+        for n, t in c.__annotations__.items()
+        for ts in [type_to_slist(t)]
+        if any(check_attr(n, t_str) for t_str in ts)]
 
-class Environment(YData):
+  return _
+
+
+class YData(UserDict):
+  """
+  YData is a dict that allows access to dict elements as properties.
+  Only elements returned by _get_all_annotations cam be used as properties. 
+  YData dynamically adds getter and setter for annotated properties that point to main dict.
+  """
+
+  _mro: _TMRO
+  def __init_subclass__(cls, **kw) -> None:
+    def safe_isinstance(o: object, typ: type | str | list[str], default: bool = False) -> bool: # type: ignore[return]
+      """ Safe version of isinstance. Use with default=True to be more permissive """
+      if not isinstance(typ, list): typ = list[typ]
+      result = None
+      for t in typ:
+        if isinstance(t, str):
+          otype = str(type(o)).split("'")[1].rpartition('.')[2]
+          if result is None:
+            result = bool(otype == t)
+        else:
+          if t in {Any}: return True
+          problematic = {Union, TypeVar}
+          safe = {int, float, str, dict, list}
+          if t in problematic: continue 
+          if set(get_args(t)) - safe: continue # ! Unsafe type detected
+          if get_origin(t) in problematic: continue
+          if result is None: 
+            result = isinstance(o, t)
+        if result is not None: return result
+      if result is None: return default
+
+
+
+    super().__init_subclass__(**kw)
+    mro = _get_all_annotations(cls)
+    cls._mro = mro
+    Debug("DG", cls.__name__, *[x for tup in mro for x in ['DIM', '|'.join(tup[1]) + ':', 'INFO', tup[0]]])
+    for aname, atype in mro:
+      if isinstance(getattr(cls, aname, None), property): continue
+      def getter(self, name=aname, type_hint=atype):
+        if not hasattr(self, 'data'): raise RuntimeError(f"YData object {name} {type_hint} not initialized'")
+        convs = []
+        for th in type_hint:
+          _ = getattr(builtins, th, None) or globals().get(th, None)
+          if _: convs.append(_)
+
+        # conv = getattr(builtins, type_hint, None) or globals().get(type_hint, None)
+        # if conv is None: raise TypeError(f"Failed to get default for {name} of type {type_hint}: {e}")
+        if not self.data.get(name, None):
+          try:
+            default = convs[0]()
+            self.data[name] = default
+            return default
+          except Exception as e:
+            raise TypeError(f"Failed to get default for {name} of type {type_hint}: {e}")
+        value = self.data[name]
+
+        for conv in convs:
+          if isinstance(value, conv): break
+        else:
+          try:
+            converted = convs[0](value)
+            self.data[name] = converted
+            return converted
+          except Exception as e:
+            raise TypeError(f"Failed to convert {name} to {type_hint}: {e}")
+
+        return value
+      def setter(self, value, name=aname, type_hint=atype):
+        if not hasattr(self, 'data'): raise RuntimeError(f"YData {cls} object not initialized'")
+
+        if value and not safe_isinstance(value, type_hint, default=True):
+          raise TypeError(f"Expected type {type_hint} for {name}, got {type(value)} instead.")
+
+        self.data[name] = value
+      setattr(cls, aname, property(getter, setter))
+
+
+  def __init__(self, *a, **kw):
+    UserDict.__init__(self, kw.pop('data', {}), **kw)
+    import builtins
+    for n, tlist in self._mro:
+      if n in self.data:
+        last_exception = None
+        for t in tlist:
+          resolved = getattr(builtins, t, None) or globals().get(t, None)
+          if resolved is None:
+            continue
+          try:
+            self.data[n] = resolved(self.data[n])
+            break
+          except Exception as e:
+            last_exception = e
+        else:
+          raise TypeError(f"Failed to convert {n} using {tlist}: {last_exception}")
+
+  
+  
+  def __hash__(self): return hash(str(self).lower())
+# endregion
+
+
+# __                              Environment                                     
+# region Environment
+class Environment:
   """Environment class that stores all global data"""
-  data: Dict[str, Any] = {}  # Use class variables with type annotations
+  # data: Dict[str, Any] = {}  # Use class variables with type annotations
+  data: ClassVar[Dict[str, Any]] = {}  # Use class variables with type annotations
   initialized: ClassVar[bool] = False
   logger: ClassVar[Logger] = Logger()
   trace_folder: ClassVar[str] = "."
   trace_rules: ClassVar[Dict[str, bool]] = {}  
 
   @classmethod
-  def from_yaml(cls, filename: str) -> 'Environment':
+  def from_yaml(cls, filename: str) -> None:
     """Load environment from YAML file"""
-    if Environment.initialized:
-      return Environment
+    if Environment.initialized: return
     
     config = dict_from_yml(filename)
     
@@ -624,3 +759,311 @@ class Environment(YData):
     cls.data = {}
     cls.initialized = False
   
+
+  @classmethod
+  def get(cls, path: str, default: Any = None) -> Any:
+    return deepget(path, cls.data, default)
+  
+  @classmethod
+  def get_int(cls, path: str, default: Optional[int] = None) -> Optional[int]:
+    return deepget_int(path, cls.data, default)
+  
+  @classmethod
+  def get_list(cls, path: str, default: Optional[List] = []) -> List:
+    return deepget_list(path, cls.data, default)
+  
+  @classmethod
+  def get_dict(cls, path: str, default: Optional[Dict] = {}) -> Dict:
+    return deepget_dict(path, cls.data, default)
+# endregion
+
+
+# &&                              Colors                                          
+# region Colors
+# Create rich theme that maps to the old TColor styles
+rich_theme = Theme({
+  "none": "",
+  "dim": "dim",
+  "bright": "bold cyan",  # 36;1
+  "bw": "bold white",     # 38;5;15;1
+  "dw": "white",          # 38;5;7;1
+  
+  # Grays
+  "gray1": "rgb(45,45,45)",    # 38;5;237
+  "gray2": "rgb(60,60,60)",    # 38;5;239/243
+  "gray3": "rgb(100,100,100)", # 38;5;246
+  "gray4": "rgb(140,140,140)", # 38;5;249
+  
+  # Colors
+  "by": "bold yellow",    # 38;5;11;1
+  "dy": "yellow",         # 38;5;3;1
+  "bg": "bold green",     # 38;5;10;1
+  "dg": "green",          # 38;5;2;1
+  "db": "blue",           # 38;5;4;1
+  "bc": "bold cyan",      # 38;5;6;1
+  "dc": "cyan",           # 38;5;14;1
+  "bm": "bold magenta",   # 38;5;13;1
+  "dm": "magenta",        # 38;5;5;1
+  "br": "bold red",       # 38;5;9;1
+  "dr": "red",            # 38;5;1;1
+  "bp": "bold rgb(135,0,175)",  # 38;5;129;1
+  "dp": "rgb(90,0,135)",        # 38;5;90;1
+  "bo": "bold rgb(175,95,0)",   # 38;5;130;1
+  "do": "rgb(175,95,0)",        # 38;5;130;1
+  "pink": "bold rgb(255,0,175)",  # 38;5;200;1
+  "dpink": "rgb(175,95,135)",     # 38;5;132;1
+  "bgold": "bold rgb(255,175,0)",  # 38;5;220;1
+  "dgold": "rgb(215,135,0)",       # 38;5;178;1
+  
+  # Special styles
+  "info": "bold blue",          # 34;1
+  "white": "black on white",    # 0;30;47
+  "yellow": "black on yellow",  # 0;30;43
+  "red": "black on red",        # 0;30;41
+  "blue": "black on blue",      # 0;30;44
+  "green": "black on green",    # 0;30;42
+  "wred": "white on red",       # 0;37;41
+  "wblue": "white on blue",     # 0;37;44
+  "wgreen": "white on green",   # 0;37;42
+  "wgray": "black on white",    # 0;30;47
+  "wpink": "black on magenta",  # 0;30;45
+  "wpurple": "white on purple", # 0;37;45
+  "wyellow": "reverse yellow",  # 7;49;93
+})
+
+console = Console(theme=rich_theme)
+
+class _TColorHack(type):
+  def __getitem__(cls, key): return getattr(cls, str(key), None)
+  def __contains__(cls, key): return hasattr(cls, str(key))
+
+  def print(cls):
+    for name in dir(cls):
+      if not name.startswith('_') and isinstance(getattr(cls, name), str):
+        console.print(f"[{name}]{name}[/]", end=" ")
+    console.print()
+
+class TColor(metaclass=_TColorHack):
+  NONE = "none"
+  DIM = "dim"
+  BRIGHT = "bright"
+  BW = "bw"
+  DW = "dw"
+  
+  GRAY1 = "gray1"
+  GRAY2 = "gray2"
+  GRAY3 = "gray3"
+  GRAY4 = "gray4"
+  
+  BY = "by"
+  DY = "dy"
+  BG = "bg"
+  DG = "dg"
+  DB = "db"
+  BC = "bc"
+  DC = "dc"
+  BM = "bm"
+  DM = "dm"
+  BR = "br"
+  DR = "dr"
+  BP = "bp"
+  DP = "dp"
+  BO = "bo"
+  DO = "do"
+  PINK = "pink"
+  DPINK = "dpink"
+  BGOLD = "bgold"
+  DGOLD = "dgold"
+  
+  ORANGE = BO
+  PURPLE = BP
+  
+  INFO = "info"
+  WHITE = "white"
+  YELLOW = "yellow"
+  RED = "red"
+  BLUE = "blue"
+  GREEN = "green"
+  
+  WRED = "wred"
+  WBLUE = "wblue"
+  WGREEN = "wgreen"
+  WGRAY = "wgray"
+  WPINK = "wpink"
+  WPURPLE = "wpurple"
+  WYELLOW = "wyellow"
+
+COLORS = {k: v for k, v in TColor.__dict__.items() 
+          if not k.startswith('_') and isinstance(v, str)}
+
+def _colorize_list(items: List) -> Text:
+  """Colorizes list of strings using rich Text"""
+  result = Text()
+  current_style = None
+
+  for i, item in enumerate(items):
+    if not item:
+      continue
+      
+    # Check if this item is a color/style name
+    item_str = str(item)
+    if item_str in COLORS:
+      current_style = item_str
+      continue
+      
+    # Handle special prefixes like ./ that don't need spaces
+    needs_space = True
+    if item_str.startswith(".") or item_str.startswith("/"):
+      needs_space = False
+      item_str = item_str[1:]
+      
+    # Add a space if needed and not the first item
+    if i > 0 and needs_space and result.plain:
+      result.append(" ")
+      
+    # Add the text with current style
+    if current_style:
+      result.append(item_str, style=current_style)
+    else:
+      result.append(item_str)
+      
+  return result
+
+def pcp(*a: Union[str, List[Any], tuple], **kw: Any) -> str:
+  """
+  Pretty colored print using rich. Supports two kinds of input:
+    level, msg: compatible with default logger
+    [args]: used to colorize output
+  Returns: colored string
+  
+  Parameters:
+    verbose: adds pfy(kwargs) to output
+    silent: suppresses local print output
+  """
+  if len(a) == 1 and isinstance(a[0], tuple):
+    a = tuple(a[0])
+  
+  out = ""
+  verbose = kw.pop('verbose', False)
+  silent = kw.pop('silent', False)
+  level = kw.pop('level', None)
+  
+  # Create a rich Text object to build our output
+  result = Text()
+  
+  if 'msg' in kw:
+    msg = kw.get('msg')
+    if isinstance(msg, tuple):
+      result = _colorize_list(list(msg))
+    elif level:
+      if level in ['CRITICAL', 'ERROR']:
+        c1, c2 = 'br', 'bright'
+      elif level in ['WARN', 'WARNING']:
+        c1, c2 = 'by', 'bright'
+      elif level in ['INFO']:
+        c1, c2 = 'blue', 'info'
+      elif level in ['DEBUG']:
+        c1, c2 = 'dim', 'dim'
+      else:
+        c1, c2 = 'dim', 'info'
+      
+      level_text = Text(level, style=c1)
+      msg_text = Text(f" {msg}", style=c2)
+      result.append(level_text)
+      result.append(msg_text)
+    else:
+      result.append(Text(str(msg)))
+    
+    if a:
+      list_text = _colorize_list(list(a))
+      result.append(list_text)
+  else:
+    result = _colorize_list(list(a))
+  
+  if kw and verbose:
+    result.append(Text("\n" + pprint.pformat(kw, indent=4, width=40, compact=True)))
+  
+  # Print if not silent
+  if not silent:
+    console.print(result)
+  
+  # Return plain text representation for compatibility
+  return result.plain
+
+SHORTEN_BY_PREFIX = ['process_', '_cb_']
+IGNORE_FUNCTIONS = ['dpcp', 'trace', 'pcp', 'Trace']
+SEVERITY_COLORS = {
+  'Error': 'wred', 
+  'Warn': 'wyellow', 
+  'Info': 'wblue', 
+  'Debug': 'gray4', 
+  None: 'wpurple'
+}
+
+def dpcp(*a: Any, conditional: Optional[bool] = None, rules: Dict[str, bool] = {},
+       no_prefix: bool = False, severity: Optional[str] = None, **kw: Any) -> Optional[str]:
+  """Version of pcp that adds info on where it was called from"""
+  remove_prefixes = lambda s, prefixes: next((s.removeprefix(prefix) for prefix in prefixes if s.startswith(prefix)), s)
+
+  def is_traced(name: Optional[str] = None) -> bool:
+    if not conditional:
+      return True
+    if not name or name not in rules:
+      return rules.get('all', False)
+    else:
+      return rules.get(name, False)
+
+  if not conditional and rules:
+    conditional = True
+  
+  frame = inspect.currentframe()
+  if frame is None:
+    return None
+
+  frame = frame.f_back
+  while frame and frame.f_back:
+    frame = frame.f_back
+    frame_info = inspect.getframeinfo(frame)
+    filename = frame_info.filename
+    func_name = frame_info.function
+
+    if func_name not in IGNORE_FUNCTIONS:
+      break
+    func_name = remove_prefixes(func_name, SHORTEN_BY_PREFIX)
+
+  if frame is None:
+    return None
+
+  if not is_traced(func_name):
+    return None
+  
+  module = filename.rsplit('/', 1)[-1].rsplit('.', 1)[0]
+  if not is_traced(module) or not is_traced(f"{module}.{func_name}"):
+    return None
+
+  args_list = []
+  
+  if 'self' in frame.f_locals:
+    class_name = frame.f_locals["self"].__class__.__name__
+    if not is_traced(class_name):
+      return None
+    if not is_traced(f"{class_name}.{func_name}"):
+      return None
+    
+    if not no_prefix:
+      args_list.extend(['gray1', f"{class_name}.", 'gray2', f".{func_name}"])
+  else:
+    if not no_prefix:
+      args_list.extend(['gray2', f".{func_name}"])
+
+  if severity and not no_prefix:
+    color = SEVERITY_COLORS.get(severity, SEVERITY_COLORS[None])
+    args_list = [color, severity] + args_list
+
+  if no_prefix:
+    args_list = list(a)
+  else:
+    args_list.extend(list(a))
+
+  return pcp(*args_list, **kw)
+# endregion
