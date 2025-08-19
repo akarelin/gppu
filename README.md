@@ -124,13 +124,16 @@ class ConfigLoader:
 
 ## Branches
 
-- **main/master**: Stable releases
-- **ETLs**: Enhanced version for CRM/ETL projects with additional utilities
-- **Feature branches**: Specific development work
+- **master** (v2.19.0): Production-ready version used by RAN/appdaemon/_adev/Y2
+- **3.0** (v3.0.0.26): Modernized refactor with Pydantic BaseModel and rich text support
+- **ETLs**: Original v2.18.3 preserved as backup
+- **8-environment**: Merged into 3.0 branch
 
-## Version
+## Version History
 
-Current version: 2.18.3.250705
+- **Current (master)**: v2.19.0.250819 - Production version identical to RAN_adev
+- **Next (3.0 branch)**: v3.0.0.26 - Major refactor with modern Python patterns
+- **Previous**: v2.18.3.250705 - Original extracted version
 
 ## License
 
