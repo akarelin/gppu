@@ -6,6 +6,8 @@ import logging
 import builtins
 import sys
 
+from pathlib import Path
+
 from abc import abstractmethod
 from functools import wraps, partial
 from pydoc import locate
@@ -23,7 +25,7 @@ from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
 
-VER_GPPU_BASE = '2.19.0'
+VER_GPPU_BASE = '2.19.1'
 VER_GPPU_BUILD = '250819'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
@@ -284,11 +286,23 @@ def template_populate(o, data: dict = {}, excludes:list = []) -> Any:
 
 # endregion
 
-
-# region Loggin and Time helpers: now_ts, now_str
-"""Logging"""
+# region Time helpers
 def now_str(): return datetime.now().strftime("%Y%m%d.%H%M%S")
 def now_ts(): return datetime.now().timestamp()
+
+def timestamp(): return datetime.now().strftime("%y%m%d-%H%M")
+def datestamp(): return datetime.now().strftime("%y%m%d")
+
+def prepend_datestamp(path, separator=" ") -> Path:
+  datestamp_str = datestamp()  
+  _ = Path(path)
+  return _.parent / f"{datestamp_str}{separator}{_.name}"
+
+def append_timestamp(path, separator=" ") -> Path:
+  timestamp_str = timestamp()
+  _ = Path(path)
+  return _.parent / f"{_.stem}{separator}{timestamp_str}{_.suffix}"
+
 def pretty_timedelta(ts) -> str:
   delta = now_ts() - ts
   seconds = int(delta)
@@ -299,7 +313,10 @@ def pretty_timedelta(ts) -> str:
   elif hours > 0: return '%dh %dm %ds' % (hours, minutes, seconds)
   elif minutes > 0: return '%dm %ds' % (minutes, seconds)
   else: return '%ds' % (seconds,)
+# endregion
 
+# region Loggin and Time helpers: now_ts, now_str
+"""Logging"""
 def pfy(object) -> str: return "\n"+pprint.pformat(object, indent=4, width=40, compact=True)
 def slugify(o) -> str:
   """Converts any object to string, then slugifies it"""

@@ -41,6 +41,8 @@ from .gppu import (
     now_str,
     now_ts,
     pretty_timedelta,
+    prepend_datestamp,
+    append_timestamp,
     
     # String utilities
     pfy,
@@ -92,7 +94,7 @@ __all__ = [
     'safe_list', 'safe_timedelta', 'safe_isinstance',
     
     # Time utilities  
-    'now_str', 'now_ts', 'pretty_timedelta',
+    'now_str', 'now_ts', 'pretty_timedelta', 'prepend_datestamp', 'append_timestamp',
     
     # String utilities
     'pfy', 'slugify',
