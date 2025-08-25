@@ -5,6 +5,7 @@ import inspect
 import logging
 import builtins
 import sys
+import platform
 
 from pathlib import Path
 
@@ -25,8 +26,8 @@ from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
 
-VER_GPPU_BASE = '2.19.1'
-VER_GPPU_BUILD = '250819'
+VER_GPPU_BASE = '2.19.3'
+VER_GPPU_BUILD = '250824'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 
@@ -34,6 +35,22 @@ _T = TypeVar('_T')
 _P = ParamSpec('_P')
 _T_ANY: type[Any] = cast(type[Any], Any)
 
+# region OS
+OS_W11 = "W11"
+OS_LINUX = "Linux"
+OS_WSL = "WSL"
+OS_OTHER = "Other" 
+
+def detect_os():
+  sysname = platform.system()
+  if sysname == "Windows": return OS_W11
+  elif sysname == "Linux":
+    release = platform.release().lower()
+    if "microsoft" in release or "wsl" in release: return OS_WSL
+    return OS_LINUX
+  else:
+    return OS_OTHER
+# # endregion
 
 # region Safe typecasting
 def safe_float(o, default: Optional[float] = None) -> Optional[float]:
@@ -207,7 +224,8 @@ def dict_to_yml(filename:str, data=None, sort_keys=False):
       with open(filename+'_error.txt','w+') as ferr: ferr.write(error)
 
 
-def dict_from_yml(filename:str):
+def dict_from_yml(filename: str | Path):
+  filename = str(filename)
   yml_root = filename.rsplit('/', 1)[0]
 
   def yml_include(loader, node):
