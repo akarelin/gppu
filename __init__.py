@@ -11,6 +11,8 @@ from .gppu import (
     VER_GPPU_BASE,
     VER_GPPU_BUILD,
     
+    detect_os,
+
     # Configuration loading
     dict_from_yml,
     dict_to_yml,
