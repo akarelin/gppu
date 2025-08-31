@@ -13,7 +13,7 @@ from abc import abstractmethod
 from functools import wraps, partial
 from pydoc import locate
 
-from types import ModuleType, UnionType
+from types import ModuleType, UnionType, FrameType
 
 from typing import Union, Callable, Any, Literal, List, Optional, Tuple, Dict, DefaultDict
 from typing import Type, TypeVar, TypeAlias, ClassVar
@@ -26,7 +26,7 @@ from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
 
-VER_GPPU_BASE = '2.19.3'
+VER_GPPU_BASE = '2.20.0'
 VER_GPPU_BUILD = '250824'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
@@ -948,14 +948,26 @@ class mixin_Logger(protocol_Logger, mixin):
 
 # ==                              DC - DataClass                              ==                                           
 # region DC - Pseudo-DataClass
+def _eval_with_extras(expr: str, frm: FrameType, extra_modules: list[ModuleType] = []):
+  ns = {}
+  ns.update(frm.f_globals or {})
+  ns.update(frm.f_locals or {})
+  for m in extra_modules:
+    if isinstance(m, ModuleType): ns[m.__name__] = m
+    elif isinstance(m, dict): ns.update(m)
+    else: ns[type[m].__name__] = m
+  return eval(expr, ns, ns)
+
+
 def _resolve_type(name: str, *, extra_modules: list[ModuleType] | None = None) -> type[Any]:
   if isinstance(name, type): return name
   if hasattr(builtins, name): return getattr(builtins, name)
 
   frm = sys._getframe(1)
   try:
-    evaluated = eval(name, frm.f_globals, frm.f_locals)
+    # evaluated = eval(name, frm.f_globals, frm.f_locals)
     # Convert PEP 604 UnionType or typing.Union to typing.Union[...] form
+    evaluated = _eval_with_extras(name, frm, extra_modules or [])
     if isinstance(evaluated, type): return evaluated
     if isinstance(evaluated, UnionType): return cast(type[Any], Union[evaluated.__args__])
     if getattr(evaluated, "__origin__", None) is Union: return evaluated    
@@ -979,7 +991,6 @@ def _resolve_type(name: str, *, extra_modules: list[ModuleType] | None = None) -
   for mod in (extra_modules or []) + auto:
     if hasattr(mod, name) and isinstance(obj := getattr(mod, name), type): return obj
 
-  # print(f"Cannot resolve type name: {name}")
   return _T_ANY
 
 
