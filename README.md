@@ -1,6 +1,6 @@
 # GPPU - General Purpose Python Utilities
 
-A comprehensive utility library providing configuration loading, logging, data manipulation, and type safety utilities.
+A comprehensive utility library providing configuration loading, logging, data manipulation, and type safety utilities. Now enhanced with Rich library for beautiful terminal output.
 
 ## Features
 
@@ -10,10 +10,12 @@ A comprehensive utility library providing configuration loading, logging, data m
 - **Template Population**: Variable substitution in configuration files
 - **Environment Variable Expansion**: Automatic `${VAR}` expansion
 
-### 📊 Logging & Debugging
-- **Colored Console Output**: Pretty formatted logs with severity-based colors
+### 📊 Logging & Debugging (Enhanced with Rich)
+- **Rich Console Output**: Beautiful formatted logs using Rich library
+- **Advanced Styling**: Support for RGB colors, bold, italic, and more
+- **Rich Logging Handler**: Integration with Python logging using RichHandler
 - **Trace Rules**: Fine-grained debug control with conditional logging
-- **Stack-Aware Tracing**: `dpcp()` shows calling function context
+- **Stack-Aware Tracing**: `dpcp()` shows calling function context with Rich formatting
 - **File Output**: `Dump()` saves objects to YAML files for inspection
 
 ### 🛠️ Data Utilities
@@ -22,15 +24,58 @@ A comprehensive utility library providing configuration loading, logging, data m
 - **List Processing**: Smart coercion from strings, dicts, and other types
 - **Data Sanitization**: Clean complex objects for JSON/YAML serialization
 
-### 🎨 Pretty Printing
-- **Colored Terminal Output**: `pcp()` with customizable color schemes
-- **Object Formatting**: `pfy()` for readable object dumps
+### 🎨 Pretty Printing (Powered by Rich)
+- **Rich Terminal Output**: `pcp()` with Rich text styling and themes
+- **Enhanced Object Formatting**: `pfy()` uses Rich pretty printing
+- **Direct Console Access**: Global `console` object for Rich features
+- **Tables and Layouts**: Support for Rich tables, panels, and more
 - **Time Utilities**: Human-readable timestamps and deltas
 
 ### 📐 Advanced Data Structures
 - **Smart Lists**: `y2list`, `y2path` with tokenization and manipulation
 - **Entity IDs**: `y2eid` for namespace-aware entity handling
 - **Data Classes**: `DC` pseudo-dataclass with property validation
+
+## Dependencies
+
+```bash
+pip install pyyaml>=6.0 rich>=13.7.0
+```
+
+## Rich Library Features
+
+The refactored version now uses the Rich library for enhanced terminal output:
+
+### Direct Rich Console Access
+```python
+from gppu import console
+
+# Use Rich markup
+console.print("[bold red]Error![/] Something went wrong")
+console.print("Success!", style="bold green")
+
+# Rich tables
+from rich.table import Table
+table = Table(title="Data")
+table.add_column("Name", style="cyan")
+table.add_column("Value", style="magenta")
+table.add_row("Count", "42")
+console.print(table)
+```
+
+### Enhanced Color System
+```python
+from gppu import TColor, pcp
+
+# New Rich-based color definitions
+pcp('BR', 'Error', 'BY', 'Warning', 'BG', 'Success')  # Rich styled output
+
+# RGB colors supported
+pcp('BO', 'Orange text')  # Uses rgb(255,165,0)
+
+# Print available colors
+TColor.print()  # Shows Rich-formatted color table
+```
 
 ## Usage Examples
 
@@ -128,7 +173,8 @@ class ConfigLoader:
 
 ## Version History
 
-- **Current (master)**: v2.19.0.250819 - Production version identical to RAN_adev
+- **Current (refactor/rich-library)**: v2.20.0.250824-rich - Refactored with Rich library integration
+- **Stable (master)**: v2.19.0.250819 - Production version identical to RAN_adev
 - **Next (3.0 branch)**: v3.0.0.26 - Major refactor with modern Python patterns
 - **Previous**: v2.18.3.250705 - Original extracted version
 

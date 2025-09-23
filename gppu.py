@@ -9,6 +9,16 @@ import platform
 
 from pathlib import Path
 
+# Rich library imports
+from rich import print as rich_print
+from rich.console import Console
+from rich.logging import RichHandler
+from rich.pretty import Pretty, pprint as rich_pprint
+from rich.table import Table
+from rich.text import Text
+from rich.traceback import install as install_rich_traceback
+from rich.theme import Theme
+
 from abc import abstractmethod
 from functools import wraps, partial
 from pydoc import locate
@@ -27,8 +37,26 @@ from datetime import datetime
 
 
 VER_GPPU_BASE = '2.20.0'
-VER_GPPU_BUILD = '250824'
+VER_GPPU_BUILD = '250824-rich'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
+
+# Initialize Rich console with custom theme
+custom_theme = Theme({
+    "error": "bold red",
+    "warning": "bold yellow",
+    "info": "bold blue",
+    "debug": "dim white",
+    "success": "bold green",
+    "trace": "dim cyan",
+    "critical": "bold white on red",
+    "highlight": "bold magenta",
+})
+
+# Create a global console instance
+console = Console(theme=custom_theme, force_terminal=True)
+
+# Install rich traceback handler for better error display
+install_rich_traceback(console=console, show_locals=True)
 
 
 _T = TypeVar('_T')
@@ -335,7 +363,19 @@ def pretty_timedelta(ts) -> str:
 
 # region Loggin and Time helpers: now_ts, now_str
 """Logging"""
-def pfy(object) -> str: return "\n"+pprint.pformat(object, indent=4, width=40, compact=True)
+def pfy(object) -> str:
+    """Pretty format object using Rich pretty printing."""
+    from io import StringIO
+    import contextlib
+    
+    # Capture Rich pretty print output
+    string_io = StringIO()
+    temp_console = Console(file=string_io, force_terminal=False, width=80)
+    temp_console.print(Pretty(object, indent_guides=True, max_length=10, max_string=80))
+    result = string_io.getvalue()
+    
+    # Return with leading newline for compatibility
+    return "\n" + result if not result.startswith("\n") else result
 def slugify(o) -> str:
   """Converts any object to string, then slugifies it"""
   return re.sub(r'[^a-zA-Z0-9_]', '_', str(o).lower())
@@ -547,103 +587,139 @@ class y2eid:
 
 # region PCP - Pretty Colored Print and colorize - utility
 class _TColorHack(type):
+  """Metaclass for TColor to support dictionary-like access and Rich style mapping."""
   def __getitem__(cls, key): return getattr(cls, str(key), None)
   def __contains__(cls, key): return hasattr(cls, str(key))
 
   def print(cls):
-    l = []
+    """Print all available colors using Rich."""
+    table = Table(title="Available Colors", show_header=True)
+    table.add_column("Name", style="cyan")
+    table.add_column("Style", style="green")
+    table.add_column("Preview")
+    
     for name in dir(cls):
-      colorcode = getattr(cls, name)
-      if isinstance(colorcode, str): l.append(colorcode)
-      l.append(name)
-    print(_colorize_list(l))
+      if not name.startswith('_'):
+        style = getattr(cls, name)
+        if isinstance(style, str) and not name in ['print']:
+          table.add_row(name, style, Text(f"Sample {name}", style=style))
+    
+    console.print(table)
 
 
 class TColor(metaclass=_TColorHack):
-  NONE = '0m'             # No color (text)
-  DIM = '38;5;8;1'        # Dim gray (text)
-  BRIGHT = '36;1'         # Bright cyan (text)
-  BW = '38;5;15;1'        # Bright white (text)
-  DW = '38;5;7;1'         # Dark white (text)
-  INFO = '34;1'           # Bright blue (text, for info messages)
-  WHITE = '0;30;47'       # Black on White (background)
-  YELLOW = '0;30;43'      # Black on Yellow (background)
-  RED = '0;30;41'         # Black on Red (background)
-  BLUE = '0;30;44'        # Black on Blue (background)
-  GREEN = '0;30;42'       # Black on Green (background)
+  """Color definitions using Rich style strings."""
+  # Text colors
+  NONE = "default"                # No color (text)
+  DIM = "dim"                     # Dim gray (text)
+  BRIGHT = "bright_cyan bold"     # Bright cyan (text)
+  BW = "bright_white bold"        # Bright white (text)
+  DW = "white"                    # Dark white (text)
+  INFO = "bright_blue bold"       # Bright blue (text, for info messages)
+  
+  # Background colors
+  WHITE = "black on white"        # Black on White (background)
+  YELLOW = "black on yellow"      # Black on Yellow (background)
+  RED = "black on red"            # Black on Red (background)
+  BLUE = "black on blue"          # Black on Blue (background)
+  GREEN = "black on green"        # Black on Green (background)
 
-  GRAY0 = '38;5;237'      # Darkest gray (text)
-  GRAY1 = '38;5;238'      # Gray (text)
-  # GRAY2 = '38;5;239'      # Gray (text)
-  GRAY2 = '38;5;243'      # Gray (text)
-  GRAY3 = '38;5;246'      # Gray (text)
-  GRAY4 = '38;5;249'      # Lightest gray (text)
+  # Gray scale
+  GRAY0 = "grey23"                # Darkest gray (text)
+  GRAY1 = "grey27"                # Gray (text)
+  GRAY2 = "grey50"                # Gray (text)
+  GRAY3 = "grey58"                # Gray (text)
+  GRAY4 = "grey70"                # Lightest gray (text)
 
-  BY = '38;5;11;1'        # Bright yellow (text)
-  DY = '38;5;3;1'         # Dark yellow (text)
-  BG = '38;5;10;1'        # Bright green (text)
-  DG = '38;5;2;1'         # Dark green (text)
- 
-  # BB = '3;30;44'          # Black on Blue (background)
-  DB = '38;5;4;1'         # Dark blue (text)
+  # Bright/Dark color pairs
+  BY = "bright_yellow bold"       # Bright yellow (text)
+  DY = "yellow"                   # Dark yellow (text)
+  BG = "bright_green bold"        # Bright green (text)
+  DG = "green"                    # Dark green (text)
+  DB = "blue"                     # Dark blue (text)
+  BC = "bright_cyan bold"         # Bright cyan (text)
+  DC = "cyan"                     # Dark cyan (text)
+  BM = "bright_magenta bold"      # Bright magenta (text)
+  DM = "magenta"                  # Dark magenta (text)
+  BR = "bright_red bold"          # Bright red (text)
+  DR = "red"                      # Dark red (text)
+  BP = "bright_magenta bold"      # Bright purple (text)
+  DP = "purple"                   # Dark purple (text)
+  BO = "rgb(255,165,0) bold"      # Bright orange (text)
+  DO = "rgb(205,115,0)"           # Dark orange (text)
+  PINK = "rgb(255,192,203) bold"  # Bright pink (text)
+  DPINK = "rgb(199,21,133)"       # Dark pink (text)
+  BGOLD = "rgb(255,215,0) bold"   # Bright gold (text)
+  DGOLD = "rgb(184,134,11)"       # Dark gold (text)
 
-  BC = '38;5;6;1'         # Bright cyan (text)
-  DC = '38;5;14;1'        # Dark cyan (text)
-  BM = '38;5;13;1'        # Bright magenta (text)
-  DM = '38;5;5;1'         # Dark magenta (text)
-  BR = '38;5;9;1'         # Bright red (text)
-  DR = '38;5;1;1'         # Dark red (text)
-  BP = '38;5;129;1'       # New: Bright purple (text)
-  DP = '38;5;90;1'        # New: Dark purple (text)
-  BO = '38;5;130;1'       # New: Bright orange (text)
-  DO = '38;5;130;1'       # New: Dark orange (text)
-  PINK = '38;5;200;1'     # New: Bright pink (text)
-  DPINK = '38;5;132;1'    # New: Dark pink (text)
-  BGOLD = '38;5;220;1'    # New: Bright gold (text)
-  DGOLD = '38;5;178;1'    # New: Dark gold (text)
+  # Aliases
+  ORANGE = BO                      # Bright orange (text)
+  PURPLE = BP                      # Bright purple (text)
 
-  ORANGE = BO   # New: Bright orange (text)
-  PURPLE = BP   # New: Bright purple (text)
-
-  WRED = '0;37;41'        # White on Red (background)
-  WBLUE = '0;37;44'       # White on Blue (background)
-  WGREEN = '0;37;42'      # White on Green (background)
-  WGRAY = '0;30;47'       # Black on Light Gray (background)
-  WPINK = '0;30;45'       # Black on Pink (background)
-  WPURPLE = '0;37;45'     # White on Purple (background)
-  #WYELLOW = '0;37;43'     # White on Yellow (background)
-  WYELLOW = '7;49;93'     # White on Yellow (background)
+  # White on color backgrounds
+  WRED = "white on red"           # White on Red (background)
+  WBLUE = "white on blue"         # White on Blue (background)
+  WGREEN = "white on green"       # White on Green (background)
+  WGRAY = "black on bright_white" # Black on Light Gray (background)
+  WPINK = "black on magenta"      # Black on Pink (background)
+  WPURPLE = "white on magenta"    # White on Purple (background)
+  WYELLOW = "black on yellow"     # Black on Yellow (background)
 
 
 def pcp(*a: str | List[Any] | Tuple[Any, ...], **kw: Any) -> str:
   """
-  Pretty colored print. Supports two kinds of input:
+  Pretty colored print using Rich. Supports two kinds of input:
     level, msg: compatible with default logger
     [args]: used by self.Dargs to colorize output
-  Returns: colored string
+  Returns: formatted string (for compatibility)
   
   Parameters:
     verbose: adds pfy(kwargs) to output
     silent: suppresses local print output
-    
+    return_text: returns Rich Text object instead of string
   """
   if len(a) == 1 and isinstance(a[0], tuple): a = tuple(a[0])
-  out: str = ""
+  
   verbose = kw.pop('verbose', False)
   silent = kw.pop('silent', False)
+  return_text = kw.pop('return_text', False)
   level = kw.pop('level', None)
+  
+  # Build Rich Text object
+  text = Text()
   
   if 'msg' in kw:
     msg = kw.get('msg')
-    out = _colorize_log(msg=msg, level=level)
-    if a: out += _colorize_list(a) # type: ignore
+    text = _colorize_log_rich(msg=msg, level=level)
+    if a: 
+      text.append(" ")
+      text.append(_colorize_list_rich(a))
   else:
-    out = _colorize_list(a) # type: ignore
-  if kw and verbose: out += pfy(kw)
-
-  # if not silent: print(out)
-  if not out.endswith('\u001b[0m'): out = out + '\u001b[0m' # Check if color reset is already present
-  return out
+    text = _colorize_list_rich(a)
+  
+  if kw and verbose:
+    text.append("\n")
+    # Convert Pretty object to string for Text.append()
+    from io import StringIO
+    string_io = StringIO()
+    temp_console = Console(file=string_io, force_terminal=False)
+    temp_console.print(Pretty(kw), end="")
+    text.append(string_io.getvalue(), style="dim")
+  
+  # Print using Rich console if not silent
+  if not silent:
+    console.print(text)
+  
+  # Return Text object or string for compatibility
+  if return_text:
+    return text
+  else:
+    # Return plain string for backward compatibility
+    from io import StringIO
+    string_io = StringIO()
+    temp_console = Console(file=string_io, force_terminal=False)
+    temp_console.print(text)
+    return string_io.getvalue().rstrip()
 
 
 _remove_prefixes = lambda s, prefixes: next((s.removeprefix(prefix) for prefix in prefixes if s.startswith(prefix)), s)
@@ -752,62 +828,135 @@ def _colorize_list(l: List[Union[str, TColor]]) -> str:
   return ''.join(result)  # Reset color at the end
 
 
-def _colorize(text:str, colorcode:str, fmt=None):
-  """
-  # Print a string in a given color, right-justified or left-justified
-  # to a given length.  The color is optional.
-  #
-  # Inputs:
-  #   text: The text to print
-  #   color: The color to print it in, defaulting to no color
-  #   format: The format string, which is a number followed by a
-  #           left or right justification character.  If no number
-  #           is given, the number is assumed to be 0.
-  """
-  # ESC = '\u001b'
-  ESC = '\033'  # ANSI escape code for terminal colors
-  NOP = ESC + '[0m'
-  if (color := colorcode):
-    if color[0] == ESC and color[1] == '[': pass
-    elif color[0] == ESC: color = ESC + '[' + color[1:]
-    else: color = ESC + '[' + color
-
-    if color[-1] == 'm': pass
-    else: color += 'm'
-  else: color = NOP
-  right, pad = False, ''
+def _colorize(text: str, colorcode: str, fmt=None) -> str:
+  """Apply Rich style to text (legacy wrapper for backward compatibility)."""
   text = str(text)
+  
+  # Handle formatting
+  right, pad = False, ''
   if fmt:
-    if fmt[0] in "<>": right = fmt[0] == '>'; fmt = fmt[1:]
+    if fmt[0] in "<>": 
+      right = fmt[0] == '>'
+      fmt = fmt[1:]
     maxlen = coerce_int(fmt)
-
     text = text[-maxlen:] if right else text[0:maxlen]
-    if (l := len(text)) < maxlen: pad = ' ' * (maxlen - l)
+    if (l := len(text)) < maxlen: 
+      pad = ' ' * (maxlen - l)
+  
+  # Apply style using Rich
+  if colorcode == 'NONE' or not colorcode:
+    styled_text = text
+  else:
+    # Convert old color codes to Rich styles if needed
+    if hasattr(TColor, colorcode):
+      style = getattr(TColor, colorcode)
+    else:
+      style = colorcode
+    
+    rich_text = Text(text, style=style)
+    
+    from io import StringIO
+    string_io = StringIO()
+    temp_console = Console(file=string_io, force_terminal=False, legacy_windows=False)
+    temp_console.print(rich_text, end="")
+    styled_text = string_io.getvalue()
+  
+  return pad + styled_text if right else styled_text + pad
 
-  text = color + text + NOP
-  return pad + text if right else text + pad
+
+def _colorize_log_rich(msg, level=None, *args):
+  """Create Rich Text object with appropriate styling for log messages."""
+  text = Text()
+  
+  if isinstance(msg, (list, tuple)):
+    return _colorize_list_rich(msg)
+  elif level:
+    # Map log levels to Rich styles
+    level_styles = {
+      'CRITICAL': ('bright_red bold', 'bright_white bold'),
+      'ERROR': ('bright_red bold', 'bright_white'),
+      'WARN': ('bright_yellow bold', 'bright_white'),
+      'WARNING': ('bright_yellow bold', 'bright_white'),
+      'INFO': ('blue', 'bright_blue'),
+      'DEBUG': ('dim', 'dim')
+    }
+    
+    style1, style2 = level_styles.get(level, ('dim', 'default'))
+    text.append(f"[{level}] ", style=style1)
+    text.append(str(msg), style=style2)
+    
+    for arg in args:
+      text.append(" ")
+      text.append(str(arg))
+  else:
+    text.append(str(msg))
+  
+  return text
+
+
+def _colorize_list_rich(l: List[Union[str, Any]]):
+  """Convert list to Rich Text with color styling."""
+  text = Text()
+  current_style = None
+  
+  for e in [e for e in l if e is not None]:
+    e_str = str(e)
+    
+    # Check if it's a color/style name
+    if hasattr(TColor, e_str):
+      current_style = getattr(TColor, e_str)
+      continue
+    
+    # Handle separators
+    if e_str and e_str[0] in "./":
+      e_str = e_str[1:]
+      separator = ""
+    else:
+      separator = " " if len(text) > 0 else ""
+    
+    # Append with style
+    if separator:
+      text.append(separator)
+    
+    if current_style:
+      text.append(e_str, style=current_style)
+    else:
+      text.append(e_str)
+  
+  return text
 
 
 class PrettyColoredFormatter(logging.Formatter):
+  """Custom formatter using Rich for colored output."""
   def format(self, record):
-    """
-    Override the default formatter to provide pretty and colored output.
-    """
-    # Extract custom attributes if present
+    """Format log record with Rich styling."""
     verbose = getattr(record, 'verbose', False)
     level = record.levelname
     msg = super().format(record)  # Default formatting for the message
 
-    # Apply colorization
-    out = _colorize_log(msg=msg, level=level)
+    # Apply Rich colorization
+    text = _colorize_log_rich(msg, level)
     if hasattr(record, 'args') and record.args:
       args = list(record.args) if not isinstance(record.args, list) else record.args
-      out += _colorize_list(args) # type: ignore
+      text.append(" ")
+      text.append(_colorize_list_rich(args))
 
     kwargs = getattr(record, 'kwargs', None)
-    if verbose and isinstance(kwargs, dict): out += pfy(kwargs)
+    if verbose and isinstance(kwargs, dict):
+      text.append("\n")
+      # Convert Pretty object to string for Text.append()
+      from io import StringIO
+      string_io = StringIO()
+      temp_console = Console(file=string_io, force_terminal=False)
+      temp_console.print(Pretty(kwargs), end="")
+      text.append(string_io.getvalue(), style="dim")
 
-    return out
+    # Convert Rich Text to string
+    from io import StringIO
+    string_io = StringIO()
+    temp_console = Console(file=string_io, force_terminal=False)
+    temp_console.print(text, end="")
+    return string_io.getvalue()
 
 
 class PrettyColoredHandler(logging.StreamHandler):
@@ -827,6 +976,7 @@ def _fmt(*a, severity: str = 'Debug', **kw) -> str:
 
 
 class _LogColorizer(logging.Formatter):
+  """Rich-based formatter for log colorization."""
   def format(self, record: logging.LogRecord) -> str:
     args = [record.msg]
     if record.args is not None: 
@@ -866,11 +1016,26 @@ class _EmptyMessageFilter(logging.Filter):
     return bool(cleaned.strip())
 
 
+# Use Rich handler for better formatting
+_rich_handler = RichHandler(
+    console=console,
+    show_time=False,
+    show_path=False,
+    markup=True,
+    rich_tracebacks=True,
+    tracebacks_show_locals=True
+)
+_rich_handler.setLevel(logging.DEBUG)
+
+# Also keep a traditional handler with our custom formatter for compatibility
 _sh = logging.StreamHandler()
 _sh.setLevel(logging.DEBUG)
 _sh.setFormatter(_LogColorizer())
 _sh.addFilter(_EmptyMessageFilter())
-_logger.addHandler(_sh)
+
+# Use Rich handler by default, traditional handler commented out to avoid duplication
+_logger.addHandler(_rich_handler)
+# _logger.addHandler(_sh)  # Uncomment if you need traditional output
 
 
 
