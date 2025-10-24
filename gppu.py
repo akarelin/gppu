@@ -339,7 +339,7 @@ def pfy(object) -> str: return "\n"+pprint.pformat(object, indent=4, width=40, c
 def slugify(o) -> str:
   """Converts any object to string, then slugifies it"""
   return re.sub(r'[^a-zA-Z0-9_]', '_', str(o).lower())
-# endregion3333333333333333333333333333333333333333333333
+# endregion
 
 
 # region Tracing decorators
@@ -896,7 +896,7 @@ def Debug(*a, logger=None, **kw): (logger or _logger).debug(*a, **kw)
 def Info(*a, logger=None, **kw): (logger or _logger).info(*a, **kw)
 def Warn(*a, logger=None, **kw): (logger or _logger).warning(*a, **kw)
 def Error(*a, logger=None, **kw): (logger or _logger).error(*a, **kw)
-def Dump(filename: str, data={}):
+def Dump(filename: str, data={}, **kw) -> None:
   """ Saves data object to yml file in trace folder """
   if '.' not in filename or not filename.endswith('.yml'): filename += '.yml'
   dict_to_yml(filename=filename, data=data)
