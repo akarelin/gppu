@@ -818,11 +818,8 @@ class PrettyColoredHandler(logging.StreamHandler):
 
 
 def _fmt(*a, severity: str = 'Debug', **kw) -> str:
-  if severity.upper() == 'DEBUG':
-    result = dpcp(*a, rules=TRACE_RULES or {}, conditional=True, **kw)
-  else:
-    result = dpcp(*a, conditional=False, severity=severity, **kw)
-  # dpcp now returns empty string instead of None, but let's be safe
+  if severity.upper() == 'DEBUG': result = dpcp(*a, rules=TRACE_RULES or {}, conditional=True, **kw)
+  else: result = dpcp(*a, conditional=False, severity=severity, **kw)
   return result if result else ''
 
 
