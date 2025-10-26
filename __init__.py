@@ -75,7 +75,7 @@ from .gppu import (
     
     # Data classes
     DC,
-    mixin,
+    _mixin,
 )
 
 __version__ = VER_GPPU
@@ -112,5 +112,5 @@ __all__ = [
     'y2list', 'y2path', 'y2topic', 'y2slug', 'y2eid',
     
     # Data classes
-    'DC', 'mixin',
+    'DC', '_mixin',
 ]
