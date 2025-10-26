@@ -26,8 +26,8 @@ from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
 
-VER_GPPU_BASE = '2.20.0'
-VER_GPPU_BUILD = '250824'
+VER_GPPU_BASE = '2.20.1'
+VER_GPPU_BUILD = '251025'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 
@@ -835,7 +835,7 @@ class _LogColorizer(logging.Formatter):
 
 # region Logger
 # @@      mixin class                                                           == 
-class mixin: pass
+class _mixin: pass
 
 # ^~            Logger                                            
 TRACE_RULES: dict = {}
@@ -924,7 +924,7 @@ class protocol_Logger(Protocol):
   Dump : Callable[..., Any]
 
 
-class mixin_Logger(protocol_Logger, mixin):
+class mixin_Logger(protocol_Logger, _mixin):
   _logger: logging.Logger
 
   @classmethod
