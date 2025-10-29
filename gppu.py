@@ -1058,10 +1058,6 @@ class DC(UserDict): # DataClass
     annotations = [(n, t) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items()]
       
     mro = [(n, t) for n, t in annotations if policy.is_allowed(n, t)]
-    # print(f"{cls} has\n\t{[_typ2str(t) for _, t in _get_all_annotations(cls)]}\n\t{[_typ2str(t) for _, t in mro]}")
-    # pp([_typ2str(t) for _, t in _get_all_annotations(cls)])
-    # pp([_typ2str(t) for _, t in mro])
-    # pp([(_typ2str(t), resolve_type(t)) for _, t in mro])
     for aname, atype in mro:
       def getter(self, name=aname): 
         if not (result := self.data.get(name)):
