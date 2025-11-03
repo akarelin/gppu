@@ -26,8 +26,8 @@ from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
 
-VER_GPPU_BASE = '2.20.1'
-VER_GPPU_BUILD = '251025'
+VER_GPPU_BASE = '2.21.0'
+VER_GPPU_BUILD = '251103'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 
@@ -367,6 +367,59 @@ def _tracer(tracer: Optional[Callable[..., Any]] = None, action: Optional[Tracer
         return tracer(self, *a, **kw)
     return wrapper
   return decorator
+
+
+# Thread-local storage to track profiling depth (shared across all profile_method decorators)
+import threading
+_profile_thread_locals = threading.local()
+
+def profile_method(func: Callable) -> Callable:
+  """Decorator to profile a method using cProfile.
+
+  Prints profiling stats sorted by cumulative time after method execution.
+  Handles nested calls by only profiling the outermost call.
+  """
+  import cProfile
+  import pstats
+  import io
+
+  @wraps(func)
+  def wrapper(*args, **kwargs):
+    # Check if we're already profiling in this thread
+    if not hasattr(_profile_thread_locals, 'profiling_depth'):
+      _profile_thread_locals.profiling_depth = 0
+
+    is_outermost = _profile_thread_locals.profiling_depth == 0
+    _profile_thread_locals.profiling_depth += 1
+
+    if is_outermost:
+      profiler = cProfile.Profile()
+      profiler.enable()
+
+    try:
+      result = func(*args, **kwargs)
+      return result
+    finally:
+      _profile_thread_locals.profiling_depth -= 1
+
+      if is_outermost:
+        profiler.disable()
+
+        # Print stats to string buffer
+        s = io.StringIO()
+        stats = pstats.Stats(profiler, stream=s)
+        stats.strip_dirs()
+        stats.sort_stats('cumulative')
+        stats.print_stats(20)  # Print top 20 functions
+
+        # Get the class and method name
+        class_name = args[0].__class__.__name__ if args else 'unknown'
+        print(f"\n{'='*80}")
+        print(f"Profile for {class_name}.{func.__name__}")
+        print('='*80)
+        print(s.getvalue())
+
+  return wrapper
 
 # endregion
 
