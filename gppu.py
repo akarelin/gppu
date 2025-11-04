@@ -805,7 +805,7 @@ def _colorize_list(l: List[Union[str, TColor]]) -> str:
   return ''.join(result)  # Reset color at the end
 
 
-def _colorize(text:str, colorcode:str, fmt=None):
+def _colorize(text: str, colorcode:str, fmt=None):
   """
   # Print a string in a given color, right-justified or left-justified
   # to a given length.  The color is optional.
