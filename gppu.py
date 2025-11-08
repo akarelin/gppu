@@ -26,8 +26,8 @@ from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
 
-VER_GPPU_BASE = '2.21.0'
-VER_GPPU_BUILD = '251103'
+VER_GPPU_BASE = '2.22.0'
+VER_GPPU_BUILD = '251107'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 
@@ -1072,7 +1072,7 @@ def safe_isinstance(obj: Any, hint: Any, *, extra_modules: list[ModuleType] | No
 def _typ2str(typ: object) -> str: return getattr(typ, "__name__", str(typ))
 
 
-class DC(UserDict): # DataClass
+class DC1(UserDict): # DataClass
   """
     DC is a dict that allows access to dict elements as properties.
     Only elements returned by _get_all_annotations cam be used as properties. 
@@ -1144,6 +1144,150 @@ class DC(UserDict): # DataClass
 
   @abstractmethod
   def init(self): ...
+
+DC_TYPE_MAP = {'str': str, 'list': list, 'dict': dict, 'set': set, 'int': int, 'float': float, 'bool': bool, 'None': type(None)}
+
+class DC2(UserDict):
+  def __init_subclass__(cls, **kw) -> None:
+    super().__init_subclass__(**kw)
+
+    # annotations = [(n, t) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items()]
+    annotations = [(n, t if type(t) == str else str(t.__name__)) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items()]
+      
+    mro = [(n, t) for n, t in annotations if n[0] != '_' and t in DC_TYPE_MAP]
+    for aname, atype in mro:
+      def getter(self, name=aname, atype=atype): 
+        result = self.data.get(name)
+        if result is not None:
+          if isinstance(result, DC_TYPE_MAP[atype]): return result
+
+        if not (result := self.data.get(name)):
+          if atype == 'str': result = ''
+          elif atype == 'list': result = []
+          elif atype == 'dict': result = {}
+          elif atype == 'set': result = set()
+        return result
+      def setter(self, value, name=aname, type_hint=atype, _owner_mod=sys.modules[cls.__module__]):
+        if value and not safe_isinstance(value, type_hint, default=True, extra_modules=[_owner_mod]): 
+          raise TypeError(f"Expected type {type_hint} for {name}, got {type(value)} instead.")
+        
+        if not hasattr(self, 'data'): self.data = {}
+        self.data[name] = value
+      setattr(cls, aname, property(getter, setter))
+
+
+  @final
+  def __init__(self, **kw):
+    data = kw.pop('data', {})
+    if isinstance(data, str): data = {'data': data}
+    self.data = kw | data
+    if hasattr(self, 'init') and callable(self.init): self.init()
+
+
+  # def __lt__(self, other): return str(self) < str(other)
+
+  @abstractmethod
+  def init(self): ...
+
+from typing import get_args, get_origin, get_type_hints
+# , final
+# Any, Optional, Union, 
+
+_DC_DEFAULTS: dict[type[Any], Any] = {
+  str: "",
+  list: list,      # factory
+  dict: dict,      # factory
+  set: set,        # factory
+  int: 0,
+  float: 0.0,
+  bool: False,
+  type(None): None,
+}
+_DC_TYPES = tuple(_DC_DEFAULTS.keys())
+_DC_NAME2TYPE = {t.__name__: t for t in _DC_TYPES}  | {"None": type(None), "NoneType": type(None)}
+
+class DC(UserDict):
+  def __init_subclass__(cls, **kw) -> None:
+    super().__init_subclass__(**kw)
+
+    mod = sys.modules.get(cls.__module__)
+    globalns = vars(mod) if mod else None
+    hints = get_type_hints(cls, globalns=globalns, localns=None, include_extras=True)
+
+    def _allows_none(tp: Any) -> bool:
+      if tp is type(None): return True
+      return get_origin(tp) is Union and any(t is type(None) for t in get_args(tp))
+
+    def _isinstance_annot(value: Any, tp: Any) -> bool:
+      if isinstance(tp, type): return isinstance(value, tp)
+      o = get_origin(tp)
+      if o is Union: return any(_isinstance_annot(value, t) for t in get_args(tp))
+      try:
+        return isinstance(value, tp)
+      except Exception:
+        bases = [t for t in (get_args(tp) if o is Union else ()) if isinstance(t, type)]
+        return any(isinstance(value, b) for b in bases)
+
+    def _default_for(tp: Any) -> Any:
+      def _pick(t: type[Any]) -> Any:
+        d = _DC_DEFAULTS[t]
+        return d() if callable(d) and d is not bool else d
+      if isinstance(tp, type):
+        return _pick(tp) if tp in _DC_DEFAULTS else None
+      if get_origin(tp) is Union:
+        for t in get_args(tp):
+          if isinstance(t, type) and t in _DC_DEFAULTS and t is not type(None):
+            return _pick(t)
+      return None
+
+    class _Field:
+      def __init__(self, anno: Any):
+        self._anno = anno
+        self._name: str = ""
+      def __set_name__(self, owner, name):
+        self._name = name
+      def __get__(self, obj, owner=None):
+        if obj is None: return self
+        if not hasattr(obj, "data"): obj.data = {}
+        if self._name not in obj.data:
+          obj.data[self._name] = _default_for(self._anno)
+        return obj.data[self._name]
+      def __set__(self, obj, value):
+        if value is None:
+          if not _allows_none(self._anno):
+            raise TypeError(f"{self._name}: None not allowed for {self._anno}")
+        elif not _isinstance_annot(value, self._anno):
+          raise TypeError(f"{self._name}: expected {self._anno}, got {type(value)}")
+        if not hasattr(obj, "data"): obj.data = {}
+        obj.data[self._name] = value
+      def __delete__(self, obj):
+        if hasattr(obj, "data") and self._name in obj.data:
+          del obj.data[self._name]
+
+    def _acceptable(a: Any) -> bool:
+      if isinstance(a, type): return a in _DC_TYPES
+      if get_origin(a) is Union:
+        return all(
+          (isinstance(t, type) and t in _DC_TYPES) or t is type(None)
+          for t in get_args(a)
+        )
+      return False
+
+    for name, anno in hints.items():
+      if name.startswith("_"): continue
+      if _acceptable(anno) and not isinstance(getattr(cls, name, None), _Field):
+        setattr(cls, name, _Field(anno))
+
+  @final
+  def __init__(self, **kw):
+    data = kw.pop("data", {})
+    if isinstance(data, str): data = {"data": data}
+    self.data = {**data, **kw}
+    if hasattr(self, "init") and callable(self.init): self.init()
+
+  @abstractmethod
+  def init(self): ...
+
 # endregion
 
 
