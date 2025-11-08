@@ -1284,7 +1284,7 @@ class DC2(UserDict):
 # endregion
 
 
-DC_TYPE_MAP = {
+_DC_BASE_TYPE_MAP = {
   'str': str, 
   'list': list, 
   'dict': dict, 
@@ -1297,18 +1297,31 @@ DC_TYPE_MAP = {
   }
 
 class DC(UserDict):
+  _DC_TYPE_MAP: dict[str, type] = _DC_BASE_TYPE_MAP.copy()
+  _DC_EXCLUDE_NAMES: list[str] = []
+  # _DC_REMAP_KEYS: dict[str, str] = {}
+
   def __init_subclass__(cls, **kw) -> None:
     super().__init_subclass__(**kw)
 
+    # tm = dict(_DC_BASE_TYPE_MAP)
+    # if cls._DC_TYPE_MAP: tm.update(cls._DC_TYPE_MAP)
+    # cls._DC_TYPE_MAP = tm
+
+    # en = list(cls._DC_EXCLUDE_NAMES) if hasattr(cls, '_DC_EXCLUDE_NAMES') and isinstance(cls._DC_EXCLUDE_NAMES, list) else []
+    # cls._DC_EXCLUDE_NAMES.extend(en)
+
     # annotations = [(n, t) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items()]
-    annotations = [(n, t if type(t) == str else str(t.__name__)) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items() if n[0] != '_']
-      
-    mro = [(n, t) for n, t in annotations if n[0] != '_' and t in DC_TYPE_MAP]
+    annotations = [(n, t if type(t) == str else str(t.__name__)) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items() if n[0] != '_' and n not in cls._DC_EXCLUDE_NAMES]
+    mro = [(n, t) for n, t in annotations if n[0] != '_' and t in cls._DC_TYPE_MAP]
+    cls._debug_annotations = annotations
+    cls._debug_mro = mro
+    cls._debug_setters = []
     for aname, atype in mro:
       def getter(self, name=aname, atype=atype): 
         result = self.data.get(name)
         if result is not None:
-          if isinstance(result, DC_TYPE_MAP[atype]): return result
+          if isinstance(result, cls._DC_TYPE_MAP[atype]): return result
 
         if not (result := self.data.get(name)):
           if atype == 'str': result = ''
@@ -1323,41 +1336,17 @@ class DC(UserDict):
         if not hasattr(self, 'data'): self.data = {}
         self.data[name] = value
       setattr(cls, aname, property(getter, setter))
+      cls._debug_setters.append(aname)
 
 
-  @final
   def __init__(self, **kw):
     data = kw.pop('data', {})
     if isinstance(data, str): data = {'data': data}
     self.data = data
 
-    for k, v in kw.items():
-      if k in self.data: 
-        if v != self.data[k]:
-          raise KeyError(f"Key {k} has multiple values {v} and {self.data[k]}")
-      attr = getattr(self, k, None)
-      if attr and isinstance(attr, property) and isinstance(attr.fset, Callable):
-        attr.fset(self, v)
-        continue
-      elif not attr:
-        setattr(self, k, v)
-        continue
-
-      print(f"Should never get here with data[{k}] = {v}")
-      
-        #prop = getattr(self.__class__, k)
-        
-        # if isinstance(prop, property) and prop.fset:
-          # prop.fset(self, v)
-          # kw.pop(k)
-      # if hasattr(cls := self.__class__, k):
-      #   prop = getattr(cls, k)
-      #   if isinstance(prop, property) and prop.fset:
-      #     prop.fset(self, v)
-      #     kw.pop(k)
-    if hasattr(self, 'init') and callable(self.init): 
-      self.init()
-    pass
+    # for k, v in kw.items():
+    #   if k in self._DC_REMAP_KEYS:
+    #     setattr(self, self._DC_REMAP_KEYS[k], v)
 
 
   # def __lt__(self, other): return str(self) < str(other)
