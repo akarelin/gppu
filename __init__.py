@@ -37,7 +37,6 @@ from .gppu import (
     coerce_float,
     safe_list,
     safe_timedelta,
-    safe_isinstance,
     
     # Time utilities
     now_str,
@@ -93,7 +92,7 @@ __all__ = [
     
     # Type utilities
     'safe_int', 'coerce_int', 'safe_float', 'coerce_float', 
-    'safe_list', 'safe_timedelta', 'safe_isinstance',
+    'safe_list', 'safe_timedelta',
     
     # Time utilities  
     'now_str', 'now_ts', 'pretty_timedelta', 'prepend_datestamp', 'append_timestamp',

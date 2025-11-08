@@ -1,10 +1,8 @@
-from curses import raw
 import pprint
 import yaml
 import re
 import inspect
 import logging
-import builtins
 import sys
 import platform
 
@@ -12,14 +10,11 @@ from pathlib import Path
 
 from abc import abstractmethod
 from functools import wraps, partial
-from pydoc import locate
-
-from types import ModuleType, UnionType, FrameType
 
 from typing import Union, Callable, Any, Literal, List, Optional, Tuple, Dict, DefaultDict
-from typing import Type, TypeVar, TypeAlias, ClassVar
-from typing import ForwardRef, ParamSpec, Protocol, get_type_hints
-from typing import get_origin, get_args, final, cast
+from typing import TypeVar, TypeAlias, ClassVar
+from typing import ParamSpec, Protocol, ForwardRef
+from typing import cast
 
 from string import Template
 
@@ -27,7 +22,7 @@ from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
 
-VER_GPPU_BASE = '2.22.2'
+VER_GPPU_BASE = '2.23.0'
 VER_GPPU_BUILD = '251107'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
@@ -897,12 +892,6 @@ TRACE_RULES: dict = {}
 _logger = logging.getLogger('gppu')
 _logger.setLevel(logging.DEBUG)  # Ensure logger level is set to DEBUG
 
-# _sh = logging.FileHandler('gppu_logger.log', mode='a')  # Use FileHandler to log to a file
-# _sh.setLevel(logging.DEBUG)
-# _sh.setFormatter(_LogColorizer())
-# _sh.addFilter(lambda record: not getattr(record, '_should_filter', False))
-# _logger.addHandler(_sh)
-
 class _EmptyMessageFilter(logging.Filter):
   """Filter that removes records that would produce empty output"""
   def filter(self, record: logging.LogRecord) -> bool:
@@ -998,290 +987,67 @@ class mixin_Logger(protocol_Logger, _mixin):
 
 
 # ==                              DC - DataClass                              ==                                           
-# region DC - Pseudo-DataClass
-def _eval_with_extras(expr: str, frm: FrameType, extra_modules: list[ModuleType] = []):
-  ns = {}
-  ns.update(frm.f_globals or {})
-  ns.update(frm.f_locals or {})
-  for m in extra_modules:
-    if isinstance(m, ModuleType): ns[m.__name__] = m
-    elif isinstance(m, dict): ns.update(m)
-    else: ns[type[m].__name__] = m
-  return eval(expr, ns, ns)
+# def _resolve_type(name: str, *, extra_modules: list[ModuleType] | None = None) -> type[Any]:
+#   if isinstance(name, type): return name
+#   if hasattr(builtins, name): return getattr(builtins, name)
+
+#   frm = sys._getframe(1)
+#   try:
+#     # evaluated = eval(name, frm.f_globals, frm.f_locals)
+#     # Convert PEP 604 UnionType or typing.Union to typing.Union[...] form
+#     evaluated = _eval_with_extras(name, frm, extra_modules or [])
+#     if isinstance(evaluated, type): return evaluated
+#     if isinstance(evaluated, UnionType): return cast(type[Any], Union[evaluated.__args__])
+#     if getattr(evaluated, "__origin__", None) is Union: return evaluated    
+#   except Exception as e:
+#     # print(f"Error evaluating type name: {name}\n{e}")    
+#     return _T_ANY  # Fallback to Any if evaluation fails
+
+#   try:
+#     typ = ForwardRef(name)._evaluate(frm.f_globals, frm.f_locals, recursive_guard=frozenset())
+#     if isinstance(typ, type):
+#       return typ
+#   except NameError as ne:
+#     # print(f"Error evaluating type name: {name}\n{ne}")
+#     return _T_ANY  # Fallback to Any if evaluation fails
+
+#   if isinstance(obj := locate(name), type): return obj
+
+#   if name in frm.f_globals and isinstance(frm.f_globals[name], type): return frm.f_globals[name]
+#   caller_mod = frm.f_globals.get('__name__')
+#   auto = [sys.modules[caller_mod]] if caller_mod else []
+#   for mod in (extra_modules or []) + auto:
+#     if hasattr(mod, name) and isinstance(obj := getattr(mod, name), type): return obj
+
+#   return _T_ANY
 
 
-def _resolve_type(name: str, *, extra_modules: list[ModuleType] | None = None) -> type[Any]:
-  if isinstance(name, type): return name
-  if hasattr(builtins, name): return getattr(builtins, name)
-
-  frm = sys._getframe(1)
-  try:
-    # evaluated = eval(name, frm.f_globals, frm.f_locals)
-    # Convert PEP 604 UnionType or typing.Union to typing.Union[...] form
-    evaluated = _eval_with_extras(name, frm, extra_modules or [])
-    if isinstance(evaluated, type): return evaluated
-    if isinstance(evaluated, UnionType): return cast(type[Any], Union[evaluated.__args__])
-    if getattr(evaluated, "__origin__", None) is Union: return evaluated    
-  except Exception as e:
-    # print(f"Error evaluating type name: {name}\n{e}")    
-    return _T_ANY  # Fallback to Any if evaluation fails
-
-  try:
-    typ = ForwardRef(name)._evaluate(frm.f_globals, frm.f_locals, recursive_guard=frozenset())
-    if isinstance(typ, type):
-      return typ
-  except NameError as ne:
-    # print(f"Error evaluating type name: {name}\n{ne}")
-    return _T_ANY  # Fallback to Any if evaluation fails
-
-  if isinstance(obj := locate(name), type): return obj
-
-  if name in frm.f_globals and isinstance(frm.f_globals[name], type): return frm.f_globals[name]
-  caller_mod = frm.f_globals.get('__name__')
-  auto = [sys.modules[caller_mod]] if caller_mod else []
-  for mod in (extra_modules or []) + auto:
-    if hasattr(mod, name) and isinstance(obj := getattr(mod, name), type): return obj
-
-  return _T_ANY
+# def _typ2str(typ: object) -> str: return getattr(typ, "__name__", str(typ))
 
 
-def safe_isinstance(obj: Any, hint: Any, *, extra_modules: list[ModuleType] | None = None, default=False) -> bool:
-  if isinstance(hint, str): hint = _resolve_type(hint, extra_modules=extra_modules)
+# def safe_isinstance(obj: Any, hint: Any, *, extra_modules: list[ModuleType] | None = None, default=False) -> bool:
+#   if isinstance(hint, str): hint = _resolve_type(hint, extra_modules=extra_modules)
 
-  if hint is Any: return True
+#   if hint is Any: return True
 
-  origin = get_origin(hint)
-  if origin is None: return isinstance(obj, hint)
+#   origin = get_origin(hint)
+#   if origin is None: return isinstance(obj, hint)
 
-  # --- generics -----------------------------------------------------------
-  if origin is Union: return any(safe_isinstance(obj, h, default=default, extra_modules=extra_modules) for h in get_args(hint))
+#   # --- generics -----------------------------------------------------------
+#   if origin is Union: return any(safe_isinstance(obj, h, default=default, extra_modules=extra_modules) for h in get_args(hint))
 
-  if origin in (list, tuple, set, frozenset):
-    if not isinstance(obj, origin): return False
-    (sub,) = get_args(hint) or (Any,)
-    return all(safe_isinstance(i, sub, default=default, extra_modules=extra_modules) for i in obj)
+#   if origin in (list, tuple, set, frozenset):
+#     if not isinstance(obj, origin): return False
+#     (sub,) = get_args(hint) or (Any,)
+#     return all(safe_isinstance(i, sub, default=default, extra_modules=extra_modules) for i in obj)
 
-  if origin is dict:
-    if not isinstance(obj, dict): return False
-    k_t, v_t = get_args(hint) or (Any, Any)
-    return (all(safe_isinstance(k, k_t, default=default, extra_modules=extra_modules) for k in obj.keys()) and
-            all(safe_isinstance(v, v_t, default=default, extra_modules=extra_modules) for v in obj.values()))
+#   if origin is dict:
+#     if not isinstance(obj, dict): return False
+#     k_t, v_t = get_args(hint) or (Any, Any)
+#     return (all(safe_isinstance(k, k_t, default=default, extra_modules=extra_modules) for k in obj.keys()) and
+#             all(safe_isinstance(v, v_t, default=default, extra_modules=extra_modules) for v in obj.values()))
 
-  return isinstance(obj, origin)
-
-
-def _typ2str(typ: object) -> str: return getattr(typ, "__name__", str(typ))
-
-
-class DC1(UserDict): # DataClass
-  """
-    DC is a dict that allows access to dict elements as properties.
-    Only elements returned by _get_all_annotations cam be used as properties. 
-    DC dynamically adds getter and setter for annotated properties that point to main dict.
-
-    "__init__" is final
-    All descendents must use init()
-  """
-  class _Policy:
-    PROHIBITED_ATTRS  = {'data'}
-    ALLOWED_TYPES     = {'str', 'list', 'dict', 'set', 'int', 'float', 'bool'}
-    PROHIBITED_TYPES = {'type', 'Logger'}
-
-    # @classmethod
-    # def _names(cls, types): return {getattr(tp, "__name__", str(tp)) for tp in types}
-  
-    @classmethod
-    def is_allowed(cls, attr: str, hint: object) -> bool:
-      st = str(hint)
-      # st = _typ2str(hint)
-      if st in cls.PROHIBITED_TYPES: return False
-      # if st not in cls.ALLOWED_TYPES: return False
-      if attr in cls.PROHIBITED_ATTRS: return False
-      if attr.startswith('_'): return False
-      return True
-
-
-  @classmethod
-  def _policy(cls) -> type[_Policy]:
-    return getattr(cls, 'Policy', cls._Policy)
-
-
-  def __init_subclass__(cls, **kw) -> None:
-    super().__init_subclass__(**kw)
-
-    policy = cls._policy()
-
-    # annotations = [(n, t) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items()]
-    annotations = [(n, t if type(t) == str else str(t.__name__)) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items()]
-      
-    mro = [(n, t) for n, t in annotations if policy.is_allowed(n, t)]
-    for aname, atype in mro:
-      def getter(self, name=aname): 
-        if not (result := self.data.get(name)):
-          if atype == 'str': result = ''
-          elif atype == 'list': result = []
-          elif atype == 'dict': result = {}
-          elif atype == 'set': result = set()
-        return result
-      def setter(self, value, name=aname, type_hint=atype, _owner_mod=sys.modules[cls.__module__]):
-        if value and not safe_isinstance(value, type_hint, default=True, extra_modules=[_owner_mod]): 
-          raise TypeError(f"Expected type {type_hint} for {name}, got {type(value)} instead.")
-        
-        if not hasattr(self, 'data'): self.data = {}
-        self.data[name] = value
-      setattr(cls, aname, property(getter, setter))
-
-
-  @final
-  def __init__(self, **kw):
-    data = kw.pop('data', {})
-    if isinstance(data, str): data = {'data': data}
-    self.data = kw | data
-    if hasattr(self, 'init') and callable(self.init): self.init()
-
-
-  def __lt__(self, other): return str(self) < str(other)
-
-
-  @abstractmethod
-  def init(self): ...
-
-# endregion
-
-# region New DC2 - Pseudo-DataClass with type checking
-from typing import get_args, get_origin, get_type_hints
-# , final
-# Any, Optional, Union, 
-
-_DC_DEFAULTS: dict[type[Any], Any] = {
-  str: "",
-  list: list,      # factory
-  dict: dict,      # factory
-  set: set,        # factory
-  int: 0,
-  float: 0.0,
-  bool: False,
-  type(None): None,
-}
-_DC_TYPES = tuple(_DC_DEFAULTS.keys())
-_DC_NAME2TYPE = {t.__name__: t for t in _DC_TYPES}  | {"None": type(None), "NoneType": type(None)}
-
-class DC2(UserDict):
-  def __init_subclass__(cls, **kw) -> None:
-    super().__init_subclass__(**kw)
-
-    # raw = inspect.get_annotations(cls, eval_str=False)
-    raw = [(n, t if type(t) == str else str(t.__name__)) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items() if n[0] != '_']
-
-    def _resolve_str(s: str) -> Any | None:
-      s = s.strip()
-      # PEP 604 unions like "str | None | int"
-      if "|" in s:
-        parts = [p.strip() for p in s.split("|")]
-        mapped = [_DC_NAME2TYPE.get(p) for p in parts]
-        if any(m is None for m in mapped): return None
-        return Union[tuple(mapped)]  # type: ignore[arg-type]
-      # typing.Optional[X]
-      if s.startswith("Optional[") and s.endswith("]"):
-        inner = s[len("Optional["):-1].strip()
-        t = _DC_NAME2TYPE.get(inner)
-        return None if t is None else Union[t, type(None)]  # type: ignore[index]
-      # typing.Union[A, B, ...]
-      if s.startswith("Union[") and s.endswith("]"):
-        inner = s[len("Union["):-1]
-        parts = [p.strip() for p in inner.split(",")]
-        mapped = [_DC_NAME2TYPE.get(p) for p in parts]
-        if any(m is None for m in mapped): return None
-        return Union[tuple(mapped)]  # type: ignore[arg-type]
-      # bare name
-      return _DC_NAME2TYPE.get(s)
-
-    hints: dict[str, Any] = {}
-    for name, anno in raw:
-      if isinstance(anno, str):
-        r = _resolve_str(anno)
-        if r is not None:
-          hints[name] = r
-      else:
-        hints[name] = anno  # already a real type/typing form
-
-    def _allows_none(tp: Any) -> bool:
-      if tp is type(None): return True
-      return get_origin(tp) is Union and any(t is type(None) for t in get_args(tp))
-
-    def _isinstance_annot(value: Any, tp: Any) -> bool:
-      if isinstance(tp, type): return isinstance(value, tp)
-      o = get_origin(tp)
-      if o is Union: return any(_isinstance_annot(value, t) for t in get_args(tp))
-      try:
-        return isinstance(value, tp)
-      except Exception:
-        bases = [t for t in (get_args(tp) if o is Union else ()) if isinstance(t, type)]
-        return any(isinstance(value, b) for b in bases)
-
-    def _default_for(tp: Any) -> Any:
-      def _pick(t: type[Any]) -> Any:
-        d = _DC_DEFAULTS[t]
-        return d() if callable(d) and d is not bool else d
-      if isinstance(tp, type):
-        return _pick(tp) if tp in _DC_DEFAULTS else None
-      if get_origin(tp) is Union:
-        for t in get_args(tp):
-          if isinstance(t, type) and t in _DC_DEFAULTS and t is not type(None):
-            return _pick(t)
-      return None
-
-    class _Field:
-      def __init__(self, anno: Any):
-        self._anno = anno
-        self._name: str = ""
-      def __set_name__(self, owner, name):
-        self._name = name
-      def __get__(self, obj, owner=None):
-        if obj is None: return self
-        if not hasattr(obj, "data"): obj.data = {}
-        if self._name not in obj.data:
-          obj.data[self._name] = _default_for(self._anno)
-        return obj.data[self._name]
-      def __set__(self, obj, value):
-        if value is None:
-          if not _allows_none(self._anno):
-            raise TypeError(f"{self._name}: None not allowed for {self._anno}")
-        elif not _isinstance_annot(value, self._anno):
-          raise TypeError(f"{self._name}: expected {self._anno}, got {type(value)}")
-        if not hasattr(obj, "data"): obj.data = {}
-        obj.data[self._name] = value
-      def __delete__(self, obj):
-        if hasattr(obj, "data") and self._name in obj.data:
-          del obj.data[self._name]
-
-    def _acceptable(a: Any) -> bool:
-      if isinstance(a, type): return a in _DC_TYPES
-      if get_origin(a) is Union:
-        return all(
-          (isinstance(t, type) and t in _DC_TYPES) or t is type(None)
-          for t in get_args(a)
-        )
-      return False
-
-    for name, anno in hints.items():
-      if name.startswith("_"): continue
-      if _acceptable(anno) and not isinstance(getattr(cls, name, None), _Field):
-        setattr(cls, name, _Field(anno))
-        print(f"Debug: added field {name} of type {anno} to {cls.__name__}")
-        Debug("added field", "INFO", name, "DIM", "of type", "INFO", anno, "DIM", "to", "INFO", {cls.__name__})
-
-  @final
-  def __init__(self, **kw):
-    data = kw.pop("data", {})
-    if isinstance(data, str): data = {"data": data}
-    self.data = {**data, **kw}
-    if hasattr(self, "init") and callable(self.init): self.init()
-
-  @abstractmethod
-  def init(self): ...
-
-# endregion
+#   return isinstance(obj, origin)
 
 
 _DC_BASE_TYPE_MAP = {
@@ -1299,19 +1065,10 @@ _DC_BASE_TYPE_MAP = {
 class DC(UserDict):
   _DC_TYPE_MAP: dict[str, type] = _DC_BASE_TYPE_MAP.copy()
   _DC_EXCLUDE_NAMES: list[str] = []
-  # _DC_REMAP_KEYS: dict[str, str] = {}
 
   def __init_subclass__(cls, **kw) -> None:
     super().__init_subclass__(**kw)
 
-    # tm = dict(_DC_BASE_TYPE_MAP)
-    # if cls._DC_TYPE_MAP: tm.update(cls._DC_TYPE_MAP)
-    # cls._DC_TYPE_MAP = tm
-
-    # en = list(cls._DC_EXCLUDE_NAMES) if hasattr(cls, '_DC_EXCLUDE_NAMES') and isinstance(cls._DC_EXCLUDE_NAMES, list) else []
-    # cls._DC_EXCLUDE_NAMES.extend(en)
-
-    # annotations = [(n, t) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items()]
     annotations = [(n, t if type(t) == str else str(t.__name__)) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items() if n[0] != '_' and n not in cls._DC_EXCLUDE_NAMES]
     mro = [(n, t) for n, t in annotations if n[0] != '_' and t in cls._DC_TYPE_MAP]
     cls._debug_annotations = annotations
@@ -1330,9 +1087,9 @@ class DC(UserDict):
           elif atype == 'set': result = set()
         return result
       def setter(self, value, name=aname, type_hint=atype, _owner_mod=sys.modules[cls.__module__]):
-        if value and not safe_isinstance(value, type_hint, default=True, extra_modules=[_owner_mod]): 
-          raise TypeError(f"Expected type {type_hint} for {name}, got {type(value)} instead.")
-        
+        #
+        #if value and not safe_isinstance(value, type_hint, default=True, extra_modules=[_owner_mod]): 
+        #  raise TypeError(f"Expected type {type_hint} for {name}, got {type(value)} instead.")
         if not hasattr(self, 'data'): self.data = {}
         self.data[name] = value
       setattr(cls, aname, property(getter, setter))
@@ -1342,14 +1099,7 @@ class DC(UserDict):
   def __init__(self, **kw):
     data = kw.pop('data', {})
     if isinstance(data, str): data = {'data': data}
-    self.data = data
-
-    # for k, v in kw.items():
-    #   if k in self._DC_REMAP_KEYS:
-    #     setattr(self, self._DC_REMAP_KEYS[k], v)
-
-
-  # def __lt__(self, other): return str(self) < str(other)
+    self.data = kw | data
 
   @abstractmethod
   def init(self): ...
