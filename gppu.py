@@ -1,3 +1,4 @@
+from curses import raw
 import pprint
 import yaml
 import re
@@ -1145,50 +1146,9 @@ class DC1(UserDict): # DataClass
   @abstractmethod
   def init(self): ...
 
-DC_TYPE_MAP = {'str': str, 'list': list, 'dict': dict, 'set': set, 'int': int, 'float': float, 'bool': bool, 'None': type(None)}
+# endregion
 
-class DC2(UserDict):
-  def __init_subclass__(cls, **kw) -> None:
-    super().__init_subclass__(**kw)
-
-    # annotations = [(n, t) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items()]
-    annotations = [(n, t if type(t) == str else str(t.__name__)) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items()]
-      
-    mro = [(n, t) for n, t in annotations if n[0] != '_' and t in DC_TYPE_MAP]
-    for aname, atype in mro:
-      def getter(self, name=aname, atype=atype): 
-        result = self.data.get(name)
-        if result is not None:
-          if isinstance(result, DC_TYPE_MAP[atype]): return result
-
-        if not (result := self.data.get(name)):
-          if atype == 'str': result = ''
-          elif atype == 'list': result = []
-          elif atype == 'dict': result = {}
-          elif atype == 'set': result = set()
-        return result
-      def setter(self, value, name=aname, type_hint=atype, _owner_mod=sys.modules[cls.__module__]):
-        if value and not safe_isinstance(value, type_hint, default=True, extra_modules=[_owner_mod]): 
-          raise TypeError(f"Expected type {type_hint} for {name}, got {type(value)} instead.")
-        
-        if not hasattr(self, 'data'): self.data = {}
-        self.data[name] = value
-      setattr(cls, aname, property(getter, setter))
-
-
-  @final
-  def __init__(self, **kw):
-    data = kw.pop('data', {})
-    if isinstance(data, str): data = {'data': data}
-    self.data = kw | data
-    if hasattr(self, 'init') and callable(self.init): self.init()
-
-
-  # def __lt__(self, other): return str(self) < str(other)
-
-  @abstractmethod
-  def init(self): ...
-
+# region New DC2 - Pseudo-DataClass with type checking
 from typing import get_args, get_origin, get_type_hints
 # , final
 # Any, Optional, Union, 
@@ -1206,13 +1166,44 @@ _DC_DEFAULTS: dict[type[Any], Any] = {
 _DC_TYPES = tuple(_DC_DEFAULTS.keys())
 _DC_NAME2TYPE = {t.__name__: t for t in _DC_TYPES}  | {"None": type(None), "NoneType": type(None)}
 
-class DC(UserDict):
+class DC2(UserDict):
   def __init_subclass__(cls, **kw) -> None:
     super().__init_subclass__(**kw)
 
-    mod = sys.modules.get(cls.__module__)
-    globalns = vars(mod) if mod else None
-    hints = get_type_hints(cls, globalns=globalns, localns=None, include_extras=True)
+    # raw = inspect.get_annotations(cls, eval_str=False)
+    raw = [(n, t if type(t) == str else str(t.__name__)) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items() if n[0] != '_']
+
+    def _resolve_str(s: str) -> Any | None:
+      s = s.strip()
+      # PEP 604 unions like "str | None | int"
+      if "|" in s:
+        parts = [p.strip() for p in s.split("|")]
+        mapped = [_DC_NAME2TYPE.get(p) for p in parts]
+        if any(m is None for m in mapped): return None
+        return Union[tuple(mapped)]  # type: ignore[arg-type]
+      # typing.Optional[X]
+      if s.startswith("Optional[") and s.endswith("]"):
+        inner = s[len("Optional["):-1].strip()
+        t = _DC_NAME2TYPE.get(inner)
+        return None if t is None else Union[t, type(None)]  # type: ignore[index]
+      # typing.Union[A, B, ...]
+      if s.startswith("Union[") and s.endswith("]"):
+        inner = s[len("Union["):-1]
+        parts = [p.strip() for p in inner.split(",")]
+        mapped = [_DC_NAME2TYPE.get(p) for p in parts]
+        if any(m is None for m in mapped): return None
+        return Union[tuple(mapped)]  # type: ignore[arg-type]
+      # bare name
+      return _DC_NAME2TYPE.get(s)
+
+    hints: dict[str, Any] = {}
+    for name, anno in raw:
+      if isinstance(anno, str):
+        r = _resolve_str(anno)
+        if r is not None:
+          hints[name] = r
+      else:
+        hints[name] = anno  # already a real type/typing form
 
     def _allows_none(tp: Any) -> bool:
       if tp is type(None): return True
@@ -1277,6 +1268,8 @@ class DC(UserDict):
       if name.startswith("_"): continue
       if _acceptable(anno) and not isinstance(getattr(cls, name, None), _Field):
         setattr(cls, name, _Field(anno))
+        print(f"Debug: added field {name} of type {anno} to {cls.__name__}")
+        Debug("added field", "INFO", name, "DIM", "of type", "INFO", anno, "DIM", "to", "INFO", {cls.__name__})
 
   @final
   def __init__(self, **kw):
@@ -1291,3 +1284,83 @@ class DC(UserDict):
 # endregion
 
 
+DC_TYPE_MAP = {
+  'str': str, 
+  'list': list, 
+  'dict': dict, 
+  'set': set, 
+  'int': int, 
+  'float': float, 
+  'bool': bool, 
+  'None': type(None), 
+  'y2eid': y2eid
+  }
+
+class DC(UserDict):
+  def __init_subclass__(cls, **kw) -> None:
+    super().__init_subclass__(**kw)
+
+    # annotations = [(n, t) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items()]
+    annotations = [(n, t if type(t) == str else str(t.__name__)) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items() if n[0] != '_']
+      
+    mro = [(n, t) for n, t in annotations if n[0] != '_' and t in DC_TYPE_MAP]
+    for aname, atype in mro:
+      def getter(self, name=aname, atype=atype): 
+        result = self.data.get(name)
+        if result is not None:
+          if isinstance(result, DC_TYPE_MAP[atype]): return result
+
+        if not (result := self.data.get(name)):
+          if atype == 'str': result = ''
+          elif atype == 'list': result = []
+          elif atype == 'dict': result = {}
+          elif atype == 'set': result = set()
+        return result
+      def setter(self, value, name=aname, type_hint=atype, _owner_mod=sys.modules[cls.__module__]):
+        if value and not safe_isinstance(value, type_hint, default=True, extra_modules=[_owner_mod]): 
+          raise TypeError(f"Expected type {type_hint} for {name}, got {type(value)} instead.")
+        
+        if not hasattr(self, 'data'): self.data = {}
+        self.data[name] = value
+      setattr(cls, aname, property(getter, setter))
+
+
+  @final
+  def __init__(self, **kw):
+    data = kw.pop('data', {})
+    if isinstance(data, str): data = {'data': data}
+    self.data = data
+
+    for k, v in kw.items():
+      if k in self.data: 
+        if v != self.data[k]:
+          raise KeyError(f"Key {k} has multiple values {v} and {self.data[k]}")
+      attr = getattr(self, k, None)
+      if attr and isinstance(attr, property) and isinstance(attr.fset, Callable):
+        attr.fset(self, v)
+        continue
+      elif not attr:
+        setattr(self, k, v)
+        continue
+
+      print(f"Should never get here with data[{k}] = {v}")
+      
+        #prop = getattr(self.__class__, k)
+        
+        # if isinstance(prop, property) and prop.fset:
+          # prop.fset(self, v)
+          # kw.pop(k)
+      # if hasattr(cls := self.__class__, k):
+      #   prop = getattr(cls, k)
+      #   if isinstance(prop, property) and prop.fset:
+      #     prop.fset(self, v)
+      #     kw.pop(k)
+    if hasattr(self, 'init') and callable(self.init): 
+      self.init()
+    pass
+
+
+  # def __lt__(self, other): return str(self) < str(other)
+
+  @abstractmethod
+  def init(self): ...
