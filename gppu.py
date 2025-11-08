@@ -1,4 +1,5 @@
 import pprint
+from requests import get
 import yaml
 import re
 import inspect
@@ -1071,8 +1072,8 @@ class DC(UserDict):
 
     annotations = [(n, t if type(t) == str else str(t.__name__)) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items() if n[0] != '_' and n not in cls._DC_EXCLUDE_NAMES]
     mro = [(n, t) for n, t in annotations if n[0] != '_' and t in cls._DC_TYPE_MAP]
-    cls._debug_annotations = annotations
-    cls._debug_mro = mro
+    cls._debug_annotations = {k: v for k, v in annotations}
+    cls._debug_mro = {k: v for k, v in mro}
     cls._debug_setters = []
     for aname, atype in mro:
       def getter(self, name=aname, atype=atype): 
@@ -1099,7 +1100,15 @@ class DC(UserDict):
   def __init__(self, **kw):
     data = kw.pop('data', {})
     if isinstance(data, str): data = {'data': data}
-    self.data = kw | data
+
+    def _2data(k, v):
+      if k in self._debug_annotations:setattr(self, k, v)
+      elif (attr := getattr(self, k, None)) is not None: attr = v
+      else: self.data[k] = v
+
+    d = kw | data
+    for k, v in d.items(): _2data(k, v)
+
 
   @abstractmethod
   def init(self): ...
