@@ -1083,18 +1083,20 @@ class DC(UserDict): # DataClass
   """
   class _Policy:
     PROHIBITED_ATTRS  = {'data'}
-    ALLOWED_ATTRS     = set()
-    PROHIBITED_TYPES  = {Callable}
-    ALLOWED_TYPES     = {str, list, dict, set, int, float, bool}
+    ALLOWED_TYPES     = {'str', 'list', 'dict', 'set', 'int', 'float', 'bool'}
+    PROHIBITED_TYPES = {'type', 'Logger'}
 
-    @classmethod
-    def _names(cls, types): return {getattr(tp, "__name__", str(tp)) for tp in types}
+    # @classmethod
+    # def _names(cls, types): return {getattr(tp, "__name__", str(tp)) for tp in types}
   
     @classmethod
     def is_allowed(cls, attr: str, hint: object) -> bool:
-      st = _typ2str(hint)
-      if (attr in cls.ALLOWED_ATTRS or st in cls._names(cls.ALLOWED_TYPES)): return True
-      if (attr.startswith('_') or attr in cls.PROHIBITED_ATTRS or callable(hint) or st in cls._names(cls.PROHIBITED_TYPES)): return False
+      st = str(hint)
+      # st = _typ2str(hint)
+      if st in cls.PROHIBITED_TYPES: return False
+      # if st not in cls.ALLOWED_TYPES: return False
+      if attr in cls.PROHIBITED_ATTRS: return False
+      if attr.startswith('_'): return False
       return True
 
 
@@ -1108,7 +1110,8 @@ class DC(UserDict): # DataClass
 
     policy = cls._policy()
 
-    annotations = [(n, t) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items()]
+    # annotations = [(n, t) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items()]
+    annotations = [(n, t if type(t) == str else str(t.__name__)) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items()]
       
     mro = [(n, t) for n, t in annotations if policy.is_allowed(n, t)]
     for aname, atype in mro:
