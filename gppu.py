@@ -988,67 +988,83 @@ class mixin_Logger(protocol_Logger, _mixin):
 
 
 # ==                              DC - DataClass                              ==                                           
-# def _resolve_type(name: str, *, extra_modules: list[ModuleType] | None = None) -> type[Any]:
-#   if isinstance(name, type): return name
-#   if hasattr(builtins, name): return getattr(builtins, name)
+import builtins
+from types import ModuleType, UnionType, FrameType
+from pydoc import locate
+from typing import get_args, get_origin, Any, Union, ForwardRef, cast
 
-#   frm = sys._getframe(1)
-#   try:
-#     # evaluated = eval(name, frm.f_globals, frm.f_locals)
-#     # Convert PEP 604 UnionType or typing.Union to typing.Union[...] form
-#     evaluated = _eval_with_extras(name, frm, extra_modules or [])
-#     if isinstance(evaluated, type): return evaluated
-#     if isinstance(evaluated, UnionType): return cast(type[Any], Union[evaluated.__args__])
-#     if getattr(evaluated, "__origin__", None) is Union: return evaluated    
-#   except Exception as e:
-#     # print(f"Error evaluating type name: {name}\n{e}")    
-#     return _T_ANY  # Fallback to Any if evaluation fails
-
-#   try:
-#     typ = ForwardRef(name)._evaluate(frm.f_globals, frm.f_locals, recursive_guard=frozenset())
-#     if isinstance(typ, type):
-#       return typ
-#   except NameError as ne:
-#     # print(f"Error evaluating type name: {name}\n{ne}")
-#     return _T_ANY  # Fallback to Any if evaluation fails
-
-#   if isinstance(obj := locate(name), type): return obj
-
-#   if name in frm.f_globals and isinstance(frm.f_globals[name], type): return frm.f_globals[name]
-#   caller_mod = frm.f_globals.get('__name__')
-#   auto = [sys.modules[caller_mod]] if caller_mod else []
-#   for mod in (extra_modules or []) + auto:
-#     if hasattr(mod, name) and isinstance(obj := getattr(mod, name), type): return obj
-
-#   return _T_ANY
+def _eval_with_extras(expr: str, frm: FrameType, extra_modules: list[ModuleType] = []):
+  ns = {}
+  ns.update(frm.f_globals or {})
+  ns.update(frm.f_locals or {})
+  for m in extra_modules:
+    if isinstance(m, ModuleType): ns[m.__name__] = m
+    elif isinstance(m, dict): ns.update(m)
+    else: ns[type[m].__name__] = m
+  return eval(expr, ns, ns)
 
 
-# def _typ2str(typ: object) -> str: return getattr(typ, "__name__", str(typ))
+def _resolve_type(name: str, *, extra_modules: list[ModuleType] | None = None) -> type[Any]:
+  if isinstance(name, type): return name
+  if hasattr(builtins, name): return getattr(builtins, name)
+
+  frm = sys._getframe(1)
+  try:
+    # evaluated = eval(name, frm.f_globals, frm.f_locals)
+    # Convert PEP 604 UnionType or typing.Union to typing.Union[...] form
+    evaluated = _eval_with_extras(name, frm, extra_modules or [])
+    if isinstance(evaluated, type): return evaluated
+    if isinstance(evaluated, UnionType): return cast(type[Any], Union[evaluated.__args__])
+    if getattr(evaluated, "__origin__", None) is Union: return evaluated    
+  except Exception as e:
+    # print(f"Error evaluating type name: {name}\n{e}")    
+    return _T_ANY  # Fallback to Any if evaluation fails
+
+  try:
+    typ = ForwardRef(name)._evaluate(frm.f_globals, frm.f_locals, recursive_guard=frozenset())
+    if isinstance(typ, type):
+      return typ
+  except NameError as ne:
+    # print(f"Error evaluating type name: {name}\n{ne}")
+    return _T_ANY  # Fallback to Any if evaluation fails
+
+  if isinstance(obj := locate(name), type): return obj
+
+  if name in frm.f_globals and isinstance(frm.f_globals[name], type): return frm.f_globals[name]
+  caller_mod = frm.f_globals.get('__name__')
+  auto = [sys.modules[caller_mod]] if caller_mod else []
+  for mod in (extra_modules or []) + auto:
+    if hasattr(mod, name) and isinstance(obj := getattr(mod, name), type): return obj
+
+  return _T_ANY
 
 
-# def safe_isinstance(obj: Any, hint: Any, *, extra_modules: list[ModuleType] | None = None, default=False) -> bool:
-#   if isinstance(hint, str): hint = _resolve_type(hint, extra_modules=extra_modules)
+def _typ2str(typ: object) -> str: return getattr(typ, "__name__", str(typ))
 
-#   if hint is Any: return True
 
-#   origin = get_origin(hint)
-#   if origin is None: return isinstance(obj, hint)
+def safe_isinstance(obj: Any, hint: Any, *, extra_modules: list[ModuleType] | None = None, default=False) -> bool:
+  if isinstance(hint, str): hint = _resolve_type(hint, extra_modules=extra_modules)
 
-#   # --- generics -----------------------------------------------------------
-#   if origin is Union: return any(safe_isinstance(obj, h, default=default, extra_modules=extra_modules) for h in get_args(hint))
+  if hint is Any: return True
 
-#   if origin in (list, tuple, set, frozenset):
-#     if not isinstance(obj, origin): return False
-#     (sub,) = get_args(hint) or (Any,)
-#     return all(safe_isinstance(i, sub, default=default, extra_modules=extra_modules) for i in obj)
+  origin = get_origin(hint)
+  if origin is None: return isinstance(obj, hint)
 
-#   if origin is dict:
-#     if not isinstance(obj, dict): return False
-#     k_t, v_t = get_args(hint) or (Any, Any)
-#     return (all(safe_isinstance(k, k_t, default=default, extra_modules=extra_modules) for k in obj.keys()) and
-#             all(safe_isinstance(v, v_t, default=default, extra_modules=extra_modules) for v in obj.values()))
+  # --- generics -----------------------------------------------------------
+  if origin is Union: return any(safe_isinstance(obj, h, default=default, extra_modules=extra_modules) for h in get_args(hint))
 
-#   return isinstance(obj, origin)
+  if origin in (list, tuple, set, frozenset):
+    if not isinstance(obj, origin): return False
+    (sub,) = get_args(hint) or (Any,)
+    return all(safe_isinstance(i, sub, default=default, extra_modules=extra_modules) for i in obj)
+
+  if origin is dict:
+    if not isinstance(obj, dict): return False
+    k_t, v_t = get_args(hint) or (Any, Any)
+    return (all(safe_isinstance(k, k_t, default=default, extra_modules=extra_modules) for k in obj.keys()) and
+            all(safe_isinstance(v, v_t, default=default, extra_modules=extra_modules) for v in obj.values()))
+
+  return isinstance(obj, origin)
 
 
 _DC_BASE_TYPE_MAP = {
@@ -1062,6 +1078,7 @@ _DC_BASE_TYPE_MAP = {
   'None': type(None), 
   'y2eid': y2eid
   }
+
 
 class DC(UserDict):
   _DC_TYPE_MAP: dict[str, type] = _DC_BASE_TYPE_MAP.copy()
@@ -1098,16 +1115,18 @@ class DC(UserDict):
 
 
   def __init__(self, **kw):
-    data = kw.pop('data', {})
-    if isinstance(data, str): data = {'data': data}
-
     def _2data(k, v):
       if k in self._debug_annotations:setattr(self, k, v)
       elif (attr := getattr(self, k, None)) is not None: attr = v
       else: self.data[k] = v
 
+    self.data = {}
+    data = kw.pop('data', {})
+    if isinstance(data, str): data = {'data': data}
+    
     d = kw | data
-    for k, v in d.items(): _2data(k, v)
+    for k, v in d.items(): 
+      _2data(k, v)
 
 
   @abstractmethod
