@@ -1090,6 +1090,7 @@ _DC_BASE_TYPE_MAP = {
 class DC(UserDict):
   _DC_TYPE_MAP: dict[str, type] = _DC_BASE_TYPE_MAP.copy()
   _DC_EXCLUDE_NAMES: list[str] = []
+  __init_steps__: tuple[str, ...] = tuple("_from_kw")
 
   def __init_subclass__(cls, **kw) -> None:
     super().__init_subclass__(**kw)
@@ -1117,19 +1118,25 @@ class DC(UserDict):
       setattr(cls, aname, property(getter, setter))
 
 
-  def __init__(self, **kw):
-    def _2data(k, v):
-      if k in self._debug_annotations:setattr(self, k, v)
-      elif (attr := getattr(self, k, None)) is not None: attr = v
-      else: self.data[k] = v
-
-    self.data = {}
+  def _from_kw(self, **kw):
     data = kw.pop('data', {})
     if isinstance(data, str): data = {'data': data}
-    
-    d = kw | data
-    for k, v in d.items(): 
-      _2data(k, v)
+    self.data = kw | data
+
+
+  def __init__(self, **kw):
+    self.data = {}
+    for cls in reversed(type(self).mro()):
+      for name in getattr(cls, '__init_steps__', ()):
+        getattr(self, name)(**kw)
+
+    # def _2data(k, v):
+    #   if k in self._debug_annotations:setattr(self, k, v)
+    #   elif (attr := getattr(self, k, None)) is not None: attr = v
+    #   else: self.data[k] = v
+    # d = kw | data
+    # for k, v in d.items(): 
+    #   _2data(k, v)
 
 
   @abstractmethod
