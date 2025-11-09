@@ -546,16 +546,21 @@ class y2slug(y2list):
 
 
 class y2eid:
-  ns: str
-  domain: str
-  slug: y2slug
+  ns: str | None
+  domain: str | None
+  slug: y2slug | None
   default_ns: ClassVar[str] = 'yala'
   default_domain: ClassVar[str] = 'entity'
+  _ready: bool = False
 
+  def __bool__(self) -> bool: return self._ready
 
   def __init__(self, o: Any, ns: Optional[str] = None, **kw):
-    ns = ns or self.default_ns
+    self._ready = False
     if not o: return
+
+    ns = ns or self.default_ns
+     
     if isinstance(o, y2eid): s = str(o)
     elif isinstance(o, dict): s = str(o.get('entity_id',""))
     elif isinstance(o, str): s = o
@@ -572,9 +577,11 @@ class y2eid:
     self.slug = y2slug(s)
 
     for k in ['tail', 'head']: setattr(self, k, getattr(self.slug, k))
+    self._ready = True
 
 
   def __str__(self):
+    if not self._ready: return ""
     s = str(self.slug)
     if self.domain: s = self.domain + '.' + s
     if self.ns: s += '@' + self.ns
@@ -1111,7 +1118,6 @@ class DC(UserDict):
         if not hasattr(self, 'data'): self.data = {}
         self.data[name] = value
       setattr(cls, aname, property(getter, setter))
-      cls._debug_setters.append(aname)
 
 
   def __init__(self, **kw):
