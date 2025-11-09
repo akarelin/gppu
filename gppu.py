@@ -23,14 +23,10 @@ from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
 
-VER_GPPU_BASE = '2.23.2'
+VER_GPPU_BASE = '2.24.0'
 VER_GPPU_BUILD = '251107'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
-
-_T = TypeVar('_T')
-_P = ParamSpec('_P')
-_T_ANY: type[Any] = cast(type[Any], Any)
 
 # region OS
 OS_W11 = "W11"
@@ -45,13 +41,11 @@ def detect_os():
     release = platform.release().lower()
     if "microsoft" in release or "wsl" in release: return OS_WSL
     return OS_LINUX
-  else:
-    return OS_OTHER
-# # endregion
+  else: return OS_OTHER
+# endregion
 
 # region Safe typecasting
-def safe_float(o, default: Optional[float] = None) -> Optional[float]:
-  result: float | None
+def safe_float(o, default: float = float("NaN")) -> float:
   if o is None: return default
   if isinstance(o, str):
     o = o.removesuffix("°c")
@@ -59,13 +53,7 @@ def safe_float(o, default: Optional[float] = None) -> Optional[float]:
   try: result = float(o)
   except: result = default
   return result
-
-
-def coerce_float(o, default: float = 0.0) -> float: return _ if (_ := safe_float(o, default)) else default
-def safe_int(o, default: Optional[int] = None) -> Optional[int]: return int(_) if (_ := safe_float(o, default)) else default
-def coerce_int(o, default: int = 0) -> int: return int(_) if (_ := safe_float(o, default)) else default
-
-
+def safe_int(o, default: int = 0) -> int: return int(_) if (_ := safe_float(o, default)) else default
 def safe_list(o) -> list:
   result = []
   if isinstance(o, str): result = [o]
@@ -78,12 +66,15 @@ def safe_timedelta(o: object) -> float:
   try: then = datetime.fromisoformat(str(o)).timestamp()
   except: then = 0.0
   return now_ts() - then
+
+# def coerce_float(o, default: float = 0.0) -> float: return _ if (_ := safe_float(o, default)) else default
+# def coerce_int(o, default: int = 0) -> int: return int(_) if (_ := safe_float(o, default)) else default
 # endregion
 
 
 # region Dict utils: deepget, dict_all_paths
-# deepdict = lambda: defaultdict(deepdict)
 deepdict: Callable[[], DefaultDict[Any, Any]] = lambda: defaultdict(deepdict)
+
 
 def deepget(path: str, d: dict, default=None):
   if '/' in path and path not in d.keys():
@@ -93,19 +84,13 @@ def deepget(path: str, d: dict, default=None):
       if not _: break
     return _ if _ else default
   return d.get(path, default)
-
-
-def deepget_int(path: str, d: dict, default: int | None = None) -> int | None:
+def deepget_int(path: str, d: dict, default: int = 0) -> int:
   """ Returns int at path, or default if not found """
   _ = deepget(path, d, default)
   return _ if isinstance(_, int) else default
-
-
 def deepget_list(path: str, d: dict, default: list = []) -> list:
   """ Returns list at path, or default if not found """
   return _ if isinstance(_ := deepget(path, d, default), list) else default
-
-
 def deepget_dict(path: str, d: dict, default: dict = {}) -> dict:
   """ Returns dict at path, or default if not found """
   return _ if isinstance(_ := deepget(path, d, default), dict) else default
@@ -298,7 +283,6 @@ def template_populate(o, data: dict = {}, excludes:list = []) -> Any:
   if isinstance(o, dict): _ = o.get('data', {}) | o
   else: _ = str(o)
   return __tp(_, data)
-
 # endregion
 
 # region Time helpers
@@ -330,8 +314,7 @@ def pretty_timedelta(ts) -> str:
   else: return '%ds' % (seconds,)
 # endregion
 
-# region Loggin and Time helpers: now_ts, now_str
-"""Logging"""
+# region prettify and slugify
 def pfy(object) -> str: return "\n"+pprint.pformat(object, indent=4, width=40, compact=True)
 def slugify(o) -> str:
   """Converts any object to string, then slugifies it"""
@@ -340,16 +323,15 @@ def slugify(o) -> str:
 
 
 # region Tracing decorators
-TracerAction: TypeAlias = Literal['before', 'after', 'instead']
+_TracerAction: TypeAlias = Literal['before', 'after', 'instead']
 
-TA_BEFORE: TracerAction = 'before'
-TA_AFTER: TracerAction = 'after'
-TA_INSTEAD: TracerAction = 'instead'
-TAs: list[TracerAction] = [TA_BEFORE, TA_AFTER, TA_INSTEAD]
+TA_BEFORE: _TracerAction = 'before'
+TA_AFTER: _TracerAction = 'after'
+TA_INSTEAD: _TracerAction = 'instead'
+TAs: list[_TracerAction] = [TA_BEFORE, TA_AFTER, TA_INSTEAD]
 
 
-# def _tracer(tracer: Callable[..., Any] | None = None, action: TracerAction | None = None) -> Callable:
-def _tracer(tracer: Optional[Callable[..., Any]] = None, action: Optional[TracerAction] = None) -> Callable:
+def _tracer(tracer: Optional[Callable[..., Any]] = None, action: Optional[_TracerAction] = None) -> Callable:
   def decorator(method: Callable) -> Callable:
     def wrapper(self, *a, **kw):
       if not tracer: return method(self, *a, **kw)
@@ -364,7 +346,6 @@ def _tracer(tracer: Optional[Callable[..., Any]] = None, action: Optional[Tracer
         return tracer(self, *a, **kw)
     return wrapper
   return decorator
-
 
 # Thread-local storage to track profiling depth (shared across all profile_method decorators)
 import threading
@@ -383,20 +364,15 @@ def profile_method(func: Callable) -> Callable:
   @wraps(func)
   def wrapper(*args, **kwargs):
     # Check if we're already profiling in this thread
-    if not hasattr(_profile_thread_locals, 'profiling_depth'):
-      _profile_thread_locals.profiling_depth = 0
+    if not hasattr(_profile_thread_locals, 'profiling_depth'): _profile_thread_locals.profiling_depth = 0
 
     is_outermost = _profile_thread_locals.profiling_depth == 0
     _profile_thread_locals.profiling_depth += 1
 
-    if is_outermost:
-      profiler = cProfile.Profile()
-      profiler.enable()
+    if is_outermost: profiler = cProfile.Profile(); profiler.enable()
 
-    try:
-      result = func(*args, **kwargs)
-      return result
-    finally:
+    try: return func(*args, **kwargs)
+    finally: 
       _profile_thread_locals.profiling_depth -= 1
 
       if is_outermost:
@@ -417,7 +393,6 @@ def profile_method(func: Callable) -> Callable:
         print(s.getvalue())
 
   return wrapper
-
 # endregion
 
 
@@ -538,7 +513,7 @@ class y2topic(y2path):
 
 
 class y2slug(y2list):
-  def __init__(self, o=None): 
+  def __init__(self, o): 
     self.token = '_'
 
     if '@' in str(o): o = str(o).split('@')[0]
@@ -546,9 +521,9 @@ class y2slug(y2list):
 
 
 class y2eid:
-  ns: str | None
-  domain: str | None
-  slug: y2slug | None
+  ns: str
+  domain: str
+  slug: y2slug 
   default_ns: ClassVar[str] = 'yala'
   default_domain: ClassVar[str] = 'entity'
   _ready: bool = False
@@ -557,7 +532,7 @@ class y2eid:
 
   def __init__(self, o: Any, ns: Optional[str] = None, **kw):
     self._ready = False
-    if not o: return
+    if not o: raise ValueError("y2eid: empty input")
 
     ns = ns or self.default_ns
      
@@ -581,7 +556,6 @@ class y2eid:
 
 
   def __str__(self):
-    if not self._ready: return ""
     s = str(self.slug)
     if self.domain: s = self.domain + '.' + s
     if self.ns: s += '@' + self.ns
@@ -598,7 +572,6 @@ class y2eid:
   def entity_id(self) -> str | None: return f"{self.domain}.{self.slug}" if self._ready else None
   @property
   def seid(self): return str(self)
-
 # endregion
 
 
@@ -694,8 +667,7 @@ def pcp(*a: str | List[Any] | Tuple[Any, ...], **kw: Any) -> str:
     msg = kw.get('msg')
     out = _colorize_log(msg=msg, level=level)
     if a: out += _colorize_list(a) # type: ignore
-  else:
-    out = _colorize_list(a) # type: ignore
+  else: out = _colorize_list(a) # type: ignore
   if kw and verbose: out += pfy(kw)
 
   # if not silent: print(out)
@@ -716,12 +688,11 @@ def dpcp(*a: Any,
   """ Version of pcp that adds info on where it was called from """
   def is_traced(name : Optional[str] = None) -> bool:
     if not conditional: return True
-
     if not name or name not in rules: return rules.get('all', False)
     else: return rules.get(name, False)
 
   def is_ignored(f, fi) -> bool:
-    if 'python3' in fi.filename: return True # !!! Ignoring all python3 libraries
+    if 'python' in fi.filename: return True # !!! Ignoring all python3 libraries
     elif fi.function in _IGNORE_FUNCTIONS: return True
     elif f.f_locals.get('self').__class__.__name__ in _IGNORE_FUNCTIONS: return True
     return False
@@ -745,17 +716,11 @@ def dpcp(*a: Any,
 
     func_name = _remove_prefixes(func_name, _SHORTEN_BY_PREFIX)
 
-  if frame is None: 
-    print(f"\tframe is None")
-    return None
+  if frame is None: print(f"\tframe is None"); return None
 
-  if not is_traced(func_name): 
-    print(f"\tis_traced({func_name}) is False")
-    return None
+  if not is_traced(func_name): print(f"\tis_traced({func_name}) is False"); return None
   module = filename.rsplit('/', 1)[-1].rsplit('.', 1)[0]
-  if not is_traced(module) or not is_traced(f"{module}.{func_name}"): 
-    print(f"\tis_traced({module}.{func_name}) is False")
-    return None
+  if not is_traced(module) or not is_traced(f"{module}.{func_name}"): print(f"\tis_traced({module}.{func_name}) is False"); return None
 
   if 'self' in frame.f_locals: 
     if not is_traced(class_name := frame.f_locals["self"].__class__.__name__): print(f"\tis_traced({class_name}) is False"); return None
@@ -783,7 +748,6 @@ def _colorize_log(msg, level=None, *args) -> str:
     else: c1, c2 = 'DIM', 'INFO'
     msg_list = [c1, level, c2, msg] + list(args)
     msg = _colorize_list(msg_list)
-  #else: raise ValueError(f"Invalid log_colored call: {msg} {level} {args}")
   return msg
 
 
@@ -836,7 +800,7 @@ def _colorize(text: str, colorcode:str, fmt=None):
   text = str(text)
   if fmt:
     if fmt[0] in "<>": right = fmt[0] == '>'; fmt = fmt[1:]
-    maxlen = coerce_int(fmt)
+    maxlen = safe_int(fmt)
 
     text = text[-maxlen:] if right else text[0:maxlen]
     if (l := len(text)) < maxlen: pad = ' ' * (maxlen - l)
@@ -870,8 +834,7 @@ class PrettyColoredFormatter(logging.Formatter):
 class PrettyColoredHandler(logging.StreamHandler):
   def emit(self, record):
     silent = getattr(record, 'silent', False)
-    if not silent:
-      super().emit(record)
+    if not silent: super().emit(record)
 
 
 def _fmt(*a, severity: str = 'Debug', **kw) -> str:
@@ -890,12 +853,13 @@ class _LogColorizer(logging.Formatter):
 # endregion
 
 
-# region Logger
 # @@      mixin class                                                           == 
 class _mixin: pass
 
+# region Logger
 # ^~            Logger                                            
 TRACE_RULES: dict = {}
+
 
 _logger = logging.getLogger('gppu')
 _logger.setLevel(logging.DEBUG)  # Ensure logger level is set to DEBUG
@@ -913,22 +877,16 @@ class _EmptyMessageFilter(logging.Filter):
     # Only log if we have actual content after stripping ANSI codes and whitespace
     return bool(cleaned.strip())
 
-
 _sh = logging.StreamHandler()
 _sh.setLevel(logging.DEBUG)
 _sh.setFormatter(_LogColorizer())
 _sh.addFilter(_EmptyMessageFilter())
 _logger.addHandler(_sh)
 
-
-
-# _sh.setFormatter(logging.Formatter('%(message)s'))
-
 def init_logger(name: str = 'gppu', trace_rules: dict | None = None) -> None:
   """Initialize global logger with a specific name and optional trace rules."""
   global _logger, TRACE_RULES
-  if trace_rules is not None:
-    TRACE_RULES = trace_rules
+  if trace_rules is not None: TRACE_RULES = trace_rules
   Logger.trace_rules = TRACE_RULES
   new_logger = logging.getLogger(name)
   new_logger.setLevel(logging.DEBUG)
@@ -937,8 +895,7 @@ def init_logger(name: str = 'gppu', trace_rules: dict | None = None) -> None:
   _logger = new_logger
   for cls in list(mixin_Logger.__subclasses__()):
     cls._logger = _logger.getChild(cls.__name__)
-    for n, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)):
-      setattr(cls, n, staticmethod(partial(fn, logger=cls._logger)))
+    for n, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)): setattr(cls, n, staticmethod(partial(fn, logger=cls._logger)))
 
 def Debug(*a, logger=None, **kw): (logger or _logger).debug(*a, **kw)
 def Info(*a, logger=None, **kw): (logger or _logger).info(*a, **kw)
@@ -982,109 +939,23 @@ class mixin_Logger(protocol_Logger, _mixin):
   def __init_subclass__(cls, **kw):
     super().__init_subclass__(**kw)
     cls._logger = _logger.getChild(cls.__name__)
-    for name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn),
-                     ('Error', Error), ('Dump', Dump)):
-      setattr(cls, name, staticmethod(partial(fn, logger=cls._logger)))
+    for name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)): setattr(cls, name, staticmethod(partial(fn, logger=cls._logger)))
 
   def __init__(self, *a, **kw):
     super(mixin_Logger, self).__init__(*a, **kw)    # ← no warning
     # instance shortcuts re-use the class-level bound functions
-    for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'):
-      setattr(self, name, getattr(self.__class__, name))
+    for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'): setattr(self, name, getattr(self.__class__, name))
 # endregion
 
 
 # ==                              DC - DataClass                              ==                                           
+# region DC - pseudo DataClass
 import builtins
 from types import ModuleType, UnionType, FrameType
 from pydoc import locate
 from typing import get_args, get_origin, Any, Union, ForwardRef, cast
 
-def _eval_with_extras(expr: str, frm: FrameType, extra_modules: list[ModuleType] = []):
-  ns = {}
-  ns.update(frm.f_globals or {})
-  ns.update(frm.f_locals or {})
-  for m in extra_modules:
-    if isinstance(m, ModuleType): ns[m.__name__] = m
-    elif isinstance(m, dict): ns.update(m)
-    else: ns[type[m].__name__] = m
-  return eval(expr, ns, ns)
-
-
-def _resolve_type(name: str, *, extra_modules: list[ModuleType] | None = None) -> type[Any]:
-  if isinstance(name, type): return name
-  if hasattr(builtins, name): return getattr(builtins, name)
-
-  frm = sys._getframe(1)
-  try:
-    # evaluated = eval(name, frm.f_globals, frm.f_locals)
-    # Convert PEP 604 UnionType or typing.Union to typing.Union[...] form
-    evaluated = _eval_with_extras(name, frm, extra_modules or [])
-    if isinstance(evaluated, type): return evaluated
-    if isinstance(evaluated, UnionType): return cast(type[Any], Union[evaluated.__args__])
-    if getattr(evaluated, "__origin__", None) is Union: return evaluated    
-  except Exception as e:
-    # print(f"Error evaluating type name: {name}\n{e}")    
-    return _T_ANY  # Fallback to Any if evaluation fails
-
-  try:
-    typ = ForwardRef(name)._evaluate(frm.f_globals, frm.f_locals, recursive_guard=frozenset())
-    if isinstance(typ, type):
-      return typ
-  except NameError as ne:
-    # print(f"Error evaluating type name: {name}\n{ne}")
-    return _T_ANY  # Fallback to Any if evaluation fails
-
-  if isinstance(obj := locate(name), type): return obj
-
-  if name in frm.f_globals and isinstance(frm.f_globals[name], type): return frm.f_globals[name]
-  caller_mod = frm.f_globals.get('__name__')
-  auto = [sys.modules[caller_mod]] if caller_mod else []
-  for mod in (extra_modules or []) + auto:
-    if hasattr(mod, name) and isinstance(obj := getattr(mod, name), type): return obj
-
-  return _T_ANY
-
-
-def _typ2str(typ: object) -> str: return getattr(typ, "__name__", str(typ))
-
-
-def safe_isinstance(obj: Any, hint: Any, *, extra_modules: list[ModuleType] | None = None, default=False) -> bool:
-  if isinstance(hint, str): hint = _resolve_type(hint, extra_modules=extra_modules)
-
-  if hint is Any: return True
-
-  origin = get_origin(hint)
-  if origin is None: return isinstance(obj, hint)
-
-  # --- generics -----------------------------------------------------------
-  if origin is Union: return any(safe_isinstance(obj, h, default=default, extra_modules=extra_modules) for h in get_args(hint))
-
-  if origin in (list, tuple, set, frozenset):
-    if not isinstance(obj, origin): return False
-    (sub,) = get_args(hint) or (Any,)
-    return all(safe_isinstance(i, sub, default=default, extra_modules=extra_modules) for i in obj)
-
-  if origin is dict:
-    if not isinstance(obj, dict): return False
-    k_t, v_t = get_args(hint) or (Any, Any)
-    return (all(safe_isinstance(k, k_t, default=default, extra_modules=extra_modules) for k in obj.keys()) and
-            all(safe_isinstance(v, v_t, default=default, extra_modules=extra_modules) for v in obj.values()))
-
-  return isinstance(obj, origin)
-
-
-_DC_BASE_TYPE_MAP = {
-  'str': str, 
-  'list': list, 
-  'dict': dict, 
-  'set': set, 
-  'int': int, 
-  'float': float, 
-  'bool': bool, 
-  'None': type(None), 
-  'y2eid': y2eid
-  }
+_DC_BASE_TYPE_MAP = {'str': str, 'list': list, 'dict': dict, 'set': set, 'int': int, 'float': float, 'bool': bool, 'None': type(None), 'y2eid': y2eid}
 
 
 class DC(UserDict):
@@ -1092,13 +963,13 @@ class DC(UserDict):
   _DC_EXCLUDE_NAMES: list[str] = []
 
 
-  def _from_kw(self, **kw):
+  def _init_from_kw(self, **kw) -> None:
     data = kw.pop('data', {})
     if isinstance(data, str): data = {'data': data}
     self.data = kw | data
 
 
-  _INIT_STEPS: list[Callable] = [_from_kw]
+  _INIT_STEPS: list[Callable] = [_init_from_kw]
 
 
   def __init_subclass__(cls, **kw) -> None:
@@ -1110,10 +981,8 @@ class DC(UserDict):
     for aname, atype in mro:
       def getter(self, name=aname, atype=atype): 
         result = self.data.get(name)
-        if result is not None:
-          if isinstance(result, cls._DC_TYPE_MAP[atype]): return result
-
-        if not (result := self.data.get(name)):
+        if result is not None and isinstance(result, cls._DC_TYPE_MAP[atype]): return result
+        if not result:
           if atype == 'str': result = ''
           elif atype == 'list': result = []
           elif atype == 'dict': result = {}
@@ -1127,9 +996,10 @@ class DC(UserDict):
 
   def __init__(self, **kw):
     self.data = {}
-    for step in self._INIT_STEPS:
-      step(self, **kw)
+    for step in self._INIT_STEPS: step(self, **kw)
 
 
   @abstractmethod
   def init(self): ...
+# endregion
+
