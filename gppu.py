@@ -23,7 +23,7 @@ from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
 
-VER_GPPU_BASE = '2.23.0'
+VER_GPPU_BASE = '2.23.1'
 VER_GPPU_BUILD = '251107'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
@@ -1112,9 +1112,6 @@ class DC(UserDict):
           elif atype == 'set': result = set()
         return result
       def setter(self, value, name=aname, type_hint=atype, _owner_mod=sys.modules[cls.__module__]):
-        #
-        #if value and not safe_isinstance(value, type_hint, default=True, extra_modules=[_owner_mod]): 
-        #  raise TypeError(f"Expected type {type_hint} for {name}, got {type(value)} instead.")
         if not hasattr(self, 'data'): self.data = {}
         self.data[name] = value
       setattr(cls, aname, property(getter, setter))
