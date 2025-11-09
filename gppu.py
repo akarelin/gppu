@@ -23,7 +23,7 @@ from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
 
-VER_GPPU_BASE = '2.23.1'
+VER_GPPU_BASE = '2.23.2'
 VER_GPPU_BUILD = '251107'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
@@ -595,7 +595,7 @@ class y2eid:
   def endswith(self, ix) -> bool: return self.slug.endswith(ix)
   def startswith(self, ix) -> bool: return self.slug.endswith(ix)
   @property
-  def entity_id(self) -> str: return f"{self.domain}.{self.slug}"
+  def entity_id(self) -> str | None: return f"{self.domain}.{self.slug}" if self._ready else None
   @property
   def seid(self): return str(self)
 
