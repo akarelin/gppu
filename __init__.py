@@ -32,9 +32,7 @@ from .gppu import (
     
     # Type safety and coercion
     safe_int,
-    coerce_int,
     safe_float,
-    coerce_float,
     safe_list,
     safe_timedelta,
     
@@ -91,8 +89,7 @@ __all__ = [
     'deepdict', 'dict_all_paths', 'dict_element_append', 'dict_sort_keylen',
     
     # Type utilities
-    'safe_int', 'coerce_int', 'safe_float', 'coerce_float', 
-    'safe_list', 'safe_timedelta',
+    'safe_int', 'safe_float', 'safe_list', 'safe_timedelta',
     
     # Time utilities  
     'now_str', 'now_ts', 'pretty_timedelta', 'prepend_datestamp', 'append_timestamp',
