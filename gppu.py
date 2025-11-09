@@ -1090,16 +1090,23 @@ _DC_BASE_TYPE_MAP = {
 class DC(UserDict):
   _DC_TYPE_MAP: dict[str, type] = _DC_BASE_TYPE_MAP.copy()
   _DC_EXCLUDE_NAMES: list[str] = []
-  __init_steps__: tuple[str, ...] = tuple("_from_kw")
+
+
+  def _from_kw(self, **kw):
+    data = kw.pop('data', {})
+    if isinstance(data, str): data = {'data': data}
+    self.data = kw | data
+
+
+  _INIT_STEPS: list[Callable] = [_from_kw]
+
 
   def __init_subclass__(cls, **kw) -> None:
     super().__init_subclass__(**kw)
 
     annotations = [(n, t if type(t) == str else str(t.__name__)) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items() if n[0] != '_' and n not in cls._DC_EXCLUDE_NAMES]
     mro = [(n, t) for n, t in annotations if n[0] != '_' and t in cls._DC_TYPE_MAP]
-    cls._debug_annotations = {k: v for k, v in annotations}
-    cls._debug_mro = {k: v for k, v in mro}
-    cls._debug_setters = []
+    print(f"\nDC.__init_subclass__: {cls.__name__} with fields: {[m[0] for m in mro]}\n")
     for aname, atype in mro:
       def getter(self, name=aname, atype=atype): 
         result = self.data.get(name)
@@ -1118,25 +1125,10 @@ class DC(UserDict):
       setattr(cls, aname, property(getter, setter))
 
 
-  def _from_kw(self, **kw):
-    data = kw.pop('data', {})
-    if isinstance(data, str): data = {'data': data}
-    self.data = kw | data
-
-
   def __init__(self, **kw):
     self.data = {}
-    for cls in reversed(type(self).mro()):
-      for name in getattr(cls, '__init_steps__', ()):
-        getattr(self, name)(**kw)
-
-    # def _2data(k, v):
-    #   if k in self._debug_annotations:setattr(self, k, v)
-    #   elif (attr := getattr(self, k, None)) is not None: attr = v
-    #   else: self.data[k] = v
-    # d = kw | data
-    # for k, v in d.items(): 
-    #   _2data(k, v)
+    for step in self._INIT_STEPS:
+      step(self, **kw)
 
 
   @abstractmethod
