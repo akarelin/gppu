@@ -1007,7 +1007,7 @@ class DC(UserDict):
     for step in self._INIT_STEPS: step(self, **kw)
 
 
-  @abstractmethod
-  def init(self): ...
+  # @abstractmethod
+  # def init(self): ...
 # endregion
 
