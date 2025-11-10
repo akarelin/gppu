@@ -23,8 +23,8 @@ from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 
 
-VER_GPPU_BASE = '2.24.0'
-VER_GPPU_BUILD = '251107'
+VER_GPPU_BASE = '2.24.1'
+VER_GPPU_BUILD = '251109'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 
@@ -982,10 +982,9 @@ class DC(UserDict):
 
     annotations_raw = [(n, t if type(t) == str else str(t.__name__)) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items() if n[0] != '_' and n not in cls._DC_EXCLUDE_NAMES]
     annotations = {n: _simple_type(t) for n, t in annotations_raw}
-    # annotations = {n: (t if type(t) == str else str(t.__name__)) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items() if n[0] != '_' and n not in cls._DC_EXCLUDE_NAMES}
     
     mro = [(n, t) for n, t in annotations.items() if n[0] != '_' and t in cls._DC_TYPE_MAP]
-    print(f"DC.__init_subclass__: {cls.__name__} with fields: {[m[0] for m in mro]}\n")
+    # print(f"DC.__init_subclass__: {cls.__name__} with fields: {[m[0] for m in mro]}\n")
     for aname, atype in mro:
       def getter(self, name=aname, atype=atype): 
         result = self.data.get(name)
