@@ -427,6 +427,7 @@ class y2list(UserList):
   def __eq__(self, other: Any) -> bool:
     if hasattr(other, 'data'): return self.data == other.data
     else: return str(self) == str(other)
+  def __hash__(self): return hash(str(self))
 
 
   def upper(self): return str(self).upper()
