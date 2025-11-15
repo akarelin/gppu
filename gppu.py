@@ -7,6 +7,7 @@ import logging
 import sys
 import platform
 import asyncio
+import json
 
 from pathlib import Path
 
@@ -93,6 +94,10 @@ def deepget_int(path: str, d: dict, default: int = 0) -> int:
   """ Returns int at path, or default if not found """
   _ = deepget(path, d, default)
   return _ if isinstance(_, int) else default
+def deepget_float(path: str, d: dict, default: float = float("NaN")) -> float:
+  """ Returns float at path, or default if not found """
+  _ = deepget(path, d, default)
+  return _ if isinstance(_, float) else default
 def deepget_list(path: str, d: dict, default: list = []) -> list:
   """ Returns list at path, or default if not found """
   return _ if isinstance(_ := deepget(path, d, default), list) else default
@@ -955,7 +960,8 @@ def Debug(*a, logger=None, **kw): (logger or _logger).debug(*a, **kw)
 def Info(*a, logger=None, **kw): (logger or _logger).info(*a, **kw)
 def Warn(*a, logger=None, **kw): (logger or _logger).warning(*a, **kw)
 def Error(*a, logger=None, **kw): (logger or _logger).error(*a, **kw)
-def Dump(filename: str, data={}, **kw) -> None:
+@sync
+async def Dump(filename: str, data={}, **kw) -> None:
   """ Saves data object to yml file in trace folder """
   if '.' not in filename or not filename.endswith('.yml'): filename += '.yml'
   dict_to_yml(filename=filename, data=data)
@@ -1024,7 +1030,7 @@ class PathBuilder:
   _SHARED_DATA_PATHS = {
     OSType.W11: Template("D:\\SD"),
     OSType.WSL: Template("/mnt/d/SD"),
-    OSType.LINUX: Template("/mnt/sd"),
+    OSType.LINUX: Template("/mnt/SD"),
     OSType.MACOS: Template("/Users/$user/SD"),
   }
 
@@ -1075,10 +1081,6 @@ class Env:
       setattr(Env, name, staticmethod(partial(fn, logger=Env._logger)))
 
 
-  @classmethod
-  def init(name: str | None = None) -> None: pass
-
-
   @staticmethod
   def load() -> None:
     config_file = Env._path_builder.config_file()
@@ -1088,8 +1090,14 @@ class Env:
 
   @staticmethod
   def _from_dict(d: dict) -> None:   # * Loader
-    if Env.initialized or Env.data: Env.reset(); Logger.Info('INFO', 'Environment', 'WRED', 'reset()')
-   
+    if Env.initialized or Env.data: Env._reset(); Logger.Info('INFO', 'Environment', 'WRED', 'reset()')
+    
+    sdp = str(Env._path_builder._shared_data_path)
+    extra = {"code_path": str(Env._path_builder._code_path), 
+             "shared_data_path": sdp,
+             "shared_data": sdp}
+    s = json.dumps(d)
+    Env.data = json.loads(Template(s).safe_substitute(**extra))
     Env.initialized = True
 
   @staticmethod
@@ -1105,10 +1113,22 @@ class Env:
   def glob_dict(path, default={}) -> dict: return deepget_dict(path, Env.data, default=default)
   @staticmethod
   @sync
-  async def dump(): Logger.Dump('Env.data', Env.data)
+  async def dump():
+    Logger.Dump('Env.data', Env.data)
+    return await asyncio.sleep(0)  # Make it truly async
 
 
 
+class mixin_Config(_mixin):
+  _my: dict[str, Any] = {}
+
+  def _config_from_key(self, key: str) -> None:  self._my.update(Env.glob_dict(key))
+
+  def my(self, path, default=None) -> Any: return deepget(path, self._my, default=default)
+  def my_int(self, path, default: Optional[int] = None) -> Optional[int]: return deepget_int(path, self._my, default=default)
+  def my_float(self, path, default: Optional[int] = None) -> Optional[int]: return deepget_float(path, self._my, default=default)
+  def my_list(self, path, default: list = []) -> list: return deepget_list(path, self._my, default=default or [])
+  def my_dict(self, path, default: dict = {}) -> dict: return deepget_dict(path, self._my, default=default or {})
 
 
 # endregion
