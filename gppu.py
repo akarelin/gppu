@@ -21,27 +21,31 @@ from string import Template
 
 from collections import defaultdict, UserDict, UserList
 from datetime import datetime
+from enum import Enum
 
 
-VER_GPPU_BASE = '2.24.1'
-VER_GPPU_BUILD = '251109'
+VER_GPPU_BASE = '2.25.0'
+VER_GPPU_BUILD = '251115'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 
 # region OS
-OS_W11 = "W11"
-OS_LINUX = "Linux"
-OS_WSL = "WSL"
-OS_OTHER = "Other" 
+class OSType(Enum):
+  """Operating System type enumeration"""
+  W11 = "W11"
+  LINUX = "Linux"
+  WSL = "WSL"
+  MACOS = "MacOS"
+  OTHER = "Other"
 
-def detect_os():
+def detect_os() -> OSType:
   sysname = platform.system()
-  if sysname == "Windows": return OS_W11
+  if sysname == "Windows": return OSType.W11
   elif sysname == "Linux":
     release = platform.release().lower()
-    if "microsoft" in release or "wsl" in release: return OS_WSL
-    return OS_LINUX
-  else: return OS_OTHER
+    if "microsoft" in release or "wsl" in release: return OSType.WSL
+    return OSType.LINUX
+  else: return OSType.OTHER
 # endregion
 
 # region Safe typecasting
@@ -946,6 +950,92 @@ class mixin_Logger(protocol_Logger, _mixin):
     super(mixin_Logger, self).__init__(*a, **kw)    # ← no warning
     # instance shortcuts re-use the class-level bound functions
     for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'): setattr(self, name, getattr(self.__class__, name))
+# endregion
+
+# region Environment
+class BaseDirType(Enum):
+  CODE = "code"
+  CONFIG = "config"
+  DATA = "data"
+
+class PathBuilder:
+  _CODE_BASE_PATHS = {
+    OSType.W11: t"D:\\Dev",
+    OSType.WSL: t"/home/$user",
+    OSType.LINUX: t"/home/$user",
+    OSType.MACOS: t"/Users/$user",
+  }
+  _KEY_PATH = Path("RAN/Keys")
+  user: str
+  app_name: str
+
+  _os: OSType
+  _code_path: Path
+
+  def config_file(self) -> Path:
+    file = self._code_path / self._KEY_PATH / Path(self.app_name).with_suffix('.yaml')
+    if not file.exists(): raise Exception(f"Config file does not exist: {file}")
+    return file
+  
+
+  def __init__(self, user: str = 'alex', app_name: str):
+    self.user = user
+    self.app_name = app_name
+    self._os = detect_os()
+    if self.os == OSType.W11: self.code_path = Path("D:\\Dev")
+    elif self.os in [OSType.WSL, OSType.LINUX]: self.code_path = Path(f"/home/{self.user}")
+    elif self.os == OSType.MACOS: self.code_path = Path(f"/Users/{self.user}")
+    else: raise Exception(f"Unsupported OS: {self.os.value}")
+
+    self._code_path = _CODE_BASE_PATHS[self.os].safe_substitute(user=self.user)
+
+class Env:
+  name: str
+  data: dict[str, Any] = {}
+  initialized: bool = False
+
+  _path_builder: PathBuilder
+  _logger: logging.Logger
+
+  def __init__(self, name: str | None = None):
+    import __main__
+    self.name = name or __main__.__file__
+    self._path_builder = PathBuilder(user='alex', app_name=self.name)
+
+    self.logger = _logger.getChild(self.name)
+    for name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)): setattr(self, name, staticmethod(partial(fn, logger=self._logger)))
+
+
+  def load(self) -> None:
+    config_file = self._path_builder.config_file()
+    config_data = yml_to_dict(config_file)
+    self._from_dict(config_data)
+
+
+  @staticmethod
+  def _from_dict(d: dict) -> None:   # * Loader
+    if self.initialized or self.data: self.reset(); Logger.Info('INFO', 'Environment', 'WRED', 'reset()')
+   
+    self.initialized = True
+
+  @staticmethod
+  def _reset() -> None: self.data = {}; self.initialized = False
+
+  @staticmethod
+  def glob(path, default=None) -> Any: return deepget(path, self.data, default=default)
+  @staticmethod
+  def glob_int(path, default: int = 0) -> int: return deepget_int(path, self.data, default=default)
+  @staticmethod
+  def glob_list(path, default=[]) -> list: return deepget_list(path, self.data, default=default)
+  @staticmethod
+  def glob_dict(path, default={}) -> dict: return deepget_dict(path, self.data, default=default)
+  @staticmethod
+  async def dump(): Logger.Dump('self.data', self.data)
+
+
+
+
+
 # endregion
 
 
