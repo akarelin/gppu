@@ -1,11 +1,12 @@
 import pprint
-from requests import get
+import stat
 import yaml
 import re
 import inspect
 import logging
 import sys
 import platform
+import asyncio
 
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from abc import abstractmethod
 from functools import wraps, partial
 
 from typing import Union, Callable, Any, Literal, List, Optional, Tuple, Dict, DefaultDict
-from typing import TypeVar, TypeAlias, ClassVar
+from typing import TypeVar, TypeAlias, ClassVar, Coroutine
 from typing import ParamSpec, Protocol, ForwardRef
 from typing import cast
 
@@ -376,7 +377,7 @@ def profile_method(func: Callable) -> Callable:
     if is_outermost: profiler = cProfile.Profile(); profiler.enable()
 
     try: return func(*args, **kwargs)
-    finally: 
+    finally:
       _profile_thread_locals.profiling_depth -= 1
 
       if is_outermost:
@@ -396,6 +397,54 @@ def profile_method(func: Callable) -> Callable:
         print('='*80)
         print(s.getvalue())
 
+  return wrapper
+
+
+# endregion
+
+
+# region Async helpers
+
+def sync_await(coro: Coroutine) -> Any:
+  """
+  Wrapper to call async functions without await from synchronous code.
+
+  Handles event loop lifecycle:
+  - If event loop is running: schedules coroutine as a task
+  - If event loop exists but not running: runs it until complete
+  - If no event loop: creates new one and runs until complete
+
+  Usage:
+    result = sync_await(async_function(args))
+
+  Args:
+    coro: A coroutine object to execute
+
+  Returns:
+    The result of the coroutine
+
+  Raises:
+    RuntimeError: If unable to execute the coroutine
+  """
+
+
+def sync(func: Callable) -> Callable:
+  @wraps(func)
+  def wrapper(*args, **kwargs):
+    coro = func(*args, **kwargs)
+    try:
+      loop = asyncio.get_running_loop()
+      return asyncio.create_task(coro)
+    except RuntimeError:
+      try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+          loop = asyncio.new_event_loop()
+          asyncio.set_event_loop(loop)
+      except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(coro)
   return wrapper
 # endregion
 
@@ -959,12 +1008,26 @@ class BaseDirType(Enum):
   DATA = "data"
 
 class PathBuilder:
+  """
+  sudo mkdir /mnt/SD
+
+  sudo mount.cifs //s1.karel.in/SD /mnt/SD -o username=alex,password=%%
+  echo "//s1.karel.in/SD /mnt/SD cifs username=alex,password=%%,iocharset=utf8,vers=3.0 0 0" | sudo tee -a /etc/fstab
+
+  """
   _CODE_BASE_PATHS = {
-    OSType.W11: t"D:\\Dev",
-    OSType.WSL: t"/home/$user",
-    OSType.LINUX: t"/home/$user",
-    OSType.MACOS: t"/Users/$user",
+    OSType.W11: Template("D:\\Dev"),
+    OSType.WSL: Template("/home/$user"),
+    OSType.LINUX: Template("/home/$user"),
+    OSType.MACOS: Template("/Users/$user"),
   }
+  _SHARED_DATA_PATHS = {
+    OSType.W11: Template("D:\\SD"),
+    OSType.WSL: Template("/mnt/d/SD"),
+    OSType.LINUX: Template("/mnt/sd"),
+    OSType.MACOS: Template("/Users/$user/SD"),
+  }
+
   _KEY_PATH = Path("RAN/Keys")
   user: str
   app_name: str
@@ -976,18 +1039,23 @@ class PathBuilder:
     file = self._code_path / self._KEY_PATH / Path(self.app_name).with_suffix('.yaml')
     if not file.exists(): raise Exception(f"Config file does not exist: {file}")
     return file
-  
 
-  def __init__(self, user: str = 'alex', app_name: str):
+ 
+  def shared_data_path(self, path: Path) -> Path: return self._shared_data_path / path
+
+
+  def __init__(self, app_name: str, user: str = 'alex'):
     self.user = user
     self.app_name = app_name
     self._os = detect_os()
-    if self.os == OSType.W11: self.code_path = Path("D:\\Dev")
-    elif self.os in [OSType.WSL, OSType.LINUX]: self.code_path = Path(f"/home/{self.user}")
-    elif self.os == OSType.MACOS: self.code_path = Path(f"/Users/{self.user}")
-    else: raise Exception(f"Unsupported OS: {self.os.value}")
+    if self._os == OSType.W11: self.code_path = Path("D:\\Dev")
+    elif self._os in [OSType.WSL, OSType.LINUX]: self.code_path = Path(f"/home/{self.user}")
+    elif self._os == OSType.MACOS: self.code_path = Path(f"/Users/{self.user}")
+    else: raise Exception(f"Unsupported OS: {self._os.value}")
 
-    self._code_path = _CODE_BASE_PATHS[self.os].safe_substitute(user=self.user)
+    self._code_path = Path(self._CODE_BASE_PATHS[self._os].safe_substitute(user=self.user))
+    self._shared_data_path = Path(self._SHARED_DATA_PATHS[self._os].safe_substitute(user=self.user))
+
 
 class Env:
   name: str
@@ -999,38 +1067,45 @@ class Env:
 
   def __init__(self, name: str | None = None):
     import __main__
-    self.name = name or __main__.__file__
-    self._path_builder = PathBuilder(user='alex', app_name=self.name)
+    Env.name = name or __main__.__file__
+    Env._path_builder = PathBuilder(user='alex', app_name=name)
 
-    self.logger = _logger.getChild(self.name)
-    for name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)): setattr(self, name, staticmethod(partial(fn, logger=self._logger)))
+    Env._logger = _logger.getChild(Env.name)
+    for name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)): 
+      setattr(Env, name, staticmethod(partial(fn, logger=Env._logger)))
 
 
-  def load(self) -> None:
-    config_file = self._path_builder.config_file()
-    config_data = yml_to_dict(config_file)
-    self._from_dict(config_data)
+  @classmethod
+  def init(name: str | None = None) -> None: pass
+
+
+  @staticmethod
+  def load() -> None:
+    config_file = Env._path_builder.config_file()
+    config_data = dict_from_yml(config_file)
+    Env._from_dict(config_data)
 
 
   @staticmethod
   def _from_dict(d: dict) -> None:   # * Loader
-    if self.initialized or self.data: self.reset(); Logger.Info('INFO', 'Environment', 'WRED', 'reset()')
+    if Env.initialized or Env.data: Env.reset(); Logger.Info('INFO', 'Environment', 'WRED', 'reset()')
    
-    self.initialized = True
+    Env.initialized = True
 
   @staticmethod
-  def _reset() -> None: self.data = {}; self.initialized = False
+  def _reset() -> None: Env.data = {}; Env.initialized = False
 
   @staticmethod
-  def glob(path, default=None) -> Any: return deepget(path, self.data, default=default)
+  def glob(path, default=None) -> Any: return deepget(path, Env.data, default=default)
   @staticmethod
-  def glob_int(path, default: int = 0) -> int: return deepget_int(path, self.data, default=default)
+  def glob_int(path, default: int = 0) -> int: return deepget_int(path, Env.data, default=default)
   @staticmethod
-  def glob_list(path, default=[]) -> list: return deepget_list(path, self.data, default=default)
+  def glob_list(path, default=[]) -> list: return deepget_list(path, Env.data, default=default)
   @staticmethod
-  def glob_dict(path, default={}) -> dict: return deepget_dict(path, self.data, default=default)
+  def glob_dict(path, default={}) -> dict: return deepget_dict(path, Env.data, default=default)
   @staticmethod
-  async def dump(): Logger.Dump('self.data', self.data)
+  @sync
+  async def dump(): Logger.Dump('Env.data', Env.data)
 
 
 
