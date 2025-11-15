@@ -10,8 +10,11 @@ from .gppu import (
     VER_GPPU,
     VER_GPPU_BASE,
     VER_GPPU_BUILD,
-    
+
     detect_os,
+
+    # Async helpers
+    sync,
 
     # Configuration loading
     dict_from_yml,
@@ -73,15 +76,21 @@ from .gppu import (
     # Data classes
     DC,
     _mixin,
+
+    # Environment configuration
+    Env,
 )
 
 __version__ = VER_GPPU
 __all__ = [
     # Version
     'VER_GPPU', 'VER_GPPU_BASE', 'VER_GPPU_BUILD', '__version__',
-    
+
+    # Async helpers
+    'sync',
+
     # Configuration
-    'dict_from_yml', 'dict_to_yml', 'dict_sanitize', 
+    'dict_from_yml', 'dict_to_yml', 'dict_sanitize',
     'template_populate', 'dict_template_populate',
     
     # Dictionary utilities
@@ -109,4 +118,7 @@ __all__ = [
     
     # Data classes
     'DC', '_mixin',
+
+    # Environment configuration
+    'Env',
 ]
