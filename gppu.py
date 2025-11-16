@@ -1,5 +1,4 @@
 import pprint
-import stat
 import yaml
 import re
 import inspect
@@ -11,13 +10,10 @@ import json
 
 from pathlib import Path
 
-from abc import abstractmethod
 from functools import wraps, partial
 
-from typing import Union, Callable, Any, Literal, List, Optional, Tuple, Dict, DefaultDict
-from typing import TypeVar, TypeAlias, ClassVar, Coroutine
-from typing import ParamSpec, Protocol, ForwardRef
-from typing import cast
+from typing import Union, Any, Literal, List, Optional, Tuple, Dict, DefaultDict
+from typing import TypeAlias, ClassVar, Callable, Protocol
 
 from string import Template
 
@@ -26,7 +22,7 @@ from datetime import datetime
 from enum import Enum
 
 
-VER_GPPU_BASE = '2.25.0'
+VER_GPPU_BASE = '2.25.1'
 VER_GPPU_BUILD = '251115'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
@@ -50,6 +46,7 @@ def detect_os() -> OSType:
   else: return OSType.OTHER
 # endregion
 
+
 # region Safe typecasting
 def safe_float(o, default: float = float("NaN")) -> float:
   if o is None: return default
@@ -66,15 +63,10 @@ def safe_list(o) -> list:
   elif isinstance(o, list): result = [element for element in o if element]
   elif isinstance(o, dict): result = list(o.keys())
   return result
-
-
 def safe_timedelta(o: object) -> float:
   try: then = datetime.fromisoformat(str(o)).timestamp()
   except: then = 0.0
   return now_ts() - then
-
-# def coerce_float(o, default: float = 0.0) -> float: return _ if (_ := safe_float(o, default)) else default
-# def coerce_int(o, default: int = 0) -> int: return int(_) if (_ := safe_float(o, default)) else default
 # endregion
 
 
@@ -143,57 +135,58 @@ KEYS_FORCE_STRING = ['parent', '']
 KEYS_DROP = ['api', 'adapi', 'AD']
 KEYS_FIRST = ['name', 'path']
 
-def _isstring(o) -> bool:
-  relatives = {type(o).__qualname__}
-  relatives |= {c.__qualname__ for c in o.__class__.__mro__}
-  return bool({'y2list', 'str', 'y2topic', 'y2path', 'ADBase'} & relatives)
-_islist = lambda o: not _isstring(o) and isinstance(o, (list, set))
-_isdict = lambda o: not _isstring(o) and (isinstance(o, (dict, defaultdict, UserDict)) or hasattr(o, 'as_dict') or (hasattr(o, 'data') and isinstance(o.data, dict)))
-_isnumber = lambda o: isinstance(o, (float, int))
-
-def sanitize_list(o) -> list:
-  result = []
- 
-  for e in sorted(o, key=lambda x: str(x)):
-    if _isdict(e): _ = sanitize_dict(e)
-    elif _islist(e): _ = sanitize_list(e)
-    elif _isnumber(e): _ = e
-    else: _ = str(e) if e else None
-    result.append(_)
-  return result
-
-def sanitize_dict(o) -> dict:
-  result = {}
-  if hasattr(o, 'as_dict'): d = o.as_dict()
-  elif hasattr(o, 'data') and isinstance(o.data, dict): d = o.data
-  else: d = dict(o)
-
-  _ = [k for k in KEYS_FIRST if k in d]
-  # ! Support for Null keys is not finished and its unclear if it is needed anymore
-  ordered_keys = _ + sorted([str(k) if k else '?' for k in d.keys() if k not in KEYS_FIRST and k not in KEYS_DROP])
-  for k in ordered_keys:
-    if k == '?': v = d.get(None)
-    else: v = d.get(k)
-    
-    if k in KEYS_DROP: continue
-    elif k in KEYS_FORCE_STRING: _ = str(v)
-    elif _isdict(v): _ = sanitize_dict(v)
-    elif _islist(v): _ = sanitize_list(v)
-    elif _isnumber(v): _ = v
-    else: _ = str(v) if v else None
-    result[str(k)] = _
-  return result
 
 def dict_sanitize(data: dict | list, sort_keys=False) -> dict | list:
   """Convert nested complex data types for json.dumps or yaml.dumps"""
-  if _islist(data): return sanitize_list(data)
-  elif _isdict(data): return sanitize_dict(data)
+  def _sanitize_list(o) -> list:
+    result = []
+  
+    for e in sorted(o, key=lambda x: str(x)):
+      if _isdict(e): _ = _sanitize_dict(e)
+      elif _islist(e): _ = _sanitize_list(e)
+      elif _isnumber(e): _ = e
+      else: _ = str(e) if e else None
+      result.append(_)
+    return result
+
+  def _sanitize_dict(o) -> dict:
+    result = {}
+    if hasattr(o, 'as_dict'): d = o.as_dict()
+    elif hasattr(o, 'data') and isinstance(o.data, dict): d = o.data
+    else: d = dict(o)
+
+    _ = [k for k in KEYS_FIRST if k in d]
+    # ! Support for Null keys is not finished and its unclear if it is needed anymore
+    ordered_keys = _ + sorted([str(k) if k else '?' for k in d.keys() if k not in KEYS_FIRST and k not in KEYS_DROP])
+    for k in ordered_keys:
+      if k == '?': v = d.get(None)
+      else: v = d.get(k)
+      
+      if k in KEYS_DROP: continue
+      elif k in KEYS_FORCE_STRING: _ = str(v)
+      elif _isdict(v): _ = _sanitize_dict(v)
+      elif _islist(v): _ = _sanitize_list(v)
+      elif _isnumber(v): _ = v
+      else: _ = str(v) if v else None
+      result[str(k)] = _
+    return result
+
+  def _isstring(o) -> bool:
+    relatives = {type(o).__qualname__}
+    relatives |= {c.__qualname__ for c in o.__class__.__mro__}
+    return bool({'y2list', 'str', 'y2topic', 'y2path', 'ADBase'} & relatives)
+  _islist = lambda o: not _isstring(o) and isinstance(o, (list, set))
+  _isdict = lambda o: not _isstring(o) and (isinstance(o, (dict, defaultdict, UserDict)) or hasattr(o, 'as_dict') or (hasattr(o, 'data') and isinstance(o.data, dict)))
+  _isnumber = lambda o: isinstance(o, (float, int))
+
+  if _islist(data): return _sanitize_list(data)
+  elif _isdict(data): return _sanitize_dict(data)
   else: raise ValueError(f"Unable to sanitize {data}")
 
 
 def _tuple_representer(dumper: yaml.Dumper, data: tuple) -> yaml.nodes.Node:
   return dumper.represent_dict(dict(enumerate(data)))
-  
+
 
 def dict_to_yml(filename:str, data=None, sort_keys=False):
   class IndentedListDumper(yaml.Dumper):
@@ -295,6 +288,7 @@ def template_populate(o, data: dict = {}, excludes:list = []) -> Any:
   return __tp(_, data)
 # endregion
 
+
 # region Time helpers
 def now_str(): return datetime.now().strftime("%Y%m%d.%H%M%S")
 def now_ts(): return datetime.now().timestamp()
@@ -323,6 +317,7 @@ def pretty_timedelta(ts) -> str:
   elif minutes > 0: return '%dm %ds' % (minutes, seconds)
   else: return '%ds' % (seconds,)
 # endregion
+
 
 # region prettify and slugify
 def pfy(object) -> str: return "\n"+pprint.pformat(object, indent=4, width=40, compact=True)
@@ -403,37 +398,12 @@ def profile_method(func: Callable) -> Callable:
         print(s.getvalue())
 
   return wrapper
-
-
 # endregion
 
 
 # region Async helpers
-
-def sync_await(coro: Coroutine) -> Any:
-  """
-  Wrapper to call async functions without await from synchronous code.
-
-  Handles event loop lifecycle:
-  - If event loop is running: schedules coroutine as a task
-  - If event loop exists but not running: runs it until complete
-  - If no event loop: creates new one and runs until complete
-
-  Usage:
-    result = sync_await(async_function(args))
-
-  Args:
-    coro: A coroutine object to execute
-
-  Returns:
-    The result of the coroutine
-
-  Raises:
-    RuntimeError: If unable to execute the coroutine
-  """
-
-
 def sync(func: Callable) -> Callable:
+  """Wrapper to call async functions without await from synchronous code."""
   @wraps(func)
   def wrapper(*args, **kwargs):
     coro = func(*args, **kwargs)
@@ -511,8 +481,6 @@ class y2list(UserList):
     elif '/' in ix: six = ix.replace('/',self.token)
     else: six = ix.lower()
     return slow.endswith(six)
-
-
   def startswith(self, ix) -> bool:
     slow = str(self).lower()
     if isinstance(ix, list): 
@@ -537,24 +505,18 @@ class y2list(UserList):
   def discard(self, element): self.data = [e for e in self.data if not e == element]
   def pophead(self) -> Optional[str]: return self.data.pop(0) if len(self.data) > 0 else None
   def poptail(self) -> Optional[str]: return self.data.pop(-1) if len(self.data) > 0 else None
-
-
   def popsuffix(self, ix):
     if self.endswith(ix):
       if '_' in ix and self.token != '_': ix = ix.replace('_',self.token)
       elif '/' in ix and self.token != '/': ix = ix.replace('/',self.token)
       self.data = self._any2list(str(self).replace(ix, ''))
       return self.token.join(self._any2list(ix))
-
-
   def popprefix(self, ix):
     if self.startswith(ix):
       if '_' in ix and self.token != '_': ix = ix.replace('_', self.token)
       elif '/' in ix and self.token != '/': ix = ix.replace('/', self.token)
       self.data = self._any2list(str(self).replace(ix, ''))
       return self.token.join(self._any2list(ix))
-
-
   def popxfix(self, ix): return self.popsuffix(ix) or self.popprefix(ix)
 
 
@@ -628,7 +590,7 @@ class y2eid:
   def endswith(self, ix) -> bool: return self.slug.endswith(ix)
   def startswith(self, ix) -> bool: return self.slug.endswith(ix)
   @property
-  def entity_id(self) -> str | None: return f"{self.domain}.{self.slug}" if self._ready else None
+  def entity_id(self) -> str: return f"{self.domain}.{self.slug}" if self._ready else ""
   @property
   def seid(self): return str(self)
 # endregion
@@ -919,9 +881,9 @@ class _mixin: pass
 # ^~            Logger                                            
 TRACE_RULES: dict = {}
 
-
 _logger = logging.getLogger('gppu')
 _logger.setLevel(logging.DEBUG)  # Ensure logger level is set to DEBUG
+
 
 class _EmptyMessageFilter(logging.Filter):
   """Filter that removes records that would produce empty output"""
@@ -936,11 +898,13 @@ class _EmptyMessageFilter(logging.Filter):
     # Only log if we have actual content after stripping ANSI codes and whitespace
     return bool(cleaned.strip())
 
+
 _sh = logging.StreamHandler()
 _sh.setLevel(logging.DEBUG)
 _sh.setFormatter(_LogColorizer())
 _sh.addFilter(_EmptyMessageFilter())
 _logger.addHandler(_sh)
+
 
 def init_logger(name: str = 'gppu', trace_rules: dict | None = None) -> None:
   """Initialize global logger with a specific name and optional trace rules."""
@@ -955,6 +919,7 @@ def init_logger(name: str = 'gppu', trace_rules: dict | None = None) -> None:
   for cls in list(mixin_Logger.__subclasses__()):
     cls._logger = _logger.getChild(cls.__name__)
     for n, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)): setattr(cls, n, staticmethod(partial(fn, logger=cls._logger)))
+
 
 def Debug(*a, logger=None, **kw): (logger or _logger).debug(*a, **kw)
 def Info(*a, logger=None, **kw): (logger or _logger).info(*a, **kw)
@@ -1006,6 +971,7 @@ class mixin_Logger(protocol_Logger, _mixin):
     # instance shortcuts re-use the class-level bound functions
     for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'): setattr(self, name, getattr(self.__class__, name))
 # endregion
+
 
 # region Environment
 class BaseDirType(Enum):
@@ -1118,29 +1084,21 @@ class Env:
     return await asyncio.sleep(0)  # Make it truly async
 
 
-
 class mixin_Config(_mixin):
   _my: dict[str, Any] = {}
 
   def _config_from_key(self, key: str) -> None:  self._my.update(Env.glob_dict(key))
 
   def my(self, path, default=None) -> Any: return deepget(path, self._my, default=default)
-  def my_int(self, path, default: Optional[int] = None) -> Optional[int]: return deepget_int(path, self._my, default=default)
-  def my_float(self, path, default: Optional[int] = None) -> Optional[int]: return deepget_float(path, self._my, default=default)
+  def my_int(self, path, default: int = 0) -> int: return deepget_int(path, self._my, default=default)
+  def my_float(self, path, default: float = float('nan')) -> float: return deepget_float(path, self._my, default=default)
   def my_list(self, path, default: list = []) -> list: return deepget_list(path, self._my, default=default or [])
   def my_dict(self, path, default: dict = {}) -> dict: return deepget_dict(path, self._my, default=default or {})
-
-
 # endregion
 
 
 # ==                              DC - DataClass                              ==                                           
 # region DC - pseudo DataClass
-import builtins
-from types import ModuleType, UnionType, FrameType
-from pydoc import locate
-from typing import get_args, get_origin, Any, Union, ForwardRef, cast
-
 _DC_BASE_TYPE_MAP = {'str': str, 'list': list, 'dict': dict, 'set': set, 'int': int, 'float': float, 'bool': bool, 'None': type(None), 'y2eid': y2eid}
 
 
@@ -1190,9 +1148,5 @@ class DC(UserDict):
   def __init__(self, **kw):
     self.data = {}
     for step in self._INIT_STEPS: step(self, **kw)
-
-
-  # @abstractmethod
-  # def init(self): ...
 # endregion
 
