@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import pprint
 import yaml
 import re
@@ -22,7 +24,7 @@ from datetime import datetime
 from enum import Enum
 
 
-VER_GPPU_BASE = '2.25.1'
+VER_GPPU_BASE = '2.25.2'
 VER_GPPU_BUILD = '251115'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
@@ -353,51 +355,51 @@ def _tracer(tracer: Optional[Callable[..., Any]] = None, action: Optional[_Trace
   return decorator
 
 # Thread-local storage to track profiling depth (shared across all profile_method decorators)
-import threading
-_profile_thread_locals = threading.local()
+# import threading
+# _profile_thread_locals = threading.local()
 
-def profile_method(func: Callable) -> Callable:
-  """Decorator to profile a method using cProfile.
+# def profile_method(func: Callable) -> Callable:
+#   """Decorator to profile a method using cProfile.
 
-  Prints profiling stats sorted by cumulative time after method execution.
-  Handles nested calls by only profiling the outermost call.
-  """
-  import cProfile
-  import pstats
-  import io
+#   Prints profiling stats sorted by cumulative time after method execution.
+#   Handles nested calls by only profiling the outermost call.
+#   """
+#   import cProfile
+#   import pstats
+#   import io
 
-  @wraps(func)
-  def wrapper(*args, **kwargs):
-    # Check if we're already profiling in this thread
-    if not hasattr(_profile_thread_locals, 'profiling_depth'): _profile_thread_locals.profiling_depth = 0
+#   @wraps(func)
+#   def wrapper(*args, **kwargs):
+#     # Check if we're already profiling in this thread
+#     if not hasattr(_profile_thread_locals, 'profiling_depth'): _profile_thread_locals.profiling_depth = 0
 
-    is_outermost = _profile_thread_locals.profiling_depth == 0
-    _profile_thread_locals.profiling_depth += 1
+#     is_outermost = _profile_thread_locals.profiling_depth == 0
+#     _profile_thread_locals.profiling_depth += 1
 
-    if is_outermost: profiler = cProfile.Profile(); profiler.enable()
+#     if is_outermost: profiler = cProfile.Profile(); profiler.enable()
 
-    try: return func(*args, **kwargs)
-    finally:
-      _profile_thread_locals.profiling_depth -= 1
+#     try: return func(*args, **kwargs)
+#     finally:
+#       _profile_thread_locals.profiling_depth -= 1
 
-      if is_outermost:
-        profiler.disable()
+#       if is_outermost:
+#         profiler.disable()
 
-        # Print stats to string buffer
-        s = io.StringIO()
-        stats = pstats.Stats(profiler, stream=s)
-        stats.strip_dirs()
-        stats.sort_stats('cumulative')
-        stats.print_stats(20)  # Print top 20 functions
+#         # Print stats to string buffer
+#         s = io.StringIO()
+#         stats = pstats.Stats(profiler, stream=s)
+#         stats.strip_dirs()
+#         stats.sort_stats('cumulative')
+#         stats.print_stats(20)  # Print top 20 functions
 
-        # Get the class and method name
-        class_name = args[0].__class__.__name__ if args else 'unknown'
-        print(f"\n{'='*80}")
-        print(f"Profile for {class_name}.{func.__name__}")
-        print('='*80)
-        print(s.getvalue())
+#         # Get the class and method name
+#         class_name = args[0].__class__.__name__ if args else 'unknown'
+#         print(f"\n{'='*80}")
+#         print(f"Profile for {class_name}.{func.__name__}")
+#         print('='*80)
+#         print(s.getvalue())
 
-  return wrapper
+#   return wrapper
 # endregion
 
 
@@ -455,7 +457,7 @@ class y2list(UserList):
   def __eq__(self, other: Any) -> bool:
     if hasattr(other, 'data'): return self.data == other.data
     else: return str(self) == str(other)
-  def __hash__(self): return hash(str(self))
+  def __hash__(self): return hash(str(self))  # type: ignore
 
 
   def upper(self): return str(self).upper()
@@ -949,7 +951,7 @@ class Logger:
   def Dump(*a, **kw): Dump(*a, **kw)
 
 
-class protocol_Logger(Protocol):
+class protocol_Logger:
   Debug: Callable[..., Any]
   Info : Callable[..., Any]
   Warn : Callable[..., Any]
@@ -967,7 +969,7 @@ class mixin_Logger(protocol_Logger, _mixin):
     for name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)): setattr(cls, name, staticmethod(partial(fn, logger=cls._logger)))
 
   def __init__(self, *a, **kw):
-    super(mixin_Logger, self).__init__(*a, **kw)    # ← no warning
+    super(mixin_Logger, self).__init__(*a, **kw)
     # instance shortcuts re-use the class-level bound functions
     for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'): setattr(self, name, getattr(self.__class__, name))
 # endregion
@@ -1040,7 +1042,7 @@ class Env:
   def __init__(self, name: str | None = None):
     import __main__
     Env.name = name or __main__.__file__
-    Env._path_builder = PathBuilder(user='alex', app_name=name)
+    Env._path_builder = PathBuilder(user='alex', app_name=Env.name)
 
     Env._logger = _logger.getChild(Env.name)
     for name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)): 
@@ -1088,6 +1090,7 @@ class mixin_Config(_mixin):
   _my: dict[str, Any] = {}
 
   def _config_from_key(self, key: str) -> None:  self._my.update(Env.glob_dict(key))
+  def _config_copy(self, other: mixin_Config) -> None: self._my = dict(other._my)
 
   def my(self, path, default=None) -> Any: return deepget(path, self._my, default=default)
   def my_int(self, path, default: int = 0) -> int: return deepget_int(path, self._my, default=default)
