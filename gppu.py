@@ -931,6 +931,8 @@ def Error(*a, logger=None, **kw): (logger or _logger).error(*a, **kw)
 async def Dump(filename: str, data={}, **kw) -> None:
   """ Saves data object to yml file in trace folder """
   if '.' not in filename or not filename.endswith('.yml'): filename += '.yml'
+  if Logger.trace_folder:
+    filename = f"{Logger.trace_folder}/{filename}"
   dict_to_yml(filename=filename, data=data)
 
 
