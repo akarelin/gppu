@@ -134,7 +134,7 @@ def dict_all_paths(d: dict) -> list:
 
 # region working with yaml files: dict_to_yml, dict_from_yml, dict_sanitize
 KEYS_FORCE_STRING = ['parent', '']
-KEYS_DROP = ['api', 'adapi', 'AD']
+KEYS_DROP = ['api', 'adapi', 'AD', 'context', 'hide_attributes']
 KEYS_FIRST = ['name', 'path']
 
 
@@ -931,6 +931,8 @@ def Error(*a, logger=None, **kw): (logger or _logger).error(*a, **kw)
 async def Dump(filename: str, data={}, **kw) -> None:
   """ Saves data object to yml file in trace folder """
   if '.' not in filename or not filename.endswith('.yml'): filename += '.yml'
+  if Logger.trace_folder:
+    filename = f"{Logger.trace_folder}/{filename}"
   dict_to_yml(filename=filename, data=data)
 
 
