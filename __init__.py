@@ -78,7 +78,7 @@ from .gppu import (
     _mixin,
 
     # Environment configuration
-    Env, mixin_Config
+    Env, mixin_Config, _Base
 )
 
 __version__ = VER_GPPU
@@ -120,5 +120,5 @@ __all__ = [
     'DC', '_mixin',
 
     # Environment configuration
-    'Env', 'mixin_Config',
+    'Env', 'mixin_Config', '_Base'
 ]
