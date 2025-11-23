@@ -24,8 +24,8 @@ from datetime import datetime
 from enum import Enum
 
 
-VER_GPPU_BASE = '2.25.2'
-VER_GPPU_BUILD = '251115'
+VER_GPPU_BASE = '2.26.0'
+VER_GPPU_BUILD = '251122'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 
@@ -1002,33 +1002,44 @@ class PathBuilder:
     OSType.MACOS: Template("/Users/$user/SD"),
   }
 
-  _KEY_PATH = Path("RAN/Keys")
+  # _KEY_PATH = Path("RAN/Keys")
   user: str
   app_name: str
+  app_path: Path
 
   _os: OSType
-  _code_path: Path
+  _base_path: Path
 
   def config_file(self) -> Path:
-    file = self._code_path / self._KEY_PATH / Path(self.app_name).with_suffix('.yaml')
-    if not file.exists(): raise Exception(f"Config file does not exist: {file}")
+    file = self.app_path / Path(self.app_name).with_suffix('.yaml')
+    if not file.exists():
+      file = self.app_path / 'config.yaml'
+    if not file.exists():
+      raise FileNotFoundError(f"Config file not found for app '{self.app_name}' in path '{self.app_path}'")
     return file
 
  
-  def shared_data_path(self, path: Path) -> Path: return self._shared_data_path / path
+#   def shared_data_path(self, path: Path) -> Path: return self._shared_data_path / path
 
 
-  def __init__(self, app_name: str, user: str = 'alex'):
+  def __init__(self, app_name: str, user: str = 'alex', app_path: Optional[Path] = None) -> None:
     self.user = user
     self.app_name = app_name
+
     self._os = detect_os()
-    if self._os == OSType.W11: self.code_path = Path("D:\\Dev")
-    elif self._os in [OSType.WSL, OSType.LINUX]: self.code_path = Path(f"/home/{self.user}")
-    elif self._os == OSType.MACOS: self.code_path = Path(f"/Users/{self.user}")
+    if self._os == OSType.W11: self._base_path = Path("D:\\Dev")
+    elif self._os in [OSType.WSL, OSType.LINUX]: self._base_path = Path(f"/home/{self.user}")
+    elif self._os == OSType.MACOS: self._base_path = Path(f"/Users/{self.user}")
     else: raise Exception(f"Unsupported OS: {self._os.value}")
 
-    self._code_path = Path(self._CODE_BASE_PATHS[self._os].safe_substitute(user=self.user))
-    self._shared_data_path = Path(self._SHARED_DATA_PATHS[self._os].safe_substitute(user=self.user))
+    # if app_path is None: app_path = self._base_path
+    # elif app_path.absolute(): self.app_path = Path(app_path)
+    # else: self.app_path = self._base_path / Path(app_path)
+    self.app_path = self._base_path 
+    if app_path: self.app_path /= app_path
+
+    # self._code_path = Path(self._CODE_BASE_PATHS[self._os].safe_substitute(user=self.user))
+    # self._shared_data_path = Path(self._SHARED_DATA_PATHS[self._os].safe_substitute(user=self.user))
 
 
 class Env:
@@ -1039,10 +1050,10 @@ class Env:
   _path_builder: PathBuilder
   _logger: logging.Logger
 
-  def __init__(self, name: str | None = None):
+  def __init__(self, name: str, app_path: Path):
     import __main__
     Env.name = name or __main__.__file__
-    Env._path_builder = PathBuilder(user='alex', app_name=Env.name)
+    Env._path_builder = PathBuilder(user='alex', app_name=Env.name, app_path=app_path)
 
     Env._logger = _logger.getChild(Env.name)
     for name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)): 
@@ -1060,11 +1071,12 @@ class Env:
   def _from_dict(d: dict) -> None:   # * Loader
     if Env.initialized or Env.data: Env._reset(); Logger.Info('INFO', 'Environment', 'WRED', 'reset()')
     
-    sdp = str(Env._path_builder._shared_data_path)
-    extra = {"code_path": str(Env._path_builder._code_path), 
-             "shared_data_path": sdp,
-             "shared_data": sdp}
+    # sdp = str(Env._path_builder._shared_data_path)
+    # extra = {"code_path": str(Env._path_builder._code_path), 
+    #          "shared_data_path": sdp,
+    #          "shared_data": sdp}
     s = json.dumps(d)
+    extra = {}
     Env.data = json.loads(Template(s).safe_substitute(**extra))
     Env.initialized = True
 
@@ -1153,3 +1165,33 @@ class DC(UserDict):
     for step in self._INIT_STEPS: step(self, **kw)
 # endregion
 
+
+# region Foundation
+Config = Env
+
+glob = Config.glob
+glob_int = Config.glob_int
+glob_list = Config.glob_list
+glob_dict = Config.glob_dict
+
+class _Logger(mixin_Logger): pass
+
+class _Config(mixin_Config):
+  _base_path: Path
+
+  def __init__(self, **kw) -> None:
+    super().__init__()
+    assert Config.initialized, "Env must be initialized before using ContactImporter"
+    key = kw.get('config_key', None)
+
+    if key:
+      self._config_from_key(key)
+      self._base_path = Path(self.my('base_dir'))
+    else:
+      self._base_path = Path('.')
+
+  def my_path(self, path) -> Path: return self._base_path / self.my(path)
+
+
+class _Base(_Logger, _Config): pass
+# endregion
