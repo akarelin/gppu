@@ -16,6 +16,9 @@ from .gppu import (
     # Async helpers
     sync,
 
+    # Global configuration
+    TRACE_RULES,
+
     # Configuration loading
     dict_from_yml,
     dict_to_yml,
@@ -88,6 +91,9 @@ __all__ = [
 
     # Async helpers
     'sync',
+
+    # Global configuration
+    'TRACE_RULES',
 
     # Configuration
     'dict_from_yml', 'dict_to_yml', 'dict_sanitize',
