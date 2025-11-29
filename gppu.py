@@ -135,7 +135,7 @@ def dict_all_paths(d: dict) -> list:
 # region working with yaml files: dict_to_yml, dict_from_yml, dict_sanitize
 KEYS_FORCE_STRING = ['parent', '']
 KEYS_DROP = ['api', 'adapi', 'AD', 'context', 'hide_attributes']
-KEYS_FIRST = ['name', 'path']
+KEYS_FIRST = ['name', 'seid', 'path']
 
 
 def dict_sanitize(data: dict | list, sort_keys=False) -> dict | list:
