@@ -24,7 +24,7 @@ from datetime import datetime
 from enum import Enum
 
 
-VER_GPPU_BASE = '2.26.2'
+VER_GPPU_BASE = '2.26.3'
 VER_GPPU_BUILD = '251130'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
