@@ -24,8 +24,8 @@ from datetime import datetime
 from enum import Enum
 
 
-VER_GPPU_BASE = '2.26.0'
-VER_GPPU_BUILD = '251122'
+VER_GPPU_BASE = '2.26.2'
+VER_GPPU_BUILD = '251130'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 
@@ -895,7 +895,6 @@ class _EmptyMessageFilter(logging.Filter):
     result = formatter.format(record)
     # Strip whitespace and ANSI color codes to check if truly empty
     # Remove all ANSI escape sequences
-    import re
     cleaned = re.sub(r'\x1b\[[0-9;]*m', '', result)
     # Only log if we have actual content after stripping ANSI codes and whitespace
     return bool(cleaned.strip())
@@ -1034,14 +1033,8 @@ class PathBuilder:
     elif self._os == OSType.MACOS: self._base_path = Path(f"/Users/{self.user}")
     else: raise Exception(f"Unsupported OS: {self._os.value}")
 
-    # if app_path is None: app_path = self._base_path
-    # elif app_path.absolute(): self.app_path = Path(app_path)
-    # else: self.app_path = self._base_path / Path(app_path)
     self.app_path = self._base_path 
     if app_path: self.app_path /= app_path
-
-    # self._code_path = Path(self._CODE_BASE_PATHS[self._os].safe_substitute(user=self.user))
-    # self._shared_data_path = Path(self._SHARED_DATA_PATHS[self._os].safe_substitute(user=self.user))
 
 
 class Env:
@@ -1051,6 +1044,7 @@ class Env:
 
   _path_builder: PathBuilder
   _logger: logging.Logger
+
 
   def __init__(self, name: str, app_path: Path):
     import __main__
@@ -1073,14 +1067,11 @@ class Env:
   def _from_dict(d: dict) -> None:   # * Loader
     if Env.initialized or Env.data: Env._reset(); Logger.Info('INFO', 'Environment', 'WRED', 'reset()')
     
-    # sdp = str(Env._path_builder._shared_data_path)
-    # extra = {"code_path": str(Env._path_builder._code_path), 
-    #          "shared_data_path": sdp,
-    #          "shared_data": sdp}
     s = json.dumps(d)
     extra = {}
     Env.data = json.loads(Template(s).safe_substitute(**extra))
     Env.initialized = True
+
 
   @staticmethod
   def _reset() -> None: Env.data = {}; Env.initialized = False
@@ -1176,7 +1167,9 @@ glob_int = Config.glob_int
 glob_list = Config.glob_list
 glob_dict = Config.glob_dict
 
+
 class _Logger(mixin_Logger): pass
+
 
 class _Config(mixin_Config):
   _base_path: Path
