@@ -67,6 +67,7 @@ from .gppu import (
     Error,
     Dump,
     mixin_Logger,
+    mixin_Config,
     protocol_Logger,
     
     # Data structures
