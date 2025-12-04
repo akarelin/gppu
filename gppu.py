@@ -11,6 +11,7 @@ import asyncio
 import json
 
 from pathlib import Path
+from copy import deepcopy
 
 from functools import wraps, partial
 
@@ -24,8 +25,8 @@ from datetime import datetime
 from enum import Enum
 
 
-VER_GPPU_BASE = '2.26.3'
-VER_GPPU_BUILD = '251130'
+VER_GPPU_BASE = '2.26.4'
+VER_GPPU_BUILD = '251204'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 
@@ -1094,8 +1095,9 @@ class Env:
 class mixin_Config(_mixin):
   _my: dict[str, Any] = {}
 
-  def _config_from_key(self, key: str) -> None:  self._my.update(Env.glob_dict(key))
+  def _config_from_key(self, key: str) -> None: self._my.update(Env.glob_dict(key))
   def _config_copy(self, other: mixin_Config) -> None: self._my = dict(other._my)
+  def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
 
   def my(self, path, default=None) -> Any: return deepget(path, self._my, default=default)
   def my_int(self, path, default: int = 0) -> int: return deepget_int(path, self._my, default=default)
