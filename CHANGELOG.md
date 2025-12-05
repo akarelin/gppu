@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.19.1] - 2025-12-05
+
+### Fixed
+- [Claude] `dict_from_yml`: Fixed `!include` directive failing when config file has no directory prefix
+  - `rsplit('/', 1)[0]` returned filename itself (e.g., 'config.yaml' -> 'config.yaml')
+  - Now uses `Path(filename).parent` for correct directory resolution
+  - Fixed variable shadowing in `yml_include` inner function
+
 ## [2.19.0] - 2025-08-19
 
 ### Changed

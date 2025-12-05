@@ -214,12 +214,17 @@ def dict_to_yml(filename:str, data=None, sort_keys=False):
 
 def dict_from_yml(filename: str | Path):
   filename = str(filename)
-  yml_root = filename.rsplit('/', 1)[0]
+  # OLD: yml_root = filename.rsplit('/', 1)[0]
+  # ^^ Bug: returns filename itself when no '/' present (e.g., 'config.yaml' -> 'config.yaml')
+  yml_root = str(Path(filename).parent)
 
   def yml_include(loader, node):
-    if node.value[0] == '/': filename = node.value
-    else: filename = yml_root+'/'+node.value
-    with open(filename, "r") as f: return yaml.load(f, Loader=yaml.FullLoader)
+    # OLD: if node.value[0] == '/': filename = node.value
+    # OLD: else: filename = yml_root+'/'+node.value
+    # ^^ Bug: shadowed outer 'filename' variable; used string concat instead of Path
+    if node.value[0] == '/': inc_filename = node.value
+    else: inc_filename = str(Path(yml_root) / node.value)
+    with open(inc_filename, "r") as f: return yaml.load(f, Loader=yaml.FullLoader)
 
   yaml.add_representer(defaultdict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(UserDict, yaml.representer.Representer.represent_dict)
