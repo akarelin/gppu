@@ -24,8 +24,10 @@ from collections import defaultdict, UserDict, UserList
 from datetime import datetime
 from enum import Enum
 
+from contextlib import contextmanager
 
-VER_GPPU_BASE = '2.26.4'
+
+VER_GPPU_BASE = '2.27.0'
 VER_GPPU_BUILD = '251204'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
@@ -1103,6 +1105,7 @@ class mixin_Config(_mixin):
   def _config_from_key(self, key: str) -> None: self._my.update(Env.glob_dict(key))
   def _config_copy(self, other: mixin_Config) -> None: self._my = dict(other._my)
   def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
+  def _config_from_env(self) -> None: self._my = deepcopy(Env.data)
 
   def my(self, path, default=None) -> Any: return deepget(path, self._my, default=default)
   def my_int(self, path, default: int = 0) -> int: return deepget_int(path, self._my, default=default)
@@ -1183,17 +1186,139 @@ class _Config(mixin_Config):
 
   def __init__(self, **kw) -> None:
     super().__init__()
-    assert Config.initialized, "Env must be initialized before using ContactImporter"
+    assert Config.initialized, "Env must be initialized"
     key = kw.get('config_key', None)
 
     if key:
       self._config_from_key(key)
       self._base_path = Path(self.my('base_dir'))
     else:
+      self._config_from_env()
       self._base_path = Path('.')
 
   def my_path(self, path) -> Path: return self._base_path / self.my(path)
 
 
 class _Base(_Logger, _Config): pass
+
+
+# class _DM(DeclarativeBase):
+#   """SQLAlchemy DeclarativeBase for ORM models."""
+#   pass
+
+
+class _PersistentBase(_Base):
+  """Base class for database-backed components.
+
+  Handles common DB connection string resolution from config.
+  Subclasses: _PGBase (psycopg2), _SQABase (SQLAlchemy)
+  """
+  db_connection_string: str
+
+  def __init__(self, **kw):
+    super().__init__(**kw)
+    self.db_connection_string = Env.glob('db') or self.my('db') or ''
+    if not self.db_connection_string:
+      raise ValueError("Database connection string 'db' not found in config")
+
+  def close(self):
+    """Close database connection. Override in subclasses."""
+    pass
+
+  def __enter__(self):
+    return self
+
+  def __exit__(self, *_):
+    self.close()
+
+
+class _PGBase(_PersistentBase):
+  """PostgreSQL database access using psycopg2.
+
+  Provides direct SQL execution with connection pooling.
+  Use for raw SQL queries and performance-critical operations.
+  """
+  import psycopg2
+  from psycopg2.extras import RealDictCursor
+
+  _connection: Any
+
+  def __init__(self, **kw):
+    super().__init__(**kw)
+    self._connection = None
+
+  @property
+  def connection(self):
+    """Lazy connection - connects on first use."""
+    if self._connection is None:
+      self._connection = self.psycopg2.connect(self.db_connection_string)
+    return self._connection
+
+  @contextmanager
+  def cursor(self, dict_cursor: bool = True):
+    """Context manager for database cursor with auto-commit/rollback."""
+    cursor_factory = self.RealDictCursor if dict_cursor else None
+    cur = self.connection.cursor(cursor_factory=cursor_factory)
+    try:
+      yield cur
+      self.connection.commit()
+    except Exception:
+      self.connection.rollback()
+      raise
+    finally:
+      cur.close()
+
+  def close(self):
+    """Close the database connection."""
+    if self._connection:
+      self._connection.close()
+      self._connection = None
+
+
+class _SQABase(_PersistentBase):
+  """SQLAlchemy ORM database access.
+
+  Provides ORM session management with declarative models.
+  Use with _DM base class for model definitions.
+  """
+  _engine: Any
+  _Session: Any
+
+  from sqlalchemy import create_engine
+  from sqlalchemy.orm import DeclarativeBase, sessionmaker
+
+  def __init__(self, **kw):
+    super().__init__(**kw)
+    self._engine = None
+    self._Session = None
+
+  @property
+  def engine(self):
+    """Lazy engine - creates on first use."""
+    if self._engine is None:
+      self._engine = self.create_engine(self.db_connection_string, echo=False)
+      self._Session = self.sessionmaker(bind=self._engine)
+    return self._engine
+
+  @contextmanager
+  def session(self):
+    """Context manager for database session with auto-commit/rollback."""
+    _ = self.engine  # ensure engine is created
+    sess = self._Session()
+    try:
+      yield sess
+      sess.commit()
+    except Exception:
+      sess.rollback()
+      raise
+    finally:
+      sess.close()
+
+  def close(self):
+    """Dispose the engine connection pool."""
+    if self._engine:
+      self._engine.dispose()
+      self._engine = None
+      self._Session = None
+
 # endregion
