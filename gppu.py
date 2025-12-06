@@ -1238,9 +1238,6 @@ class _PGBase(_PersistentBase):
   Provides direct SQL execution with connection pooling.
   Use for raw SQL queries and performance-critical operations.
   """
-  import psycopg2
-  from psycopg2.extras import RealDictCursor
-
   _connection: Any
 
   def __init__(self, **kw):
@@ -1251,13 +1248,15 @@ class _PGBase(_PersistentBase):
   def connection(self):
     """Lazy connection - connects on first use."""
     if self._connection is None:
-      self._connection = self.psycopg2.connect(self.db_connection_string)
+      import psycopg2
+      self._connection = psycopg2.connect(self.db_connection_string)
     return self._connection
 
   @contextmanager
   def cursor(self, dict_cursor: bool = True):
     """Context manager for database cursor with auto-commit/rollback."""
-    cursor_factory = self.RealDictCursor if dict_cursor else None
+    from psycopg2.extras import RealDictCursor
+    cursor_factory = RealDictCursor if dict_cursor else None
     cur = self.connection.cursor(cursor_factory=cursor_factory)
     try:
       yield cur
@@ -1284,9 +1283,6 @@ class _SQABase(_PersistentBase):
   _engine: Any
   _Session: Any
 
-  from sqlalchemy import create_engine
-  from sqlalchemy.orm import DeclarativeBase, sessionmaker
-
   def __init__(self, **kw):
     super().__init__(**kw)
     self._engine = None
@@ -1296,8 +1292,10 @@ class _SQABase(_PersistentBase):
   def engine(self):
     """Lazy engine - creates on first use."""
     if self._engine is None:
-      self._engine = self.create_engine(self.db_connection_string, echo=False)
-      self._Session = self.sessionmaker(bind=self._engine)
+      from sqlalchemy import create_engine
+      from sqlalchemy.orm import sessionmaker
+      self._engine = create_engine(self.db_connection_string, echo=False)
+      self._Session = sessionmaker(bind=self._engine)
     return self._engine
 
   @contextmanager
