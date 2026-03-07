@@ -1,19 +1,67 @@
-name: Build and Release
+name: CI
 
 on:
   push:
     tags:
       - 'v*'
-    branches:
-      - dev
-      - beta
+    branches: [master, dev, beta]
+  pull_request:
+    branches: [master]
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          pip install PyYAML pytest
+          pip install -e .
+
+      - name: Run tests
+        run: python -m pytest tests/ -v
+
+  stamp:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master' && !contains(github.event.head_commit.message, '[version-stamp]')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stamp build date in gppu.py
+        run: |
+          BUILD=$(date +%y%m%d)
+          sed -i "s/^VER_GPPU_BUILD = .*/VER_GPPU_BUILD = '${BUILD}'/" gppu/gppu.py
+          BASE=$(grep -oP "(?<=^version = \").*(?=\")" pyproject.toml)
+          echo "VERSION=${BASE}.${BUILD}" >> $GITHUB_ENV
+
+      - name: Commit version stamp
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add gppu/gppu.py
+          git diff --staged --quiet && echo "No version change" && exit 0
+          git commit -m "chore: version stamp ${VERSION} [version-stamp]"
+          git push
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/beta'
+
     steps:
       - uses: actions/checkout@v4
 
