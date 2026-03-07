@@ -17,6 +17,7 @@ log.txt
 *.yml
 !*docker*.yml
 !*compose*.yml
+!.github/**/*.yml
 msg*.xlsx
 ~$*
 *.jsonl
