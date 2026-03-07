@@ -27,12 +27,11 @@ from enum import Enum
 from contextlib import contextmanager
 
 
-try:
-  from importlib.metadata import version as _pkg_version
-  VER_GPPU_BASE = _pkg_version('gppu')
-except Exception:
-  VER_GPPU_BASE = '2.27.0'
-VER_GPPU_BUILD = '260307'
+from importlib.metadata import version as _pkg_version
+_ver_full = _pkg_version('gppu')
+_ver_parts = _ver_full.split('.')
+VER_GPPU_BASE = '.'.join(_ver_parts[:3])
+VER_GPPU_BUILD = _ver_parts[3] if len(_ver_parts) > 3 else '0'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 
@@ -438,176 +437,6 @@ def sync(func: Callable) -> Callable:
 # endregion
 
 
-# region y2xxx
-# xx                                                                                        
-# xx y2list, y2path and y2slug                                                              
-# xx                                                                                        
-""" y2list-based: y2path, y2slug"""
-class y2list(UserList):
-  data: List[Any]
-  token: str
-
-
-  def _any2list(self, o) -> list:
-    result = []
-    if o:
-      if hasattr(o, 'data'): o = o.data
-      if isinstance(o, (list, tuple)): result = [_ for _ in o if _]
-      elif self.token: result = str(o).split(self.token)
-      else: result = re.findall('[a-zA-Z0-9]+', str(o))
-    return result
-
-
-  def __init__(self, o: Optional[Any] = None) -> None:
-    super().__init__()
-    self.token = ""
-    self.data = self._any2list(o)
-
-
-  def __str__(self): return self.token.join(self.data)
-  def __repr__(self): return self.token.join(self.data)
-  def __eq__(self, other: Any) -> bool:
-    if hasattr(other, 'data'): return self.data == other.data
-    else: return str(self) == str(other)
-  def __hash__(self): return hash(str(self))  # type: ignore
-
-
-  def upper(self): return str(self).upper()
-  def lower(self): return str(self).lower()
-  def encode(self, encoding='utf-8', errors='strict'): return str(self.data).encode(encoding, errors)
-  def iadd(self, o): self.data += self._any2list(o)
-  def to_json(self): return str(self)
-
-
-  @property
-  def head(self) -> Optional[str]: return self.data[0] if len(self.data) > 0 else None
-  @property
-  def tail(self) -> Optional[str]: return self.data[-1] if len(self.data) > 0 else None
-
-
-  def endswith(self, ix) -> bool:
-    slow = str(self).lower()
-    if isinstance(ix, list): 
-      for element in ix: 
-        if slow.endswith(element.lower()): return True
-      return False
-    if '_' in ix: six = ix.replace('_',self.token)
-    elif '/' in ix: six = ix.replace('/',self.token)
-    else: six = ix.lower()
-    return slow.endswith(six)
-  def startswith(self, ix) -> bool:
-    slow = str(self).lower()
-    if isinstance(ix, list): 
-      for element in ix:
-        if slow.startswith(element.lower()): return True
-      return False
-    if '_' in ix: six = ix.replace('_', self.token)
-    elif '/' in ix: six = ix.replace('/', self.token)
-    else: six = ix.lower()
-    return slow.startswith(six)
-
-
-  def extract(self, s:str, default=None):
-    """
-    Removes element by value and returns it or default
-    ! modifies self.data
-    """
-    if s in self.data: return self.data.pop(self.data.index(s))
-    return default
-
-
-  def discard(self, element): self.data = [e for e in self.data if not e == element]
-  def pophead(self) -> Optional[str]: return self.data.pop(0) if len(self.data) > 0 else None
-  def poptail(self) -> Optional[str]: return self.data.pop(-1) if len(self.data) > 0 else None
-  def popsuffix(self, ix):
-    if self.endswith(ix):
-      if '_' in ix and self.token != '_': ix = ix.replace('_',self.token)
-      elif '/' in ix and self.token != '/': ix = ix.replace('/',self.token)
-      self.data = self._any2list(str(self).replace(ix, ''))
-      return self.token.join(self._any2list(ix))
-  def popprefix(self, ix):
-    if self.startswith(ix):
-      if '_' in ix and self.token != '_': ix = ix.replace('_', self.token)
-      elif '/' in ix and self.token != '/': ix = ix.replace('/', self.token)
-      self.data = self._any2list(str(self).replace(ix, ''))
-      return self.token.join(self._any2list(ix))
-  def popxfix(self, ix): return self.popsuffix(ix) or self.popprefix(ix)
-
-
-class y2path(y2list):
-  def __init__(self, *args):
-    data = []
-    self.token = '/'
-
-    for a in args: data += self._any2list(a)
-    self.data = self._any2list(data)
-
-
-class y2topic(y2path):
-  def is_wildcard(self) -> bool: return bool(set(self.data) & {"#", "+"})
-
-
-class y2slug(y2list):
-  def __init__(self, o): 
-    self.token = '_'
-
-    if '@' in str(o): o = str(o).split('@')[0]
-    self.data = self._any2list(o)
-
-
-class y2eid:
-  ns: str
-  domain: str
-  slug: y2slug 
-  default_ns: ClassVar[str] = 'yala'
-  default_domain: ClassVar[str] = 'entity'
-  _ready: bool = False
-
-  def __bool__(self) -> bool: return self._ready
-
-  def __init__(self, o: Any, ns: Optional[str] = None, **kw):
-    self._ready = False
-    if not o: raise ValueError("y2eid: empty input")
-
-    ns = ns or self.default_ns
-     
-    if isinstance(o, y2eid): s = str(o)
-    elif isinstance(o, dict): s = str(o.get('entity_id',""))
-    elif isinstance(o, str): s = o
-    elif hasattr(o, 'entity_id') and hasattr(o, 'namespace'): s = f"{o.entity_id}@{o.namespace}"
-    elif hasattr(o, 'entity_id') and hasattr(o, 'ns'): s = f"{o.entity_id}@{o.ns}"
-    elif hasattr(o, 'seid'): s = o.seid
-    else: raise ValueError
-
-    self.ns = ns
-    if '.' in s: self.domain, s = s.split('.',1)
-    if '@' in s: s, self.ns = s.rsplit('@',1)
-    self.ns = self.ns or self.default_ns
-    self.domain = self.domain or self.default_domain
-    self.slug = y2slug(s)
-
-    for k in ['tail', 'head']: setattr(self, k, getattr(self.slug, k))
-    self._ready = True
-
-
-  def __str__(self):
-    s = str(self.slug)
-    if self.domain: s = self.domain + '.' + s
-    if self.ns: s += '@' + self.ns
-    return s
-  def __repr__(self): return str(self)
-  def __hash__(self): return hash(str(self))
-  def __eq__(self,other): return str(self) == str(other)
-  def __lt__(self,other): return str(self) < str(other)
-
-
-  def endswith(self, ix) -> bool: return self.slug.endswith(ix)
-  def startswith(self, ix) -> bool: return self.slug.endswith(ix)
-  @property
-  def entity_id(self) -> str: return f"{self.domain}.{self.slug}" if self._ready else ""
-  @property
-  def seid(self): return str(self)
-# endregion
 
 
 # region PCP - Pretty Colored Print and colorize - utility
@@ -888,8 +717,6 @@ class _LogColorizer(logging.Formatter):
 # endregion
 
 
-# @@      mixin class                                                           == 
-class _mixin: pass
 
 # region Logger
 # ^~            Logger                                            
@@ -942,49 +769,11 @@ def Error(*a, logger=None, **kw): (logger or _logger).error(*a, **kw)
 async def Dump(filename: str, data={}, **kw) -> None:
   """ Saves data object to yml file in trace folder """
   if '.' not in filename or not filename.endswith('.yml'): filename += '.yml'
-  if Logger.trace_folder:
-    filename = f"{Logger.trace_folder}/{filename}"
+  # if Logger.trace_folder:
+  #   filename = f"{Logger.trace_folder}/{filename}"
   dict_to_yml(filename=filename, data=data)
 
 
-class Logger:
-  """Namespace wrapper exposing logging helpers."""
-  trace_folder: str = ''
-  trace_rules: dict = TRACE_RULES
-
-  @staticmethod
-  def Debug(*a, **kw): Debug(*a, **kw)
-  @staticmethod
-  def Info(*a, **kw): Info(*a, **kw)
-  @staticmethod
-  def Warn(*a, **kw): Warn(*a, **kw)
-  @staticmethod
-  def Error(*a, **kw): Error(*a, **kw)
-  @staticmethod
-  def Dump(*a, **kw): Dump(*a, **kw)
-
-
-class protocol_Logger:
-  Debug: Callable[..., Any]
-  Info : Callable[..., Any]
-  Warn : Callable[..., Any]
-  Error: Callable[..., Any]
-  Dump : Callable[..., Any]
-
-
-class mixin_Logger(protocol_Logger, _mixin):
-  _logger: logging.Logger
-
-  @classmethod
-  def __init_subclass__(cls, **kw):
-    super().__init_subclass__(**kw)
-    cls._logger = _logger.getChild(cls.__name__)
-    for name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)): setattr(cls, name, staticmethod(partial(fn, logger=cls._logger)))
-
-  def __init__(self, *a, **kw):
-    super(mixin_Logger, self).__init__(*a, **kw)
-    # instance shortcuts re-use the class-level bound functions
-    for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'): setattr(self, name, getattr(self.__class__, name))
 # endregion
 
 
@@ -1099,228 +888,11 @@ class Env:
   @staticmethod
   @sync
   async def dump():
-    Logger.Dump('Env.data', Env.data)
+    Dump('Env.data', Env.data)
     return await asyncio.sleep(0)  # Make it truly async
-
-
-class mixin_Config(_mixin):
-  _my: dict[str, Any] = {}
-
-  def _config_from_key(self, key: str) -> None: self._my.update(Env.glob_dict(key))
-  def _config_copy(self, other: mixin_Config) -> None: self._my = dict(other._my)
-  def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
-  def _config_from_env(self) -> None: self._my = deepcopy(Env.data)
-
-  def my(self, path, default=None) -> Any: return deepget(path, self._my, default=default)
-  def my_int(self, path, default: int = 0) -> int: return deepget_int(path, self._my, default=default)
-  def my_float(self, path, default: float = float('nan')) -> float: return deepget_float(path, self._my, default=default)
-  def my_list(self, path, default: list = []) -> list: return deepget_list(path, self._my, default=default or [])
-  def my_dict(self, path, default: dict = {}) -> dict: return deepget_dict(path, self._my, default=default or {})
 # endregion
 
 
-# ==                              DC - DataClass                              ==                                           
-# region DC - pseudo DataClass
-_DC_BASE_TYPE_MAP = {'str': str, 'list': list, 'dict': dict, 'set': set, 'int': int, 'float': float, 'bool': bool, 'None': type(None), 'y2eid': y2eid}
-
-
-class DC(UserDict):
-  _DC_TYPE_MAP: dict[str, type] = _DC_BASE_TYPE_MAP.copy()
-  _DC_EXCLUDE_NAMES: list[str] = []
-
-
-  def _init_from_kw(self, **kw) -> None:
-    data = kw.pop('data', {})
-    if isinstance(data, str): data = {'data': data}
-    self.data = kw | data
-
-
-  _INIT_STEPS: list[Callable] = [_init_from_kw]
-
-
-  def __init_subclass__(cls, **kw) -> None:
-    def _simple_type(typ: type | str) -> str:
-      typ = str(typ)
-      if typ.startswith('list['): return 'list'
-      return typ
-
-    super().__init_subclass__(**kw)
-
-    annotations_raw = [(n, t if type(t) == str else str(t.__name__)) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items() if n[0] != '_' and n not in cls._DC_EXCLUDE_NAMES]
-    annotations = {n: _simple_type(t) for n, t in annotations_raw}
-    
-    mro = [(n, t) for n, t in annotations.items() if n[0] != '_' and t in cls._DC_TYPE_MAP]
-    # print(f"DC.__init_subclass__: {cls.__name__} with fields: {[m[0] for m in mro]}\n")
-    for aname, atype in mro:
-      def getter(self, name=aname, atype=atype): 
-        result = self.data.get(name)
-        if result is not None and isinstance(result, cls._DC_TYPE_MAP[atype]): return result
-        if not result:
-          if atype == 'str': result = ''
-          elif atype == 'list': result = []
-          elif atype == 'dict': result = {}
-          elif atype == 'set': result = set()
-        return result
-      def setter(self, value, name=aname, type_hint=atype, _owner_mod=sys.modules[cls.__module__]):
-        if not hasattr(self, 'data'): self.data = {}
-        self.data[name] = value
-      setattr(cls, aname, property(getter, setter))
-
-
-  def __init__(self, **kw):
-    self.data = {}
-    for step in self._INIT_STEPS: step(self, **kw)
-# endregion
-
-
-# region Foundation
-Config = Env
-
-glob = Config.glob
-glob_int = Config.glob_int
-glob_list = Config.glob_list
-glob_dict = Config.glob_dict
-
-
-class _Logger(mixin_Logger): pass
-
-
-class _Config(mixin_Config):
-  _base_path: Path
-
-  def __init__(self, **kw) -> None:
-    super().__init__()
-    assert Config.initialized, "Env must be initialized"
-    key = kw.get('config_key', None)
-
-    if key:
-      self._config_from_key(key)
-      self._base_path = Path(self.my('base_dir'))
-    else:
-      self._config_from_env()
-      self._base_path = Path('.')
-
-  def my_path(self, path) -> Path: return self._base_path / self.my(path)
-
-
-class _Base(_Logger, _Config): pass
-
-
-# class _DM(DeclarativeBase):
-#   """SQLAlchemy DeclarativeBase for ORM models."""
-#   pass
-
-
-class _PersistentBase(_Base):
-  """Base class for database-backed components.
-
-  Handles common DB connection string resolution from config.
-  Subclasses: _PGBase (psycopg2), _SQABase (SQLAlchemy)
-  """
-  db_connection_string: str
-
-  def __init__(self, **kw):
-    super().__init__(**kw)
-    self.db_connection_string = Env.glob('db') or self.my('db') or ''
-    if not self.db_connection_string:
-      raise ValueError("Database connection string 'db' not found in config")
-
-  def close(self):
-    """Close database connection. Override in subclasses."""
-    pass
-
-  def __enter__(self):
-    return self
-
-  def __exit__(self, *_):
-    self.close()
-
-
-class _PGBase(_PersistentBase):
-  """PostgreSQL database access using psycopg2.
-
-  Provides direct SQL execution with connection pooling.
-  Use for raw SQL queries and performance-critical operations.
-  """
-  _connection: Any
-
-  def __init__(self, **kw):
-    super().__init__(**kw)
-    self._connection = None
-
-  @property
-  def connection(self):
-    """Lazy connection - connects on first use."""
-    if self._connection is None:
-      import psycopg2
-      self._connection = psycopg2.connect(self.db_connection_string)
-    return self._connection
-
-  @contextmanager
-  def cursor(self, dict_cursor: bool = True):
-    """Context manager for database cursor with auto-commit/rollback."""
-    from psycopg2.extras import RealDictCursor
-    cursor_factory = RealDictCursor if dict_cursor else None
-    cur = self.connection.cursor(cursor_factory=cursor_factory)
-    try:
-      yield cur
-      self.connection.commit()
-    except Exception:
-      self.connection.rollback()
-      raise
-    finally:
-      cur.close()
-
-  def close(self):
-    """Close the database connection."""
-    if self._connection:
-      self._connection.close()
-      self._connection = None
-
-
-class _SQABase(_PersistentBase):
-  """SQLAlchemy ORM database access.
-
-  Provides ORM session management with declarative models.
-  Use with _DM base class for model definitions.
-  """
-  _engine: Any
-  _Session: Any
-
-  def __init__(self, **kw):
-    super().__init__(**kw)
-    self._engine = None
-    self._Session = None
-
-  @property
-  def engine(self):
-    """Lazy engine - creates on first use."""
-    if self._engine is None:
-      from sqlalchemy import create_engine
-      from sqlalchemy.orm import sessionmaker
-      self._engine = create_engine(self.db_connection_string, echo=False)
-      self._Session = sessionmaker(bind=self._engine)
-    return self._engine
-
-  @contextmanager
-  def session(self):
-    """Context manager for database session with auto-commit/rollback."""
-    _ = self.engine  # ensure engine is created
-    sess = self._Session()
-    try:
-      yield sess
-      sess.commit()
-    except Exception:
-      sess.rollback()
-      raise
-    finally:
-      sess.close()
-
-  def close(self):
-    """Dispose the engine connection pool."""
-    if self._engine:
-      self._engine.dispose()
-      self._engine = None
-      self._Session = None
-
-# endregion
+# Re-exports for backward compatibility with `from gppu.gppu import ...`
+from .ad import y2list, y2path, y2topic, y2slug, y2eid  # noqa: F401,E402
+from .data import DC, _DC_BASE_TYPE_MAP  # noqa: F401,E402
