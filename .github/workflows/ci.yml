@@ -7,6 +7,15 @@ on:
     branches: [master, dev, beta]
   pull_request:
     branches: [master]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump'
+        required: true
+        type: choice
+        options:
+          - patch
+          - major
 
 permissions:
   contents: write
@@ -33,10 +42,44 @@ jobs:
       - name: Run tests
         run: python -m pytest tests/ -v
 
+  bump:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bump version
+        run: |
+          BASE=$(grep -oP "(?<=^version = \").*(?=\")" pyproject.toml)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
+          if [ "${{ inputs.bump }}" = "major" ]; then
+            MAJOR=$((MAJOR + 1))
+            PATCH=0
+          else
+            PATCH=$((PATCH + 1))
+          fi
+          NEW="${MAJOR}.${MINOR}.${PATCH}"
+          sed -i "s/^version = .*/version = \"${NEW}\"/" pyproject.toml
+          BUILD=$(date +%y%m%d)
+          sed -i "s/^VER_GPPU_BUILD = .*/VER_GPPU_BUILD = '${BUILD}'/" gppu/gppu.py
+          echo "VERSION=${NEW}.${BUILD}" >> $GITHUB_ENV
+          echo "TAG=v${NEW}" >> $GITHUB_ENV
+
+      - name: Commit and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml gppu/gppu.py
+          git commit -m "chore: bump version to ${VERSION} [version-stamp]"
+          git tag "${TAG}"
+          git push origin master "${TAG}"
+
   stamp:
     needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/master' && !contains(github.event.head_commit.message, '[version-stamp]')
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push' && !contains(github.event.head_commit.message, '[version-stamp]')
 
     steps:
       - uses: actions/checkout@v4
