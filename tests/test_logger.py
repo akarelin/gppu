@@ -1,6 +1,7 @@
 """Tests for Logger, init_logger, mixin_Logger."""
 import logging
-from gppu import Logger, init_logger, mixin_Logger, TRACE_RULES
+from gppu import TRACE_RULES
+from gppu.ad import Logger, init_logger, mixin_Logger
 
 
 class TestLogger:
