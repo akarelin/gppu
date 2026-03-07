@@ -424,14 +424,8 @@ def sync(func: Callable) -> Callable:
       loop = asyncio.get_running_loop()
       return asyncio.create_task(coro)
     except RuntimeError:
-      try:
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-          loop = asyncio.new_event_loop()
-          asyncio.set_event_loop(loop)
-      except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+      loop = asyncio.new_event_loop()
+      asyncio.set_event_loop(loop)
     return loop.run_until_complete(coro)
   return wrapper
 # endregion
@@ -673,33 +667,6 @@ def _colorize(text: str, colorcode:str, fmt=None):
   return pad + text if right else text + pad
 
 
-class PrettyColoredFormatter(logging.Formatter):
-  def format(self, record):
-    """
-    Override the default formatter to provide pretty and colored output.
-    """
-    # Extract custom attributes if present
-    verbose = getattr(record, 'verbose', False)
-    level = record.levelname
-    msg = super().format(record)  # Default formatting for the message
-
-    # Apply colorization
-    out = _colorize_log(msg=msg, level=level)
-    if hasattr(record, 'args') and record.args:
-      args = list(record.args) if not isinstance(record.args, list) else record.args
-      out += _colorize_list(args) # type: ignore
-
-    kwargs = getattr(record, 'kwargs', None)
-    if verbose and isinstance(kwargs, dict): out += pfy(kwargs)
-
-    return out
-
-
-class PrettyColoredHandler(logging.StreamHandler):
-  def emit(self, record):
-    silent = getattr(record, 'silent', False)
-    if not silent: super().emit(record)
-
 
 def _fmt(*a, severity: str = 'Debug', **kw) -> str:
   if severity.upper() == 'DEBUG': result = dpcp(*a, rules=TRACE_RULES or {}, conditional=True, **kw)
@@ -746,19 +713,15 @@ _sh.addFilter(_EmptyMessageFilter())
 _logger.addHandler(_sh)
 
 
-def init_logger(name: str = 'gppu', trace_rules: dict | None = None) -> None:
+def _init_logger_base(name: str = 'gppu', trace_rules: dict | None = None) -> None:
   """Initialize global logger with a specific name and optional trace rules."""
   global _logger, TRACE_RULES
   if trace_rules is not None: TRACE_RULES = trace_rules
-  Logger.trace_rules = TRACE_RULES
   new_logger = logging.getLogger(name)
   new_logger.setLevel(logging.DEBUG)
   new_logger.handlers = []
   new_logger.addHandler(_sh)
   _logger = new_logger
-  for cls in list(mixin_Logger.__subclasses__()):
-    cls._logger = _logger.getChild(cls.__name__)
-    for n, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)): setattr(cls, n, staticmethod(partial(fn, logger=cls._logger)))
 
 
 def Debug(*a, logger=None, **kw): (logger or _logger).debug(*a, **kw)
@@ -895,4 +858,5 @@ class Env:
 
 # Re-exports for backward compatibility with `from gppu.gppu import ...`
 from .ad import y2list, y2path, y2topic, y2slug, y2eid  # noqa: F401,E402
-from .data import DC, _DC_BASE_TYPE_MAP  # noqa: F401,E402
+from .ad import _mixin, Logger, protocol_Logger, mixin_Logger, mixin_Config, init_logger  # noqa: F401,E402
+from .ad import DC, _DC_BASE_TYPE_MAP  # noqa: F401,E402
