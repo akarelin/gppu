@@ -59,28 +59,20 @@ from .gppu import (
     TColor,
 
     # Logging
-    Logger,
-    init_logger,
     Debug,
     Info,
     Warn,
     Error,
     Dump,
-    mixin_Logger,
-    mixin_Config,
-    protocol_Logger,
-
-    _mixin,
 
     # Environment configuration
     Env,
 )
 
 from .ad import y2list, y2path, y2topic, y2slug, y2eid
-from .data import DC, _DC_BASE_TYPE_MAP, _Base, _PersistentBase, _PGBase, _SQABase
-
-# Wire y2eid into DC's type map after both modules are loaded
-_DC_BASE_TYPE_MAP['y2eid'] = y2eid
+from .ad import _mixin, Logger, protocol_Logger, mixin_Logger, mixin_Config, init_logger, init_logger_ad
+from .ad import DC, _DC_BASE_TYPE_MAP, _Base
+from .data import _PersistentBase, _PGBase, _SQABase
 
 __version__ = VER_GPPU
 __all__ = [

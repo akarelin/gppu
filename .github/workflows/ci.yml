@@ -22,10 +22,11 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     strategy:
       matrix:
-        python-version: ['3.11', '3.12', '3.13']
+        python-version: ['3.12', '3.13', '3.14']
+        extras: ['', 'pg', 'sql']
 
     steps:
       - uses: actions/checkout@v4
@@ -33,18 +34,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          allow-prereleases: true
 
       - name: Install dependencies
         run: |
           pip install PyYAML pytest
-          pip install -e .
+          pip install -e ".${{ matrix.extras && format('[{0}]', matrix.extras) || '' }}"
 
       - name: Run tests
         run: python -m pytest tests/ -v
 
   bump:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     if: github.event_name == 'workflow_dispatch'
 
     steps:
@@ -76,7 +78,7 @@ jobs:
 
   stamp:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     if: github.ref == 'refs/heads/master' && github.event_name == 'push' && !contains(github.event.head_commit.message, '[version-stamp]')
 
     steps:
@@ -101,8 +103,8 @@ jobs:
 
   release:
     needs: test
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/beta'
+    runs-on: [self-hosted, linux]
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/dev'
 
     steps:
       - uses: actions/checkout@v4
@@ -119,12 +121,6 @@ jobs:
         run: |
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
           sed -i "s/^version = .*/version = \"$(grep -oP '(?<=version = \").*(?=\")' pyproject.toml).dev${TIMESTAMP}\"/" pyproject.toml
-
-      - name: Set beta version suffix
-        if: github.ref == 'refs/heads/beta'
-        run: |
-          TIMESTAMP=$(date +%Y%m%d%H%M%S)
-          sed -i "s/^version = .*/version = \"$(grep -oP '(?<=version = \").*(?=\")' pyproject.toml)b${TIMESTAMP}\"/" pyproject.toml
 
       - name: Build package
         run: python -m build
