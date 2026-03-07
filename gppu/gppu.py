@@ -32,7 +32,7 @@ _ver_full = _pkg_version('gppu')
 _ver_parts = _ver_full.split('.')
 VER_GPPU_BASE = '.'.join(_ver_parts[:3])
 VER_GPPU_BUILD = _ver_parts[3] if len(_ver_parts) > 3 else '0'
-VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
+VER_GPPU = _ver_full
 
 
 # region OS
