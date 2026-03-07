@@ -58,8 +58,9 @@ jobs:
             PATCH=$((PATCH + 1))
           fi
           NEW="${MAJOR}.${MINOR}.${PATCH}"
-          sed -i "s/^version = .*/version = \"${NEW}.${{ github.run_number }}\"/" pyproject.toml
-          echo "VERSION=${NEW}.${{ github.run_number }}" >> $GITHUB_ENV
+          DATESTAMP=$(date +%y%m%d)
+          sed -i "s/^version = .*/version = \"${NEW}.${DATESTAMP}\"/" pyproject.toml
+          echo "VERSION=${NEW}.${DATESTAMP}" >> $GITHUB_ENV
           echo "TAG=v${NEW}" >> $GITHUB_ENV
 
       - name: Commit and tag
@@ -83,7 +84,8 @@ jobs:
         run: |
           BASE=$(grep -oP "(?<=^version = \").*(?=\")" pyproject.toml)
           IFS='.' read -r MAJOR MINOR PATCH _ <<< "$BASE"
-          NEW="${MAJOR}.${MINOR}.${PATCH}.${{ github.run_number }}"
+          DATESTAMP=$(date +%y%m%d)
+          NEW="${MAJOR}.${MINOR}.${PATCH}.${DATESTAMP}"
           sed -i "s/^version = .*/version = \"${NEW}\"/" pyproject.toml
           echo "VERSION=${NEW}" >> $GITHUB_ENV
 
