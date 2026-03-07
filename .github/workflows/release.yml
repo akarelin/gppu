@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - dev
 
 permissions:
   contents: write
@@ -21,11 +23,28 @@ jobs:
       - name: Install build tools
         run: pip install build
 
+      - name: Set dev version suffix
+        if: github.ref == 'refs/heads/dev'
+        run: |
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          sed -i "s/^version = .*/version = \"$(grep -oP '(?<=version = \").*(?=\")' pyproject.toml).dev${TIMESTAMP}\"/" pyproject.toml
+
       - name: Build package
         run: python -m build
 
-      - name: Create GitHub Release
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
           generate_release_notes: true
+
+      - name: Create Dev Pre-release
+        if: github.ref == 'refs/heads/dev'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev-latest
+          name: Dev Build (latest)
+          files: dist/*
+          prerelease: true
+          make_latest: false
