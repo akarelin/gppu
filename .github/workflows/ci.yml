@@ -82,8 +82,13 @@ jobs:
 
       - name: Stamp build number in pyproject.toml
         run: |
-          BASE=$(grep -oP "(?<=^version = \").*(?=\")" pyproject.toml)
-          IFS='.' read -r MAJOR MINOR PATCH _ <<< "$BASE"
+          # Get latest version tag (e.g. v2.50.0 → 2.50.0)
+          LATEST_TAG=$(git tag -l 'v*' --sort=-v:refname | head -1 | sed 's/^v//')
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_TAG="0.0.0"
+          fi
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_TAG"
+          PATCH=$((PATCH + 1))
           DATESTAMP=$(date +%y%m%d)
           NEW="${MAJOR}.${MINOR}.${PATCH}.${DATESTAMP}"
           sed -i "s/^version = .*/version = \"${NEW}\"/" pyproject.toml
