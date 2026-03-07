@@ -25,8 +25,8 @@ from .gppu import (
     dict_sanitize,
     template_populate,
     dict_template_populate,
-    
-    # Dictionary utilities  
+
+    # Dictionary utilities
     deepget,
     deepget_dict,
     deepget_int,
@@ -35,29 +35,29 @@ from .gppu import (
     dict_all_paths,
     dict_element_append,
     dict_sort_keylen,
-    
+
     # Type safety and coercion
     safe_int,
     safe_float,
     safe_list,
     safe_timedelta,
-    
+
     # Time utilities
     now_str,
     now_ts,
     pretty_timedelta,
     prepend_datestamp,
     append_timestamp,
-    
+
     # String utilities
     pfy,
     slugify,
-    
+
     # Colored printing
     pcp,
     dpcp,
     TColor,
-    
+
     # Logging
     Logger,
     init_logger,
@@ -69,24 +69,18 @@ from .gppu import (
     mixin_Logger,
     mixin_Config,
     protocol_Logger,
-    
-    # Data structures
-    y2list,
-    y2path,
-    y2topic,
-    y2slug,
-    y2eid,
-    
-    # Data classes
-    DC,
+
     _mixin,
 
     # Environment configuration
-    Env, mixin_Config, _Base,
-
-    # Database base classes
-    _PersistentBase, _PGBase, _SQABase
+    Env,
 )
+
+from .ad import y2list, y2path, y2topic, y2slug, y2eid
+from .data import DC, _DC_BASE_TYPE_MAP, _Base, _PersistentBase, _PGBase, _SQABase
+
+# Wire y2eid into DC's type map after both modules are loaded
+_DC_BASE_TYPE_MAP['y2eid'] = y2eid
 
 __version__ = VER_GPPU
 __all__ = [
