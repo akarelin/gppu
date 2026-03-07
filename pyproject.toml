@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gppu"
+version = "2.27.0"
+description = "General Purpose Python Utilities"
+requires-python = ">=3.11"
+dependencies = [
+    "PyYAML",
+]
+
+[project.optional-dependencies]
+pg = ["psycopg2-binary"]
+sql = ["sqlalchemy"]
+all = ["psycopg2-binary", "sqlalchemy"]

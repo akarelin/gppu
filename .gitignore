@@ -27,3 +27,7 @@ msg*.xlsx
 *.log
 **/*.log
 
+# Build artifacts
+*.egg-info/
+dist/
+build/
