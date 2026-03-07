@@ -39,6 +39,12 @@ jobs:
           files: dist/*
           generate_release_notes: true
 
+      - name: Update latest tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          git tag -f latest
+          git push -f origin latest
+
       - name: Create Dev Pre-release
         if: github.ref == 'refs/heads/dev'
         uses: softprops/action-gh-release@v2
