@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=64"]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "gppu"
-version = "2.50.4"
+dynamic = ["version"]
 description = "General Purpose Python Utilities"
 requires-python = ">=3.11"
 dependencies = [
@@ -16,6 +16,8 @@ pg = ["psycopg2-binary"]
 sql = ["sqlalchemy"]
 all = ["psycopg2-binary", "sqlalchemy"]
 test = ["pytest"]
+
+[tool.setuptools_scm]
 
 [tool.setuptools.packages.find]
 where = ["."]

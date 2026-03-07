@@ -27,11 +27,14 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-tags: true
+          fetch-depth: 0
 
       - name: Setup venv and install
         run: |
           python3 -m venv .venv
-          .venv/bin/pip install PyYAML pytest
+          .venv/bin/pip install PyYAML pytest setuptools-scm
           .venv/bin/pip install -e ".${{ matrix.extras && format('[{0}]', matrix.extras) || '' }}"
 
       - name: Run tests
@@ -44,35 +47,34 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-tags: true
+          fetch-depth: 0
 
-      - name: Bump version
+      - name: Compute next version
         run: |
-          BASE=$(grep -oP "(?<=^version = \").*(?=\")" pyproject.toml)
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
-          if [ "${{ inputs.bump }}" = "major" ]; then
-            MAJOR=$((MAJOR + 1))
+          LATEST_TAG=$(git tag -l 'v*' --sort=-v:refname | head -1 | sed 's/^v//')
+          if [ -z "$LATEST_TAG" ]; then LATEST_TAG="0.0.0"; fi
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_TAG"
+          if [ "${{ inputs.bump }}" = "minor" ]; then
+            MINOR=$((MINOR + 1))
             PATCH=0
           else
             PATCH=$((PATCH + 1))
           fi
-          NEW="${MAJOR}.${MINOR}.${PATCH}"
-          sed -i "s/^version = .*/version = \"${NEW}\"/" pyproject.toml
-          echo "VERSION=${NEW}" >> $GITHUB_ENV
-          echo "TAG=v${NEW}" >> $GITHUB_ENV
+          echo "TAG=v${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_ENV
 
-      - name: Commit and tag
+      - name: Create tag
         run: |
           git config user.name "Alex AI Actions"
           git config user.email "actions@karelin.ai"
-          git add pyproject.toml
-          git commit -m "chore: bump version to ${VERSION} [version-stamp]"
           git tag "${TAG}"
-          git push origin master "${TAG}"
+          git push origin "${TAG}"
 
-      - name: Build package
+      - name: Build and release
         run: |
           python3 -m venv .venv
-          .venv/bin/pip install build
+          .venv/bin/pip install build setuptools-scm
           .venv/bin/python -m build
 
       - name: Create Release
@@ -90,7 +92,7 @@ jobs:
   stamp:
     needs: test
     runs-on: [self-hosted, linux]
-    if: github.ref == 'refs/heads/master' && github.event_name == 'push' && !contains(github.event.head_commit.message, '[version-stamp]')
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
 
     steps:
       - uses: actions/checkout@v4
@@ -98,39 +100,31 @@ jobs:
           fetch-tags: true
           fetch-depth: 0
 
-      - name: Stamp build number in pyproject.toml
+      - name: Compute next version
         run: |
-          # Get latest version tag (e.g. v2.50.0 → 2.50.0)
           LATEST_TAG=$(git tag -l 'v*' --sort=-v:refname | head -1 | sed 's/^v//')
-          if [ -z "$LATEST_TAG" ]; then
-            LATEST_TAG="0.0.0"
-          fi
+          if [ -z "$LATEST_TAG" ]; then LATEST_TAG="0.0.0"; fi
           IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_TAG"
           PATCH=$((PATCH + 1))
-          NEW="${MAJOR}.${MINOR}.${PATCH}"
-          sed -i "s/^version = .*/version = \"${NEW}\"/" pyproject.toml
-          echo "VERSION=${NEW}" >> $GITHUB_ENV
+          echo "TAG=v${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_ENV
 
-      - name: Commit, tag and push
+      - name: Create tag
         run: |
           git config user.name "Alex AI Actions"
           git config user.email "actions@karelin.ai"
-          git add pyproject.toml
-          git diff --staged --quiet && echo "No version change" && exit 0
-          git commit -m "chore: version stamp ${VERSION} [version-stamp]"
-          git tag "v${VERSION}"
-          git push origin master "v${VERSION}"
+          git tag "${TAG}"
+          git push origin "${TAG}"
 
-      - name: Build package
+      - name: Build and release
         run: |
           python3 -m venv .venv
-          .venv/bin/pip install build
+          .venv/bin/pip install build setuptools-scm
           .venv/bin/python -m build
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ env.VERSION }}
+          tag_name: ${{ env.TAG }}
           files: dist/*
           generate_release_notes: true
 
@@ -146,11 +140,14 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-tags: true
+          fetch-depth: 0
 
       - name: Build package
         run: |
           python3 -m venv .venv
-          .venv/bin/pip install build
+          .venv/bin/pip install build setuptools-scm
           .venv/bin/python -m build
 
       - name: Create Dev Pre-release
