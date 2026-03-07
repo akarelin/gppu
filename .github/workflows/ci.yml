@@ -95,14 +95,15 @@ jobs:
           sed -i "s/^version = .*/version = \"${NEW}\"/" pyproject.toml
           echo "VERSION=${NEW}" >> $GITHUB_ENV
 
-      - name: Commit version stamp
+      - name: Commit, tag and push
         run: |
           git config user.name "Alex AI Actions"
           git config user.email "actions@karelin.ai"
           git add pyproject.toml
           git diff --staged --quiet && echo "No version change" && exit 0
           git commit -m "chore: version stamp ${VERSION} [version-stamp]"
-          git push
+          git tag "v${VERSION}"
+          git push origin master "v${VERSION}"
 
   release:
     needs: test
