@@ -2,8 +2,6 @@ name: CI
 
 on:
   push:
-    tags:
-      - 'v*'
     branches: [master, dev]
   pull_request:
     branches: [master]
@@ -71,6 +69,24 @@ jobs:
           git tag "${TAG}"
           git push origin master "${TAG}"
 
+      - name: Build package
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install build
+          .venv/bin/python -m build
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          files: dist/*
+          generate_release_notes: true
+
+      - name: Update latest tag
+        run: |
+          git tag -f latest
+          git push -f origin latest
+
   stamp:
     needs: test
     runs-on: [self-hosted, linux]
@@ -105,38 +121,39 @@ jobs:
           git tag "v${VERSION}"
           git push origin master "v${VERSION}"
 
-  release:
-    needs: test
-    runs-on: [self-hosted, linux]
-    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/dev'
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install build tools
+      - name: Build package
         run: |
           python3 -m venv .venv
           .venv/bin/pip install build
-
-      - name: Build package
-        run: .venv/bin/python -m build
+          .venv/bin/python -m build
 
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ env.VERSION }}
           files: dist/*
           generate_release_notes: true
 
       - name: Update latest tag
-        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           git tag -f latest
           git push -f origin latest
 
+  release-dev:
+    needs: test
+    runs-on: [self-hosted, linux]
+    if: github.ref == 'refs/heads/dev'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build package
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install build
+          .venv/bin/python -m build
 
       - name: Create Dev Pre-release
-        if: github.ref == 'refs/heads/dev'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: dev
