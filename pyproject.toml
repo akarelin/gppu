@@ -15,3 +15,10 @@ dependencies = [
 pg = ["psycopg2-binary"]
 sql = ["sqlalchemy"]
 all = ["psycopg2-binary", "sqlalchemy"]
+test = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
