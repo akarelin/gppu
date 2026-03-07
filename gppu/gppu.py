@@ -32,7 +32,7 @@ try:
   VER_GPPU_BASE = _pkg_version('gppu')
 except Exception:
   VER_GPPU_BASE = '2.27.0'
-VER_GPPU_BUILD = '251204'
+VER_GPPU_BUILD = '260307'
 VER_GPPU = f"{VER_GPPU_BASE}.{VER_GPPU_BUILD}"
 
 
