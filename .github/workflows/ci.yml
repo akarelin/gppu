@@ -25,16 +25,10 @@ jobs:
     runs-on: [self-hosted, linux]
     strategy:
       matrix:
-        python-version: ['3.12', '3.13', '3.14']
         extras: ['', 'pg', 'sql']
 
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          allow-prereleases: true
 
       - name: Install dependencies
         run: |
@@ -108,10 +102,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
 
       - name: Install build tools
         run: pip install build
