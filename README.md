@@ -1,5 +1,7 @@
 # GPPU - General Purpose Python Utilities
 
+[![CI](https://github.com/akarelin/gppu/actions/workflows/ci.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/ci.yml)
+
 A comprehensive utility library providing configuration loading, logging, data manipulation, and type safety utilities.
 
 ## Features
