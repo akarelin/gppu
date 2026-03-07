@@ -58,9 +58,8 @@ jobs:
             PATCH=$((PATCH + 1))
           fi
           NEW="${MAJOR}.${MINOR}.${PATCH}"
-          DATESTAMP=$(date +%y%m%d)
-          sed -i "s/^version = .*/version = \"${NEW}.${DATESTAMP}\"/" pyproject.toml
-          echo "VERSION=${NEW}.${DATESTAMP}" >> $GITHUB_ENV
+          sed -i "s/^version = .*/version = \"${NEW}\"/" pyproject.toml
+          echo "VERSION=${NEW}" >> $GITHUB_ENV
           echo "TAG=v${NEW}" >> $GITHUB_ENV
 
       - name: Commit and tag
@@ -92,8 +91,7 @@ jobs:
           fi
           IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_TAG"
           PATCH=$((PATCH + 1))
-          DATESTAMP=$(date +%y%m%d)
-          NEW="${MAJOR}.${MINOR}.${PATCH}.${DATESTAMP}"
+          NEW="${MAJOR}.${MINOR}.${PATCH}"
           sed -i "s/^version = .*/version = \"${NEW}\"/" pyproject.toml
           echo "VERSION=${NEW}" >> $GITHUB_ENV
 
@@ -118,6 +116,12 @@ jobs:
         run: |
           python3 -m venv .venv
           .venv/bin/pip install build
+
+      - name: Append datestamp to version
+        run: |
+          BASE=$(grep -oP '(?<=version = ").*(?=")' pyproject.toml)
+          DATESTAMP=$(date +%y%m%d)
+          sed -i "s/^version = .*/version = \"${BASE}.${DATESTAMP}\"/" pyproject.toml
 
       - name: Set dev version suffix
         if: github.ref == 'refs/heads/dev'
