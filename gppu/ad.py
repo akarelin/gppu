@@ -12,11 +12,16 @@ from typing import Any, Optional, ClassVar, List, Callable
 
 from .gppu import (
     TRACE_RULES, Env,
+    VER_GPPU,
     deepget, deepget_int, deepget_float, deepget_list, deepget_dict,
     Debug, Info, Warn, Error, Dump,
     _logger,
     _init_logger_base,
     _colorize_log, _colorize_list, pfy,
+    # Re-export core utilities for AD consumers
+    dict_from_yml, dict_to_yml, dict_all_paths, dict_sanitize, dict_template_populate,
+    dpcp, now_ts, safe_int, safe_float, safe_timedelta,
+    TColor,
 )
 
 
