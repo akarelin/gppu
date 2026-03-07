@@ -129,11 +129,13 @@ class TestY2Eid:
         assert eid.ns == "yala"
 
     def test_without_domain_uses_default(self):
-        # y2eid requires a domain via '.' - without it, domain attribute isn't set
-        # Use the full format: domain.slug@namespace
-        eid = y2eid("entity.my_entity@ns1")
+        eid = y2eid("my_entity@ns1")
         assert eid.domain == "entity"
         assert eid.ns == "ns1"
+
+    def test_startswith(self):
+        eid = y2eid("light.living_room@yala")
+        assert eid.startswith("living")
 
     def test_entity_id_property(self):
         eid = y2eid("switch.kitchen@home")
