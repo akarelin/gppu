@@ -1,6 +1,6 @@
 """Tests for y2list, y2path, y2topic, y2slug, y2eid."""
 import pytest
-from gppu import y2list, y2path, y2topic, y2slug, y2eid
+from gppu.ad import y2list, y2path, y2topic, y2slug, y2eid
 
 
 class TestY2List:
