@@ -6,6 +6,7 @@ on:
       - 'v*'
     branches:
       - dev
+      - beta
 
 permissions:
   contents: write
@@ -29,6 +30,12 @@ jobs:
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
           sed -i "s/^version = .*/version = \"$(grep -oP '(?<=version = \").*(?=\")' pyproject.toml).dev${TIMESTAMP}\"/" pyproject.toml
 
+      - name: Set beta version suffix
+        if: github.ref == 'refs/heads/beta'
+        run: |
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          sed -i "s/^version = .*/version = \"$(grep -oP '(?<=version = \").*(?=\")' pyproject.toml)b${TIMESTAMP}\"/" pyproject.toml
+
       - name: Build package
         run: python -m build
 
@@ -45,11 +52,21 @@ jobs:
           git tag -f latest
           git push -f origin latest
 
+      - name: Create Beta Pre-release
+        if: github.ref == 'refs/heads/beta'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: beta
+          name: Beta Build (latest)
+          files: dist/*
+          prerelease: true
+          make_latest: false
+
       - name: Create Dev Pre-release
         if: github.ref == 'refs/heads/dev'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: dev-latest
+          tag_name: dev
           name: Dev Build (latest)
           files: dist/*
           prerelease: true
