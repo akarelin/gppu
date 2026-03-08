@@ -210,11 +210,11 @@ def dict_to_yml(filename:str, data=None, sort_keys=False):
   yaml.add_representer(UserDict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(set, yaml.representer.Representer.represent_list)
   yaml.add_representer(tuple, _tuple_representer)
-  with open(filename,'w+') as f:
+  with open(filename,'w+', encoding='utf-8') as f:
     try: yaml.dump(redata, f, indent=2, Dumper=IndentedListDumper, sort_keys=False, width=2147483647)
     except Exception as err:
       error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(redata)}\n\n"
-      with open(filename+'_error.txt','w+') as ferr: ferr.write(error)
+      with open(filename+'_error.txt','w+', encoding='utf-8') as ferr: ferr.write(error)
 
 
 def dict_from_yml(filename: str | Path):
@@ -229,7 +229,7 @@ def dict_from_yml(filename: str | Path):
     # ^^ Bug: shadowed outer 'filename' variable; used string concat instead of Path
     if node.value[0] == '/': inc_filename = node.value
     else: inc_filename = str(Path(yml_root) / node.value)
-    with open(inc_filename, "r") as f: return yaml.load(f, Loader=yaml.FullLoader)
+    with open(inc_filename, "r", encoding='utf-8') as f: return yaml.load(f, Loader=yaml.FullLoader)
 
   yaml.add_representer(defaultdict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(UserDict, yaml.representer.Representer.represent_dict)
@@ -237,7 +237,7 @@ def dict_from_yml(filename: str | Path):
   yaml.add_representer(tuple, _tuple_representer)
   yaml.add_constructor("!include", yml_include, Loader=yaml.FullLoader)
 
-  with open(filename) as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
+  with open(filename, encoding='utf-8') as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
 
 
 def dict_template_populate(o, data: dict = {}, excludes:list = []) -> dict:
