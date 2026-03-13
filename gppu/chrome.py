@@ -11,6 +11,7 @@ Usage:
     driver.get("https://example.com")
 """
 
+import json
 import subprocess
 import sys
 import time
@@ -44,26 +45,62 @@ def _chrome_pids(profile: str) -> List[int]:
   return [int(l.split(maxsplit=1)[0]) for l in lines if profile in l]
 
 
+def _remove_stale_locks(user_data_dir: str) -> None:
+  """Remove stale SingletonLock / SingletonCookie left after a Chrome crash."""
+  for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+    lock = os.path.join(user_data_dir, name)
+    if os.path.exists(lock) or os.path.islink(lock):
+      try:
+        os.remove(lock)
+      except OSError:
+        pass
+
+
+def _clear_crash_state(user_data_dir: str, profile_directory: Optional[str] = None) -> None:
+  """Clear Chrome crash recovery flags so it starts cleanly under Selenium."""
+  profile_dir = profile_directory or "Default"
+  prefs_path = os.path.join(user_data_dir, profile_dir, "Preferences")
+  if not os.path.exists(prefs_path): return
+
+  try:
+    with open(prefs_path) as f:
+      prefs = json.load(f)
+    changed = False
+    if prefs.get("profile", {}).get("exit_type") != "Normal":
+      prefs.setdefault("profile", {})["exit_type"] = "Normal"
+      changed = True
+    if not prefs.get("profile", {}).get("exited_cleanly"):
+      prefs.setdefault("profile", {})["exited_cleanly"] = True
+      changed = True
+    if changed:
+      with open(prefs_path, "w") as f:
+        json.dump(prefs, f)
+  except (json.JSONDecodeError, OSError):
+    pass
+
+
 def _ensure_profile_unlocked(profile: str, timeout: float = 5.0, interactive: bool = True) -> None:
   pids = _chrome_pids(profile)
-  if not pids: return
 
-  if interactive:
-    ans = input(f"Chrome is running with {profile}. Close it so the script can automate? [y/N]: ").strip().lower()
-    if ans not in {"y", "yes"}: sys.exit("Aborted – close Chrome and rerun.")
-  else:
-    print(f"Closing Chrome ({len(pids)} processes using {profile})...")
+  if pids:
+    if interactive:
+      ans = input(f"Chrome is running with {profile}. Close it so the script can automate? [y/N]: ").strip().lower()
+      if ans not in {"y", "yes"}: sys.exit("Aborted – close Chrome and rerun.")
+    else:
+      print(f"Closing Chrome ({len(pids)} processes using {profile})...")
 
-  subprocess.run(["kill", "-TERM", *map(str, pids)], check=False)
+    subprocess.run(["kill", "-TERM", *map(str, pids)], check=False)
 
-  end = time.time() + timeout
-  while time.time() < end and _chrome_pids(profile): time.sleep(0.25)
+    end = time.time() + timeout
+    while time.time() < end and _chrome_pids(profile): time.sleep(0.25)
 
-  if _chrome_pids(profile):
-    subprocess.run(["kill", "-KILL", *map(str, _chrome_pids(profile))], check=False)
-    time.sleep(1)
+    if _chrome_pids(profile):
+      subprocess.run(["kill", "-KILL", *map(str, _chrome_pids(profile))], check=False)
+      time.sleep(1)
 
-  if _chrome_pids(profile): sys.exit("Could not close Chrome – aborting.")
+    if _chrome_pids(profile): sys.exit("Could not close Chrome – aborting.")
+
+  _remove_stale_locks(profile)
 
 
 # ##########################################################################
@@ -72,17 +109,21 @@ def _ensure_profile_unlocked(profile: str, timeout: float = 5.0, interactive: bo
 
 def prepare_driver(
     download_directory: str = "~/Downloads",
-    profile: str = DEFAULT_PROFILE,
+    user_data_dir: str = DEFAULT_PROFILE,
+    profile_directory: Optional[str] = None,
     interactive: bool = True,
 ) -> webdriver.Chrome:
-  """Prepare a Selenium Chrome driver with the automation profile.
+  """Prepare a Selenium Chrome driver with a Chrome profile.
 
   Args:
-      download_directory: Where Chrome saves downloads.
-      profile:           Path to the Chrome user-data-dir.
-      interactive:       If True, prompt before killing Chrome. If False, kill silently.
+      download_directory:  Where Chrome saves downloads.
+      user_data_dir:       Path to --user-data-dir (e.g. ~/.config/google-chrome).
+      profile_directory:   Profile subfolder (e.g. "Default", "Profile 1"). Optional.
+      interactive:         If True, prompt before killing Chrome. If False, kill silently.
   """
-  _ensure_profile_unlocked(profile, interactive=interactive)
+  user_data_dir = os.path.expanduser(user_data_dir)
+  _ensure_profile_unlocked(user_data_dir, interactive=interactive)
+  _clear_crash_state(user_data_dir, profile_directory)
 
   options = webdriver.ChromeOptions()
   prefs = {
@@ -94,10 +135,18 @@ def prepare_driver(
 
   if os.path.exists(SYSTEM_CHROME): options.binary_location = SYSTEM_CHROME
 
-  options.add_argument(f"--user-data-dir={profile}")
+  options.add_argument(f"--user-data-dir={user_data_dir}")
+  if profile_directory:
+    options.add_argument(f"--profile-directory={profile_directory}")
   options.add_argument("--disable-gpu")
   options.add_argument("--no-sandbox")
   options.add_argument("--disable-dev-shm-usage")
+
+  # Remove stale DevToolsActivePort
+  devtools_port = os.path.join(user_data_dir, "DevToolsActivePort")
+  if os.path.exists(devtools_port):
+    try: os.remove(devtools_port)
+    except OSError: pass
 
   service = Service()
   driver = webdriver.Chrome(service=service, options=options)
