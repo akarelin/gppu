@@ -232,58 +232,7 @@ async def fetch_data(): ...
 
 Hex values computed from ANSI codes in `gppu/gppu.py` (xterm-256color palette).
 
-**General**
-
-| Name | Swatch | Hex | Description |
-|------|--------|-----|-------------|
-| `NONE` | | `0m` | Reset |
-| `DIM` | $\color{#808080}\textsf{████}$ | `#808080` | Dim gray |
-| `BRIGHT` | $\color{#00ffff}\textsf{████}$ | `#00ffff` | Bright cyan |
-| `INFO` | $\color{#5555ff}\textsf{████}$ | `#5555ff` | Bright blue |
-| `BW` | $\color{#ffffff}\textsf{████}$ | `#ffffff` | Bright white |
-| `DW` | $\color{#c0c0c0}\textsf{████}$ | `#c0c0c0` | Dark white |
-
-**Background** (text on colored bg)
-
-| Name | Swatch | Fg / Bg | Description |
-|------|--------|---------|-------------|
-| `RED` | $\colorbox{#800000}{\color{#000000}\textsf{ RED }}$ | black on `#800000` | |
-| `BLUE` | $\colorbox{#000080}{\color{#000000}\textsf{ BLUE }}$ | black on `#000080` | |
-| `GREEN` | $\colorbox{#008000}{\color{#000000}\textsf{ GREEN }}$ | black on `#008000` | |
-| `YELLOW` | $\colorbox{#808000}{\color{#000000}\textsf{ YELLOW }}$ | black on `#808000` | |
-| `WHITE` | $\colorbox{#c0c0c0}{\color{#000000}\textsf{ WHITE }}$ | black on `#c0c0c0` | |
-| `WRED` | $\colorbox{#800000}{\color{#c0c0c0}\textsf{ WRED }}$ | white on `#800000` | |
-| `WBLUE` | $\colorbox{#000080}{\color{#c0c0c0}\textsf{ WBLUE }}$ | white on `#000080` | |
-| `WGREEN` | $\colorbox{#008000}{\color{#c0c0c0}\textsf{ WGREEN }}$ | white on `#008000` | |
-| `WGRAY` | $\colorbox{#c0c0c0}{\color{#000000}\textsf{ WGRAY }}$ | black on `#c0c0c0` | |
-| `WPINK` | $\colorbox{#800080}{\color{#000000}\textsf{ WPINK }}$ | black on `#800080` | |
-| `WPURPLE` | $\colorbox{#800080}{\color{#c0c0c0}\textsf{ WPURPLE }}$ | white on `#800080` | |
-| `WYELLOW` | $\colorbox{#ffff00}{\color{#000000}\textsf{ WYELLOW }}$ | black on `#ffff00` | |
-
-**Text colors** (bright / dark pairs)
-
-| Name | Swatch | Hex | Name | Swatch | Hex |
-|------|--------|-----|------|--------|-----|
-| `BR` | $\color{#ff0000}\textsf{████}$ | `#ff0000` | `DR` | $\color{#800000}\textsf{████}$ | `#800000` |
-| `BG` | $\color{#00ff00}\textsf{████}$ | `#00ff00` | `DG` | $\color{#008000}\textsf{████}$ | `#008000` |
-| `BY` | $\color{#ffff00}\textsf{████}$ | `#ffff00` | `DY` | $\color{#808000}\textsf{████}$ | `#808000` |
-| `BC` | $\color{#008080}\textsf{████}$ | `#008080` | `DC` | $\color{#00ffff}\textsf{████}$ | `#00ffff` |
-| `BM` | $\color{#ff00ff}\textsf{████}$ | `#ff00ff` | `DM` | $\color{#800080}\textsf{████}$ | `#800080` |
-| `DB` | $\color{#000080}\textsf{████}$ | `#000080` | | | |
-| `BP` / `PURPLE` | $\color{#af00ff}\textsf{████}$ | `#af00ff` | `DP` | $\color{#870087}\textsf{████}$ | `#870087` |
-| `BO` / `ORANGE` | $\color{#af5f00}\textsf{████}$ | `#af5f00` | `DO` | $\color{#af5f00}\textsf{████}$ | `#af5f00` |
-| `PINK` | $\color{#ff00d7}\textsf{████}$ | `#ff00d7` | `DPINK` | $\color{#af5f87}\textsf{████}$ | `#af5f87` |
-| `BGOLD` | $\color{#ffd700}\textsf{████}$ | `#ffd700` | `DGOLD` | $\color{#d7af00}\textsf{████}$ | `#d7af00` |
-
-**Grays** (232-255 grayscale ramp)
-
-| Name | Swatch | Hex |
-|------|--------|-----|
-| `GRAY0` | $\color{#3a3a3a}\textsf{████}$ | `#3a3a3a` |
-| `GRAY1` | $\color{#444444}\textsf{████}$ | `#444444` |
-| `GRAY2` | $\color{#767676}\textsf{████}$ | `#767676` |
-| `GRAY3` | $\color{#949494}\textsf{████}$ | `#949494` |
-| `GRAY4` | $\color{#b2b2b2}\textsf{████}$ | `#b2b2b2` |
+<img src="docs/tcolor-reference.svg" alt="TColor reference" width="640">
 
 ## Branches
 

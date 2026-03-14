@@ -1,0 +1,207 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="580" viewBox="0 0 640 580">
+  <defs>
+    <style>
+      .l { font-family: 'Consolas','Courier New',monospace; font-size: 12px; fill: #cdd6f4; }
+      .h { font-family: 'Consolas','Courier New',monospace; font-size: 11px; fill: #a6adc8; }
+      .hd { font-family: 'Consolas','Courier New',monospace; font-size: 12px; font-weight: bold; fill: #89b4fa; }
+      .d { font-family: 'Consolas','Courier New',monospace; font-size: 11px; fill: #6c7086; }
+      .bt { font-family: 'Consolas','Courier New',monospace; font-size: 10px; font-weight: bold; }
+    </style>
+  </defs>
+  <rect width="640" height="580" rx="8" fill="#1e1e2e"/>
+
+  <!-- ═══ GENERAL ═══ -->
+  <text class="hd" x="20" y="24">General</text>
+  <line x1="20" y1="30" x2="620" y2="30" stroke="#313244"/>
+
+  <!-- NONE -->
+  <text class="l" x="20" y="50">NONE</text>
+  <text class="d" x="132" y="50">reset</text>
+  <text class="h" x="184" y="50">0m</text>
+  <!-- DIM 38;5;8 → idx 8 → #808080 -->
+  <text class="l" x="340" y="50">DIM</text>
+  <rect x="440" y="39" width="44" height="14" rx="2" fill="#808080" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="492" y="50">#808080</text>
+
+  <!-- BRIGHT 36;1 → bright cyan #00ffff -->
+  <text class="l" x="20" y="70">BRIGHT</text>
+  <rect x="132" y="59" width="44" height="14" rx="2" fill="#00ffff" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="184" y="70">#00ffff</text>
+  <!-- INFO 34;1 → bright blue #5555ff -->
+  <text class="l" x="340" y="70">INFO</text>
+  <rect x="440" y="59" width="44" height="14" rx="2" fill="#5555ff" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="492" y="70">#5555ff</text>
+
+  <!-- BW 38;5;15 → #ffffff -->
+  <text class="l" x="20" y="90">BW</text>
+  <rect x="132" y="79" width="44" height="14" rx="2" fill="#ffffff" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="184" y="90">#ffffff</text>
+  <!-- DW 38;5;7 → #c0c0c0 -->
+  <text class="l" x="340" y="90">DW</text>
+  <rect x="440" y="79" width="44" height="14" rx="2" fill="#c0c0c0" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="492" y="90">#c0c0c0</text>
+
+  <!-- ═══ BACKGROUND ═══ -->
+  <text class="hd" x="20" y="120">Background</text>
+  <line x1="20" y1="126" x2="620" y2="126" stroke="#313244"/>
+
+  <!-- RED 0;30;41 → black on #800000 -->
+  <text class="l" x="20" y="146">RED</text>
+  <rect x="132" y="133" width="52" height="18" rx="3" fill="#800000" stroke="#45475a" stroke-width="0.5"/>
+  <text class="bt" x="145" y="146" fill="#000000">Aa</text>
+  <!-- BLUE 0;30;44 → black on #000080 -->
+  <text class="l" x="340" y="146">BLUE</text>
+  <rect x="440" y="133" width="52" height="18" rx="3" fill="#000080" stroke="#45475a" stroke-width="0.5"/>
+  <text class="bt" x="453" y="146" fill="#000000">Aa</text>
+
+  <!-- GREEN 0;30;42 → black on #008000 -->
+  <text class="l" x="20" y="166">GREEN</text>
+  <rect x="132" y="153" width="52" height="18" rx="3" fill="#008000" stroke="#45475a" stroke-width="0.5"/>
+  <text class="bt" x="145" y="166" fill="#000000">Aa</text>
+  <!-- YELLOW 0;30;43 → black on #808000 -->
+  <text class="l" x="340" y="166">YELLOW</text>
+  <rect x="440" y="153" width="52" height="18" rx="3" fill="#808000" stroke="#45475a" stroke-width="0.5"/>
+  <text class="bt" x="453" y="166" fill="#000000">Aa</text>
+
+  <!-- WHITE 0;30;47 → black on #c0c0c0 -->
+  <text class="l" x="20" y="186">WHITE</text>
+  <rect x="132" y="173" width="52" height="18" rx="3" fill="#c0c0c0" stroke="#45475a" stroke-width="0.5"/>
+  <text class="bt" x="145" y="186" fill="#000000">Aa</text>
+
+  <!-- WRED 0;37;41 → white on #800000 -->
+  <text class="l" x="20" y="206">WRED</text>
+  <rect x="132" y="193" width="52" height="18" rx="3" fill="#800000" stroke="#45475a" stroke-width="0.5"/>
+  <text class="bt" x="145" y="206" fill="#c0c0c0">Aa</text>
+  <!-- WBLUE 0;37;44 → white on #000080 -->
+  <text class="l" x="340" y="206">WBLUE</text>
+  <rect x="440" y="193" width="52" height="18" rx="3" fill="#000080" stroke="#45475a" stroke-width="0.5"/>
+  <text class="bt" x="453" y="206" fill="#c0c0c0">Aa</text>
+
+  <!-- WGREEN 0;37;42 → white on #008000 -->
+  <text class="l" x="20" y="226">WGREEN</text>
+  <rect x="132" y="213" width="52" height="18" rx="3" fill="#008000" stroke="#45475a" stroke-width="0.5"/>
+  <text class="bt" x="145" y="226" fill="#c0c0c0">Aa</text>
+  <!-- WGRAY 0;30;47 → black on #c0c0c0 -->
+  <text class="l" x="340" y="226">WGRAY</text>
+  <rect x="440" y="213" width="52" height="18" rx="3" fill="#c0c0c0" stroke="#45475a" stroke-width="0.5"/>
+  <text class="bt" x="453" y="226" fill="#000000">Aa</text>
+
+  <!-- WPINK 0;30;45 → black on #800080 -->
+  <text class="l" x="20" y="246">WPINK</text>
+  <rect x="132" y="233" width="52" height="18" rx="3" fill="#800080" stroke="#45475a" stroke-width="0.5"/>
+  <text class="bt" x="145" y="246" fill="#000000">Aa</text>
+  <!-- WPURPLE 0;37;45 → white on #800080 -->
+  <text class="l" x="340" y="246">WPURPLE</text>
+  <rect x="440" y="233" width="52" height="18" rx="3" fill="#800080" stroke="#45475a" stroke-width="0.5"/>
+  <text class="bt" x="453" y="246" fill="#c0c0c0">Aa</text>
+
+  <!-- WYELLOW 7;49;93 → reverse bright yellow → black on #ffff00 -->
+  <text class="l" x="20" y="266">WYELLOW</text>
+  <rect x="132" y="253" width="52" height="18" rx="3" fill="#ffff00" stroke="#45475a" stroke-width="0.5"/>
+  <text class="bt" x="145" y="266" fill="#000000">Aa</text>
+
+  <!-- ═══ TEXT COLORS ═══ -->
+  <text class="hd" x="20" y="296">Text colors</text>
+  <line x1="20" y1="302" x2="620" y2="302" stroke="#313244"/>
+
+  <!-- BR 38;5;9 → #ff0000 | DR 38;5;1 → #800000 -->
+  <text class="l" x="20" y="322">BR</text>
+  <rect x="132" y="311" width="44" height="14" rx="2" fill="#ff0000" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="184" y="322">#ff0000</text>
+  <text class="l" x="340" y="322">DR</text>
+  <rect x="440" y="311" width="44" height="14" rx="2" fill="#800000" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="492" y="322">#800000</text>
+
+  <!-- BG 38;5;10 → #00ff00 | DG 38;5;2 → #008000 -->
+  <text class="l" x="20" y="342">BG</text>
+  <rect x="132" y="331" width="44" height="14" rx="2" fill="#00ff00" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="184" y="342">#00ff00</text>
+  <text class="l" x="340" y="342">DG</text>
+  <rect x="440" y="331" width="44" height="14" rx="2" fill="#008000" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="492" y="342">#008000</text>
+
+  <!-- BY 38;5;11 → #ffff00 | DY 38;5;3 → #808000 -->
+  <text class="l" x="20" y="362">BY</text>
+  <rect x="132" y="351" width="44" height="14" rx="2" fill="#ffff00" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="184" y="362">#ffff00</text>
+  <text class="l" x="340" y="362">DY</text>
+  <rect x="440" y="351" width="44" height="14" rx="2" fill="#808000" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="492" y="362">#808000</text>
+
+  <!-- BC 38;5;6 → #008080 | DC 38;5;14 → #00ffff -->
+  <text class="l" x="20" y="382">BC</text>
+  <rect x="132" y="371" width="44" height="14" rx="2" fill="#008080" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="184" y="382">#008080</text>
+  <text class="l" x="340" y="382">DC</text>
+  <rect x="440" y="371" width="44" height="14" rx="2" fill="#00ffff" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="492" y="382">#00ffff</text>
+
+  <!-- BM 38;5;13 → #ff00ff | DM 38;5;5 → #800080 -->
+  <text class="l" x="20" y="402">BM</text>
+  <rect x="132" y="391" width="44" height="14" rx="2" fill="#ff00ff" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="184" y="402">#ff00ff</text>
+  <text class="l" x="340" y="402">DM</text>
+  <rect x="440" y="391" width="44" height="14" rx="2" fill="#800080" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="492" y="402">#800080</text>
+
+  <!-- DB 38;5;4 → #000080 -->
+  <text class="l" x="20" y="422">DB</text>
+  <rect x="132" y="411" width="44" height="14" rx="2" fill="#000080" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="184" y="422">#000080</text>
+
+  <!-- BP 38;5;129 → 16+36*3+6*0+5 → (175,0,255) #af00ff | DP 38;5;90 → 16+36*2+6*0+2 → (135,0,135) #870087 -->
+  <text class="l" x="20" y="442">BP/PURPLE</text>
+  <rect x="132" y="431" width="44" height="14" rx="2" fill="#af00ff" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="184" y="442">#af00ff</text>
+  <text class="l" x="340" y="442">DP</text>
+  <rect x="440" y="431" width="44" height="14" rx="2" fill="#870087" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="492" y="442">#870087</text>
+
+  <!-- BO 38;5;130 → 16+36*3+6*1+0 → (175,95,0) #af5f00 | DO 38;5;130 → same -->
+  <text class="l" x="20" y="462">BO/ORANGE</text>
+  <rect x="132" y="451" width="44" height="14" rx="2" fill="#af5f00" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="184" y="462">#af5f00</text>
+  <text class="l" x="340" y="462">DO</text>
+  <rect x="440" y="451" width="44" height="14" rx="2" fill="#af5f00" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="492" y="462">#af5f00</text>
+
+  <!-- PINK 38;5;200 → 16+36*5+6*0+4 → (255,0,215) #ff00d7 | DPINK 38;5;132 → 16+36*3+6*1+2 → (175,95,135) #af5f87 -->
+  <text class="l" x="20" y="482">PINK</text>
+  <rect x="132" y="471" width="44" height="14" rx="2" fill="#ff00d7" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="184" y="482">#ff00d7</text>
+  <text class="l" x="340" y="482">DPINK</text>
+  <rect x="440" y="471" width="44" height="14" rx="2" fill="#af5f87" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="492" y="482">#af5f87</text>
+
+  <!-- BGOLD 38;5;220 → 16+36*5+6*4+0 → (255,215,0) #ffd700 | DGOLD 38;5;178 → 16+36*4+6*3+0 → (215,175,0) #d7af00 -->
+  <text class="l" x="20" y="502">BGOLD</text>
+  <rect x="132" y="491" width="44" height="14" rx="2" fill="#ffd700" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="184" y="502">#ffd700</text>
+  <text class="l" x="340" y="502">DGOLD</text>
+  <rect x="440" y="491" width="44" height="14" rx="2" fill="#d7af00" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="492" y="502">#d7af00</text>
+
+  <!-- ═══ GRAYS ═══ -->
+  <text class="hd" x="20" y="532">Grays</text>
+  <line x1="20" y1="538" x2="620" y2="538" stroke="#313244"/>
+
+  <!-- GRAY0 38;5;237 → 8+(237-232)*10=58 → #3a3a3a | GRAY1 38;5;238 → 68 → #444444 -->
+  <text class="l" x="20" y="558">GRAY0</text>
+  <rect x="132" y="547" width="44" height="14" rx="2" fill="#3a3a3a" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="184" y="558">#3a3a3a</text>
+  <text class="l" x="340" y="558">GRAY1</text>
+  <rect x="440" y="547" width="44" height="14" rx="2" fill="#444444" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="492" y="558">#444444</text>
+
+  <!-- GRAY2 38;5;243 → 118 → #767676 | GRAY3 38;5;246 → 148 → #949494 -->
+  <!-- GRAY4 38;5;249 → 178 → #b2b2b2 -->
+  <!-- Compact: show all 5 as a gradient strip -->
+  <text class="l" x="20" y="574">GRAY2</text>
+  <rect x="132" y="563" width="44" height="14" rx="2" fill="#767676" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="184" y="574">#767676</text>
+  <text class="l" x="268" y="574">GRAY3</text>
+  <rect x="340" y="563" width="44" height="14" rx="2" fill="#949494" stroke="#45475a" stroke-width="0.5"/>
+  <text class="h" x="392" y="574">#949494</text>
+  <text class="l" x="476" y="574">GRAY4</text>
+  <rect x="548" y="563" width="44" height="14" rx="2" fill="#b2b2b2" stroke="#45475a" stroke-width="0.5"/>
+</svg>
