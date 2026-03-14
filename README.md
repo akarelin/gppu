@@ -228,6 +228,111 @@ async def fetch_data(): ...
 # or returns a Task if loop is already running
 ```
 
+## TColor Reference
+
+Hex values computed from ANSI codes in `gppu/gppu.py`. Palette: xterm-256color (index 0-7 standard, 8-15 bright, 16-231 = 6x6x6 cube, 232-255 grayscale).
+
+<!-- 256-color formula: 16-231 → 16+36r+6g+b, levels=[0,95,135,175,215,255]; 232-255 → 8+(i-232)*10 -->
+
+<table>
+<tr><th colspan="4">General</th></tr>
+<tr>
+  <td><code>NONE</code></td><td>Reset <code>0m</code></td>
+  <td><code>DIM</code></td><td><span style="color:#808080">██</span> <code>#808080</code> Dim gray</td>
+</tr>
+<tr>
+  <td><code>BRIGHT</code></td><td><span style="color:#00ffff">██</span> <code>#00ffff</code> Bright cyan</td>
+  <td><code>INFO</code></td><td><span style="color:#5555ff">██</span> <code>#5555ff</code> Bright blue</td>
+</tr>
+<tr>
+  <td><code>BW</code></td><td><span style="color:#ffffff">██</span> <code>#ffffff</code> Bright white</td>
+  <td><code>DW</code></td><td><span style="color:#c0c0c0">██</span> <code>#c0c0c0</code> Dark white</td>
+</tr>
+<tr><th colspan="4">Background</th></tr>
+<tr>
+  <td><code>RED</code></td><td><span style="background:#800000;color:#000000;padding:1px 6px">RED</span></td>
+  <td><code>BLUE</code></td><td><span style="background:#000080;color:#000000;padding:1px 6px">BLUE</span></td>
+</tr>
+<tr>
+  <td><code>GREEN</code></td><td><span style="background:#008000;color:#000000;padding:1px 6px">GREEN</span></td>
+  <td><code>YELLOW</code></td><td><span style="background:#808000;color:#000000;padding:1px 6px">YELLOW</span></td>
+</tr>
+<tr>
+  <td><code>WHITE</code></td><td><span style="background:#c0c0c0;color:#000000;padding:1px 6px">WHITE</span></td>
+  <td></td><td></td>
+</tr>
+<tr>
+  <td><code>WRED</code></td><td><span style="background:#800000;color:#c0c0c0;padding:1px 6px">WRED</span></td>
+  <td><code>WBLUE</code></td><td><span style="background:#000080;color:#c0c0c0;padding:1px 6px">WBLUE</span></td>
+</tr>
+<tr>
+  <td><code>WGREEN</code></td><td><span style="background:#008000;color:#c0c0c0;padding:1px 6px">WGREEN</span></td>
+  <td><code>WGRAY</code></td><td><span style="background:#c0c0c0;color:#000000;padding:1px 6px">WGRAY</span></td>
+</tr>
+<tr>
+  <td><code>WPINK</code></td><td><span style="background:#800080;color:#000000;padding:1px 6px">WPINK</span></td>
+  <td><code>WPURPLE</code></td><td><span style="background:#800080;color:#c0c0c0;padding:1px 6px">WPURPLE</span></td>
+</tr>
+<tr>
+  <td><code>WYELLOW</code></td><td><span style="background:#ffff00;color:#000000;padding:1px 6px">WYELLOW</span></td>
+  <td></td><td></td>
+</tr>
+<tr><th colspan="4">Text colors</th></tr>
+<tr>
+  <td><code>BR</code></td><td><span style="color:#ff0000">██</span> <code>#ff0000</code> Bright red</td>
+  <td><code>DR</code></td><td><span style="color:#800000">██</span> <code>#800000</code> Dark red</td>
+</tr>
+<tr>
+  <td><code>BG</code></td><td><span style="color:#00ff00">██</span> <code>#00ff00</code> Bright green</td>
+  <td><code>DG</code></td><td><span style="color:#008000">██</span> <code>#008000</code> Dark green</td>
+</tr>
+<tr>
+  <td><code>BY</code></td><td><span style="color:#ffff00">██</span> <code>#ffff00</code> Bright yellow</td>
+  <td><code>DY</code></td><td><span style="color:#808000">██</span> <code>#808000</code> Dark yellow</td>
+</tr>
+<tr>
+  <td><code>BC</code></td><td><span style="color:#008080">██</span> <code>#008080</code> Cyan</td>
+  <td><code>DC</code></td><td><span style="color:#00ffff">██</span> <code>#00ffff</code> Bright cyan</td>
+</tr>
+<tr>
+  <td><code>BM</code></td><td><span style="color:#ff00ff">██</span> <code>#ff00ff</code> Bright magenta</td>
+  <td><code>DM</code></td><td><span style="color:#800080">██</span> <code>#800080</code> Dark magenta</td>
+</tr>
+<tr>
+  <td><code>DB</code></td><td><span style="color:#000080">██</span> <code>#000080</code> Dark blue</td>
+  <td></td><td></td>
+</tr>
+<tr>
+  <td><code>BP</code> / <code>PURPLE</code></td><td><span style="color:#af00ff">██</span> <code>#af00ff</code> Bright purple</td>
+  <td><code>DP</code></td><td><span style="color:#870087">██</span> <code>#870087</code> Dark purple</td>
+</tr>
+<tr>
+  <td><code>BO</code> / <code>ORANGE</code></td><td><span style="color:#af5f00">██</span> <code>#af5f00</code> Orange</td>
+  <td><code>DO</code></td><td><span style="color:#af5f00">██</span> <code>#af5f00</code> Dark orange</td>
+</tr>
+<tr>
+  <td><code>PINK</code></td><td><span style="color:#ff00d7">██</span> <code>#ff00d7</code> Bright pink</td>
+  <td><code>DPINK</code></td><td><span style="color:#af5f87">██</span> <code>#af5f87</code> Dark pink</td>
+</tr>
+<tr>
+  <td><code>BGOLD</code></td><td><span style="color:#ffd700">██</span> <code>#ffd700</code> Bright gold</td>
+  <td><code>DGOLD</code></td><td><span style="color:#d7af00">██</span> <code>#d7af00</code> Dark gold</td>
+</tr>
+<tr><th colspan="4">Grays (232-255 grayscale ramp)</th></tr>
+<tr>
+  <td><code>GRAY0</code></td><td><span style="color:#3a3a3a">██</span> <code>#3a3a3a</code></td>
+  <td><code>GRAY1</code></td><td><span style="color:#444444">██</span> <code>#444444</code></td>
+</tr>
+<tr>
+  <td><code>GRAY2</code></td><td><span style="color:#767676">██</span> <code>#767676</code></td>
+  <td><code>GRAY3</code></td><td><span style="color:#949494">██</span> <code>#949494</code></td>
+</tr>
+<tr>
+  <td><code>GRAY4</code></td><td><span style="color:#b2b2b2">██</span> <code>#b2b2b2</code></td>
+  <td></td><td></td>
+</tr>
+</table>
+
 ## Branches
 
 - **master** (v2.52.x): Production. Used by: Y2 dev, RAN, CRAP
