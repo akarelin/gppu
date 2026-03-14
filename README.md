@@ -28,8 +28,8 @@ Requires Python >= 3.11. Core dependency: PyYAML.
 |--------|---------|
 | `gppu` (core) | `Env` config loader, type coercion, dict utilities, YAML/JSON I/O, colored logging, time helpers, OS detection, async helpers, template population |
 | [`gppu.ad`](AD.md) | `Logger`/`init_logger`, mixins (`mixin_Logger`, `mixin_Config`), `_Base` foundation class, advanced types (`y2list`, `y2path`, `y2topic`, `y2slug`, `y2eid`), `DC` pseudo-dataclass |
-| `gppu.data` | Database base classes: `_PGBase` (psycopg2) and `_SQABase` (SQLAlchemy) with lazy connections, context managers, auto-commit/rollback |
-| `gppu.chrome` | Selenium Chrome driver setup with profile management, process lifecycle, crash recovery, stale lock cleanup, mobile/desktop emulation |
+| [`gppu.data`](DATA.md) | Database base classes: `_PGBase` (psycopg2) and `_SQABase` (SQLAlchemy) with lazy connections, context managers, auto-commit/rollback |
+| [`gppu.chrome`](CHROME.md) | Selenium Chrome driver setup with profile management, process lifecycle, crash recovery, stale lock cleanup, mobile/desktop emulation |
 
 ## Public API
 
@@ -93,37 +93,6 @@ Dump('debug_state.yml', data)
 
 For `Logger`, `init_logger`, mixin classes, and `_Base` see [AD.md](AD.md).
 
-### TColor Reference
-
-| Name | Style | | Name | Style |
-|------|-------|-|------|-------|
-| `NONE` | Reset | | `DIM` | Dim gray |
-| `BRIGHT` | Bright cyan | | `BW` | Bright white |
-| `DW` | Dark white | | `INFO` | Bright blue |
-| **Background** | | | | |
-| `WHITE` | Black on white | | `YELLOW` | Black on yellow |
-| `RED` | Black on red | | `BLUE` | Black on blue |
-| `GREEN` | Black on green | | | |
-| `WRED` | White on red | | `WBLUE` | White on blue |
-| `WGREEN` | White on green | | `WGRAY` | Black on light gray |
-| `WPINK` | Black on pink | | `WPURPLE` | White on purple |
-| `WYELLOW` | White on yellow | | | |
-| **Text colors** | | | | |
-| `BR` | Bright red | | `DR` | Dark red |
-| `BG` | Bright green | | `DG` | Dark green |
-| `BY` | Bright yellow | | `DY` | Dark yellow |
-| `BC` | Bright cyan | | `DC` | Dark cyan |
-| `BM` | Bright magenta | | `DM` | Dark magenta |
-| `DB` | Dark blue | | | |
-| `BP` / `PURPLE` | Bright purple | | `DP` | Dark purple |
-| `BO` / `ORANGE` | Bright orange | | `DO` | Dark orange |
-| `PINK` | Bright pink | | `DPINK` | Dark pink |
-| `BGOLD` | Bright gold | | `DGOLD` | Dark gold |
-| **Grays** | | | | |
-| `GRAY0` | Darkest | | `GRAY1` | Dark |
-| `GRAY2` | Medium | | `GRAY3` | Light |
-| `GRAY4` | Lightest | | | |
-
 ### pfy
 
 ```python
@@ -176,12 +145,6 @@ clean = dict_sanitize(data)
 ```python
 from gppu import deepget, deepget_int, deepget_list, deepget_dict
 from gppu import deepdict, dict_all_paths, dict_element_append, dict_sort_keylen
-
-# Path-based nested access ("/" separator)
-deepget('database/host', config, default='localhost')
-deepget_int('database/port', config, default=5432)
-deepget_list('tags', config, default=[])
-deepget_dict('options', config, default={})
 
 # Auto-vivifying nested defaultdict
 d = deepdict()
@@ -240,55 +203,11 @@ See [AD.md](AD.md) for full documentation of `y2list`, `y2path`, `y2topic`, `y2s
 
 ### Database Access (gppu.data)
 
-Both classes inherit from `_Base` (logger + config). Connection string is resolved from `Env.glob('db')` or `self.my('db')`.
-
-```python
-from gppu.data import _PGBase, _SQABase
-
-# PostgreSQL (psycopg2) - lazy connection, dict cursors by default
-class MyDB(_PGBase):
-    pass
-
-with MyDB(config_key='postgres') as db:
-    with db.cursor() as cur:
-        cur.execute('SELECT * FROM users')
-        rows = cur.fetchall()  # list of RealDictRow
-    with db.cursor(dict_cursor=False) as cur:
-        cur.execute('SELECT count(*) FROM users')
-
-# SQLAlchemy ORM - lazy engine, session context manager
-class MyORM(_SQABase):
-    pass
-
-with MyORM(config_key='database') as db:
-    with db.session() as sess:
-        users = sess.query(User).all()
-```
+See [DATA.md](DATA.md) for `_PGBase` (psycopg2) and `_SQABase` (SQLAlchemy).
 
 ### Chrome Automation (gppu.chrome)
 
-Profile-aware Chrome driver with process lifecycle management.
-
-```python
-from gppu.chrome import prepare_driver, switch_to_mobile, switch_to_desktop
-
-# Prepares driver: kills existing Chrome on same profile, removes stale locks,
-# clears crash recovery flags, configures download dir
-driver = prepare_driver(
-    download_directory='~/Downloads',
-    user_data_dir='~/.config/chrome-automation',  # default
-    profile_directory='Default',                   # optional
-    interactive=True,                              # prompt before killing Chrome
-)
-
-driver.get('https://example.com')
-
-# CDP-based device emulation
-switch_to_mobile(driver)   # iPhone X (375x812, 3x scale)
-switch_to_desktop(driver)  # clears emulation
-
-driver.quit()
-```
+See [CHROME.md](CHROME.md) for `prepare_driver`, `switch_to_mobile`, `switch_to_desktop`.
 
 ### Other Utilities
 
