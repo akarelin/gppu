@@ -240,6 +240,20 @@ def dict_from_yml(filename: str | Path):
   with open(filename, encoding='utf-8') as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
 
 
+def dict_to_json(filename: str | Path, data=None, indent=2):
+  assert filename
+  if not data: return
+  with open(filename, 'w', encoding='utf-8') as f:
+    try: json.dump(data, f, indent=indent, ensure_ascii=False, default=str)
+    except Exception as err:
+      error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(data)}\n\n"
+      with open(str(filename)+'_error.txt', 'w', encoding='utf-8') as ferr: ferr.write(error)
+
+
+def dict_from_json(filename: str | Path):
+  with open(filename, encoding='utf-8') as f: return json.load(f)
+
+
 def dict_template_populate(o, data: dict = {}, excludes:list = []) -> dict:
   """ 
     Returns new dictionary, copy of o with all templatable elements filled-in from data 
