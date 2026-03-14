@@ -22,6 +22,8 @@ from .gppu import (
     # Configuration loading
     dict_from_yml,
     dict_to_yml,
+    dict_from_json,
+    dict_to_json,
     dict_sanitize,
     template_populate,
     dict_template_populate,
@@ -82,7 +84,7 @@ __all__ = [
     'TRACE_RULES',
 
     # Configuration
-    'dict_from_yml', 'dict_to_yml', 'dict_sanitize',
+    'dict_from_yml', 'dict_to_yml', 'dict_from_json', 'dict_to_json', 'dict_sanitize',
     'template_populate', 'dict_template_populate',
 
     # Dictionary utilities
