@@ -2,7 +2,7 @@ name: Statusline Release
 
 on:
   push:
-    tags: ['v*']
+    tags: ['sl-*']
 
 permissions:
   contents: write
