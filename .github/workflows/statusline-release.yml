@@ -24,7 +24,7 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-tags: true
           fetch-depth: 0
@@ -56,7 +56,7 @@ jobs:
     runs-on: [self-hosted, linux]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.bump.outputs.tag || github.ref }}
           fetch-tags: true
@@ -70,7 +70,7 @@ jobs:
           .venv/bin/pyinstaller --onefile --name statusline --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=jinja2 --hidden-import=yaml --collect-all jinja2 --copy-metadata gppu statusline/__main__.py
           mv dist/statusline dist/statusline-linux-amd64
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: statusline-linux-amd64
           path: dist/statusline-linux-amd64
@@ -81,13 +81,13 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.bump.outputs.tag || github.ref }}
           fetch-tags: true
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -98,7 +98,7 @@ jobs:
           pyinstaller --onefile --name statusline --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=jinja2 --hidden-import=yaml --collect-all jinja2 --copy-metadata gppu statusline/__main__.py
           mv dist/statusline dist/statusline-macos-arm64
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: statusline-macos-arm64
           path: dist/statusline-macos-arm64
@@ -109,13 +109,13 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.bump.outputs.tag || github.ref }}
           fetch-tags: true
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -129,7 +129,7 @@ jobs:
         shell: bash
         run: mv dist/statusline.exe dist/statusline-windows-amd64.exe
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: statusline-windows-amd64.exe
           path: dist/statusline-windows-amd64.exe
@@ -140,20 +140,20 @@ jobs:
     runs-on: [self-hosted, linux]
 
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts/
           merge-multiple: true
 
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@latest
         with:
           tag_name: ${{ needs.bump.outputs.tag || github.ref_name }}
           files: artifacts/*
           generate_release_notes: true
 
       - name: Update sl-latest tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-tags: true
           fetch-depth: 0
