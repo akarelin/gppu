@@ -31,16 +31,21 @@ from statusline.stats import git_info
 def _config_dir() -> Path:
     """Resolve config directory for statusline YAML files.
 
-    Priority: STATUSLINE_CONFIG_DIR env var > XDG/APPDATA default.
+    Priority: STATUSLINE_CONFIG_DIR env var > ~/.config/statusline > APPDATA/statusline.
     """
     override = os.environ.get("STATUSLINE_CONFIG_DIR")
     if override:
         return Path(override)
+    # Prefer ~/.config/statusline on all platforms (chezmoi default)
+    xdg = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "statusline"
+    if xdg.is_dir():
+        return xdg
+    # Windows fallback: %APPDATA%/statusline
     if sys.platform == "win32":
-        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
-    else:
-        base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    return base / "statusline"
+        appdata = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "statusline"
+        if appdata.is_dir():
+            return appdata
+    return xdg
 
 # ── Initialize gppu ────────────────────────────────────────────────────────
 
