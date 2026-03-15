@@ -1,14 +1,6 @@
 {
   "permissions": {
-    "allow": [
-      "Bash(chezmoi source-path:*)",
-      "Bash(chezmoi diff:*)",
-      "Bash(chezmoi apply:*)",
-      "Bash(cat \"C:\\\\CACHE~1\\\\WinTemp\\\\claude\\\\D--Dev-gppu\\\\7822475f-f7b6-431e-a1cf-1daa99e950c0\\\\tasks\\\\bje13vpoq.output\" 2>/dev/null; echo \"EXIT: $?\")",
-      "Read(//d/Dev/gppu/$HOME/.config/chezmoi/**)",
-      "Read(//d/Dev/gppu/$APPDATA/chezmoi/**)",
-      "Read(//d/Dev/gppu/$HOME/.local/share/chezmoi/**)",
-      "Bash(tasklist | grep -i chezmoi 2>/dev/null || ps aux | grep chezmoi 2>/dev/null)"
-    ]
+    "allow": [],
+    "deny": []
   }
 }
