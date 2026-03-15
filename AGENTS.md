@@ -35,13 +35,14 @@ All `gppu`-powered applications start by initializing the `Env` object. This is 
 from gppu import Env
 from pathlib import Path
 
-# Initialize Env once at the start of your application
-env = Env(name='app-name', app_path=Path(".../app_root_directory"))
-env.load()
+# Initialize Env once at the start of your application.
+# Env uses class-level state (singleton) — the instance is not stored.
+Env(name='app-name', app_path=Path('CRAP/app_root_directory'))
+Env.load()
 ```
 
 -   `name`: A unique identifier for your application (e.g., `file-indexer`).
--   `app_path`: The directory where `gppu` will look for your `config.yaml` or `{app_name}.yaml`.
+-   `app_path`: A **relative** path appended to the OS-specific base directory (`D:\Dev` on Windows, `/home/alex` on Linux). For example, `Path('CRAP/file_indexer')` resolves to `D:\Dev\CRAP\file_indexer` on Windows.
 
 ---
 
@@ -85,8 +86,8 @@ from gppu import Env, Info, Error, glob, glob_int
 from pathlib import Path
 
 # 1. Initialize Env
-env = Env(name='my-app', app_path=Path(".../app_root_directory"))
-env.load()
+Env(name='my-app', app_path=Path('CRAP/my_app'))
+Env.load()
 
 # 2. Use gppu functions directly
 Info('INFO', 'Application started', 'WGREEN', 'OK', 'DIM', '(config loaded)')
@@ -120,8 +121,8 @@ class DataProcessor(_Base):
         self.Info('INFO', 'Processing data for host', 'BRIGHT', self._host)
 
 # --- Application Entry Point ---
-env = Env(name='my-app', app_path=Path(".../app_root_directory"))
-env.load()
+Env(name='my-app', app_path=Path('CRAP/my_app'))
+Env.load()
 
 processor = DataProcessor()
 processor.process()
@@ -167,13 +168,4 @@ Adherence to these rules is critical for maintaining clean, configurable, and ma
 
 -   **No Placeholders:** Your `config.yaml` must be clean of any example or placeholder text.
 -   **Use Includes for Modularity:** Import shared configs from `RAN/Keys`.
--   **Define OS-Specific Roots:** Provide paths for different operating systems in the `root` section. `gppu` will select the correct one automatically.
-
-```yaml
-# config.yaml
-root:
-  W11: "D:\\Dev\\CRAP\\app"
-  WSL: "/home/alex/CRAP/app"
-  LINUX: "/home/alex/CRAP/app"
-  MACOS: "/Users/alex/CRAP/app"
-```
+-   **OS-Specific Paths:** `PathBuilder` handles OS-specific base path resolution automatically via `app_path`. You do not need to define OS-specific roots in your config.

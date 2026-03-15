@@ -867,10 +867,19 @@ class Env:
   async def dump():
     Dump('Env.data', Env.data)
     return await asyncio.sleep(0)  # Make it truly async
+
+
 # endregion
+
+# Global aliases for Env.glob* methods
+glob = Env.glob
+glob_int = Env.glob_int
+glob_list = Env.glob_list
+glob_dict = Env.glob_dict
 
 
 # Re-exports for backward compatibility with `from gppu.gppu import ...`
 from .ad import y2list, y2path, y2topic, y2slug, y2eid  # noqa: F401,E402
 from .ad import _mixin, Logger, protocol_Logger, mixin_Logger, mixin_Config, init_logger  # noqa: F401,E402
+from .ad import _Base  # noqa: F401,E402
 from .ad import DC, _DC_BASE_TYPE_MAP  # noqa: F401,E402

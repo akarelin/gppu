@@ -80,6 +80,7 @@ class mixin_Config(_mixin):
   def my_list(self, path, default: list = []) -> list: return deepget_list(path, self._my, default=default or [])
   def my_dict(self, path, default: dict = {}) -> dict: return deepget_dict(path, self._my, default=default or {})
 
+
 class Logger:
   """Namespace wrapper exposing logging helpers."""
   trace_folder: str = ''
