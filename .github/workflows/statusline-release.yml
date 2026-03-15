@@ -50,23 +50,35 @@ jobs:
           git tag "${{ steps.version.outputs.tag }}"
           git push origin "${{ steps.version.outputs.tag }}"
 
-  build:
+  build-linux:
     if: always() && (needs.bump.result == 'success' || needs.bump.result == 'skipped')
     needs: bump
-    strategy:
-      matrix:
-        include:
-          - runner: [self-hosted, linux]
-            artifact: statusline-linux-amd64
-            suffix: ""
-          - runner: macos-latest
-            artifact: statusline-macos-arm64
-            suffix: ""
-          - runner: windows-latest
-            artifact: statusline-windows-amd64.exe
-            suffix: ".exe"
+    runs-on: [self-hosted, linux]
 
-    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump.outputs.tag || github.ref }}
+          fetch-tags: true
+          fetch-depth: 0
+
+      - name: Build binary
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install pyinstaller jinja2
+          .venv/bin/pip install -e .
+          .venv/bin/pyinstaller --onefile --name statusline --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=jinja2 --hidden-import=yaml --collect-all jinja2 --copy-metadata gppu statusline/__main__.py
+          mv dist/statusline dist/statusline-linux-amd64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: statusline-linux-amd64
+          path: dist/statusline-linux-amd64
+
+  build-macos:
+    if: always() && (needs.bump.result == 'success' || needs.bump.result == 'skipped')
+    needs: bump
+    runs-on: macos-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -79,28 +91,52 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install dependencies
+      - name: Build binary
         run: |
-          python -m pip install --upgrade pip
           pip install pyinstaller jinja2
           pip install -e .
+          pyinstaller --onefile --name statusline --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=jinja2 --hidden-import=yaml --collect-all jinja2 --copy-metadata gppu statusline/__main__.py
+          mv dist/statusline dist/statusline-macos-arm64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: statusline-macos-arm64
+          path: dist/statusline-macos-arm64
+
+  build-windows:
+    if: always() && (needs.bump.result == 'success' || needs.bump.result == 'skipped')
+    needs: bump
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump.outputs.tag || github.ref }}
+          fetch-tags: true
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
       - name: Build binary
         run: |
+          pip install pyinstaller jinja2
+          pip install -e .
           pyinstaller --onefile --name statusline --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=jinja2 --hidden-import=yaml --collect-all jinja2 --copy-metadata gppu statusline/__main__.py
 
       - name: Rename artifact
         shell: bash
-        run: mv dist/statusline${{ matrix.suffix }} dist/${{ matrix.artifact }}
+        run: mv dist/statusline.exe dist/statusline-windows-amd64.exe
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: dist/${{ matrix.artifact }}
+          name: statusline-windows-amd64.exe
+          path: dist/statusline-windows-amd64.exe
 
   release:
-    needs: [bump, build]
-    if: always() && needs.build.result == 'success'
+    needs: [bump, build-linux, build-macos, build-windows]
+    if: always() && needs.build-linux.result == 'success' && needs.build-macos.result == 'success' && needs.build-windows.result == 'success'
     runs-on: [self-hosted, linux]
 
     steps:
