@@ -69,6 +69,15 @@ from .gppu import (
 
     # Environment configuration
     Env,
+
+    # Config access (aliases for Env.glob*)
+    glob,
+    glob_int,
+    glob_list,
+    glob_dict,
+
+    # Foundation class
+    _Base,
 )
 
 
@@ -108,4 +117,10 @@ __all__ = [
 
     # Environment configuration
     'Env',
+
+    # Config access
+    'glob', 'glob_int', 'glob_list', 'glob_dict',
+
+    # Foundation class
+    '_Base',
 ]
