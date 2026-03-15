@@ -243,7 +243,7 @@ When building applications with `gppu`, follow the config-first workflow and pat
 1. **Define the configuration** in a `.yaml` file first. The user must review and approve the final structure.
 2. **Configuration is everything** — paths, credentials, API keys, settings, flags all belong in YAML.
 3. **Begin development** only after the config structure is finalized.
-4. **Zero-parameter execution** — all scripts must run without CLI arguments (e.g., `python3 my_app.py`).
+4. **Zero-parameter execution** — all scripts must run without CLI arguments (e.g., `python my_app.py`).
 
 ### Initialization
 
