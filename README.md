@@ -236,62 +236,7 @@ Hex values computed from ANSI codes in `gppu/gppu.py` (xterm-256color palette).
 
 ## LLM Development Guide
 
-When building applications with `gppu`, follow the config-first workflow and patterns below. For the full agent instruction set, see [AGENTS.md](AGENTS.md).
-
-### Config-First Workflow
-
-1. **Define the configuration** in a `.yaml` file first. The user must review and approve the final structure.
-2. **Configuration is everything** — paths, credentials, API keys, settings, flags all belong in YAML.
-3. **Begin development** only after the config structure is finalized.
-4. **Zero-parameter execution** — all scripts must run without CLI arguments (e.g., `python my_app.py`).
-
-### Initialization
-
-`Env` uses class-level state (singleton). Initialize once, then call `Env.load()`:
-
-```python
-from gppu import Env
-from pathlib import Path
-
-Env(name='file-indexer', app_path=Path('CRAP/file_indexer'))
-Env.load()
-```
-
-- `name`: Application identifier. Config file lookup: `{name}.yaml`, then `config.yaml`.
-- `app_path`: **Relative** path appended to the OS-specific base (`D:\Dev` on Windows, `/home/alex` on Linux).
-
-### Two-Tier Configuration
-
-Applications use lean config files that `!include` shared secrets from `RAN/Keys`:
-
-```yaml
-db: !include D:\Dev\RAN\Keys\postgres\file_indexer.yaml
-
-imessage_workflow:
-  mode: 'full'
-  max_age_days: 365
-```
-
-### Usage Pattern
-
-```python
-from gppu import Env, Info, Error, glob
-from pathlib import Path
-
-Env(name='my-app', app_path=Path('CRAP/my_app'))
-Env.load()
-
-Info('INFO', 'Application started', 'WGREEN', 'OK', 'DIM', '(config loaded)')
-db_connection = glob('db/connection_string')
-```
-
-### Anti-Patterns
-
-- **No fallback defaults** — a missing value is a config error: `self.my('key')` + validation, never `default=`.
-- **No hardcoded placeholders** — no `user@hostname` or `/path/to/...` in configs or code.
-- **No direct config parsing** — use `Env`, never `dict_from_yml('config.yaml')` in application code.
-- **No CLI arguments for config** — all settings belong in `.yaml` files.
-- **No manual path logic** — `PathBuilder` handles OS-specific resolution automatically.
+See [AGENTS.md](AGENTS.md) for config-first workflow, initialization patterns, anti-patterns, and agent interaction rules.
 
 ## Branches
 
