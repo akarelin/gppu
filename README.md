@@ -247,3 +247,4 @@ See [AGENTS.md](AGENTS.md) for config-first workflow, initialization patterns, a
 ## License
 
 Extracted from RAN project for reuse across Alex Karelin's automation and data processing tools.
+@
