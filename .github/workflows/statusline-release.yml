@@ -3,7 +3,6 @@ name: Statusline Release
 on:
   push:
     tags: ['sl-*']
-    paths: ['statusline/**', '.github/workflows/statusline-release.yml']
   workflow_dispatch:
     inputs:
       bump:
