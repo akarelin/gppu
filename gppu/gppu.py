@@ -811,8 +811,9 @@ class PathBuilder:
     elif self._os == OSType.MACOS: self._base_path = Path(f"/Users/{self.user}")
     else: raise Exception(f"Unsupported OS: {self._os.value}")
 
-    self.app_path = self._base_path 
-    if app_path: self.app_path /= app_path
+    self.app_path = self._base_path
+    if app_path:
+      self.app_path = app_path if app_path.is_absolute() else self.app_path / app_path
 
 
 class Env:
