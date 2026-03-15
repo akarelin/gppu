@@ -32,7 +32,7 @@ jobs:
       - name: Compute next version
         id: version
         run: |
-          LATEST_TAG=$(git tag -l 'sl-*' --sort=-v:refname | head -1 | sed 's/^sl-//')
+          LATEST_TAG=$(git tag -l 'sl-[0-9]*' --sort=-v:refname | head -1 | sed 's/^sl-//')
           if [ -z "$LATEST_TAG" ]; then LATEST_TAG="0.0.0"; fi
           IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_TAG"
           if [ "${{ inputs.bump }}" = "minor" ]; then
