@@ -78,7 +78,7 @@ jobs:
           .venv/bin/python -m build
 
       - name: Create Release
-        uses: softprops/action-gh-release@latest
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
           files: dist/*
@@ -122,7 +122,7 @@ jobs:
           .venv/bin/python -m build
 
       - name: Create Release
-        uses: softprops/action-gh-release@latest
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
           files: dist/*
@@ -151,7 +151,7 @@ jobs:
           .venv/bin/python -m build
 
       - name: Create Dev Pre-release
-        uses: softprops/action-gh-release@latest
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: dev
           name: Dev Build (latest)
