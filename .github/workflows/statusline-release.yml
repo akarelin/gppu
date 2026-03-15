@@ -3,7 +3,16 @@ name: Statusline Release
 on:
   push:
     tags: ['sl-*']
-
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          
 permissions:
   contents: write
 
