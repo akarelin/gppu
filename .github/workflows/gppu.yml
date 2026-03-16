@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: write
+  variables: write
 
 jobs:
   test:
