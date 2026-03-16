@@ -800,12 +800,15 @@ class Env:
 
   @staticmethod
   def _config_file() -> Path:
-    file = Env.app_path / Path(Env.name).with_suffix('.yaml')
-    if not file.exists():
-      file = Env.app_path / 'config.yaml'
-    if not file.exists():
-      raise FileNotFoundError(f"Config file not found for app '{Env.name}' in path '{Env.app_path}'")
-    return file
+    gppu_dir = Env.home / '.gppu'
+    for base in (gppu_dir, Env.app_path):
+      file = base / Path(Env.name).with_suffix('.yaml')
+      if file.exists(): return file
+      file = base / 'config.yaml'
+      if file.exists(): return file
+    raise FileNotFoundError(
+      f"Config file not found for app '{Env.name}' in '{gppu_dir}' or '{Env.app_path}'"
+    )
 
 
   def __init__(self, name: Optional[str] = None, app_path: Optional[Path] = None):
