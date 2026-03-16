@@ -18,7 +18,7 @@ from pathlib import Path
 from gppu import Env
 from gppu.tui import LauncherApp, launcher_main, load_app_registry
 
-APP_DIR = Path(__file__).parent
+APP_DIR = Path(__file__).resolve().parent
 
 
 class W11App(LauncherApp):
@@ -27,7 +27,7 @@ class W11App(LauncherApp):
 
 
 def main() -> None:
-    Env()
+    Env(app_path=APP_DIR)
     Env.load()
     apps = load_app_registry(APP_DIR)
     launcher_main(apps, W11App, APP_DIR, 'w11 — Windows 11 Superapp')
