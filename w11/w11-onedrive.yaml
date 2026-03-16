@@ -1,0 +1,55 @@
+# ── w11 manifest ─────────────────────────────────────────────────────────────
+manifest:
+  name: OneDrive Diagnostics
+  description: OneDrive sync diagnostics & conflict cleanup
+  script: w11-onedrive.py
+  icon: "\u2601"
+  modes:
+    diag:
+      name: Sync Diagnostics
+      args: [diag]
+    diag-watch:
+      name: Sync Diagnostics (live)
+      args: [diag, --watch]
+    reset:
+      name: Reset OneDrive
+      args: [reset]
+    conflicts:
+      name: Conflict Analysis
+      args: [conflicts]
+      ask_for:
+        - name: account
+          options: accounts  # resolved from config key below
+
+# ── App config ───────────────────────────────────────────────────────────────
+
+# Default mode: diag or conflicts (omit to prompt interactively)
+# mode: diag
+
+# Accounts (used for conflict analysis account picker)
+accounts:
+  - Business1
+  - Business2
+
+# Auto-refresh health panel every N seconds (0 = disabled)
+watch_interval: 10
+
+# ── Conflict analysis ──────────────────────────────────────────────────────
+
+# Known hostnames to look for in conflict files
+# These are offered first in the hostname picker; auto-discovery adds more
+hostnames:
+  - Mailstore
+  - Alex-PC
+
+# Words to ignore during hostname auto-discovery (case-insensitive)
+hostname_stopwords:
+  - OCR
+  - Logitech
+  - Small-1
+
+# Folders to skip when scanning for conflicts (relative to OneDrive root)
+conflict_scan_exclude:
+  - .git
+  - node_modules
+  - __pycache__
