@@ -6,7 +6,10 @@ import shutil
 import sys
 from pathlib import Path
 
-_DEFAULT_CONFIG = Path(__file__).resolve().parent / 'default_config'
+if getattr(sys, 'frozen', False):
+    _DEFAULT_CONFIG = Path(sys._MEIPASS) / 'default_config'
+else:
+    _DEFAULT_CONFIG = Path(__file__).resolve().parent / 'default_config'
 _USER_CONFIG = Path.home() / '.gppu' / 'w11'
 
 
