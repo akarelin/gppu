@@ -16,7 +16,6 @@ on:
 
 permissions:
   contents: write
-  variables: write
 
 jobs:
   bump:
@@ -161,17 +160,13 @@ jobs:
           files: artifacts/*
           generate_release_notes: true
 
-      - name: Update sl-latest tag and version variable
+      - name: Update sl-latest tag
         uses: actions/checkout@v6
         with:
           fetch-tags: true
           fetch-depth: 0
-      - env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
+      - run: |
           git config user.name "Alex AI Actions"
           git config user.email "actions@karelin.ai"
           git tag -f sl-latest
           git push -f origin sl-latest
-          TAG="${{ needs.bump.outputs.tag || github.ref_name }}"
-          gh variable set VERSION_STATUSLINE --body "${TAG#sl-}"
