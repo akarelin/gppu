@@ -16,6 +16,7 @@ on:
 
 permissions:
   contents: write
+  variables: write
 
 jobs:
   bump:
