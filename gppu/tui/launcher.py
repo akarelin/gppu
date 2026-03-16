@@ -56,15 +56,27 @@ def resolve_cwd(app_dir: Path, app_def: dict) -> Path:
     return (app_dir / app_def['script']).resolve().parent
 
 
-def launch_app(
-    app_dir: Path, app_def: dict, extra_args: list[str] | None = None,
-) -> None:
-    """Launch a sub-app by running its script in a new process."""
+def _resolve_cmd(app_dir: Path, app_def: dict) -> list[str]:
+    """Build the command to launch a sub-app, handling frozen (PyInstaller) mode."""
+    if getattr(sys, 'frozen', False):
+        exe_name = Path(app_def['script']).stem + '.exe'
+        exe = Path(sys.executable).parent / exe_name
+        if not exe.exists():
+            print(f'Executable not found: {exe}')
+            sys.exit(1)
+        return [str(exe)]
     script = (app_dir / app_def['script']).resolve()
     if not script.exists():
         print(f'Script not found: {script}')
         sys.exit(1)
-    cmd = [sys.executable, str(script)] + (extra_args or [])
+    return [sys.executable, str(script)]
+
+
+def launch_app(
+    app_dir: Path, app_def: dict, extra_args: list[str] | None = None,
+) -> None:
+    """Launch a sub-app by running its script in a new process."""
+    cmd = _resolve_cmd(app_dir, app_def) + (extra_args or [])
     subprocess.run(cmd, cwd=resolve_cwd(app_dir, app_def))
 
 
@@ -337,8 +349,10 @@ class LauncherApp(App):
 
     @work(thread=True)
     def _run_inline_cmd(self, cli_args: list[str], app_name: str) -> None:
-        script = (self._app_dir / self._selected_app['script']).resolve()
-        cmd = [sys.executable, '-u', str(script)] + cli_args
+        cmd = _resolve_cmd(self._app_dir, self._selected_app)
+        if not getattr(sys, 'frozen', False):
+            cmd.insert(1, '-u')
+        cmd += cli_args
         try:
             proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
