@@ -12,6 +12,7 @@ on:
         options:
           - patch
           - minor
+          - none
 
 permissions:
   contents: write
