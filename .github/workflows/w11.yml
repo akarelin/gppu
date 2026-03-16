@@ -54,7 +54,7 @@ jobs:
   build-windows:
     if: always() && (needs.bump.result == 'success' || needs.bump.result == 'skipped')
     needs: bump
-    runs-on: windows-latest
+    runs-on: [self-hosted, Windows]
 
     steps:
       - uses: actions/checkout@v6
@@ -87,7 +87,7 @@ jobs:
           cp dist/w11.exe dist/w11-events.exe dist/w11-onedrive.exe release/
           cp w11/w11.yaml w11/w11-events.yaml w11/w11-onedrive.yaml release/
           cp w11/error_rules.yaml w11/event_categories.yaml release/
-          cd release && 7z a ../dist/w11-windows-amd64.zip *
+          cd release && powershell -Command "Compress-Archive -Path * -DestinationPath ../dist/w11-windows-amd64.zip"
 
       - uses: actions/upload-artifact@v7
         with:
