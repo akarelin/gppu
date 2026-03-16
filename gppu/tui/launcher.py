@@ -27,13 +27,75 @@ import sys
 from pathlib import Path
 
 from gppu import Env, dict_from_yml
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, RenderResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.content import Content
+from textual.dom import NoScreen
+from textual.events import Mount
 from textual import work
 from textual.widgets import (
     Footer, Header, Input, ListItem, ListView, OptionList, RichLog, Static,
 )
+from textual.widgets._header import HeaderIcon, HeaderTitle
+
+
+# ── StatusHeader ──────────────────────────────────────────────────────────────
+
+class _HeaderIndicator(Static):
+    """Right-aligned indicator area replacing Textual's empty HeaderClockSpace."""
+
+    DEFAULT_CSS = """
+    _HeaderIndicator {
+        dock: right;
+        width: auto;
+        max-width: 60%;
+        padding: 0 1;
+        content-align: right middle;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+        color: $foreground;
+        text-opacity: 85%;
+    }
+    """
+
+
+class StatusHeader(Header):
+    """Header that shows ``sub_title`` right-aligned instead of center-merged.
+
+    Drop-in replacement for Textual's ``Header``.  The title stays centered;
+    the subtitle (set via ``app.sub_title``) renders on the right where
+    Textual < 1.0 used to place it.
+    """
+
+    def compose(self) -> ComposeResult:
+        yield HeaderIcon().data_bind(StatusHeader.icon)
+        yield HeaderTitle()
+        yield _HeaderIndicator()
+
+    def format_title(self) -> Content:
+        """Title only — sub_title is handled by the right indicator."""
+        return Content(self.screen_title)
+
+    def _on_mount(self, _: Mount) -> None:
+        async def set_title() -> None:
+            try:
+                self.query_one(HeaderTitle).update(self.format_title())
+            except NoScreen:
+                pass
+
+        async def set_indicator() -> None:
+            try:
+                sub = self.screen_sub_title
+                indicator = self.query_one(_HeaderIndicator)
+                indicator.update(f'[dim]{sub}[/dim]' if sub else '')
+            except NoScreen:
+                pass
+
+        self.watch(self.app, 'title', set_title)
+        self.watch(self.screen, 'title', set_title)
+        self.watch(self.app, 'sub_title', set_indicator)
+        self.watch(self.screen, 'sub_title', set_indicator)
 
 
 # ── Utilities ────────────────────────────────────────────────────────────────
@@ -269,7 +331,7 @@ class LauncherApp(App):
         self._bg_running = False
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield StatusHeader()
         with Horizontal(id='top-bar'):
             yield SpinnerIndicator(id='spinner')
             yield Static('', id='process-status')
