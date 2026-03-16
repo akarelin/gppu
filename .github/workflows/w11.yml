@@ -16,7 +16,6 @@ on:
 
 permissions:
   contents: write
-  variables: write
 
 jobs:
   bump:
@@ -115,17 +114,13 @@ jobs:
           files: artifacts/*
           generate_release_notes: true
 
-      - name: Update w11-latest tag and version variable
+      - name: Update w11-latest tag
         uses: actions/checkout@v6
         with:
           fetch-tags: true
           fetch-depth: 0
-      - env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
+      - run: |
           git config user.name "Alex AI Actions"
           git config user.email "actions@karelin.ai"
           git tag -f w11-latest
           git push -f origin w11-latest
-          TAG="${{ needs.bump.outputs.tag || github.ref_name }}"
-          gh variable set VERSION_W11 --body "${TAG#w11-}"
