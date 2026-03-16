@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "w11"
+version = "0.1"
+description = "Windows 11 utilities and diagnostics"
+requires-python = ">=3.11"
+dependencies = [
+    "gppu @ git+ssh://git@github.com/akarelin/gppu.git@latest",
+    "textual",
+    "PyYAML",
+]
+
+[project.scripts]
+w11 = "w11:main"
