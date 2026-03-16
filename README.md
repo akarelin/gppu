@@ -1,6 +1,6 @@
 # GPPU - General Purpose Python Utilities
 
-[![gppu](https://github.com/akarelin/gppu/actions/workflows/ci.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/ci.yml)
+[![gppu](https://github.com/akarelin/gppu/actions/workflows/gppu.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/gppu.yml)
 [![version](https://img.shields.io/github/v/tag/akarelin/gppu?label=version&sort=semver)](https://github.com/akarelin/gppu/releases/latest)
 [![Statusline](https://github.com/akarelin/gppu/actions/workflows/statusline-release.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/statusline-release.yml)
 
