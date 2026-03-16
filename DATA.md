@@ -107,3 +107,66 @@ postgres:
   db: "postgresql://user:pass@localhost/specific_db"
   base_dir: "/data/postgres"
 ```
+
+## DiskCache - Disk-Backed Key/Value Cache
+
+Standalone disk-backed cache with TTL support and environment variable bypass. Does **not** require `Env` or config initialization.
+
+```python
+from gppu.data import DiskCache
+
+# Basic usage with context manager
+with DiskCache('~/.cache/myapp', ttl=3600) as cache:
+    cache.set('key', {'data': [1, 2, 3]})
+    result = cache.get('key')          # {'data': [1, 2, 3]}
+    cache.get('missing')               # None
+    cache.get('missing', default=42)   # 42
+    cache.delete('key')
+
+# Per-key TTL override
+cache.set('short_lived', 'val', ttl=10)   # expires in 10s
+cache.set('long_lived', 'val', ttl=3600)  # expires in 1h
+cache.set('permanent', 'val', ttl=0)      # no expiration
+
+# Use as decorator for automatic memoization
+cache = DiskCache('/tmp/fn_cache', ttl=300)
+
+@cache
+def expensive_computation(x):
+    return x * 2
+
+expensive_computation(5)  # computed
+expensive_computation(5)  # served from cache
+```
+
+### Constructor
+
+```python
+DiskCache(directory, ttl=86400, *, skip_env='SKIP_CACHE')
+```
+
+| Parameter   | Default        | Description |
+|-------------|----------------|-------------|
+| `directory` | *(required)*   | Cache directory path (supports `~` expansion) |
+| `ttl`       | `86400` (24h)  | Default TTL in seconds |
+| `skip_env`  | `'SKIP_CACHE'` | Env var name that bypasses caching when set to `true`/`1`/`yes`. Empty string disables this check |
+
+### Methods
+
+| Method | Description |
+|--------|-------------|
+| `get(key, default=None)` | Retrieve cached value, or `default` if missing/expired |
+| `set(key, value, ttl=None)` | Store value. Uses instance TTL if `ttl` is `None`; `ttl=0` means no expiration |
+| `delete(key)` | Remove a key |
+| `close()` | Close the cache |
+| `skip` (property) | `True` if caching is bypassed via env var |
+
+### Env-Var Bypass
+
+Set the environment variable named in `skip_env` to `true`, `1`, or `yes` to disable all caching (reads return `default`, writes are no-ops, decorator passes through). Useful for testing or debugging.
+
+```bash
+SKIP_CACHE=true python my_script.py  # all cache reads return default
+```
+
+Requires `diskcache`: `pip install "gppu[cache] @ git+ssh://git@github.com/akarelin/gppu.git@latest"`
