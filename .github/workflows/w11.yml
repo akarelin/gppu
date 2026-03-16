@@ -76,9 +76,9 @@ jobs:
       - name: Build binaries
         run: |
           pip install pyinstaller
-          pyinstaller --onefile --name w11 --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=textual --hidden-import=yaml --collect-all textual --copy-metadata gppu w11/__main__.py
-          pyinstaller --onefile --name w11-events --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=textual --hidden-import=yaml --collect-all textual --copy-metadata gppu w11/w11-events.py
-          pyinstaller --onefile --name w11-onedrive --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=textual --hidden-import=yaml --collect-all textual --copy-metadata gppu w11/w11-onedrive.py
+          pyinstaller --onefile --name w11 --add-data "w11/default_config;default_config" --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=textual --hidden-import=yaml --collect-all textual --copy-metadata gppu w11/__main__.py
+          pyinstaller --onefile --name w11-events --add-data "w11/default_config;default_config" --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=textual --hidden-import=yaml --collect-all textual --copy-metadata gppu w11/w11-events.py
+          pyinstaller --onefile --name w11-onedrive --add-data "w11/default_config;default_config" --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=textual --hidden-import=yaml --collect-all textual --copy-metadata gppu w11/w11-onedrive.py
 
       - name: Stage release files
         run: |
