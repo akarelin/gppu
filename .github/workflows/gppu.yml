@@ -21,7 +21,6 @@ on:
 
 permissions:
   contents: write
-  variables: write
 
 jobs:
   test:
@@ -90,10 +89,7 @@ jobs:
           files: dist/*
           generate_release_notes: true
 
-      - name: Update latest tag and version variable
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Update latest tag
         run: |
           git tag -f latest
           git push -f origin latest
-          gh variable set VERSION_GPPU --body "${TAG#v}"
