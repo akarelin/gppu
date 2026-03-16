@@ -1,0 +1,74 @@
+common_errors:
+  app-crash:
+    count: 1
+    extracted:
+      app: TiWorker.exe
+      exception: c00000fd
+      module: ucrtbase.dll
+  app-hang:
+    count: 2
+    extracted:
+      app: explorer.exe
+      type: Cross-thread;Cross-process
+  device-display:
+    count: 2
+  device-failure:
+    count: 1
+    extracted:
+      device: ROOT\VMS_VSMP\0002
+      driver: wvms_mp_windows.inf
+      problem: '0xa'
+      service: VMSMP
+      status: '0xc0000001'
+  security-kerberos:
+    count: 2
+  service-crash:
+    count: 1
+    extracted:
+      service: GitHub Actions Runner (akarelin/dotfiles)
+      times: '%%1'
+  service-failure:
+    count: 2
+  system-tcpip:
+    count: 1
+  windows-search:
+    count: 12
+common_sources:
+  explorer:
+    count: 2
+    errors:
+      app-hang: 2
+  tiworker:
+    count: 1
+    errors:
+      app-crash: 1
+  vmsmp:
+    count: 1
+    errors:
+      device-failure: 1
+generated: '2026-03-16T16:29:39'
+host: Alex-PC
+logs:
+  Application:
+    ERR:
+      count: 8
+      last_message: 'The program explorer.exe version 10.0.26100.8036 stopped interacting with Windows and was closed. To see if more information about the problem is available, check the problem history in the Security and Maintenance control panel. | '
+      last_seen: '2026-03-16T23:08:38'
+    WRN:
+      count: 21
+      last_message: VBScript is scheduled for deprecation. Our telemetry indicates that your system is currently utilizing VBScript. | We strongly recommend identifying and migrating away from any VBScript dependencies at the earliest. |  | The following process has been detected as using VBScript. The associated pr...
+      last_seen: '2026-03-16T23:22:41'
+  Microsoft-Windows-Kernel-PnP/Configuration:
+    ERR:
+      count: 1
+      last_message: 'Device ROOT\VMS_VSMP\0002 had a problem starting. |  | Driver Name: wvms_mp_windows.inf | Class GUID: {4d36e972-e325-11ce-bfc1-08002be10318} | Service: VMSMP | Lower Filters:  | Upper Filters:  | Problem: 0xA | Problem Status: 0xC0000001'
+      last_seen: '2026-03-16T21:13:08'
+  System:
+    ERR:
+      count: 3
+      last_message: The Distinguished Name in the subject field of your smart card logon certificate does not contain enough information to identify the appropriate domain on an non-domain joined computer. Contact your system administrator.
+      last_seen: '2026-03-16T23:27:22'
+    WRN:
+      count: 12
+      last_message: The application-specific permission settings do not grant Local Activation permission for the COM Server application with CLSID  | {2593F8B9-4EAF-457C-B68A-50F6B8EA6B54} |  and APPID  | {15C20B67-12E7-4BB6-92BB-7AFF07997402} |  to the user KARELIN\Alex SID (S-1-12-1-3188208456-1243779992-23281622...
+      last_seen: '2026-03-16T22:19:02'

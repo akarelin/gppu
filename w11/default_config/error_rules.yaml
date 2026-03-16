@@ -1,0 +1,192 @@
+/creative-cloud:
+  name: Creative Cloud
+  match: Creative Cloud
+/explorer:
+  name: Explorer
+  match: Explorer
+/intel-dsa:
+  name: Intel DSA
+  match: DSATray|Intel.*Driver and Support
+/intel-tacd:
+  name: Intel TACD
+  match: IntelTACD
+/keepass:
+  name: KeePass
+  match: KeePass
+/logitech:
+  name: Logitech
+  match: logioptions
+/mmc:
+  name: MMC
+  match: mmc
+/notepad:
+  name: Notepad
+  match: Notepad
+/nvidia:
+  name: NVIDIA
+  match: NVIDIA
+/onedrive:
+  name: OneDrive
+  match: OneDrive
+/sonos:
+  name: Sonos
+  match: SonosLibraryService
+/synology-drive:
+  name: Synology Drive
+  match: cloud-drive-daemon|SynologyDrive|cloud-drive-ui
+/synology-surveillance:
+  name: Synology Surveillance
+  match: Synology Surveillance
+/systemsettings:
+  name: System Settings
+  match: SystemSettings
+/tiworker:
+  name: TiWorker
+  match: TiWorker
+/vmsmp:
+  name: Hyper-V VMSMP
+  match: VMS_VSMP
+/windowsupdate:
+  name: Windows Update
+  match: WindowsUpdateClient
+app-crash/:
+  name: Application Crash
+  extract:
+    app: AppName
+    exception: ExceptionCode
+    module: ModuleName
+  pattern:
+    - Application Error
+    - Faulting application name
+  source_field: app
+app-hang/:
+  name: Application Hang
+  extract:
+    app: AppName
+    type: HangType
+  pattern: The program .+ stopped interacting|Application Hang
+  source_field: app
+device-display/:
+  name: Display HDR
+  pattern: you can turn on HDR in display settings
+device-failure/:
+  name: Device Failure
+  extract:
+    device: DeviceInstanceId
+    driver: DriverName
+    problem: Problem
+    service: ServiceName
+    status: Status
+  pattern: had a problem starting|driver.*failed to load
+  source_field: device
+device-intel-nic/:
+  name: Intel NIC
+  pattern: Intel.*Ethernet.*Network Adapter.*disconnected
+perflib/:
+  name: Perflib Error
+  pattern: The Open procedure for service|cannot load the extensible counter DLL
+security-auth-failure/:
+  name: Auth Failure
+  extract:
+    account: TargetUserName
+    domain: TargetDomainName
+    ip: IpAddress
+  pattern: logon.*fail|authentication.*fail
+security-cert-error/:
+  name: Certificate Error
+  pattern: certificate.*expir|certificate.*invalid|certificate.*revok
+security-kerberos/:
+  name: Kerberos Error
+  pattern: Distinguished Name.*smart card logon
+security-tpm/:
+  name: TPM Error
+  pattern: Device Health Certificate provisioning
+service-crash/:
+  name: Service Crash
+  extract:
+    action: param5
+    service: param1
+    times: param2
+  pattern:
+    - service terminated unexpectedly
+    - service terminated with the following error
+  source_field: service
+service-failure/:
+  name: Service Failure
+  pattern:
+    - Service cannot be started
+    - service could not be started
+    - service failed to start
+  source_field: service
+system-bsod/:
+  name: BSOD / Bugcheck
+  pattern: bugcheck|BugCheck|blue screen|unexpected shutdown
+system-disk-io/:
+  name: Disk IO Error
+  pattern: disk.*error|The IO operation.*at logical block
+system-dns/:
+  name: DNS Resolution
+  pattern: name resolution.*fail|DNS.*timeout|DNS.*error
+system-event-suppressed/:
+  name: Event Suppressed
+  pattern: has been suppressed \d+ time
+system-memory/:
+  name: Memory Pressure
+  pattern: low on memory|resource exhaustion|paged pool
+system-restart/:
+  name: Restart Blocked
+  pattern: cannot be restarted
+system-secure-boot/:
+  name: Secure Boot Certs
+  pattern: Secure Boot certificates.*not yet been applied
+system-shutdown:
+  name: Shutdown Delay
+  pattern: delaying system shutdown
+system-tcpip/:
+  name: Tcpip Port Exhaustion
+  pattern: A request to allocate an ephemeral port
+system-vss/:
+  name: VSS Error
+  pattern: Volume Shadow Copy Service error
+system-wlan/:
+  name: WLAN AutoConfig
+  pattern: WLAN Extensibility Module has stopped
+system-wmi/:
+  name: WMI Warning
+  pattern: A provider.*has been registered.*Windows Management
+usb-usbhub3-196/:
+  name: USB-USBHUB3 196
+  extract:
+    fid-bcddevice: fid_bcdDevice
+    fid-dripswatchdogresult: fid_DripsWatchdogResult
+    fid-idproduct: fid_idProduct
+    fid-idvendor: fid_idVendor
+    fid-usbdevice: fid_UsbDevice
+  pattern: USB\ device\ draining\ system\ power\ when
+win32k-700/:
+  name: Win32k 700
+  pattern: Power\ Manager\ has\ requested\ suppression
+windows-hyper-v/:
+  name: Hyper-V Hypervisor
+  pattern: The hypervisor did not enable mitigation
+windows-search/:
+  name: Search Hang
+  pattern: filter host process.*did not respond
+windows-update/:
+  name: Windows Update Fail
+  extract:
+    error: errorCode
+    update: updateTitle
+  pattern: Windows Update.*fail|update.*error.*0x
+windows/dcom-permission:
+  name: DCOM Permission
+  pattern: The application-specific permission settings do not grant
+windows/dcom-timeout:
+  name: DCOM Timeout
+  pattern: did not register with DCOM
+windows/dotnet:
+  name: .NET Runtime Error
+  pattern: \.NET Runtime.*failure
+windows/vbscript:
+  name: VBScript Deprecation
+  pattern: VBScript is scheduled for deprecation
