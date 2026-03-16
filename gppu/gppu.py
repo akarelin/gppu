@@ -794,13 +794,14 @@ class PathBuilder:
   @staticmethod
   def data_path() -> Path:
     if PathBuilder.os == OSType.W11:
-      import ctypes.wintypes
-      GUID = ctypes.c_char * 16
+      import ctypes, ctypes.wintypes
+      class _GUID(ctypes.Structure):
+        _fields_ = [("Data1", ctypes.wintypes.DWORD), ("Data2", ctypes.wintypes.WORD), ("Data3", ctypes.wintypes.WORD), ("Data4", ctypes.c_byte * 8)]
       _SHGetKnownFolderPath = ctypes.windll.shell32.SHGetKnownFolderPath
-      _SHGetKnownFolderPath.argtypes = [ctypes.POINTER(GUID), ctypes.wintypes.DWORD, ctypes.wintypes.HANDLE, ctypes.POINTER(ctypes.c_wchar_p)]
+      _SHGetKnownFolderPath.argtypes = [ctypes.POINTER(_GUID), ctypes.wintypes.DWORD, ctypes.wintypes.HANDLE, ctypes.POINTER(ctypes.c_wchar_p)]
       path_ptr = ctypes.c_wchar_p()
       # FOLDERID_Downloads = {374DE290-123F-4565-9164-39C4925E467B}
-      guid = GUID(b'\x90\xe2\x4d\x37\x3f\x12\x65\x45\x91\x64\x39\xc4\x92\x5e\x46\x7b')
+      guid = _GUID(0x374DE290, 0x123F, 0x4565, (ctypes.c_byte * 8)(0x91, 0x64, 0x39, 0xC4, 0x92, 0x5E, 0x46, 0x7B))
       if _SHGetKnownFolderPath(ctypes.byref(guid), 0, None, ctypes.byref(path_ptr)) == 0:
         return Path(path_ptr.value)
     if PathBuilder.os == OSType.MACOS: return PathBuilder._HOME / 'Downloads'
