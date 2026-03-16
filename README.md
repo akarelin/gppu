@@ -3,6 +3,7 @@
 [![gppu](https://github.com/akarelin/gppu/actions/workflows/gppu.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/gppu.yml)
 [![version](https://img.shields.io/github/v/tag/akarelin/gppu?label=version&sort=semver)](https://github.com/akarelin/gppu/releases/latest)
 [![Statusline](https://github.com/akarelin/gppu/actions/workflows/statusline-release.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/statusline-release.yml)
+[![W11](https://github.com/akarelin/gppu/actions/workflows/w11-release.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/w11-release.yml)
 
 A utility library for configuration management, logging, data manipulation, type safety, database access, and browser automation. Used across Y2 (home automation), CRAP (data pipelines), and RAN (infrastructure).
 
@@ -235,6 +236,27 @@ async def fetch_data(): ...
 Hex values computed from ANSI codes in `gppu/gppu.py` (xterm-256color palette).
 
 <img src="docs/tcolor-reference.svg" alt="TColor reference" width="640">
+
+## W11 — Windows 11 Utilities
+
+Windows-only (Intel) diagnostics and management tools. Separate package with its own release cycle (`w11-*` tags).
+
+See [w11/README.md](w11/README.md) for full documentation. Sub-apps:
+
+| Tool | Purpose |
+|------|---------|
+| [w11-events](w11/w11-events.md) | TUI for Windows Event Viewer — log analysis, deduplication, error categorization |
+| [w11-onedrive](w11/w11-onedrive.md) | OneDrive sync diagnostics & conflict analysis |
+
+```bash
+# Install from source
+cd w11 && pip install -e .
+
+# Run
+w11                    # TUI launcher
+w11 events             # launch events directly
+w11 onedrive           # launch onedrive directly
+```
 
 ## LLM Development Guide
 
