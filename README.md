@@ -22,7 +22,7 @@ pip install "gppu[all] @ git+ssh://git@github.com/akarelin/gppu.git@latest"
 pip install -e ".[all,test]"
 ```
 
-**Optional extras**: `pg` (psycopg2), `sql` (SQLAlchemy), `chrome` (Selenium), `all`, `test` (pytest).
+**Optional extras**: `pg` (psycopg2), `sql` (SQLAlchemy), `cache` (diskcache), `chrome` (Selenium), `all`, `test` (pytest).
 
 Requires Python >= 3.11. Core dependency: PyYAML.
 
@@ -205,9 +205,9 @@ prepend_datestamp('report.csv', '_')    # Path("260314_report.csv")
 
 See [AD.md](AD.md) for full documentation of `y2list`, `y2path`, `y2topic`, `y2slug`, `y2eid`, `DC`, `Logger`, `init_logger`, mixins, and `_Base`.
 
-### Database Access (gppu.data)
+### Database Access & Caching (gppu.data)
 
-See [DATA.md](DATA.md) for `_PGBase` (psycopg2) and `_SQABase` (SQLAlchemy).
+See [DATA.md](DATA.md) for `_PGBase` (psycopg2), `_SQABase` (SQLAlchemy), and `DiskCache` (disk-backed key/value cache with TTL and env-var bypass).
 
 ### Chrome Automation (gppu.chrome)
 
