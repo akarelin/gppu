@@ -153,7 +153,7 @@ jobs:
           files: artifacts/*
           generate_release_notes: true
 
-      - name: Update sl-latest tag and version badge
+      - name: Update sl-latest tag
         uses: actions/checkout@v6
         with:
           fetch-tags: true
@@ -163,9 +163,3 @@ jobs:
           git config user.email "actions@karelin.ai"
           git tag -f sl-latest
           git push -f origin sl-latest
-          TAG="${{ needs.bump.outputs.tag || github.ref_name }}"
-          VERSION="${TAG#sl-}"
-          echo "{\"schemaVersion\": 1, \"label\": \"version\", \"message\": \"${VERSION}\", \"color\": \"blue\"}" > badges/statusline.json
-          git add badges/statusline.json
-          git commit -m "chore: update statusline version badge to ${VERSION}" || true
-          git push
