@@ -21,7 +21,7 @@ from pathlib import Path
 from gppu import Env, dict_from_yml
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual import work
 from textual.widgets import Footer, Header, Input, ListItem, ListView, OptionList, RichLog, Static
 
@@ -95,6 +95,48 @@ class ModeItem(ListItem):
         yield Static(f'  {label}')
 
 
+class SpinnerIndicator(Static):
+    """Animated spinner indicating a background process is running.
+
+    Click to toggle the full output panel.
+    """
+
+    FRAMES = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__('', **kwargs)
+        self._frame = 0
+        self._active = False
+        self._timer = None
+
+    def start(self) -> None:
+        self._active = True
+        if self._timer:
+            self._timer.stop()
+        self._timer = self.set_interval(1 / 12, self._tick)
+
+    def stop(self) -> None:
+        self._active = False
+        if self._timer:
+            self._timer.stop()
+            self._timer = None
+        self.update('[green]✓[/green]')
+
+    def reset(self) -> None:
+        self._active = False
+        if self._timer:
+            self._timer.stop()
+            self._timer = None
+        self.update('')
+
+    def _tick(self) -> None:
+        self._frame = (self._frame + 1) % len(self.FRAMES)
+        self.update(f'[yellow]{self.FRAMES[self._frame]}[/yellow]')
+
+    def on_click(self) -> None:
+        self.app.action_toggle_output()
+
+
 class W11App(App):
     """Windows 11 Superapp launcher."""
 
@@ -102,6 +144,36 @@ class W11App(App):
     CSS = """
     Screen {
         align: center middle;
+    }
+    #top-bar {
+        dock: top;
+        height: 1;
+        padding: 0 1;
+        display: none;
+    }
+    #top-bar.has-process {
+        display: block;
+    }
+    #spinner {
+        width: 3;
+        height: 1;
+        min-width: 3;
+    }
+    #process-status {
+        height: 1;
+        width: 1fr;
+    }
+    #output-panel {
+        dock: top;
+        display: none;
+        height: auto;
+        max-height: 14;
+        border-top: solid $primary;
+        overflow-y: auto;
+        padding: 0 1;
+    }
+    #output-panel.visible {
+        display: block;
     }
     #menu {
         width: 80;
@@ -139,18 +211,13 @@ class W11App(App):
     OptionList:focus {
         border: none;
     }
-    #inline-output {
-        height: auto;
-        max-height: 18;
-        border: none;
-        padding: 0 1;
-    }
     """
     BINDINGS = [
         Binding('q', 'quit', 'Quit'),
         Binding('escape', 'back', 'Back'),
         Binding('enter', 'launch', 'Launch', show=False),
         Binding('d', 'toggle_dark', 'Dark/Light'),
+        Binding('o', 'toggle_output', 'Output', show=False),
     ]
 
     def __init__(self, apps: dict[str, dict]) -> None:
@@ -158,9 +225,14 @@ class W11App(App):
         self._apps = apps
         self._selected_app: dict | None = None
         self._phase = 'apps'  # apps → modes → ask
+        self._bg_running = False
 
     def compose(self) -> ComposeResult:
         yield Header()
+        with Horizontal(id='top-bar'):
+            yield SpinnerIndicator(id='spinner')
+            yield Static('', id='process-status')
+        yield RichLog(id='output-panel')
         with Vertical(id='menu'):
             yield Static('Windows 11 Tools', id='menu-title')
             yield ListView(
@@ -206,35 +278,69 @@ class W11App(App):
             self.exit(result={'app': self._selected_app, 'args': base_args})
 
     def _run_inline(self, cli_args: list[str]) -> None:
-        self._phase = 'inline'
-        title = self.query_one('#menu-title', Static)
-        title.update(f'{self._selected_app.get("name", "")} — Running...')
-        lv = self.query_one('#app-list', ListView)
-        lv.display = False
-        menu = self.query_one('#menu')
-        log = RichLog(id='inline-output')
-        menu.mount(log)
-        self._run_inline_cmd(cli_args, log)
+        """Start a background process, show spinner + status in top bar."""
+        self._bg_running = True
+        app_name = self._selected_app.get('name', '')
+
+        # Show top bar
+        top_bar = self.query_one('#top-bar')
+        top_bar.add_class('has-process')
+
+        # Start spinner
+        spinner = self.query_one('#spinner', SpinnerIndicator)
+        spinner.start()
+
+        # Update status
+        status = self.query_one('#process-status', Static)
+        status.update(f' [bold]{app_name}[/bold] [dim]running…[/dim]')
+
+        # Clear previous output
+        log = self.query_one('#output-panel', RichLog)
+        log.clear()
+
+        # Return to apps list so user can keep navigating
+        self._phase = 'apps'
+        self._run_inline_cmd(cli_args, app_name)
 
     @work(thread=True)
-    def _run_inline_cmd(self, cli_args: list[str], log: RichLog) -> None:
+    def _run_inline_cmd(self, cli_args: list[str], app_name: str) -> None:
         script = APP_DIR / self._selected_app['script']
-        cmd = [sys.executable, str(script)] + cli_args
+        cmd = [sys.executable, '-u', str(script)] + cli_args
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            output = result.stdout or ''
-            if result.stderr:
-                output += result.stderr
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1,
+            )
+            for line in proc.stdout:
+                line = line.rstrip('\n\r')
+                if line:
+                    self.call_from_thread(self._append_output, line)
+            proc.wait()
         except Exception as e:
-            output = str(e)
-        self.call_from_thread(self._show_inline_result, output.strip())
+            self.call_from_thread(self._append_output, f'Error: {e}')
+        self.call_from_thread(self._process_done, app_name)
 
-    def _show_inline_result(self, text: str) -> None:
-        title = self.query_one('#menu-title', Static)
-        title.update(f'{self._selected_app.get("name", "")} — Done  [dim]Esc=Back[/dim]')
-        log = self.query_one('#inline-output', RichLog)
-        for line in text.splitlines():
-            log.write(line)
+    def _append_output(self, line: str) -> None:
+        """Append a line to the output panel and update the status indicator."""
+        log = self.query_one('#output-panel', RichLog)
+        log.write(line)
+        status = self.query_one('#process-status', Static)
+        # Show truncated last line as the static indicator
+        display = line if len(line) <= 70 else line[:67] + '…'
+        status.update(f' [dim]{display}[/dim]')
+
+    def _process_done(self, app_name: str) -> None:
+        """Called when the background process finishes."""
+        self._bg_running = False
+        spinner = self.query_one('#spinner', SpinnerIndicator)
+        spinner.stop()
+        status = self.query_one('#process-status', Static)
+        status.update(f' [bold]{app_name}[/bold] [green]done[/green]  [dim]click ✓ or press O for output[/dim]')
+
+    def action_toggle_output(self) -> None:
+        """Toggle the output panel visibility."""
+        panel = self.query_one('#output-panel', RichLog)
+        panel.toggle_class('visible')
 
     def _show_ask_form(self, fields: list, base_args: list[str] | None = None) -> None:
         self._phase = 'ask'
@@ -296,15 +402,18 @@ class W11App(App):
 
     def action_back(self) -> None:
         if self._phase == 'apps':
+            # Hide output panel if visible, otherwise quit
+            panel = self.query_one('#output-panel', RichLog)
+            if panel.has_class('visible'):
+                panel.remove_class('visible')
+                return
             self.exit(result=None)
             return
         # Clean up phase-specific widgets
-        if self._phase in ('ask', 'inline'):
+        if self._phase == 'ask':
             menu = self.query_one('#menu')
             for widget in list(menu.children):
                 if widget.id and widget.id.startswith('ask-'):
-                    widget.remove()
-                elif widget.id == 'inline-output':
                     widget.remove()
                 elif isinstance(widget, (Input, OptionList, Static)) and widget.id not in ('menu-title', 'app-list'):
                     widget.remove()
