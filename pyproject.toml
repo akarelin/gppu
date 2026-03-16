@@ -16,7 +16,8 @@ pg = ["psycopg2-binary"]
 sql = ["sqlalchemy"]
 chrome = ["selenium>=4.0.0"]
 statusline = ["jinja2"]
-all = ["psycopg2-binary", "sqlalchemy", "selenium>=4.0.0", "jinja2"]
+tui = ["textual"]
+all = ["psycopg2-binary", "sqlalchemy", "selenium>=4.0.0", "jinja2", "textual"]
 test = ["pytest"]
 
 [project.scripts]
@@ -26,7 +27,7 @@ statusline = "statusline.status_line:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["gppu*", "statusline*"]
+include = ["gppu*", "statusline*", "w11*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
