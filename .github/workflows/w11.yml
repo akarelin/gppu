@@ -67,10 +67,15 @@ jobs:
         with:
           python-version: '3.13'
 
+      - name: Test w11 launch
+        run: |
+          pip install textual
+          pip install -e .
+          python -m w11 --list
+
       - name: Build binaries
         run: |
-          pip install pyinstaller textual
-          pip install -e .
+          pip install pyinstaller
           pyinstaller --onefile --name w11 --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=textual --hidden-import=yaml --collect-all textual --copy-metadata gppu w11/__main__.py
           pyinstaller --onefile --name w11-events --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=textual --hidden-import=yaml --collect-all textual --copy-metadata gppu w11/w11-events.py
           pyinstaller --onefile --name w11-onedrive --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=textual --hidden-import=yaml --collect-all textual --copy-metadata gppu w11/w11-onedrive.py
