@@ -14,10 +14,11 @@ dependencies = [
 [project.optional-dependencies]
 pg = ["psycopg2-binary"]
 sql = ["sqlalchemy"]
+cache = ["diskcache"]
 chrome = ["selenium>=4.0.0"]
 statusline = ["jinja2"]
 tui = ["textual"]
-all = ["psycopg2-binary", "sqlalchemy", "selenium>=4.0.0", "jinja2", "textual"]
+all = ["psycopg2-binary", "sqlalchemy", "diskcache", "selenium>=4.0.0", "jinja2", "textual"]
 test = ["pytest"]
 
 [project.scripts]
