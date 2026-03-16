@@ -32,7 +32,7 @@ class W11App(LauncherApp):
 
 
 def main() -> None:
-    Env(app_path=APP_DIR)
+    Env(name='w11', app_path=APP_DIR)
     Env.load()
     apps = load_app_registry(APP_DIR)
     launcher_main(apps, W11App, APP_DIR, 'w11 — Windows 11 Superapp')
