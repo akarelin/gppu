@@ -1,0 +1,2 @@
+gppu @ git+ssh://git@github.com/akarelin/gppu.git@latest
+textual
