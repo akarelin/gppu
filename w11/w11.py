@@ -13,12 +13,17 @@ Usage:
 
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 
 from gppu import Env
 from gppu.tui import LauncherApp, launcher_main, load_app_registry
 
-APP_DIR = Path(__file__).resolve().parent
+if getattr(sys, 'frozen', False):
+    APP_DIR = Path(os.environ.get('W11_APP_DIR', Path(sys.executable).parent))
+else:
+    APP_DIR = Path(__file__).resolve().parent
 
 
 class W11App(LauncherApp):
