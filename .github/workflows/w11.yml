@@ -100,20 +100,31 @@ jobs:
           path: artifacts/
           merge-multiple: true
 
+      - name: Compute version
+        id: version
+        run: |
+          TAG="${{ needs.bump.outputs.tag || github.ref_name }}"
+          echo "clean=${TAG#w11-}" >> $GITHUB_OUTPUT
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.bump.outputs.tag || github.ref_name }}
+          name: ${{ steps.version.outputs.clean }}
           files: artifacts/*
           generate_release_notes: true
 
-      - name: Update w11-latest tag
+      - name: Update w11-latest tag and version variable
         uses: actions/checkout@v6
         with:
           fetch-tags: true
           fetch-depth: 0
-      - run: |
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
           git config user.name "Alex AI Actions"
           git config user.email "actions@karelin.ai"
           git tag -f w11-latest
           git push -f origin w11-latest
+          TAG="${{ needs.bump.outputs.tag || github.ref_name }}"
+          gh variable set VERSION_W11 --body "${TAG#w11-}"
