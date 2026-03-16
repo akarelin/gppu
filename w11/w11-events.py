@@ -17,9 +17,11 @@ from __future__ import annotations
 import argparse
 import ctypes
 import json
+import os
 import re
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 from datetime import datetime
@@ -1343,7 +1345,11 @@ def main():
     parser.add_argument('--clear-logs', action='store_true', help='Clear all configured event logs (needs admin)')
     args = parser.parse_args()
 
-    Env(name='w11-events', app_path=Path(__file__).resolve().parent)
+    if getattr(sys, 'frozen', False):
+        app_dir = Path(os.environ.get('W11_APP_DIR', Path(sys.executable).parent))
+    else:
+        app_dir = Path(__file__).resolve().parent
+    Env(name='w11-events', app_path=app_dir)
     Env.load()
 
     if args.all_logs:
