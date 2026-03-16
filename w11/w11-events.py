@@ -1345,10 +1345,8 @@ def main():
     parser.add_argument('--clear-logs', action='store_true', help='Clear all configured event logs (needs admin)')
     args = parser.parse_args()
 
-    if getattr(sys, 'frozen', False):
-        app_dir = Path(os.environ.get('W11_APP_DIR', Path(sys.executable).parent))
-    else:
-        app_dir = Path(__file__).resolve().parent
+    from w11 import resolve_app_dir
+    app_dir = resolve_app_dir()
     Env(name='w11-events', app_path=app_dir)
     Env.load()
 
