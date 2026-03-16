@@ -7,6 +7,14 @@
 
 A utility library for configuration management, logging, data manipulation, type safety, database access, and browser automation. Used across Y2 (home automation), CRAP (data pipelines), and RAN (infrastructure).
 
+This repo contains **3 independent products**:
+
+| Product | Description | Platform |
+|---------|-------------|----------|
+| **gppu** (this page) | Core Python utility library | All |
+| [**statusline**](statusline/) | Claude Code 2-line status line tool | Linux, macOS, Windows |
+| [**w11**](w11/README.md) | Windows 11 utilities & diagnostics | Windows (Intel) |
+
 ## Installation
 
 ```bash
