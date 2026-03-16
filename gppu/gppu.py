@@ -816,7 +816,13 @@ class Env:
     Env._main_file = Path(getattr(__main__, '__file__', 'app')).resolve()
     Env._main_dir = Env._main_file.parent
 
-    Env.name = name or Env._main_file.stem
+    # Under PyInstaller __main__.__file__ resolves to __main__; use exe name instead
+    if name:
+      Env.name = name
+    elif getattr(sys, 'frozen', False):
+      Env.name = Path(sys.executable).stem
+    else:
+      Env.name = Env._main_file.stem
     Env.app_path = Env._resolve_app_path(app_path)
     Env.data_path = Env._detect_data_path()
     Env.config_file = Env._config_file()
