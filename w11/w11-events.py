@@ -1343,7 +1343,7 @@ def main():
     parser.add_argument('--clear-logs', action='store_true', help='Clear all configured event logs (needs admin)')
     args = parser.parse_args()
 
-    Env(app_path=Path('RAN/Win11'))
+    Env(name='w11-events', app_path=Path(__file__).resolve().parent)
     Env.load()
 
     if args.all_logs:
