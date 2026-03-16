@@ -153,7 +153,7 @@ class DiskCache:
 
   def set(self, key: str, value: Any, ttl: int | None = None) -> None:
     if self._skip: return
-    try: self._cache.set(key, value, expire=ttl or self._ttl)
+    try: self._cache.set(key, value, expire=self._ttl if ttl is None else (ttl or None))
     except Exception: pass
 
   def delete(self, key: str) -> None:

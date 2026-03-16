@@ -6,37 +6,35 @@ import tempfile
 import time
 from collections import Counter
 
-DEFAULT_CACHE_PATH = os.path.join(tempfile.gettempdir(), "claude_statusline_cache.json")
+from gppu.data import DiskCache
+
+DEFAULT_CACHE_DIR = os.path.join(tempfile.gettempdir(), "claude_statusline_cache")
 DEFAULT_GIT_TTL = 10  # seconds
 DEFAULT_JSONL_TTL = 2  # seconds
 
-_cache_path = DEFAULT_CACHE_PATH
+_dc: DiskCache | None = None
 _git_ttl = DEFAULT_GIT_TTL
 _jsonl_ttl = DEFAULT_JSONL_TTL
 
 
+def _get_dc() -> DiskCache:
+    """Lazy-init the DiskCache singleton."""
+    global _dc
+    if _dc is None:
+        _dc = DiskCache(DEFAULT_CACHE_DIR, ttl=86400, skip_env='')
+    return _dc
+
+
 def init_cache(cfg):
     """Initialize cache settings from config dict."""
-    global _cache_path, _git_ttl, _jsonl_ttl
-    _cache_path = cfg.get("cache_path", DEFAULT_CACHE_PATH)
+    global _dc, _git_ttl, _jsonl_ttl
+    cache_dir = cfg.get("cache_path", DEFAULT_CACHE_DIR)
+    # Migrate from old .json path to directory-based cache
+    if cache_dir.endswith('.json'):
+        cache_dir = cache_dir.removesuffix('.json')
     _git_ttl = cfg.get("git_ttl", DEFAULT_GIT_TTL)
     _jsonl_ttl = cfg.get("jsonl_ttl", DEFAULT_JSONL_TTL)
-
-
-def _load():
-    try:
-        with open(_cache_path) as f:
-            return json.load(f)
-    except Exception:
-        return {"jsonl": {}, "git": {}}
-
-
-def _save(cache):
-    try:
-        with open(_cache_path, "w") as f:
-            json.dump(cache, f)
-    except Exception:
-        pass
+    _dc = DiskCache(cache_dir, ttl=86400, skip_env='')
 
 
 def _new_counts():
@@ -101,7 +99,7 @@ def _parse_from_offset(path, offset):
                         for block in msg.get("content", []):
                             if isinstance(block, dict) and block.get("type") == "text":
                                 txt = block.get("text", "")
-                                if txt.startswith("Error:") or txt.startswith("❌"):
+                                if txt.startswith("Error:") or txt.startswith("\u274c"):
                                     counts["errors"] += 1
                 if e.get("subtype") == "compact_boundary":
                     counts["compactions"] += 1
@@ -140,13 +138,12 @@ def transcript_stats_cached(path):
     if not path or not os.path.isfile(path):
         return Counter(), _new_counts(), _new_meta(), 0
 
-    cache = _load()
-    jsonl_cache = cache.setdefault("jsonl", {})
+    dc = _get_dc()
 
-    # Check JSONL-level TTL: skip all file checks if recently validated
+    # Check session-level TTL: skip all file checks if recently validated
     now = time.time()
-    session_key = f"_session:{path}"
-    session_cached = jsonl_cache.get(session_key)
+    session_key = f"session:{path}"
+    session_cached = dc.get(session_key)
     if session_cached and (now - session_cached.get("ts", 0)) < _jsonl_ttl:
         return (Counter(session_cached["tools"]), session_cached["counts"],
                 session_cached.get("meta", _new_meta()), session_cached.get("subagents", 0))
@@ -170,7 +167,8 @@ def transcript_stats_cached(path):
         if not os.path.isfile(fpath):
             continue
         size = os.path.getsize(fpath)
-        cached = jsonl_cache.get(fpath)
+        file_key = f"jsonl:{fpath}"
+        cached = dc.get(file_key)
 
         if cached and cached["offset"] >= size:
             # File unchanged, use cache
@@ -190,24 +188,23 @@ def transcript_stats_cached(path):
             merged_counts = _merge_counts(old_counts, new_counts)
             merged_meta = _merge_meta(old_meta, new_meta)
 
-            jsonl_cache[fpath] = {
+            # Per-file offset entries: no expiration (ttl=0), invalidated by size check
+            dc.set(file_key, {
                 "offset": new_offset,
                 "tools": merged_tools,
                 "counts": merged_counts,
                 "meta": merged_meta,
-            }
+            }, ttl=0)
 
             all_tools.update(merged_tools)
             all_counts = _merge_counts(all_counts, merged_counts)
             all_meta = _merge_meta(all_meta, merged_meta)
 
-    # Store session-level aggregated result with TTL
-    jsonl_cache[session_key] = {
+    # Session-level aggregated result — TTL handled by timestamp check above
+    dc.set(session_key, {
         "ts": now, "tools": dict(all_tools), "counts": all_counts,
         "meta": all_meta, "subagents": subagent_count,
-    }
-    cache["jsonl"] = jsonl_cache
-    _save(cache)
+    }, ttl=0)
     return all_tools, all_counts, all_meta, subagent_count
 
 
@@ -221,16 +218,14 @@ def git_info_cached(cwd, git_fn):
     if not cwd:
         return git_fn(cwd)
 
-    cache = _load()
-    git_cache = cache.setdefault("git", {})
-    cached = git_cache.get(cwd)
+    dc = _get_dc()
+    git_key = f"git:{cwd}"
+    cached = dc.get(git_key)
 
     now = time.time()
     if cached and (now - cached.get("ts", 0)) < _git_ttl:
         return cached["data"]
 
     data = git_fn(cwd)
-    git_cache[cwd] = {"ts": now, "data": data}
-    cache["git"] = git_cache
-    _save(cache)
+    dc.set(git_key, {"ts": now, "data": data}, ttl=_git_ttl * 3)
     return data
