@@ -13,6 +13,7 @@ on:
         options:
           - patch
           - minor
+          - none
       run_tests:
         description: 'Run tests before release'
         type: boolean
