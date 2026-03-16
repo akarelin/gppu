@@ -9,6 +9,7 @@ import sys
 import platform
 import asyncio
 import json
+import getpass
 
 from pathlib import Path
 from copy import deepcopy
@@ -768,76 +769,82 @@ class PathBuilder:
   echo "//s1.karel.in/SD /mnt/SD cifs username=alex,password=%%,iocharset=utf8,vers=3.0 0 0" | sudo tee -a /etc/fstab
 
   """
-  _CODE_BASE_PATHS = {
-    OSType.W11: Template("D:\\Dev"),
-    OSType.WSL: Template("/home/$user"),
-    OSType.LINUX: Template("/home/$user"),
-    OSType.MACOS: Template("/Users/$user"),
-  }
-  _SHARED_DATA_PATHS = {
-    OSType.W11: Template("D:\\SD"),
-    OSType.WSL: Template("/mnt/d/SD"),
-    OSType.LINUX: Template("/mnt/SD"),
-    OSType.MACOS: Template("/Users/$user/SD"),
-  }
+  _HOME = Path.home()
 
-  # _KEY_PATH = Path("RAN/Keys")
-  user: str
-  app_name: str
-  app_path: Path
+  # Legacy hardcoded paths (kept for reference)
+  # _CODE_BASE_PATHS = {
+  #   OSType.W11: Template("D:\\Dev"),
+  #   OSType.WSL: Template("/home/$user"),
+  #   OSType.LINUX: Template("/home/$user"),
+  #   OSType.MACOS: Template("/Users/$user"),
+  # }
+  # _SHARED_DATA_PATHS = {
+  #   OSType.W11: Template("D:\\SD"),
+  #   OSType.WSL: Template("/mnt/d/SD"),
+  #   OSType.LINUX: Template("/mnt/SD"),
+  #   OSType.MACOS: Template("/Users/$user/SD"),
+  # }
 
-  _os: OSType
-  _base_path: Path
+  user: str = getpass.getuser()
+  os: OSType = detect_os()
 
-  def config_file(self) -> Path:
-    file = self.app_path / Path(self.app_name).with_suffix('.yaml')
+  @staticmethod
+  def base_path() -> Path: return PathBuilder._HOME
+
+  @staticmethod
+  def data_path() -> Path:
+    if PathBuilder.os == OSType.W11:
+      import ctypes.wintypes
+      GUID = ctypes.c_char * 16
+      _SHGetKnownFolderPath = ctypes.windll.shell32.SHGetKnownFolderPath
+      _SHGetKnownFolderPath.argtypes = [ctypes.POINTER(GUID), ctypes.wintypes.DWORD, ctypes.wintypes.HANDLE, ctypes.POINTER(ctypes.c_wchar_p)]
+      path_ptr = ctypes.c_wchar_p()
+      # FOLDERID_Downloads = {374DE290-123F-4565-9164-39C4925E467B}
+      guid = GUID(b'\x90\xe2\x4d\x37\x3f\x12\x65\x45\x91\x64\x39\xc4\x92\x5e\x46\x7b')
+      if _SHGetKnownFolderPath(ctypes.byref(guid), 0, None, ctypes.byref(path_ptr)) == 0:
+        return Path(path_ptr.value)
+    if PathBuilder.os == OSType.MACOS: return PathBuilder._HOME / 'Downloads'
+    return PathBuilder._HOME
+
+  @staticmethod
+  def app_path(app_path: Optional[Path] = None) -> Path:
+    if not app_path: return Path.cwd()
+    if app_path.is_absolute(): return app_path
+    return PathBuilder.base_path() / app_path
+
+  @staticmethod
+  def config_file(app_name: str, app_path: Optional[Path] = None) -> Path:
+    resolved = PathBuilder.app_path(app_path)
+    file = resolved / Path(app_name).with_suffix('.yaml')
     if not file.exists():
-      file = self.app_path / 'config.yaml'
+      file = resolved / 'config.yaml'
     if not file.exists():
-      raise FileNotFoundError(f"Config file not found for app '{self.app_name}' in path '{self.app_path}'")
+      raise FileNotFoundError(f"Config file not found for app '{app_name}' in path '{resolved}'")
     return file
-
- 
-#   def shared_data_path(self, path: Path) -> Path: return self._shared_data_path / path
-
-
-  def __init__(self, app_name: str, user: str = 'alex', app_path: Optional[Path] = None) -> None:
-    self.user = user
-    self.app_name = app_name
-
-    self._os = detect_os()
-    if self._os == OSType.W11: self._base_path = Path("D:\\Dev")
-    elif self._os in [OSType.WSL, OSType.LINUX]: self._base_path = Path(f"/home/{self.user}")
-    elif self._os == OSType.MACOS: self._base_path = Path(f"/Users/{self.user}")
-    else: raise Exception(f"Unsupported OS: {self._os.value}")
-
-    self.app_path = self._base_path
-    if app_path:
-      self.app_path = app_path if app_path.is_absolute() else self.app_path / app_path
 
 
 class Env:
   name: str
+  app_path: Optional[Path] = None
   data: dict[str, Any] = {}
   initialized: bool = False
 
-  _path_builder: PathBuilder
   _logger: logging.Logger
 
 
-  def __init__(self, name: str, app_path: Path):
+  def __init__(self, name: Optional[str] = None, app_path: Optional[Path] = None):
     import __main__
     Env.name = name or __main__.__file__
-    Env._path_builder = PathBuilder(user='alex', app_name=Env.name, app_path=app_path)
+    Env.app_path = app_path
 
     Env._logger = _logger.getChild(Env.name)
-    for name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)): 
+    for name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)):
       setattr(Env, name, staticmethod(partial(fn, logger=Env._logger)))
 
 
   @staticmethod
   def load() -> None:
-    config_file = Env._path_builder.config_file()
+    config_file = PathBuilder.config_file(Env.name, Env.app_path)
     config_data = dict_from_yml(config_file)
     Env._from_dict(config_data)
 
