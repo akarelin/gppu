@@ -118,7 +118,16 @@ jobs:
           files: artifacts/*
           generate_release_notes: true
 
-      - name: Update w11-latest tag
+      - name: Update w11-latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: w11-latest
+          name: w11-latest
+          files: artifacts/*
+          prerelease: true
+          make_latest: false
+
+      - name: Force-update w11-latest tag
         uses: actions/checkout@v6
         with:
           fetch-tags: true
