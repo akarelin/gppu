@@ -89,12 +89,7 @@ jobs:
           files: dist/*
           generate_release_notes: true
 
-      - name: Update latest tag and version badge
+      - name: Update latest tag
         run: |
           git tag -f latest
           git push -f origin latest
-          VERSION="${TAG#v}"
-          echo "{\"schemaVersion\": 1, \"label\": \"version\", \"message\": \"${VERSION}\", \"color\": \"blue\"}" > badges/gppu.json
-          git add badges/gppu.json
-          git commit -m "chore: update gppu version badge to ${VERSION}" || true
-          git push
