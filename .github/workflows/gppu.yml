@@ -45,8 +45,34 @@ jobs:
       - name: Run tests
         run: .venv/bin/python -m pytest tests/ -v
 
+  test-windows:
+    if: github.event_name == 'pull_request' || inputs.run_tests
+    runs-on: [self-hosted, Windows]
+    strategy:
+      matrix:
+        extras: ['', 'pg', 'sql']
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-tags: true
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Setup venv and install
+        run: |
+          python -m venv .venv
+          .venv\Scripts\pip install PyYAML pytest setuptools-scm
+          .venv\Scripts\pip install -e ".${{ matrix.extras && format('[{0}]', matrix.extras) || '' }}"
+
+      - name: Run tests
+        run: .venv\Scripts\python -m pytest tests/ -v
+
   release:
-    needs: test
+    needs: [test, test-windows]
     if: always() && github.event_name == 'workflow_dispatch' && (needs.test.result == 'success' || needs.test.result == 'skipped')
     runs-on: [self-hosted, linux]
 
