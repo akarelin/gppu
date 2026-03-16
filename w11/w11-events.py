@@ -29,10 +29,11 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from gppu import Env, dict_from_yml, dict_to_yml
+from gppu.tui import StatusHeader
 from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import DataTable, Footer, Header, RichLog, Static
+from textual.widgets import DataTable, Footer, RichLog, Static
 
 # ── Event model ──────────────────────────────────────────────────────────────
 
@@ -813,7 +814,7 @@ class EventLogApp(App):
         self._detail_mode = False  # True = showing selected event detail
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield StatusHeader()
         with Vertical(id='main-layout'):
             with Vertical(id='history-panel'):
                 yield Static(f'History — last {self.days} days', id='history-label', classes='panel-label')
