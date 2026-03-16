@@ -107,7 +107,7 @@ jobs:
           files: artifacts/*
           generate_release_notes: true
 
-      - name: Update w11-latest tag and version badge
+      - name: Update w11-latest tag
         uses: actions/checkout@v6
         with:
           fetch-tags: true
@@ -117,9 +117,3 @@ jobs:
           git config user.email "actions@karelin.ai"
           git tag -f w11-latest
           git push -f origin w11-latest
-          TAG="${{ needs.bump.outputs.tag || github.ref_name }}"
-          VERSION="${TAG#w11-}"
-          echo "{\"schemaVersion\": 1, \"label\": \"version\", \"message\": \"${VERSION}\", \"color\": \"blue\"}" > badges/w11.json
-          git add badges/w11.json
-          git commit -m "chore: update w11 version badge to ${VERSION}" || true
-          git push
