@@ -756,44 +756,23 @@ async def Dump(filename: str, data={}, **kw) -> None:
 
 
 # region Environment
-class BaseDirType(Enum):
-  CODE = "code"
-  CONFIG = "config"
-  DATA = "data"
+class Env:
+  name: str
+  app_path: Path
+  data_path: Path
+  data: dict[str, Any] = {}
+  initialized: bool = False
 
-class PathBuilder:
-  """
-  sudo mkdir /mnt/SD
-
-  sudo mount.cifs //s1.karel.in/SD /mnt/SD -o username=alex,password=%%
-  echo "//s1.karel.in/SD /mnt/SD cifs username=alex,password=%%,iocharset=utf8,vers=3.0 0 0" | sudo tee -a /etc/fstab
-
-  """
-  _HOME = Path.home()
-
-  # Legacy hardcoded paths (kept for reference)
-  # _CODE_BASE_PATHS = {
-  #   OSType.W11: Template("D:\\Dev"),
-  #   OSType.WSL: Template("/home/$user"),
-  #   OSType.LINUX: Template("/home/$user"),
-  #   OSType.MACOS: Template("/Users/$user"),
-  # }
-  # _SHARED_DATA_PATHS = {
-  #   OSType.W11: Template("D:\\SD"),
-  #   OSType.WSL: Template("/mnt/d/SD"),
-  #   OSType.LINUX: Template("/mnt/SD"),
-  #   OSType.MACOS: Template("/Users/$user/SD"),
-  # }
-
+  home: Path = Path.home()
   user: str = getpass.getuser()
   os: OSType = detect_os()
 
-  @staticmethod
-  def base_path() -> Path: return PathBuilder._HOME
+  _logger: logging.Logger
+
 
   @staticmethod
-  def data_path() -> Path:
-    if PathBuilder.os == OSType.W11:
+  def _detect_data_path() -> Path:
+    if Env.os == OSType.W11:
       import ctypes, ctypes.wintypes
       class _GUID(ctypes.Structure):
         _fields_ = [("Data1", ctypes.wintypes.DWORD), ("Data2", ctypes.wintypes.WORD), ("Data3", ctypes.wintypes.WORD), ("Data4", ctypes.c_byte * 8)]
@@ -804,39 +783,40 @@ class PathBuilder:
       guid = _GUID(0x374DE290, 0x123F, 0x4565, (ctypes.c_byte * 8)(0x91, 0x64, 0x39, 0xC4, 0x92, 0x5E, 0x46, 0x7B))
       if _SHGetKnownFolderPath(ctypes.byref(guid), 0, None, ctypes.byref(path_ptr)) == 0:
         return Path(path_ptr.value)
-    if PathBuilder.os == OSType.MACOS: return PathBuilder._HOME / 'Downloads'
-    return PathBuilder._HOME
+    if Env.os == OSType.MACOS: return Env.home / 'Downloads'
+    return Env.home
 
   @staticmethod
-  def app_path(app_path: Optional[Path] = None) -> Path:
-    if not app_path: return Path.cwd()
+  def _resolve_app_path(app_path: Optional[Path] = None) -> Path:
+    if not app_path: return Env._main_dir
     if app_path.is_absolute(): return app_path
-    return PathBuilder.base_path() / app_path
+    # Walk up from script location to find the relative path
+    parent = Env._main_dir
+    while parent != parent.parent:
+      candidate = parent / app_path
+      if candidate.exists(): return candidate
+      parent = parent.parent
+    return Env._main_dir / app_path
 
   @staticmethod
-  def config_file(app_name: str, app_path: Optional[Path] = None) -> Path:
-    resolved = PathBuilder.app_path(app_path)
-    file = resolved / Path(app_name).with_suffix('.yaml')
+  def _config_file() -> Path:
+    file = Env.app_path / Path(Env.name).with_suffix('.yaml')
     if not file.exists():
-      file = resolved / 'config.yaml'
+      file = Env.app_path / 'config.yaml'
     if not file.exists():
-      raise FileNotFoundError(f"Config file not found for app '{app_name}' in path '{resolved}'")
+      raise FileNotFoundError(f"Config file not found for app '{Env.name}' in path '{Env.app_path}'")
     return file
-
-
-class Env:
-  name: str
-  app_path: Optional[Path] = None
-  data: dict[str, Any] = {}
-  initialized: bool = False
-
-  _logger: logging.Logger
 
 
   def __init__(self, name: Optional[str] = None, app_path: Optional[Path] = None):
     import __main__
-    Env.name = name or __main__.__file__
-    Env.app_path = app_path
+    Env._main_file = Path(getattr(__main__, '__file__', 'app')).resolve()
+    Env._main_dir = Env._main_file.parent
+
+    Env.name = name or Env._main_file.stem
+    Env.app_path = Env._resolve_app_path(app_path)
+    Env.data_path = Env._detect_data_path()
+    Env.config_file = Env._config_file()
 
     Env._logger = _logger.getChild(Env.name)
     for name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)):
@@ -845,8 +825,7 @@ class Env:
 
   @staticmethod
   def load() -> None:
-    config_file = PathBuilder.config_file(Env.name, Env.app_path)
-    config_data = dict_from_yml(config_file)
+    config_data = dict_from_yml(Env.config_file)
     Env._from_dict(config_data)
 
 
