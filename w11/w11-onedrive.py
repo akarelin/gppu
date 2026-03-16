@@ -24,6 +24,7 @@ import shutil
 import sqlite3
 import subprocess
 import struct
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -1850,7 +1851,11 @@ def db_explore(accounts: list[str], output_dir: str | None = None) -> str | None
 def main():
     import argparse
 
-    Env(name='w11-onedrive', app_path=Path(__file__).resolve().parent)
+    if getattr(sys, 'frozen', False):
+        app_dir = Path(os.environ.get('W11_APP_DIR', Path(sys.executable).parent))
+    else:
+        app_dir = Path(__file__).resolve().parent
+    Env(name='w11-onedrive', app_path=app_dir)
     Env.load()
 
     parser = argparse.ArgumentParser(description='OneDrive Sync Diagnostics TUI')
