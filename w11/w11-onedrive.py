@@ -1850,7 +1850,7 @@ def db_explore(accounts: list[str], output_dir: str | None = None) -> str | None
 def main():
     import argparse
 
-    Env()
+    Env(name='w11-onedrive', app_path=Path(__file__).resolve().parent)
     Env.load()
 
     parser = argparse.ArgumentParser(description='OneDrive Sync Diagnostics TUI')
