@@ -1,9 +1,9 @@
-# gppu.data - Database Base Classes
+# gppu.data - Database & Caching
 
-`gppu.data` provides database access classes built on top of `_Base` (from `gppu.ad`), combining logging, config management, and connection lifecycle.
+`gppu.data` provides database access classes built on top of `_Base` (from `gppu.ad`), combining logging, config management, and connection lifecycle. It also includes `DiskCache`, a standalone disk-backed key/value cache.
 
 ```python
-from gppu.data import _PGBase, _SQABase
+from gppu.data import _PGBase, _SQABase, DiskCache
 ```
 
 ## Inheritance Chain
