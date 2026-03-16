@@ -1,0 +1,40 @@
+# ── w11 manifest ─────────────────────────────────────────────────────────────
+manifest:
+  name: Event Viewer
+  description: Windows Event Viewer logs — history, common errors, live tail
+  script: w11-events.py
+  icon: "\U0001F4CB"
+  modes:
+    default:
+      name: Default
+    refresh:
+      name: Refresh stats
+      args: [--stats]
+      inline: true
+    clear-logs:
+      name: Clear logs
+      args: [--clear-logs]
+      inline: true
+    ask:
+      name: Custom...
+      ask_for:
+        - name: days
+        - name: level
+          options: [Critical, Error, Warning, Information, Verbose, All]
+
+# ── App config ───────────────────────────────────────────────────────────────
+logs:
+  - Application
+  - System
+  - Security
+  - Microsoft-Windows-Kernel-PnP/Configuration
+
+level: Warning    # Critical, Error, Warning, Information, Verbose, All
+days: 30
+dedup: true
+max_message_length: 300
+
+event_categories: !include event_categories.yaml
+error_rules: !include error_rules.yaml
+
+# stats file is auto-generated as {hostname}.yaml next to this config
