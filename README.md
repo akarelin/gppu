@@ -1,6 +1,7 @@
 # GPPU - General Purpose Python Utilities
 
-[![CI](https://github.com/akarelin/gppu/actions/workflows/ci.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/ci.yml)
+[![gppu](https://github.com/akarelin/gppu/actions/workflows/ci.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/ci.yml)
+[![version](https://img.shields.io/github/v/tag/akarelin/gppu?label=version&sort=semver)](https://github.com/akarelin/gppu/releases/latest)
 [![Statusline](https://github.com/akarelin/gppu/actions/workflows/statusline-release.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/statusline-release.yml)
 
 A utility library for configuration management, logging, data manipulation, type safety, database access, and browser automation. Used across Y2 (home automation), CRAP (data pipelines), and RAN (infrastructure).
