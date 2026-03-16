@@ -160,6 +160,12 @@ class DiskCache:
     try: self._cache.delete(key)
     except Exception: pass
 
+  def __call__(self, fn):
+    """Use as @cache decorator for automatic memoization."""
+    if self._skip: return fn
+    try: return self._cache.memoize(expire=self._ttl)(fn)
+    except Exception: return fn
+
   def close(self):
     if self._cache: self._cache.close(); self._cache = None
 
