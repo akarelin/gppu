@@ -1,4 +1,4 @@
-name: W11 Release
+name: W11
 
 on:
   push:
@@ -12,7 +12,7 @@ on:
         options:
           - patch
           - minor
-          - None
+          - none
 
 permissions:
   contents: write
