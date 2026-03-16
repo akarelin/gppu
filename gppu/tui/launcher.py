@@ -72,16 +72,11 @@ def load_app_registry(app_dir: Path) -> dict[str, dict]:
     """Load app manifests from YAML configs referenced in ``Env.glob_dict('apps')``.
 
     Call ``Env()`` + ``Env.load()`` before this.
-    Checks ``~/.gppu/`` first, then *app_dir* for each config file.
     """
-    gppu_dir = Env.home / '.gppu'
     registry = Env.glob_dict('apps')
     apps: dict[str, dict] = {}
     for key, config_file in registry.items():
-        path = gppu_dir / config_file
-        if not path.exists():
-            path = app_dir / config_file
-        cfg = dict_from_yml(path)
+        cfg = dict_from_yml(app_dir / config_file)
         manifest = cfg.get('manifest', {})
         if manifest:
             manifest['_config'] = {k: v for k, v in cfg.items() if k != 'manifest'}
