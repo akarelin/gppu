@@ -32,7 +32,8 @@ APP_DIR = Path(__file__).parent
 
 def load_apps() -> dict[str, dict]:
     """Load app registry via Env, then read each app's manifest + config via dict_from_yml."""
-    Env(name='w11', app_path=Path('RAN/Win11'))
+    # Env(name='w11', app_path=Path('RAN/Win11'))
+    Env()
     Env.load()
     registry = Env.glob_dict('apps')
     apps: dict[str, dict] = {}
