@@ -1,4 +1,4 @@
-"""gppu.tui — Reusable TUI superapp launcher framework."""
+"""gppu.tui — Reusable TUI superapp launcher framework and selector widgets."""
 
 from .launcher import (
     AppItem,
@@ -12,7 +12,16 @@ from .launcher import (
     launcher_main,
 )
 
+from .selectors import (
+    Selector,
+    DetailedSelector,
+    DetailScreen,
+    ui_select,
+    ui_select_rows,
+)
+
 __all__ = [
+    # Launcher framework
     'AppItem',
     'ModeItem',
     'SpinnerIndicator',
@@ -22,4 +31,10 @@ __all__ = [
     'launch_app',
     'load_app_registry',
     'launcher_main',
+    # Selector widgets
+    'Selector',
+    'DetailedSelector',
+    'DetailScreen',
+    'ui_select',
+    'ui_select_rows',
 ]
