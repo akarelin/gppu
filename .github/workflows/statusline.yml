@@ -107,7 +107,7 @@ jobs:
   build-windows:
     if: always() && (needs.bump.result == 'success' || needs.bump.result == 'skipped')
     needs: bump
-    runs-on: windows-latest
+    runs-on: [self-hosted, Windows]
 
     steps:
       - uses: actions/checkout@v6
