@@ -763,7 +763,7 @@ class OneDriveDiagApp(App):
         return f'{name}-{account}'
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield StatusHeader()
         with TabbedContent(id='tabs'):
             for acc, data in self.accounts_data.items():
                 with TabPane(data.tab_label, id=f'tab-{acc}'):
@@ -1341,7 +1341,7 @@ class HostnamePicker(App):
         self._discovered = [h for h in discovered if h not in cfg_hostnames]
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield StatusHeader()
         with Vertical(id='picker'):
             yield Static('Select hostnames  [dim]Enter=Confirm  Esc=Cancel[/dim]',
                           id='picker-title')
@@ -1436,7 +1436,7 @@ class ConflictApp(App):
         self._delete_all_armed = False
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield StatusHeader()
         with Vertical(id='main-layout'):
             with Vertical(id='summary-panel'):
                 yield Static('Conflict Summary', id='summary-label', classes='panel-label')
