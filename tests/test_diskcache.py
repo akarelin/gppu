@@ -70,3 +70,36 @@ class TestDiskCache:
             cache.set('key', 'value')
             assert cache.get('key') == 'value'
         assert cache._cache is None
+
+    def test_decorator_memoizes(self, tmp_path):
+        cache = DiskCache(str(tmp_path / 'cache'), ttl=60, skip_env='')
+        call_count = 0
+
+        @cache
+        def expensive(x):
+            nonlocal call_count
+            call_count += 1
+            return x * 2
+
+        assert expensive(5) == 10
+        assert expensive(5) == 10
+        assert call_count == 1  # second call served from cache
+        assert expensive(3) == 6
+        assert call_count == 2  # different arg = new call
+        cache.close()
+
+    def test_decorator_skip_bypasses(self, tmp_path, monkeypatch):
+        monkeypatch.setenv('TEST_SKIP', 'true')
+        cache = DiskCache(str(tmp_path / 'cache'), ttl=60, skip_env='TEST_SKIP')
+        call_count = 0
+
+        @cache
+        def expensive(x):
+            nonlocal call_count
+            call_count += 1
+            return x * 2
+
+        assert expensive(5) == 10
+        assert expensive(5) == 10
+        assert call_count == 2  # no caching when skipped
+        cache.close()
