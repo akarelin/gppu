@@ -81,13 +81,12 @@ jobs:
           pyinstaller --onefile --name w11-onedrive --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=textual --hidden-import=yaml --collect-all textual --copy-metadata gppu w11/w11-onedrive.py
 
       - name: Stage release files
-        shell: bash
         run: |
-          mkdir -p release
-          cp dist/w11.exe dist/w11-events.exe dist/w11-onedrive.exe release/
-          cp w11/w11.yaml w11/w11-events.yaml w11/w11-onedrive.yaml release/
-          cp w11/error_rules.yaml w11/event_categories.yaml release/
-          cd release && powershell -Command "Compress-Archive -Path * -DestinationPath ../dist/w11-windows-amd64.zip"
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Copy-Item dist/w11.exe, dist/w11-events.exe, dist/w11-onedrive.exe -Destination release/
+          Copy-Item w11/w11.yaml, w11/w11-events.yaml, w11/w11-onedrive.yaml -Destination release/
+          Copy-Item w11/error_rules.yaml, w11/event_categories.yaml -Destination release/
+          Compress-Archive -Path release/* -DestinationPath dist/w11-windows-amd64.zip
 
       - uses: actions/upload-artifact@v7
         with:
