@@ -1,6 +1,27 @@
-# Win11
+# W11 — Windows 11 Utilities
 
-Windows 11 utilities and diagnostics for Alex-PC (KARELIN domain).
+[![W11](https://github.com/akarelin/gppu/actions/workflows/w11-release.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/w11-release.yml)
+
+Windows 11 utilities and diagnostics. Windows-only (Intel/amd64). Part of the [gppu](../README.md) repository.
+
+## Installation
+
+```bash
+# From source
+cd w11 && pip install -e .
+
+# Binary release (Windows x64)
+# Download from https://github.com/akarelin/gppu/releases?q=w11
+```
+
+## Usage
+
+```bash
+w11                    # TUI superapp launcher
+w11 events             # launch w11-events directly
+w11 onedrive           # launch w11-onedrive directly
+w11 --list             # list available tools
+```
 
 ## Tools
 
@@ -8,47 +29,47 @@ Windows 11 utilities and diagnostics for Alex-PC (KARELIN domain).
 
 TUI application for Windows Event Viewer analysis. Queries event logs, deduplicates noise (45K NVIDIA crashes become 1 line), classifies errors by category/source rules, and tracks known error sources.
 
+Full documentation: [w11-events.md](w11-events.md)
+
 ```bash
-python w11_events.py              # TUI
-python w11_events.py --stats      # recalculate stats, no TUI
-python w11_events.py --days 7     # override time window
-python w11_events.py --clear-logs # clear all configured logs (admin)
+w11 events                          # TUI
+python w11-events.py --stats        # recalculate stats, no TUI
+python w11-events.py --days 7       # override time window
+python w11-events.py --clear-logs   # clear all configured logs (admin)
 ```
 
 **Files:**
-- `w11_events.py` — main application
-- `w11_events.yaml` — config (logs, level, days)
+- `w11-events.py` — main application
+- `w11-events.yaml` — config (logs, level, days)
 - `error_rules.yaml` — category/source rules (`category/`, `/source`, `category/source` pairs)
-- `Alex-PC.yaml` — auto-generated stats per host
-- `SPEC.md` — full specification
+- `event_categories.yaml` — event type taxonomy
 
 **TUI keybindings:** `q` quit, `d` theme, `s` stats, `r` refresh, `c` clear logs, `e` export history, `w` export errors, `a` add rule, `o` overlap analysis
 
-**Dependencies:** gppu, textual, PyYAML
+### w11-onedrive
 
-### Watch-EventLog.ps1
+OneDrive for Business sync diagnostics & conflict analysis TUI.
 
-PowerShell version (predecessor). Real-time event log watcher with color-coded output, dedup, and CSV/JSON export. Standalone, no dependencies.
+Full documentation: [w11-onedrive.md](w11-onedrive.md)
 
-```powershell
-.\Watch-EventLog.ps1                              # default: warnings+, last 10 days
-.\Watch-EventLog.ps1 -LogName System -Level Error  # specific log/level
-.\Watch-EventLog.ps1 -ExportPath events.csv        # export
-.\Watch-EventLog.ps1 -NoDeDup                      # disable dedup
+```bash
+w11 onedrive                                # interactive mode selector
+python w11-onedrive.py diag                 # sync diagnostics
+python w11-onedrive.py diag --watch         # auto-refresh
+python w11-onedrive.py conflicts            # conflict analysis
 ```
 
-### OneDrive Diagnostics
+Reference: [OD4B-Sync-Diagnostics.md](OD4B-Sync-Diagnostics.md) — OneDrive for Business troubleshooting (log locations, key fields, reset procedure)
 
-- `onedrive-diag.py` — OneDrive sync diagnostics tool
-- `OD4B-Sync-Diagnostics.md` — OneDrive for Business troubleshooting reference (log locations, key fields, reset procedure)
+## Dependencies
 
-### pc-control
-
-PC control utilities (placeholder).
+- [gppu](../README.md) — configuration, logging, utilities
+- [textual](https://textual.textualize.io/) — TUI framework
+- PyYAML
 
 ## Config Pattern
 
-Uses [gppu](../../gppu) `Env` for configuration:
+Uses [gppu](../README.md) `Env` for configuration:
 ```python
 Env(name='w11_events', app_path=Path('RAN/Win11'))
 Env.load()
