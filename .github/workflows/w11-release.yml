@@ -1,0 +1,118 @@
+name: W11 Release
+
+on:
+  push:
+    tags: ['w11-*']
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump'
+        required: false
+        type: choice
+        options:
+          - patch
+          - minor
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    runs-on: [self-hosted, linux]
+    if: github.event_name == 'workflow_dispatch'
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-tags: true
+          fetch-depth: 0
+
+      - name: Compute next version
+        id: version
+        run: |
+          LATEST_TAG=$(git tag -l 'w11-[0-9]*' --sort=-v:refname | head -1 | sed 's/^w11-//')
+          if [ -z "$LATEST_TAG" ]; then LATEST_TAG="0.1.0"; fi
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_TAG"
+          if [ "${{ inputs.bump }}" = "minor" ]; then
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          else
+            PATCH=$((PATCH + 1))
+          fi
+          echo "tag=w11-${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_OUTPUT
+
+      - name: Create tag
+        run: |
+          git config user.name "Alex AI Actions"
+          git config user.email "actions@karelin.ai"
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+  build-windows:
+    if: always() && (needs.bump.result == 'success' || needs.bump.result == 'skipped')
+    needs: bump
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.bump.outputs.tag || github.ref }}
+          fetch-tags: true
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Build binaries
+        run: |
+          pip install pyinstaller textual
+          pip install -e .
+          pyinstaller --onefile --name w11 --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=textual --hidden-import=yaml --collect-all textual --copy-metadata gppu w11/__main__.py
+          pyinstaller --onefile --name w11-events --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=textual --hidden-import=yaml --collect-all textual --copy-metadata gppu w11/w11-events.py
+          pyinstaller --onefile --name w11-onedrive --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=textual --hidden-import=yaml --collect-all textual --copy-metadata gppu w11/w11-onedrive.py
+
+      - name: Stage release files
+        shell: bash
+        run: |
+          mkdir -p release
+          cp dist/w11.exe dist/w11-events.exe dist/w11-onedrive.exe release/
+          cp w11/w11.yaml w11/w11-events.yaml w11/w11-onedrive.yaml release/
+          cp w11/error_rules.yaml w11/event_categories.yaml release/
+          cd release && 7z a ../dist/w11-windows-amd64.zip *
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: w11-windows-amd64
+          path: dist/w11-windows-amd64.zip
+
+  release:
+    needs: [bump, build-windows]
+    if: always() && needs.build-windows.result == 'success'
+    runs-on: [self-hosted, linux]
+
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts/
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.bump.outputs.tag || github.ref_name }}
+          files: artifacts/*
+          generate_release_notes: true
+
+      - name: Update w11-latest tag
+        uses: actions/checkout@v6
+        with:
+          fetch-tags: true
+          fetch-depth: 0
+      - run: |
+          git config user.name "Alex AI Actions"
+          git config user.email "actions@karelin.ai"
+          git tag -f w11-latest
+          git push -f origin w11-latest
