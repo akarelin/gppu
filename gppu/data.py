@@ -118,3 +118,50 @@ class _SQABase(_PersistentBase):
       self._engine.dispose()
       self._engine = None
       self._Session = None
+
+
+class DiskCache:
+  """Disk-backed key/value cache with TTL and env-var bypass.
+
+  Standalone utility -- does not require Env or config initialization.
+  Requires: pip install "gppu[cache]"
+  """
+  _cache: Any
+  _ttl: int
+  _skip: bool
+
+  def __init__(self, directory: str, ttl: int = 86400, *, skip_env: str = 'SKIP_CACHE'):
+    """
+    Args:
+      directory:  Cache directory path (supports ~ expansion).
+      ttl:        Default TTL in seconds (default: 86400 = 24h).
+      skip_env:   Env var name to check for bypass (empty string disables).
+    """
+    import os
+    from diskcache import Cache
+    self._ttl = ttl
+    self._skip = bool(skip_env and os.getenv(skip_env, '').lower() in ('true', '1', 'yes'))
+    self._cache = Cache(os.path.expanduser(directory))
+
+  @property
+  def skip(self) -> bool: return self._skip
+
+  def get(self, key: str, default: Any = None) -> Any:
+    if self._skip: return default
+    try: return self._cache.get(key, default)
+    except Exception: return default
+
+  def set(self, key: str, value: Any, ttl: int | None = None) -> None:
+    if self._skip: return
+    try: self._cache.set(key, value, expire=ttl or self._ttl)
+    except Exception: pass
+
+  def delete(self, key: str) -> None:
+    try: self._cache.delete(key)
+    except Exception: pass
+
+  def close(self):
+    if self._cache: self._cache.close(); self._cache = None
+
+  def __enter__(self): return self
+  def __exit__(self, *_): self.close()
