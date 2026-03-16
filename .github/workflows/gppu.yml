@@ -73,7 +73,7 @@ jobs:
 
   release:
     needs: [test, test-windows]
-    if: always() && github.event_name == 'workflow_dispatch' && (needs.test.result == 'success' || needs.test.result == 'skipped')
+    if: always() && github.event_name == 'workflow_dispatch' && (needs.test.result == 'success' || needs.test.result == 'skipped') && (needs.test-windows.result == 'success' || needs.test-windows.result == 'skipped')
     runs-on: [self-hosted, linux]
 
     steps:
