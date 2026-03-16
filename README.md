@@ -1,8 +1,8 @@
 This repo contains **3 independent products**:
 
-[![gppu](https://github.com/akarelin/gppu/actions/workflows/gppu.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/gppu.yml) [![version](https://img.shields.io/github/v/release/akarelin/gppu?filter=v*&label=version&color=blue)](https://github.com/akarelin/gppu/releases/latest) Core Python utility library<br>
-[![Statusline](https://github.com/akarelin/gppu/actions/workflows/statusline.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/statusline.yml) [![version](https://img.shields.io/github/v/release/akarelin/gppu?filter=sl-*&label=version&color=blue)](https://github.com/akarelin/gppu/releases/tag/sl-latest) Claude Code 2-line status line tool (Linux, macOS, Windows)<br>
-[![W11](https://github.com/akarelin/gppu/actions/workflows/w11.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/w11.yml) [![version](https://img.shields.io/github/v/release/akarelin/gppu?filter=w11-*&label=version&color=blue)](https://github.com/akarelin/gppu/releases/tag/w11-latest) [**w11**](w11/README.md) Windows 11 utilities & diagnostics (Windows x64)
+[![gppu](https://github.com/akarelin/gppu/actions/workflows/gppu.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/gppu.yml) [![version](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/akarelin/gppu/badges/gppu.json)](https://github.com/akarelin/gppu/releases/latest) Core Python utility library<br>
+[![Statusline](https://github.com/akarelin/gppu/actions/workflows/statusline.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/statusline.yml) [![version](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/akarelin/gppu/badges/statusline.json)](https://github.com/akarelin/gppu/releases/tag/sl-latest) Claude Code 2-line status line tool (Linux, macOS, Windows)<br>
+[![W11](https://github.com/akarelin/gppu/actions/workflows/w11.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/w11.yml) [![version](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/akarelin/gppu/badges/w11.json)](https://github.com/akarelin/gppu/releases/tag/w11-latest) [**w11**](w11/README.md) Windows 11 utilities & diagnostics (Windows x64)
 
 # GPPU - General Purpose Python Utilities
 
