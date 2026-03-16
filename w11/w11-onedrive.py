@@ -12,6 +12,8 @@ Usage:
     python w11-onedrive.py diag --watch        # auto-refresh
     python w11-onedrive.py conflicts           # conflict analysis
     python w11-onedrive.py conflicts --hostname Mailstore
+    python w11-onedrive.py dbexplore           # explore sync DB, dump report
+    python w11-onedrive.py dbexplore --output . # save report to current dir
 """
 
 from __future__ import annotations
@@ -351,6 +353,137 @@ def resolve_folder(cur: sqlite3.Cursor, resource_id: str | None) -> str:
         except sqlite3.Error:
             break
     return '/'.join(parts) if parts else '(unknown folder)'
+
+
+def query_scope_info(db_path: Path) -> list[dict]:
+    """Get all synced scopes (libraries) with URLs and types."""
+    if not db_path:
+        return []
+    LIBRARY_TYPES = {0: 'Personal', 1: 'SharedWithMe', 2: 'ODB', 4: 'SPDocLib'}
+    SCOPE_TYPES = {3: 'ODB root', 6: 'SPO library'}
+    conn = sqlite3.connect(str(db_path))
+    cur = conn.cursor()
+    results = []
+    try:
+        cur.execute(
+            'SELECT scopeID, scopeType, libraryType, webURL, '
+            'selectiveSyncEnabled, lastProcessedChange '
+            'FROM od_ScopeInfo_Records')
+        for row in cur.fetchall():
+            # Resolve library name from URL path
+            url = row[3] or ''
+            lib_name = url.rstrip('/').rsplit('/', 1)[-1] if url else ''
+            results.append({
+                'scopeID': row[0],
+                'scopeType': SCOPE_TYPES.get(row[1], str(row[1])),
+                'libraryType': LIBRARY_TYPES.get(row[2], str(row[2])),
+                'webURL': url,
+                'libName': lib_name,
+                'selectiveSync': bool(row[4]) if row[4] is not None else None,
+                'lastProcessedChange': row[5] or '',
+            })
+    except sqlite3.Error:
+        pass
+    conn.close()
+    return results
+
+
+def query_service_history(db_path: Path, limit: int = 30) -> list[dict]:
+    """Get recent service operations, especially errors."""
+    if not db_path:
+        return []
+    conn = sqlite3.connect(str(db_path))
+    cur = conn.cursor()
+    results = []
+    try:
+        cur.execute(
+            'SELECT timestamp, scopeId, operationName, resultCode, '
+            'sizeInBytes, scenarioName '
+            'FROM od_ServiceOperationHistory ORDER BY id DESC LIMIT ?',
+            (limit,))
+        for row in cur.fetchall():
+            results.append({
+                'time': format_epoch(row[0]),
+                'scopeID': row[1],
+                'operation': row[2],
+                'resultCode': row[3],
+                'size': int(row[4]) if row[4] else 0,
+                'scenario': row[5] or '',
+            })
+    except sqlite3.Error:
+        pass
+    conn.close()
+    return results
+
+
+def query_file_folder_counts(db_path: Path) -> tuple[int, int]:
+    """Get total file and folder counts from the database."""
+    if not db_path:
+        return 0, 0
+    conn = sqlite3.connect(str(db_path))
+    cur = conn.cursor()
+    files = folders = 0
+    try:
+        cur.execute('SELECT COUNT(*) FROM od_ClientFile_Records')
+        files = cur.fetchone()[0]
+    except sqlite3.Error:
+        pass
+    try:
+        cur.execute('SELECT COUNT(*) FROM od_ClientFolder_Records')
+        folders = cur.fetchone()[0]
+    except sqlite3.Error:
+        pass
+    conn.close()
+    return files, folders
+
+
+def query_postponed_folder_changes(db_path: Path) -> list[dict]:
+    """Get postponed folder changes."""
+    if not db_path:
+        return []
+    conn = sqlite3.connect(str(db_path))
+    cur = conn.cursor()
+    results = []
+    try:
+        cur.execute(
+            'SELECT resourceID, folderName, changeType, postponedCount, '
+            'flags, parentResourceID '
+            'FROM od_ClientFolderPostponedChange_Records '
+            'ORDER BY postponedCount DESC')
+        for row in cur.fetchall():
+            folder = resolve_folder(cur, row[5])
+            results.append({
+                'resourceID': row[0],
+                'folderName': row[1],
+                'changeType': row[2],
+                'postponedCount': row[3],
+                'flags': row[4],
+                'parentFolder': folder,
+            })
+    except sqlite3.Error:
+        pass
+    conn.close()
+    return results
+
+
+SYNC_PROGRESS_BITS = {
+    0: 'Syncing',
+    16: 'ScanInProgress',
+    24: 'Hydration',
+}
+
+
+def decode_sync_progress(state: int) -> list[str]:
+    """Decode syncProgressState bitfield into human-readable flags."""
+    if state == 0:
+        return ['Idle']
+    flags = []
+    for bit, name in SYNC_PROGRESS_BITS.items():
+        if state & (1 << bit):
+            flags.append(name)
+    if not flags:
+        flags.append(f'Unknown(0x{state:x})')
+    return flags
 
 
 def format_epoch(ts: int | None) -> str:
@@ -1527,6 +1660,191 @@ class ConflictApp(App):
         label.update('Detail — select a row')
 
 
+# ── DB Explorer (non-TUI report) ────────────────────────────────────────────
+
+def db_explore(accounts: list[str], output_dir: str | None = None) -> str | None:
+    """Explore sync databases for all accounts and dump a diagnostic report.
+
+    Returns the output file path, or None if no output was written.
+    """
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    lines: list[str] = []
+
+    def out(text: str = '') -> None:
+        print(text)
+        lines.append(text)
+
+    out(f'OneDrive DB Explorer — {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+    out('=' * 72)
+
+    issues_found = 0
+
+    for acc in accounts:
+        out('')
+        out(f'Account: {acc}')
+        out('-' * 72)
+
+        email = user_email(acc) or '(unknown)'
+        od_folder = user_folder(acc) or '(unknown)'
+        out(f'  Email:  {email}')
+        out(f'  Folder: {od_folder}')
+
+        # SyncDiagnostics.log summary
+        diag = parse_sync_diag(acc)
+        if diag:
+            progress_state = int(diag.get('SyncProgressState',
+                                          diag.get('syncProgressState', '0')))
+            progress_flags = decode_sync_progress(progress_state)
+            uptime = int(diag.get('uptimeSecs', '0'))
+            out(f'  Uptime: {format_uptime(uptime)}  '
+                f'PID: {diag.get("pid", "?")}  '
+                f'v{diag.get("clientVersion", "?")}')
+            out(f'  SyncProgressState: {progress_state} '
+                f'({", ".join(progress_flags)})')
+
+            # Key counters
+            counters = {}
+            for field in ['ChangesToProcess', 'ChangesToSend',
+                          'FilesToDownload', 'FilesToUpload',
+                          'numFileFailedDownloads', 'numFileFailedUploads',
+                          'syncStallDetected', 'scanStateStallDetected']:
+                val = diag.get(field, diag.get(
+                    field[0].lower() + field[1:], '0'))
+                counters[field] = val
+            nonzero = {k: v for k, v in counters.items() if v != '0'}
+            if nonzero:
+                out(f'  Active counters: {nonzero}')
+                issues_found += len(nonzero)
+            else:
+                out('  All sync counters: 0 (healthy)')
+        else:
+            out('  SyncDiagnostics.log: NOT FOUND')
+            issues_found += 1
+
+        # Database queries
+        db_path = copy_sync_db(acc)
+        if not db_path:
+            out('  SyncEngineDatabase.db: NOT FOUND or locked')
+            issues_found += 1
+            continue
+
+        # Scope info
+        scopes = query_scope_info(db_path)
+        out(f'  Scopes (synced libraries): {len(scopes)}')
+        for s in scopes:
+            out(f'    [{s["scopeType"]}] {s["webURL"] or "(no URL)"}'
+                f'  type={s["libraryType"]}')
+
+        # File/folder counts
+        files, folders = query_file_folder_counts(db_path)
+        out(f'  Database records: {files} files, {folders} folders')
+
+        # Active hydrations
+        hydrations = query_hydration_data(db_path)
+        if hydrations:
+            out(f'  Active hydrations: {len(hydrations)}  *** ISSUE ***')
+            issues_found += len(hydrations)
+            for h in hydrations:
+                name = h['fileName'] or h['resourceID'][:30]
+                out(f'    {name}  '
+                    f'type={h["type"]}  count={h["count"]}  '
+                    f'last={h["lastHydration"]}')
+                # Resolve folder for hydration items
+                conn = sqlite3.connect(str(db_path))
+                cur = conn.cursor()
+                try:
+                    rid = h['resourceID'].split('+')[0]
+                    cur.execute(
+                        'SELECT parentResourceID, size '
+                        'FROM od_ClientFile_Records WHERE resourceID LIKE ?',
+                        (rid + '%',))
+                    row = cur.fetchone()
+                    if row:
+                        folder = resolve_folder(cur, row[0])
+                        out(f'      folder: {folder}  '
+                            f'size: {format_bytes(row[1] or 0)}')
+                except sqlite3.Error:
+                    pass
+                conn.close()
+        else:
+            out('  Active hydrations: 0')
+
+        # Postponed file changes
+        postponed = query_postponed_changes(db_path)
+        if postponed:
+            out(f'  Postponed file changes: {len(postponed)}  *** ISSUE ***')
+            issues_found += len(postponed)
+            for p in postponed:
+                out(f'    {p["fileName"]}  '
+                    f'type={p["changeType"]}  '
+                    f'retries={p["postponedCount"]}  '
+                    f'folder={p["folder"]}')
+        else:
+            out('  Postponed file changes: 0')
+
+        # Postponed folder changes
+        postponed_folders = query_postponed_folder_changes(db_path)
+        if postponed_folders:
+            out(f'  Postponed folder changes: {len(postponed_folders)}'
+                f'  *** ISSUE ***')
+            issues_found += len(postponed_folders)
+            for p in postponed_folders:
+                out(f'    {p["folderName"]}  '
+                    f'type={p["changeType"]}  '
+                    f'retries={p["postponedCount"]}  '
+                    f'parent={p["parentFolder"]}')
+        else:
+            out('  Postponed folder changes: 0')
+
+        # Service operation history
+        history = query_service_history(db_path, limit=30)
+        errors = [h for h in history
+                  if h['resultCode'] not in (200, 206, 304, None)]
+        if errors:
+            out(f'  Recent service errors: {len(errors)}  *** ISSUE ***')
+            issues_found += len(errors)
+            for e in errors:
+                scope_url = ''
+                for s in scopes:
+                    if s['scopeID'] == e['scopeID']:
+                        scope_url = s['webURL']
+                        break
+                scope_label = scope_url or e['scopeID'][:16]
+                out(f'    [{e["time"]}] {e["operation"]} -> '
+                    f'{e["resultCode"]}  '
+                    f'scope={scope_label}  '
+                    f'{e["scenario"][:60]}')
+        else:
+            out(f'  Recent service operations: {len(history)} (all OK)')
+
+        # Health assessment
+        postponed_for_health = query_postponed_changes(db_path)
+        dl_lines = parse_downloads_queue(acc)
+        stuck_dl = query_stuck_downloads(db_path, dl_lines)
+        status_text, _ = assess_health(diag, stuck_dl, postponed_for_health)
+        out(f'  Health: {status_text}')
+
+    # Summary
+    out('')
+    out('=' * 72)
+    if issues_found:
+        out(f'Total issues found: {issues_found}')
+    else:
+        out('No issues found — all accounts healthy.')
+
+    # Write report file
+    if output_dir is None:
+        output_dir = os.environ.get('TEMP', '.')
+    out_path = os.path.join(output_dir, f'onedrive-dbexplore-{timestamp}.txt')
+    try:
+        Path(out_path).write_text('\n'.join(lines), encoding='utf-8')
+        print(f'\nReport saved: {out_path}')
+        return out_path
+    except OSError as e:
+        print(f'\nFailed to save report: {e}')
+        return None
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -1536,7 +1854,8 @@ def main():
     Env.load()
 
     parser = argparse.ArgumentParser(description='OneDrive Sync Diagnostics TUI')
-    parser.add_argument('mode', nargs='?', choices=['diag', 'conflicts', 'reset'],
+    parser.add_argument('mode', nargs='?',
+                        choices=['diag', 'conflicts', 'reset', 'dbexplore'],
                         help='Mode: diag, conflicts, or reset')
     parser.add_argument('--account', action='append', default=None,
                         help='Account folder name(s). Repeatable. Default: all detected.')
@@ -1544,6 +1863,8 @@ def main():
                         help='Hostname suffix to analyze conflicts for (e.g., Mailstore)')
     parser.add_argument('--watch', action='store_true',
                         help='Auto-refresh health every 10s')
+    parser.add_argument('--output', default=None,
+                        help='Output directory for report files (dbexplore mode)')
     args = parser.parse_args()
 
     # Config values
@@ -1661,6 +1982,13 @@ def main():
         app = ConflictApp(od_folder=od_folder, hostnames=hostnames,
                           exclude_dirs=cfg_exclude)
         app.run()
+
+    elif mode == 'dbexplore':
+        accounts = args.account or cfg_accounts or discover_accounts()
+        if not accounts:
+            print('No OneDrive accounts found.')
+            return
+        db_explore(accounts, output_dir=args.output)
 
     elif mode == 'reset':
         exe = onedrive_exe_path()
