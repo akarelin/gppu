@@ -31,12 +31,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from gppu import Env
+from gppu.tui import StatusHeader
 from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.binding import Binding
 from textual.widgets import (
-    Button, Checkbox, DataTable, Footer, Header, Input, RichLog, Static,
+    Button, Checkbox, DataTable, Footer, Input, RichLog, Static,
     TabbedContent, TabPane,
 )
 
