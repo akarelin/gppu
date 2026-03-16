@@ -11,6 +11,9 @@ manifest:
     diag-watch:
       name: Sync Diagnostics (live)
       args: [diag, --watch]
+    dbexplore:
+      name: DB Explorer (report)
+      args: [dbexplore]
     reset:
       name: Reset OneDrive
       args: [reset]
