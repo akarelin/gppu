@@ -57,7 +57,7 @@ class TestPrependDatestamp:
 
     def test_preserves_directory(self):
         result = prepend_datestamp("/some/dir/file.txt")
-        assert str(result.parent) == "/some/dir"
+        assert result.parent == PurePosixPath("/some/dir")
 
 
 class TestAppendTimestamp:
@@ -73,4 +73,4 @@ class TestAppendTimestamp:
 
     def test_preserves_directory(self):
         result = append_timestamp("/some/dir/file.txt")
-        assert str(result.parent) == "/some/dir"
+        assert result.parent == PurePosixPath("/some/dir")
