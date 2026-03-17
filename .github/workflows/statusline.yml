@@ -67,8 +67,8 @@ jobs:
         run: |
           python3 -m venv .venv
           .venv/bin/pip install pyinstaller jinja2
-          .venv/bin/pip install -e ".[cache]"
-          .venv/bin/pyinstaller --onefile --name statusline --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=jinja2 --hidden-import=yaml --hidden-import=diskcache --collect-all jinja2 --copy-metadata gppu statusline/__main__.py
+          .venv/bin/pip install -e .
+          .venv/bin/pyinstaller --onefile --name statusline --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=jinja2 --hidden-import=yaml --collect-all jinja2 --copy-metadata gppu statusline/__main__.py
           mv dist/statusline dist/statusline-linux-amd64
 
       - uses: actions/upload-artifact@v7
@@ -95,8 +95,8 @@ jobs:
       - name: Build binary
         run: |
           pip install pyinstaller jinja2
-          pip install -e ".[cache]"
-          pyinstaller --onefile --name statusline --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=jinja2 --hidden-import=yaml --hidden-import=diskcache --collect-all jinja2 --copy-metadata gppu statusline/__main__.py
+          pip install -e .
+          pyinstaller --onefile --name statusline --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=jinja2 --hidden-import=yaml --collect-all jinja2 --copy-metadata gppu statusline/__main__.py
           mv dist/statusline dist/statusline-macos-arm64
 
       - uses: actions/upload-artifact@v7
@@ -123,8 +123,8 @@ jobs:
       - name: Build binary
         run: |
           pip install pyinstaller jinja2
-          pip install -e ".[cache]"
-          pyinstaller --onefile --name statusline --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=jinja2 --hidden-import=yaml --hidden-import=diskcache --collect-all jinja2 --copy-metadata gppu statusline/__main__.py
+          pip install -e .
+          pyinstaller --onefile --name statusline --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=jinja2 --hidden-import=yaml --collect-all jinja2 --copy-metadata gppu statusline/__main__.py
 
       - name: Rename artifact
         shell: bash
