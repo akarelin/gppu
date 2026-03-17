@@ -120,28 +120,232 @@ class _SQABase(_PersistentBase):
       self._Session = None
 
 
-class DiskCache:
-  """Disk-backed key/value cache with TTL and env-var bypass.
+class _JsonBackend:
+  """JSON-file cache backend. No dependencies."""
+
+  def __init__(self, path: str):
+    import os, json
+    self._path = path
+    self._data: dict = {}
+    os.makedirs(os.path.dirname(path) if not os.path.isdir(path) else path, exist_ok=True)
+    if os.path.isdir(path):
+      self._path = os.path.join(path, '_cache.json')
+    try:
+      with open(self._path) as f: self._data = json.load(f)
+    except Exception: pass
+
+  def _flush(self):
+    import json
+    try:
+      with open(self._path, 'w') as f: json.dump(self._data, f)
+    except Exception: pass
+
+  def _alive(self, entry: dict) -> bool:
+    import time
+    exp = entry.get('_exp')
+    return exp is None or time.time() < exp
+
+  def get(self, key: str, default=None):
+    entry = self._data.get(key)
+    if entry is None or not self._alive(entry): return default
+    return entry.get('v', default)
+
+  def set(self, key: str, value, expire=None):
+    import time
+    entry: dict = {'v': value}
+    if expire is not None: entry['_exp'] = time.time() + expire
+    self._data[key] = entry
+    self._flush()
+
+  def delete(self, key: str):
+    self._data.pop(key, None)
+    self._flush()
+
+  def close(self): self._flush()
+
+
+class _SqliteBackend:
+  """SQLite cache backend. No external dependencies (stdlib sqlite3)."""
+
+  def __init__(self, path: str):
+    import os, sqlite3
+    os.makedirs(os.path.dirname(path) if not os.path.isdir(path) else path, exist_ok=True)
+    if os.path.isdir(path):
+      path = os.path.join(path, '_cache.db')
+    self._conn = sqlite3.connect(path)
+    self._conn.execute(
+      'CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value BLOB, expire REAL)')
+
+  def get(self, key: str, default=None):
+    import pickle, time
+    row = self._conn.execute('SELECT value, expire FROM cache WHERE key=?', (key,)).fetchone()
+    if row is None: return default
+    if row[1] is not None and time.time() >= row[1]:
+      self._conn.execute('DELETE FROM cache WHERE key=?', (key,))
+      self._conn.commit()
+      return default
+    return pickle.loads(row[0])
+
+  def set(self, key: str, value, expire=None):
+    import pickle, time
+    exp = (time.time() + expire) if expire else None
+    self._conn.execute('INSERT OR REPLACE INTO cache (key, value, expire) VALUES (?, ?, ?)',
+                       (key, pickle.dumps(value), exp))
+    self._conn.commit()
+
+  def delete(self, key: str):
+    self._conn.execute('DELETE FROM cache WHERE key=?', (key,))
+    self._conn.commit()
+
+  def close(self):
+    if self._conn: self._conn.close(); self._conn = None
+
+
+class _PickleBackend:
+  """Pickle-file cache backend. No external dependencies."""
+
+  def __init__(self, path: str):
+    import os, pickle
+    self._path = path
+    self._data: dict = {}
+    os.makedirs(os.path.dirname(path) if not os.path.isdir(path) else path, exist_ok=True)
+    if os.path.isdir(path):
+      self._path = os.path.join(path, '_cache.pkl')
+    try:
+      with open(self._path, 'rb') as f: self._data = pickle.load(f)
+    except Exception: pass
+
+  def _flush(self):
+    import pickle
+    try:
+      with open(self._path, 'wb') as f: pickle.dump(self._data, f)
+    except Exception: pass
+
+  def _alive(self, entry: dict) -> bool:
+    import time
+    exp = entry.get('_exp')
+    return exp is None or time.time() < exp
+
+  def get(self, key: str, default=None):
+    entry = self._data.get(key)
+    if entry is None or not self._alive(entry): return default
+    return entry.get('v', default)
+
+  def set(self, key: str, value, expire=None):
+    import time
+    entry: dict = {'v': value}
+    if expire is not None: entry['_exp'] = time.time() + expire
+    self._data[key] = entry
+    self._flush()
+
+  def delete(self, key: str):
+    self._data.pop(key, None)
+    self._flush()
+
+  def close(self): self._flush()
+
+
+class _DiskcacheBackend:
+  """diskcache backend. Requires: pip install diskcache"""
+
+  def __init__(self, path: str):
+    from diskcache import Cache
+    self._cache = Cache(path)
+
+  def get(self, key: str, default=None): return self._cache.get(key, default)
+  def set(self, key: str, value, expire=None): self._cache.set(key, value, expire=expire)
+  def delete(self, key: str): self._cache.delete(key)
+  def close(self): self._cache.close(); self._cache = None
+
+
+class _DbBackend:
+  """SQLAlchemy-based cache backend for any remote database."""
+
+  def __init__(self, url: str):
+    from sqlalchemy import create_engine, text
+    self._engine = create_engine(url)
+    with self._engine.connect() as conn:
+      conn.execute(text(
+        'CREATE TABLE IF NOT EXISTS cache (key VARCHAR(512) PRIMARY KEY, value BYTEA, expire FLOAT)'))
+      conn.commit()
+
+  def get(self, key: str, default=None):
+    import pickle, time
+    from sqlalchemy import text
+    with self._engine.connect() as conn:
+      row = conn.execute(text('SELECT value, expire FROM cache WHERE key=:k'), {'k': key}).fetchone()
+    if row is None: return default
+    if row[1] is not None and time.time() >= row[1]:
+      self.delete(key)
+      return default
+    return pickle.loads(row[0])
+
+  def set(self, key: str, value, expire=None):
+    import pickle, time
+    from sqlalchemy import text
+    exp = (time.time() + expire) if expire else None
+    blob = pickle.dumps(value)
+    with self._engine.connect() as conn:
+      conn.execute(text(
+        'INSERT INTO cache (key, value, expire) VALUES (:k, :v, :e) '
+        'ON CONFLICT (key) DO UPDATE SET value=:v, expire=:e'),
+        {'k': key, 'v': blob, 'e': exp})
+      conn.commit()
+
+  def delete(self, key: str):
+    from sqlalchemy import text
+    with self._engine.connect() as conn:
+      conn.execute(text('DELETE FROM cache WHERE key=:k'), {'k': key})
+      conn.commit()
+
+  def close(self):
+    if self._engine: self._engine.dispose(); self._engine = None
+
+
+_BACKENDS = {
+  'json': _JsonBackend,
+  'pickle': _PickleBackend,
+  'sqlite': _SqliteBackend,
+  'diskcache': _DiskcacheBackend,
+  'db': _DbBackend,
+}
+
+
+DiskCache = None  # removed, use Cache
+
+
+class Cache:
+  """Key/value cache with TTL and env-var bypass.
 
   Standalone utility -- does not require Env or config initialization.
-  Requires: pip install "gppu[cache]"
+
+  Backends (explicit, no fallback):
+    json      — JSON file, no deps
+    pickle    — pickle file, no deps
+    sqlite    — stdlib sqlite3
+    diskcache — pip install diskcache
+    db        — any SQLAlchemy URL (postgres, mysql, etc.)
   """
   _cache: Any
   _ttl: int
   _skip: bool
 
-  def __init__(self, directory: str, ttl: int = 86400, *, skip_env: str = 'SKIP_CACHE'):
+  def __init__(self, directory: str, ttl: int = 86400, *,
+               backend: str = 'sqlite', skip_env: str = 'SKIP_CACHE'):
     """
     Args:
-      directory:  Cache directory path (supports ~ expansion).
+      directory:  Cache path (file/dir) or DB URL for 'db' backend.
       ttl:        Default TTL in seconds (default: 86400 = 24h).
+      backend:    'json', 'pickle', 'sqlite', 'diskcache', or 'db'.
       skip_env:   Env var name to check for bypass (empty string disables).
     """
     import os
-    from diskcache import Cache
     self._ttl = ttl
     self._skip = bool(skip_env and os.getenv(skip_env, '').lower() in ('true', '1', 'yes'))
-    self._cache = Cache(os.path.expanduser(directory))
+    if backend not in _BACKENDS:
+      raise ValueError(f"Unknown backend {backend!r}, expected one of: {', '.join(_BACKENDS)}")
+    path = directory if backend == 'db' else os.path.expanduser(directory)
+    self._cache = _BACKENDS[backend](path)
 
   @property
   def skip(self) -> bool: return self._skip
@@ -163,8 +367,16 @@ class DiskCache:
   def __call__(self, fn):
     """Use as @cache decorator for automatic memoization."""
     if self._skip: return fn
-    try: return self._cache.memoize(expire=self._ttl)(fn)
-    except Exception: return fn
+    import functools, hashlib
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+      k = f'memo:{fn.__module__}.{fn.__qualname__}:{hashlib.md5(repr((args, kwargs)).encode()).hexdigest()}'
+      cached = self.get(k)
+      if cached is not None: return cached
+      result = fn(*args, **kwargs)
+      self.set(k, result)
+      return result
+    return wrapper
 
   def close(self):
     if self._cache: self._cache.close(); self._cache = None

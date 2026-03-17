@@ -6,22 +6,22 @@ import tempfile
 import time
 from collections import Counter
 
-from gppu.data import DiskCache
+from gppu.data import Cache
 
 DEFAULT_CACHE_DIR = os.path.join(tempfile.gettempdir(), "claude_statusline_cache")
 DEFAULT_GIT_TTL = 10  # seconds
 DEFAULT_JSONL_TTL = 2  # seconds
 
-_dc: DiskCache | None = None
+_dc: Cache | None = None
 _git_ttl = DEFAULT_GIT_TTL
 _jsonl_ttl = DEFAULT_JSONL_TTL
 
 
-def _get_dc() -> DiskCache:
-    """Lazy-init the DiskCache singleton."""
+def _get_dc() -> Cache:
+    """Lazy-init the Cache singleton."""
     global _dc
     if _dc is None:
-        _dc = DiskCache(DEFAULT_CACHE_DIR, ttl=86400, skip_env='')
+        _dc = Cache(DEFAULT_CACHE_DIR, ttl=86400, backend='sqlite', skip_env='')
     return _dc
 
 
@@ -34,7 +34,7 @@ def init_cache(cfg):
         cache_dir = cache_dir.removesuffix('.json')
     _git_ttl = cfg.get("git_ttl", DEFAULT_GIT_TTL)
     _jsonl_ttl = cfg.get("jsonl_ttl", DEFAULT_JSONL_TTL)
-    _dc = DiskCache(cache_dir, ttl=86400, skip_env='')
+    _dc = Cache(cache_dir, ttl=86400, backend='sqlite', skip_env='')
 
 
 def _new_counts():
