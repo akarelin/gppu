@@ -123,8 +123,8 @@ jobs:
       - name: Build binary
         run: |
           pip install pyinstaller jinja2
-          pip install -e .
-          pyinstaller --onefile --name statusline --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=jinja2 --hidden-import=yaml --collect-all jinja2 --copy-metadata gppu statusline/__main__.py
+          pip install -e ".[cache]"
+          pyinstaller --onefile --name statusline --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=jinja2 --hidden-import=yaml --hidden-import=diskcache --collect-all jinja2 --copy-metadata gppu statusline/__main__.py
 
       - name: Rename artifact
         shell: bash
