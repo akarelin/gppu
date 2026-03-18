@@ -3,6 +3,7 @@
 from .launcher import (
     TUIApp,
     TUILauncher,
+    AppScreen,
     AppItem,
     InfoScreen,
     ModeItem,
@@ -28,6 +29,7 @@ __all__ = [
     # Base TUI classes
     'TUIApp',
     'TUILauncher',
+    'AppScreen',
     # Launcher framework
     'AppItem',
     'InfoScreen',
