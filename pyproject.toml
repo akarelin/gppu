@@ -28,6 +28,7 @@ statusline = "statusline.status_line:main"
 
 [tool.setuptools_scm]
 tag_regex = "^gppu/v(?P<version>.*)$"
+git_describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--match", "gppu/v*"]
 
 [tool.setuptools.packages.find]
 where = ["."]
