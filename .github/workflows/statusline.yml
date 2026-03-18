@@ -135,8 +135,6 @@ jobs:
         run: |
           TAG="${{ needs.bump.outputs.tag || github.ref_name }}"
           echo "clean=${TAG#statusline/v}" >> $GITHUB_OUTPUT
-          GPPU_VER=$(git describe --tags --match 'gppu/v*' --abbrev=0 2>/dev/null | sed 's|^gppu/||')
-          echo "gppu=${GPPU_VER}" >> $GITHUB_OUTPUT
 
       - name: Create release
         uses: softprops/action-gh-release@v2
