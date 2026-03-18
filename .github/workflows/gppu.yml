@@ -122,7 +122,6 @@ jobs:
     if: >-
       always()
       && github.event_name == 'workflow_dispatch'
-      && inputs.bump != 'none'
       && github.ref == 'refs/heads/master'
       && (needs.matrix.result == 'success' || needs.matrix.result == 'skipped')
       && (needs.test.result == 'success' || needs.test.result == 'skipped')
@@ -134,21 +133,26 @@ jobs:
           fetch-tags: true
           fetch-depth: 0
 
-      - name: Compute next version
+      - name: Compute version
         run: |
           BUMP="${{ inputs.bump }}"
           LATEST_TAG=$(git tag -l 'gppu/v*' --sort=-v:refname | grep -E '^gppu/v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 | sed 's|^gppu/v||')
           if [ -z "$LATEST_TAG" ]; then LATEST_TAG="0.0.0"; fi
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_TAG"
-          if [ "$BUMP" = "minor" ]; then
-            MINOR=$((MINOR + 1))
-            PATCH=0
+          if [ "$BUMP" = "none" ]; then
+            echo "TAG=gppu/v${LATEST_TAG}" >> $GITHUB_ENV
           else
-            PATCH=$((PATCH + 1))
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_TAG"
+            if [ "$BUMP" = "minor" ]; then
+              MINOR=$((MINOR + 1))
+              PATCH=0
+            else
+              PATCH=$((PATCH + 1))
+            fi
+            echo "TAG=gppu/v${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_ENV
           fi
-          echo "TAG=gppu/v${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_ENV
 
       - name: Create tag
+        if: inputs.bump != 'none'
         run: |
           git config user.name "Alex AI Actions"
           git config user.email "actions@karelin.ai"
@@ -165,12 +169,19 @@ jobs:
         run: echo "VERSION=${TAG#gppu/v}" >> $GITHUB_ENV
 
       - name: Create Release
+        if: inputs.bump != 'none'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
           name: gppu v${{ env.VERSION }}
           files: dist/*
           generate_release_notes: true
+
+      - name: Upload assets to existing release
+        if: inputs.bump == 'none'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${TAG}" dist/* --clobber
 
       - name: Update gppu/latest tag
         run: |
