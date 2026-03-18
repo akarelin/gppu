@@ -1,6 +1,7 @@
 """gppu.tui — Reusable TUI superapp launcher framework and selector widgets."""
 
 from .launcher import (
+    _tui_available,
     TUIApp,
     TUILauncher,
     AppScreen,
@@ -16,6 +17,8 @@ from .launcher import (
     load_app_registry,
     launcher_main,
 )
+
+from .config_editor import ConfigEditorApp
 
 from .selectors import (
     Selector,
@@ -42,6 +45,8 @@ __all__ = [
     'launch_app',
     'load_app_registry',
     'launcher_main',
+    # Config editor
+    'ConfigEditorApp',
     # Selector widgets
     'Selector',
     'DetailedSelector',
