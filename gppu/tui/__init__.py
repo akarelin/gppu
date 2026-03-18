@@ -1,8 +1,11 @@
 """gppu.tui — Reusable TUI superapp launcher framework and selector widgets."""
 
 from .launcher import (
+    AppEnvironment,
+    Apps,
     AppItem,
     ModeItem,
+    ProcessRow,
     SpinnerIndicator,
     StatusHeader,
     LauncherApp,
@@ -22,9 +25,13 @@ from .selectors import (
 )
 
 __all__ = [
+    # Base TUI classes
+    'AppEnvironment',
+    'Apps',
     # Launcher framework
     'AppItem',
     'ModeItem',
+    'ProcessRow',
     'SpinnerIndicator',
     'StatusHeader',
     'LauncherApp',
