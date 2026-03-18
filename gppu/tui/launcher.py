@@ -13,8 +13,7 @@ Usage::
         MENU_TITLE = 'My Tools'
 
     def main():
-        Env(name='myapp', app_path=APP_DIR)
-        Env.load()
+        Env.from_env(name='myapp', app_path=APP_DIR)
         apps = load_app_registry(APP_DIR)
         launcher_main(apps, MyApp, APP_DIR, 'My Tools — launcher')
 
@@ -25,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import shlex
 import subprocess
 import sys
@@ -33,6 +33,7 @@ from pathlib import Path
 from gppu import Env, App, mixin_Config, dict_from_yml
 from textual.app import App as TextualApp, ComposeResult
 from textual.binding import Binding
+from textual.command import Hit, Hits, Provider
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
 from textual.dom import NoScreen
@@ -303,12 +304,27 @@ class ProcessRow(Horizontal):
 
 # ── Base TUI App Classes ─────────────────────────────────────────────────────
 
+def _tui_available() -> bool:
+  """Check if a TUI can be displayed (textual installed + interactive terminal or web serve)."""
+  try:
+    import textual  # noqa
+  except ImportError:
+    return False
+  # textual-serve runs without a real TTY but sets TEXTUAL_DRIVER
+  if os.environ.get('TEXTUAL_DRIVER'):
+    return True
+  return sys.stdin.isatty() and sys.stdout.isatty()
+
+
 class TUIApp(mixin_Config, TextualApp):
   """Textual App with per-instance config via self.my().
 
   Works standalone (``app.run()``) or embedded in a TUILauncher via AppScreen.
   Use ``self.done(result)`` to finish — it calls ``exit()`` or ``dismiss()``
   depending on context.
+
+  Override ``cli()`` to provide a CLI fallback when textual is unavailable.
+  Use ``MyApp.main()`` as the unified entry point.
   """
 
   _screen_wrapper: Screen | None = None
@@ -322,6 +338,20 @@ class TUIApp(mixin_Config, TextualApp):
       self._screen_wrapper.dismiss(result=result)
     else:
       self.exit(result=result)
+
+  def cli(self):
+    """CLI fallback. Override in subclasses."""
+    print(f'{self.__class__.__name__}: no CLI mode defined')
+    return None
+
+  @classmethod
+  def main(cls, **kwargs):
+    """Run this app — TUI if possible, CLI fallback otherwise."""
+    instance = cls(**kwargs)
+    if _tui_available():
+      return instance.run()
+    else:
+      return instance.cli()
 
 
 class AppScreen(Screen):
@@ -345,12 +375,42 @@ class AppScreen(Screen):
     self.dismiss(result=None)
 
 
+class LauncherCommands(Provider):
+    """Command palette provider for TUILauncher."""
+
+    def _commands(self) -> dict[str, callable]:
+        launcher = self.app
+        commands = {
+            'Show Info': launcher.action_show_info,
+            'Edit Config': lambda: launcher._open_config_editor(),
+            'Toggle Output': launcher.action_toggle_output,
+            'Toggle Dark Mode': launcher.action_toggle_dark,
+        }
+        if hasattr(launcher, '_running_apps'):
+            for name in launcher._running_apps:
+                commands[f'Switch to: {name}'] = lambda n=name: launcher.push_screen(launcher._running_apps[n])
+        return commands
+
+    async def discover(self) -> Hits:
+        for name, callback in self._commands().items():
+            yield Hit(1, name, callback)
+
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+        for name, callback in self._commands().items():
+            score = matcher.match(name)
+            if score > 0:
+                yield Hit(score, matcher.highlight(name), callback)
+
+
 class TUILauncher(TUIApp):
     """Base TUI superapp launcher.
 
     Subclass and set ``TITLE`` / ``MENU_TITLE``, then pass to
     :func:`launcher_main`.
     """
+
+    COMMANDS = TextualApp.COMMANDS | {LauncherCommands}
 
     TITLE = 'Launcher'
     MENU_TITLE = 'Apps'
@@ -498,16 +558,23 @@ class TUILauncher(TUIApp):
         mode_def = mode_def or {}
         base_args = build_args(mode_def)
         ask_for = mode_def.get('ask_for')
+        # Check mode-level then app-level for module/class
+        tui_module = mode_def.get('module') or self._selected_app.get('module')
+        tui_class = mode_def.get('class') or self._selected_app.get('class')
         if ask_for:
-            self._show_ask_form(ask_for, base_args)
-        elif self._selected_app.get('module') and self._selected_app.get('class'):
-            self._launch_tui_app(self._selected_app, base_args)
-        elif mode_def.get('direct'):
-            # Exit TUI and hand control to the subprocess (needs a terminal)
-            self.exit(result={'app': self._selected_app, 'args': base_args})
-        else:
-            # Run inline with output capture (default for all modes)
+            self._show_ask_form(ask_for, base_args, mode_def=mode_def)
+        elif tui_module and tui_class:
+            self._launch_tui_app({**self._selected_app, 'module': tui_module, 'class': tui_class}, base_args)
+        elif mode_def.get('inline'):
+            # Run in background with output capture
             self._run_inline(base_args)
+        else:
+            # Default: suspend TUI, run subprocess with terminal, resume
+            self._run_suspended(base_args)
+
+    def _run_suspended(self, cli_args: list[str]) -> None:
+        """Exit TUI, run subprocess with full terminal access, then re-enter."""
+        self.exit(result={'app': self._selected_app, 'args': cli_args})
 
     def _launch_tui_app(self, app_def: dict, cli_args: list[str]) -> None:
         """Import a TUIApp class and push it as a screen."""
@@ -520,6 +587,11 @@ class TUILauncher(TUIApp):
         if app_name in self._running_apps:
             self.push_screen(self._running_apps[app_name])
             return
+
+        # Add app's directory to sys.path for import
+        app_cwd = str(resolve_cwd(self._app_dir, app_def))
+        if app_cwd not in sys.path:
+            sys.path.insert(0, app_cwd)
 
         mod = importlib.import_module(module_name)
         cls = getattr(mod, class_name)
@@ -688,13 +760,31 @@ class TUILauncher(TUIApp):
             sections.append(('Instance config', pprint.pformat(self._my)))
         self.push_screen(InfoScreen(sections))
 
+    def _open_config_editor(self) -> None:
+        """Open the config editor as an AppScreen."""
+        from .config_editor import ConfigEditorApp
+        name = 'Config Editor'
+        if name in self._running_apps:
+            self.push_screen(self._running_apps[name])
+            return
+        editor = ConfigEditorApp(
+            root_config=Env.config_file,
+            project_root=self._app_dir,
+        )
+        screen = AppScreen(editor)
+        self._running_apps[name] = screen
+        self.install_screen(screen, name='app-config-editor')
+        self.push_screen(screen, callback=lambda r: self._running_apps.pop(name, None))
+
     # ── Ask form ─────────────────────────────────────────────────────────
 
     def _show_ask_form(
         self, fields: list, base_args: list[str] | None = None,
+        mode_def: dict | None = None,
     ) -> None:
         self._phase = 'ask'
         self._base_args = base_args or []
+        self._ask_mode_def = mode_def or {}
         self._ask_fields: list[dict] = []
 
         app_config = self._selected_app.get('_config', {})
@@ -756,7 +846,43 @@ class TUILauncher(TUIApp):
                 val = widget.value.strip()
             if val:
                 args.extend([f'--{fname}', val])
-        self.exit(result={'app': self._selected_app, 'args': args})
+
+        app_def = self._selected_app
+        mode_def = self._ask_mode_def
+
+        if mode_def.get('inline'):
+            # Clean up ask form, return to app list, run in background
+            self._cleanup_ask_form()
+            self._run_inline_with_app(app_def, args)
+        else:
+            # Exit TUI, run subprocess
+            self.exit(result={'app': app_def, 'args': args})
+
+    def _cleanup_ask_form(self) -> None:
+        """Remove ask form widgets and return to app list."""
+        menu = self.query_one('#menu')
+        for widget in list(menu.children):
+            if widget.id and widget.id.startswith('ask-'):
+                widget.remove()
+            elif isinstance(widget, (Input, OptionList, Static)) \
+                    and widget.id not in ('menu-title', 'app-list'):
+                widget.remove()
+        lv = self.query_one('#app-list', ListView)
+        lv.display = True
+        self._phase = 'apps'
+        self._selected_app = None
+        title = self.query_one('#menu-title', Static)
+        title.update(self.MENU_TITLE)
+        lv.clear()
+        for k, v in self._apps.items():
+            lv.append(AppItem(k, v))
+
+    def _run_inline_with_app(self, app_def: dict, cli_args: list[str]) -> None:
+        """Run an inline process from a specific app_def (used after ask form)."""
+        saved = self._selected_app
+        self._selected_app = app_def
+        self._run_inline(cli_args)
+        self._selected_app = saved
 
     # ── Navigation ───────────────────────────────────────────────────────
 
@@ -860,6 +986,11 @@ def launcher_main(
         launch_app(app_dir, apps[args.app], args.extra or None)
         return
 
+    # CLI fallback when no TUI available
+    if not _tui_available():
+        _launcher_cli(apps, app_dir)
+        return
+
     # TUI launcher — loop back after sub-app exits
     while True:
         tui = app_class(apps, app_dir)
@@ -867,3 +998,31 @@ def launcher_main(
         if not result:
             break
         launch_app(app_dir, result['app'], result.get('args') or None)
+
+
+def _launcher_cli(apps: dict[str, dict], app_dir: Path) -> None:
+    """Simple CLI fallback for launcher when TUI is unavailable."""
+    app_keys = list(apps.keys())
+    while True:
+        print('')
+        for i, (key, app_def) in enumerate(apps.items(), 1):
+            icon = app_def.get('icon', '')
+            name = app_def.get('name', key)
+            desc = app_def.get('description', '')
+            print(f'  {i}. {icon}  {name} — {desc}')
+        print(f'  q. Quit')
+        print('')
+        choice = input('Select: ').strip()
+        if choice.lower() == 'q' or not choice:
+            break
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(app_keys):
+                launch_app(app_dir, apps[app_keys[idx]])
+            else:
+                print(f'  Invalid choice: {choice}')
+        except ValueError:
+            if choice in apps:
+                launch_app(app_dir, apps[choice])
+            else:
+                print(f'  Unknown: {choice}')

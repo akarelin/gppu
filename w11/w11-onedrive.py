@@ -1854,8 +1854,7 @@ def main():
 
     from w11 import resolve_app_dir
     app_dir = resolve_app_dir()
-    Env(name='w11-onedrive', app_path=app_dir)
-    Env.load()
+    Env.from_env(name='w11-onedrive', app_path=app_dir)
 
     parser = argparse.ArgumentParser(description='OneDrive Sync Diagnostics TUI')
     parser.add_argument('mode', nargs='?',

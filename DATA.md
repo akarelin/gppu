@@ -1,9 +1,9 @@
 # gppu.data - Database & Caching
 
-`gppu.data` provides database access classes built on top of `_Base` (from `gppu.ad`), combining logging, config management, and connection lifecycle. It also includes `DiskCache`, a standalone disk-backed key/value cache.
+`gppu.data` provides database access classes built on top of `_Base` (from `gppu.ad`), combining logging, config management, and connection lifecycle. It also includes `Cache`, a standalone multi-backend key/value cache.
 
 ```python
-from gppu.data import _PGBase, _SQABase, DiskCache
+from gppu.data import _PGBase, _SQABase, Cache
 ```
 
 ## Inheritance Chain
@@ -58,7 +58,7 @@ postgres:
   db: "postgresql://user:pass@localhost:5432/mydb"
 ```
 
-Requires `psycopg2-binary`: `pip install "gppu[pg] @ git+ssh://git@github.com/akarelin/gppu.git@latest"`
+Requires `psycopg2-binary`: `pip install "gppu[pg] @ git+ssh://git@github.com/akarelin/gppu.git@gppu/latest"`
 
 ## _SQABase - SQLAlchemy ORM
 
@@ -87,7 +87,7 @@ with db.session() as sess:
 db.close()  # disposes engine connection pool
 ```
 
-Requires `sqlalchemy`: `pip install "gppu[sql] @ git+ssh://git@github.com/akarelin/gppu.git@latest"`
+Requires `sqlalchemy`: `pip install "gppu[sql] @ git+ssh://git@github.com/akarelin/gppu.git@gppu/latest"`
 
 ## Connection String Resolution
 
@@ -108,20 +108,20 @@ postgres:
   base_dir: "/data/postgres"
 ```
 
-## DiskCache - Disk-Backed Key/Value Cache
+## Cache - Multi-Backend Key/Value Cache
 
-Standalone disk-backed cache with TTL support and environment variable bypass. Does **not** require `Env` or config initialization.
+Standalone cache with TTL support, multiple backends, and environment variable bypass. Does **not** require `Env` or config initialization.
 
 ```python
-from gppu.data import DiskCache
+from gppu.data import Cache
 
-# Basic usage with context manager
-with DiskCache('~/.cache/myapp', ttl=3600) as cache:
-    cache.set('key', {'data': [1, 2, 3]})
-    result = cache.get('key')          # {'data': [1, 2, 3]}
-    cache.get('missing')               # None
-    cache.get('missing', default=42)   # 42
-    cache.delete('key')
+# SQLite backend (default, no extra deps)
+cache = Cache('/tmp/my_cache', ttl=3600, backend='sqlite')
+cache.set('key', {'data': [1, 2, 3]})
+result = cache.get('key')          # {'data': [1, 2, 3]}
+cache.get('missing')               # None
+cache.get('missing', default=42)   # 42
+cache.delete('key')
 
 # Per-key TTL override
 cache.set('short_lived', 'val', ttl=10)   # expires in 10s
@@ -129,7 +129,7 @@ cache.set('long_lived', 'val', ttl=3600)  # expires in 1h
 cache.set('permanent', 'val', ttl=0)      # no expiration
 
 # Use as decorator for automatic memoization
-cache = DiskCache('/tmp/fn_cache', ttl=300)
+cache = Cache('/tmp/fn_cache', ttl=300)
 
 @cache
 def expensive_computation(x):
@@ -142,14 +142,25 @@ expensive_computation(5)  # served from cache
 ### Constructor
 
 ```python
-DiskCache(directory, ttl=86400, *, skip_env='SKIP_CACHE')
+Cache(directory, ttl=86400, *, backend='sqlite', skip_env='SKIP_CACHE')
 ```
 
 | Parameter   | Default        | Description |
 |-------------|----------------|-------------|
-| `directory` | *(required)*   | Cache directory path (supports `~` expansion) |
+| `directory` | *(required)*   | Cache path (file/dir) or DB URL for `db` backend |
 | `ttl`       | `86400` (24h)  | Default TTL in seconds |
+| `backend`   | `'sqlite'`     | Storage backend (see below) |
 | `skip_env`  | `'SKIP_CACHE'` | Env var name that bypasses caching when set to `true`/`1`/`yes`. Empty string disables this check |
+
+### Backends
+
+| Backend     | Path type     | Dependencies |
+|-------------|---------------|--------------|
+| `json`      | File path     | None (stdlib) |
+| `pickle`    | File path     | None (stdlib) |
+| `sqlite`    | File/dir path | None (stdlib) |
+| `diskcache` | Directory     | `pip install gppu[cache]` |
+| `db`        | SQLAlchemy URL | `pip install gppu[sql]` |
 
 ### Methods
 
@@ -161,6 +172,8 @@ DiskCache(directory, ttl=86400, *, skip_env='SKIP_CACHE')
 | `close()` | Close the cache |
 | `skip` (property) | `True` if caching is bypassed via env var |
 
+Supports context manager protocol and `@cache` decorator for function memoization.
+
 ### Env-Var Bypass
 
 Set the environment variable named in `skip_env` to `true`, `1`, or `yes` to disable all caching (reads return `default`, writes are no-ops, decorator passes through). Useful for testing or debugging.
@@ -168,5 +181,3 @@ Set the environment variable named in `skip_env` to `true`, `1`, or `yes` to dis
 ```bash
 SKIP_CACHE=true python my_script.py  # all cache reads return default
 ```
-
-Requires `diskcache`: `pip install "gppu[cache] @ git+ssh://git@github.com/akarelin/gppu.git@latest"`
