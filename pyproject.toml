@@ -20,6 +20,7 @@ statusline = ["jinja2"]
 tui = ["textual"]
 all = ["psycopg2-binary", "sqlalchemy", "diskcache", "selenium>=4.0.0", "jinja2", "textual"]
 test = ["pytest"]
+test-tui = ["pytest", "pytest-asyncio", "textual"]
 
 [project.scripts]
 statusline = "statusline.status_line:main"

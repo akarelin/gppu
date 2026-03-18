@@ -11,7 +11,7 @@ from functools import partial
 from typing import Any, Optional, ClassVar, List, Callable
 
 from .gppu import (
-    TRACE_RULES, Env,
+    TRACE_RULES, Env, Environment,
     VER_GPPU,
     deepget, deepget_int, deepget_float, deepget_list, deepget_dict,
     Debug, Info, Warn, Error, Dump,
@@ -22,6 +22,9 @@ from .gppu import (
     dict_from_yml, dict_to_yml, dict_all_paths, dict_sanitize, dict_template_populate,
     dpcp, now_ts, safe_int, safe_float, safe_timedelta,
     TColor,
+    # Mixins, Logger, Foundation (canonical definitions in gppu.py, re-exported here for backward compat)
+    _mixin, mixin_Config, Logger, protocol_Logger, mixin_Logger,
+    _Logger, _Config, _Base,
 )
 
 
@@ -63,62 +66,7 @@ class PrettyColoredHandler(logging.StreamHandler):
 
 
 # @@      mixin class                                                           ==
-class _mixin: pass
-
-
-class mixin_Config(_mixin):
-  _my: dict[str, Any] = {}
-
-  def _config_from_key(self, key: str) -> None: self._my.update(Env.glob_dict(key))
-  def _config_copy(self, other: mixin_Config) -> None: self._my = dict(other._my)
-  def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
-  def _config_from_env(self) -> None: self._my = deepcopy(Env.data)
-
-  def my(self, path, default=None) -> Any: return deepget(path, self._my, default=default)
-  def my_int(self, path, default: int = 0) -> int: return deepget_int(path, self._my, default=default)
-  def my_float(self, path, default: float = float('nan')) -> float: return deepget_float(path, self._my, default=default)
-  def my_list(self, path, default: list = []) -> list: return deepget_list(path, self._my, default=default or [])
-  def my_dict(self, path, default: dict = {}) -> dict: return deepget_dict(path, self._my, default=default or {})
-
-
-class Logger:
-  """Namespace wrapper exposing logging helpers."""
-  trace_folder: str = ''
-  trace_rules: dict = TRACE_RULES
-
-  @staticmethod
-  def Debug(*a, **kw): Debug(*a, **kw)
-  @staticmethod
-  def Info(*a, **kw): Info(*a, **kw)
-  @staticmethod
-  def Warn(*a, **kw): Warn(*a, **kw)
-  @staticmethod
-  def Error(*a, **kw): Error(*a, **kw)
-  @staticmethod
-  def Dump(*a, **kw): Dump(*a, **kw)
-
-
-class protocol_Logger:
-  Debug: Callable[..., Any]
-  Info : Callable[..., Any]
-  Warn : Callable[..., Any]
-  Error: Callable[..., Any]
-  Dump : Callable[..., Any]
-
-
-class mixin_Logger(protocol_Logger, _mixin):
-  _logger: logging.Logger
-
-  @classmethod
-  def __init_subclass__(cls, **kw):
-    super().__init_subclass__(**kw)
-    cls._logger = _logger.getChild(cls.__name__)
-    for name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)): setattr(cls, name, staticmethod(partial(fn, logger=cls._logger)))
-
-  def __init__(self, *a, **kw):
-    super(mixin_Logger, self).__init__(*a, **kw)
-    # instance shortcuts re-use the class-level bound functions
-    for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'): setattr(self, name, getattr(self.__class__, name))
+# _mixin, mixin_Config, Logger, protocol_Logger, mixin_Logger are now defined in gppu.py and imported above
 
 # region y2xxx
 # xx
@@ -346,26 +294,5 @@ class DC(UserDict):
 
 
 # region Foundation
-class _Logger(mixin_Logger): pass
-
-
-class _Config(mixin_Config):
-  _base_path: Path
-
-  def __init__(self, **kw) -> None:
-    super().__init__()
-    assert Env.initialized, "Env must be initialized"
-    key = kw.get('config_key', None)
-
-    if key:
-      self._config_from_key(key)
-      self._base_path = Path(self.my('base_dir'))
-    else:
-      self._config_from_env()
-      self._base_path = Path('.')
-
-  def my_path(self, path) -> Path: return self._base_path / self.my(path)
-
-
-class _Base(_Logger, _Config): pass
+# _Logger, _Config, _Base are now defined in gppu.py and imported above
 # endregion

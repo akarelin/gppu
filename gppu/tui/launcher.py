@@ -22,12 +22,16 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import logging
 import subprocess
 import sys
 from pathlib import Path
 
-from gppu import Env, dict_from_yml
-from textual.app import App, ComposeResult, RenderResult
+from typing import Any
+
+from copy import deepcopy
+from gppu import Env, Environment, dict_from_yml, deepget, deepget_dict, deepget_float, deepget_int, deepget_list
+from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
@@ -38,6 +42,8 @@ from textual.widgets import (
     Footer, Header, Input, ListItem, ListView, OptionList, RichLog, Static,
 )
 from textual.widgets._header import HeaderIcon, HeaderTitle
+
+_log = logging.getLogger(__name__)
 
 
 # ── StatusHeader ──────────────────────────────────────────────────────────────
@@ -226,13 +232,76 @@ class SpinnerIndicator(Static):
         self._frame = (self._frame + 1) % len(self.FRAMES)
         self.update(f'[yellow]{self.FRAMES[self._frame]}[/yellow]')
 
+
+
+class ProcessRow(Horizontal):
+    """A row in the process bar representing one background process.
+
+    Click to toggle that process's log output in the shared output panel.
+    """
+
+    def __init__(self, proc_id: int, app_name: str) -> None:
+        super().__init__(id=f'proc-{proc_id}', classes='process-row')
+        self.proc_id = proc_id
+        self.app_name = app_name
+        self.log_lines: list[str] = []
+
+    def compose(self) -> ComposeResult:
+        yield SpinnerIndicator(classes='proc-spinner')
+        yield Static(
+            f' [bold]{self.app_name}[/bold] [dim]running…[/dim]',
+            classes='proc-status',
+        )
+        yield Static(' [dim]▸ logs[/dim]', classes='log-toggle')
+
+    def on_mount(self) -> None:
+        self.query_one(SpinnerIndicator).start()
+
     def on_click(self) -> None:
-        self.app.action_toggle_output()
+        self.app.show_process_logs(self.proc_id)
 
 
-# ── Base Launcher App ────────────────────────────────────────────────────────
+# ── Base TUI App Classes ─────────────────────────────────────────────────────
 
-class LauncherApp(App):
+class AppEnvironment(App):
+  """Textual App with Environment (Env + glob) access."""
+  _env: Environment
+
+  def __init__(self, *args, name: str | None = None, app_path: str | Path | None = None, **kwargs):
+    super().__init__(*args, **kwargs)
+    if name or app_path:
+      Environment.from_env(name=name, app_path=app_path)
+
+  @staticmethod
+  def glob(path, default=None) -> Any: return Environment.glob(path, default=default)
+  @staticmethod
+  def glob_int(path, default: int = 0) -> int: return Environment.glob_int(path, default=default)
+  @staticmethod
+  def glob_list(path, default=[]) -> list: return Environment.glob_list(path, default=default)
+  @staticmethod
+  def glob_dict(path, default={}) -> dict: return Environment.glob_dict(path, default=default)
+
+
+class Apps(App):
+  """Textual App with per-instance config via self.my()."""
+  _my: dict[str, Any] = {}
+
+  def _config_from_name(self, key: str) -> None: self._my.update(Environment.glob_dict(key))
+  def _config_copy(self, other: Apps) -> None: self._my = dict(other._my)
+  def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
+  def _config_from_env(self) -> None: self._my = deepcopy(Environment.data)
+
+  def my(self, path, default=None) -> Any: return deepget(path, self._my, default=default)
+  def my_int(self, path, default: int = 0) -> int: return deepget_int(path, self._my, default=default)
+  def my_float(self, path, default: float = float('nan')) -> float: return deepget_float(path, self._my, default=default)
+  def my_list(self, path, default: list = []) -> list: return deepget_list(path, self._my, default=default or [])
+  def my_dict(self, path, default: dict = {}) -> dict: return deepget_dict(path, self._my, default=default or {})
+
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+
+
+class LauncherApp(Apps):
     """Base TUI superapp launcher.
 
     Subclass and set ``TITLE`` / ``MENU_TITLE``, then pass to
@@ -246,23 +315,31 @@ class LauncherApp(App):
     Screen {
         align: center middle;
     }
-    #top-bar {
+    #process-bar {
         dock: top;
+        height: auto;
+        max-height: 6;
+    }
+    .process-row {
         height: 1;
         padding: 0 1;
-        display: none;
     }
-    #top-bar.has-process {
-        display: block;
+    .process-row.active-log {
+        background: $primary 20%;
     }
-    #spinner {
+    .proc-spinner {
         width: 3;
         height: 1;
         min-width: 3;
     }
-    #process-status {
+    .proc-status {
         height: 1;
         width: 1fr;
+    }
+    .log-toggle {
+        width: auto;
+        height: 1;
+        min-width: 8;
     }
     #output-panel {
         dock: top;
@@ -328,13 +405,13 @@ class LauncherApp(App):
         self._app_dir = app_dir
         self._selected_app: dict | None = None
         self._phase = 'apps'  # apps → modes → ask
-        self._bg_running = False
+        self._processes: dict[int, ProcessRow] = {}
+        self._proc_counter = 0
+        self._active_log: int | None = None
 
     def compose(self) -> ComposeResult:
         yield StatusHeader()
-        with Horizontal(id='top-bar'):
-            yield SpinnerIndicator(id='spinner')
-            yield Static('', id='process-status')
+        yield Vertical(id='process-bar')
         yield RichLog(id='output-panel')
         with Vertical(id='menu'):
             yield Static(self.MENU_TITLE, id='menu-title')
@@ -384,34 +461,64 @@ class LauncherApp(App):
 
     # ── Inline / background execution ────────────────────────────────────
 
+    def run_task(self, name: str, fn, *args, **kwargs) -> int:
+        """Start a background task with spinner and log capture.
+
+        *fn* is called in a worker thread as ``fn(*args, log=log_fn, **kwargs)``.
+        The injected ``log`` callback accepts a string and:
+
+        1. Appends it to the task's scrollback (viewable via the process row).
+        2. Emits it at ``DEBUG`` level through Python's :mod:`logging`.
+
+        Returns the task ID (usable with :meth:`show_process_logs`).
+        """
+        self._proc_counter += 1
+        proc_id = self._proc_counter
+
+        row = ProcessRow(proc_id, name)
+        self._processes[proc_id] = row
+
+        bar = self.query_one('#process-bar')
+        bar.mount(row)
+
+        self._run_task_worker(proc_id, name, fn, args, kwargs)
+        return proc_id
+
+    @work(thread=True)
+    def _run_task_worker(self, proc_id, name, fn, args, kwargs):
+        def log_fn(line):
+            _log.debug('[%s] %s', name, line)
+            self.call_from_thread(self._append_output, proc_id, str(line))
+
+        kwargs['log'] = log_fn
+        try:
+            fn(*args, **kwargs)
+        except Exception as e:
+            log_fn(f'Error: {e}')
+        self.call_from_thread(self._process_done, proc_id)
+
     def _run_inline(self, cli_args: list[str]) -> None:
-        """Start a background process, show spinner + status in top bar."""
-        self._bg_running = True
-        app_name = self._selected_app.get('name', '')
+        """Start a background process with its own spinner row."""
+        self._proc_counter += 1
+        proc_id = self._proc_counter
+        app_def = self._selected_app
+        app_name = app_def.get('name', '')
 
-        # Show top bar
-        top_bar = self.query_one('#top-bar')
-        top_bar.add_class('has-process')
+        row = ProcessRow(proc_id, app_name)
+        self._processes[proc_id] = row
 
-        # Start spinner
-        spinner = self.query_one('#spinner', SpinnerIndicator)
-        spinner.start()
-
-        # Update status
-        status = self.query_one('#process-status', Static)
-        status.update(f' [bold]{app_name}[/bold] [dim]running…[/dim]')
-
-        # Clear previous output
-        log = self.query_one('#output-panel', RichLog)
-        log.clear()
+        bar = self.query_one('#process-bar')
+        bar.mount(row)
 
         # Return to apps list so user can keep navigating
         self._phase = 'apps'
-        self._run_inline_cmd(cli_args, app_name)
+        self._run_inline_cmd(cli_args, proc_id, app_def)
 
     @work(thread=True)
-    def _run_inline_cmd(self, cli_args: list[str], app_name: str) -> None:
-        cmd = _resolve_cmd(self._app_dir, self._selected_app)
+    def _run_inline_cmd(
+        self, cli_args: list[str], proc_id: int, app_def: dict,
+    ) -> None:
+        cmd = _resolve_cmd(self._app_dir, app_def)
         if not getattr(sys, 'frozen', False):
             cmd.insert(1, '-u')
         cmd += cli_args
@@ -419,40 +526,76 @@ class LauncherApp(App):
             proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, bufsize=1,
-                cwd=resolve_cwd(self._app_dir, self._selected_app),
+                cwd=resolve_cwd(self._app_dir, app_def),
             )
             for line in proc.stdout:
                 line = line.rstrip('\n\r')
                 if line:
-                    self.call_from_thread(self._append_output, line)
+                    self.call_from_thread(self._append_output, proc_id, line)
             proc.wait()
         except Exception as e:
-            self.call_from_thread(self._append_output, f'Error: {e}')
-        self.call_from_thread(self._process_done, app_name)
+            self.call_from_thread(
+                self._append_output, proc_id, f'Error: {e}',
+            )
+        self.call_from_thread(self._process_done, proc_id)
 
-    def _append_output(self, line: str) -> None:
-        """Append a line to the output panel and update the status indicator."""
-        log = self.query_one('#output-panel', RichLog)
-        log.write(line)
-        status = self.query_one('#process-status', Static)
+    def _append_output(self, proc_id: int, line: str) -> None:
+        """Append a line to a process's log buffer and update its status."""
+        row = self._processes.get(proc_id)
+        if not row:
+            return
+        row.log_lines.append(line)
+        status = row.query_one('.proc-status', Static)
         display = line if len(line) <= 70 else line[:67] + '…'
         status.update(f' [dim]{display}[/dim]')
+        # Live-append if this process's logs are currently shown
+        if self._active_log == proc_id:
+            panel = self.query_one('#output-panel', RichLog)
+            panel.write(line)
 
-    def _process_done(self, app_name: str) -> None:
-        """Called when the background process finishes."""
-        self._bg_running = False
-        spinner = self.query_one('#spinner', SpinnerIndicator)
+    def _process_done(self, proc_id: int) -> None:
+        """Called when a background process finishes."""
+        row = self._processes.get(proc_id)
+        if not row:
+            return
+        spinner = row.query_one(SpinnerIndicator)
         spinner.stop()
-        status = self.query_one('#process-status', Static)
+        status = row.query_one('.proc-status', Static)
         status.update(
-            f' [bold]{app_name}[/bold] [green]done[/green]'
-            f'  [dim]click ✓ or press O for output[/dim]'
+            f' [bold]{row.app_name}[/bold] [green]done[/green]'
+            f'  [dim]click for logs[/dim]'
         )
 
-    def action_toggle_output(self) -> None:
-        """Toggle the output panel visibility."""
+    def show_process_logs(self, proc_id: int) -> None:
+        """Show or toggle the log panel for a specific process."""
         panel = self.query_one('#output-panel', RichLog)
-        panel.toggle_class('visible')
+        if self._active_log == proc_id and panel.has_class('visible'):
+            panel.remove_class('visible')
+            self._processes[proc_id].remove_class('active-log')
+            self._active_log = None
+            return
+        # Deselect previous
+        if self._active_log is not None and self._active_log in self._processes:
+            self._processes[self._active_log].remove_class('active-log')
+        # Populate and show
+        self._active_log = proc_id
+        self._processes[proc_id].add_class('active-log')
+        panel.clear()
+        for line in self._processes[proc_id].log_lines:
+            panel.write(line)
+        panel.add_class('visible')
+
+    def action_toggle_output(self) -> None:
+        """Toggle the output panel for the current or most recent process."""
+        panel = self.query_one('#output-panel', RichLog)
+        if panel.has_class('visible'):
+            panel.remove_class('visible')
+            if self._active_log is not None and self._active_log in self._processes:
+                self._processes[self._active_log].remove_class('active-log')
+            self._active_log = None
+        elif self._processes:
+            proc_id = self._active_log or max(self._processes)
+            self.show_process_logs(proc_id)
 
     # ── Ask form ─────────────────────────────────────────────────────────
 
@@ -532,6 +675,9 @@ class LauncherApp(App):
             panel = self.query_one('#output-panel', RichLog)
             if panel.has_class('visible'):
                 panel.remove_class('visible')
+                if self._active_log is not None and self._active_log in self._processes:
+                    self._processes[self._active_log].remove_class('active-log')
+                self._active_log = None
                 return
             self.exit(result=None)
             return
