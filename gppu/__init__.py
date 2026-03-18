@@ -75,9 +75,8 @@ from .gppu import (
     protocol_Logger,
     mixin_Logger,
 
-    # Environment configuration
+    # Env
     Env,
-    Environment,
 
     # Config access (aliases for Env.glob*)
     glob,
@@ -89,6 +88,7 @@ from .gppu import (
     _Logger,
     _Config,
     _Base,
+    App,
 )
 
 
@@ -130,12 +130,12 @@ __all__ = [
     '_mixin', 'mixin_Config',
     'Logger', 'protocol_Logger', 'mixin_Logger',
 
-    # Environment configuration
-    'Env', 'Environment',
+    # Env
+    'Env',
 
     # Config access
     'glob', 'glob_int', 'glob_list', 'glob_dict',
 
     # Foundation classes
-    '_Logger', '_Config', '_Base',
+    '_Logger', '_Config', '_Base', 'App',
 ]

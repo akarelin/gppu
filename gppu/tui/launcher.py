@@ -6,9 +6,9 @@ Each consumer creates a thin wrapper with its own Env initialization and brandin
 Usage::
 
     from gppu import Env
-    from gppu.tui import LauncherApp, launcher_main, load_app_registry
+    from gppu.tui import TUILauncher, launcher_main, load_app_registry
 
-    class MyApp(LauncherApp):
+    class MyApp(TUILauncher):
         TITLE = 'My Tools'
         MENU_TITLE = 'My Tools'
 
@@ -27,11 +27,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from typing import Any
-
-from copy import deepcopy
-from gppu import Env, Environment, dict_from_yml, deepget, deepget_dict, deepget_float, deepget_int, deepget_list
-from textual.app import App, ComposeResult
+from gppu import Env, App, mixin_Config, dict_from_yml
+from textual.app import App as TextualApp, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
@@ -263,45 +260,14 @@ class ProcessRow(Horizontal):
 
 # ── Base TUI App Classes ─────────────────────────────────────────────────────
 
-class AppEnvironment(App):
-  """Textual App with Environment (Env + glob) access."""
-  _env: Environment
-
-  def __init__(self, *args, name: str | None = None, app_path: str | Path | None = None, **kwargs):
-    super().__init__(*args, **kwargs)
-    if name or app_path:
-      Environment.from_env(name=name, app_path=app_path)
-
-  @staticmethod
-  def glob(path, default=None) -> Any: return Environment.glob(path, default=default)
-  @staticmethod
-  def glob_int(path, default: int = 0) -> int: return Environment.glob_int(path, default=default)
-  @staticmethod
-  def glob_list(path, default=[]) -> list: return Environment.glob_list(path, default=default)
-  @staticmethod
-  def glob_dict(path, default={}) -> dict: return Environment.glob_dict(path, default=default)
-
-
-class Apps(App):
+class TUIApp(mixin_Config, TextualApp):
   """Textual App with per-instance config via self.my()."""
-  _my: dict[str, Any] = {}
-
-  def _config_from_name(self, key: str) -> None: self._my.update(Environment.glob_dict(key))
-  def _config_copy(self, other: Apps) -> None: self._my = dict(other._my)
-  def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
-  def _config_from_env(self) -> None: self._my = deepcopy(Environment.data)
-
-  def my(self, path, default=None) -> Any: return deepget(path, self._my, default=default)
-  def my_int(self, path, default: int = 0) -> int: return deepget_int(path, self._my, default=default)
-  def my_float(self, path, default: float = float('nan')) -> float: return deepget_float(path, self._my, default=default)
-  def my_list(self, path, default: list = []) -> list: return deepget_list(path, self._my, default=default or [])
-  def my_dict(self, path, default: dict = {}) -> dict: return deepget_dict(path, self._my, default=default or {})
 
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
 
 
-class LauncherApp(Apps):
+class TUILauncher(TUIApp):
     """Base TUI superapp launcher.
 
     Subclass and set ``TITLE`` / ``MENU_TITLE``, then pass to
@@ -397,6 +363,7 @@ class LauncherApp(Apps):
         Binding('enter', 'launch', 'Launch', show=False),
         Binding('d', 'toggle_dark', 'Dark/Light'),
         Binding('o', 'toggle_output', 'Output', show=False),
+        Binding('i', 'show_info', 'Info', show=False),
     ]
 
     def __init__(self, apps: dict[str, dict], app_dir: Path) -> None:
@@ -597,6 +564,16 @@ class LauncherApp(Apps):
             proc_id = self._active_log or max(self._processes)
             self.show_process_logs(proc_id)
 
+    def action_show_info(self) -> None:
+        """Show current app config (self._my) in the output panel."""
+        import pprint
+        panel = self.query_one('#output-panel', RichLog)
+        panel.clear()
+        panel.write('[bold]App config (self._my)[/bold]')
+        for line in pprint.pformat(self._my).splitlines():
+            panel.write(line)
+        panel.add_class('visible')
+
     # ── Ask form ─────────────────────────────────────────────────────────
 
     def _show_ask_form(
@@ -707,7 +684,7 @@ class LauncherApp(Apps):
 
 def launcher_main(
     apps: dict[str, dict],
-    app_class: type[LauncherApp],
+    app_class: type[TUILauncher],
     app_dir: Path,
     description: str = 'TUI Launcher',
 ) -> None:
