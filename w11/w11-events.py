@@ -1348,8 +1348,7 @@ def main():
 
     from w11 import resolve_app_dir
     app_dir = resolve_app_dir()
-    Env(name='w11-events', app_path=app_dir)
-    Env.load()
+    Env.from_env(name='w11-events', app_path=app_dir)
 
     if args.all_logs:
         log_names = get_all_log_names()

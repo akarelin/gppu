@@ -757,11 +757,11 @@ async def Dump(filename: str, data={}, **kw) -> None:
 
 # region Environment
 class Env:
-  name: str
-  app_path: Path
-  data_path: Path
   data: dict[str, Any] = {}
   initialized: bool = False
+
+  name: str
+  app_path: Path
 
   home: Path = Path.home()
   user: str = getpass.getuser()
@@ -769,22 +769,58 @@ class Env:
 
   _logger: logging.Logger
 
+  @staticmethod
+  def _load_dict(d: dict) -> None:
+    if Env.initialized or Env.data: Env.reset(); Logger.Info('INFO', 'Environment', 'WRED', 'reset()')
+    s = json.dumps(d)
+    Env.data = json.loads(Template(s).safe_substitute())
+    Env.initialized = True
 
   @staticmethod
-  def _detect_data_path() -> Path:
-    if Env.os == OSType.W11:
-      import ctypes, ctypes.wintypes
-      class _GUID(ctypes.Structure):
-        _fields_ = [("Data1", ctypes.wintypes.DWORD), ("Data2", ctypes.wintypes.WORD), ("Data3", ctypes.wintypes.WORD), ("Data4", ctypes.c_byte * 8)]
-      _SHGetKnownFolderPath = ctypes.windll.shell32.SHGetKnownFolderPath
-      _SHGetKnownFolderPath.argtypes = [ctypes.POINTER(_GUID), ctypes.wintypes.DWORD, ctypes.wintypes.HANDLE, ctypes.POINTER(ctypes.c_wchar_p)]
-      path_ptr = ctypes.c_wchar_p()
-      # FOLDERID_Downloads = {374DE290-123F-4565-9164-39C4925E467B}
-      guid = _GUID(0x374DE290, 0x123F, 0x4565, (ctypes.c_byte * 8)(0x91, 0x64, 0x39, 0xC4, 0x92, 0x5E, 0x46, 0x7B))
-      if _SHGetKnownFolderPath(ctypes.byref(guid), 0, None, ctypes.byref(path_ptr)) == 0:
-        return Path(path_ptr.value)
-    if Env.os == OSType.MACOS: return Env.home / 'Downloads'
-    return Env.home
+  def reset() -> None: Env.data = {}; Env.initialized = False
+
+  @staticmethod
+  def glob(path, default=None) -> Any: return deepget(path, Env.data, default=default)
+  @staticmethod
+  def glob_int(path, default: int = 0) -> int: return deepget_int(path, Env.data, default=default)
+  @staticmethod
+  def glob_list(path, default=[]) -> list: return deepget_list(path, Env.data, default=default)
+  @staticmethod
+  def glob_dict(path, default={}) -> dict: return deepget_dict(path, Env.data, default=default)
+  @staticmethod
+  @sync
+  async def dump():
+    Dump('Env.data', Env.data)
+    return await asyncio.sleep(0)  # Make it truly async
+
+  @staticmethod
+  def from_dict(d: dict) -> None:
+    """Initialize Env from a pre-built dict (no file I/O)."""
+    Env._load_dict(d)
+
+  @staticmethod
+  def from_env(name: Optional[str] = None, app_path: Optional[Path] = None) -> None:
+    """Initialize Env from name + app_path, resolving config file and loading YAML."""
+    import __main__
+    Env._main_file = Path(getattr(__main__, '__file__', 'app')).resolve()
+    Env._main_dir = Env._main_file.parent
+
+    # Under PyInstaller __main__.__file__ resolves to __main__; use exe name instead
+    if name:
+      Env.name = name
+    elif getattr(sys, 'frozen', False):
+      Env.name = Path(sys.executable).stem
+    else:
+      Env.name = Env._main_file.stem
+    Env.app_path = Env._resolve_app_path(app_path)
+    Env.config_file = Env._config_file()
+
+    Env._logger = _logger.getChild(Env.name)
+    for attr_name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)):
+      setattr(Env, attr_name, staticmethod(partial(fn, logger=Env._logger)))
+
+    config_data = dict_from_yml(Env.config_file)
+    Env._load_dict(config_data)
 
   @staticmethod
   def _resolve_app_path(app_path: Optional[Path] = None) -> Path:
@@ -808,61 +844,6 @@ class Env:
     return file
 
 
-  def __init__(self, name: Optional[str] = None, app_path: Optional[Path] = None):
-    import __main__
-    Env._main_file = Path(getattr(__main__, '__file__', 'app')).resolve()
-    Env._main_dir = Env._main_file.parent
-
-    # Under PyInstaller __main__.__file__ resolves to __main__; use exe name instead
-    if name:
-      Env.name = name
-    elif getattr(sys, 'frozen', False):
-      Env.name = Path(sys.executable).stem
-    else:
-      Env.name = Env._main_file.stem
-    Env.app_path = Env._resolve_app_path(app_path)
-    Env.data_path = Env._detect_data_path()
-    Env.config_file = Env._config_file()
-
-    Env._logger = _logger.getChild(Env.name)
-    for name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)):
-      setattr(Env, name, staticmethod(partial(fn, logger=Env._logger)))
-
-
-  @staticmethod
-  def load() -> None:
-    config_data = dict_from_yml(Env.config_file)
-    Env._from_dict(config_data)
-
-
-  @staticmethod
-  def _from_dict(d: dict) -> None:   # * Loader
-    if Env.initialized or Env.data: Env._reset(); Logger.Info('INFO', 'Environment', 'WRED', 'reset()')
-    
-    s = json.dumps(d)
-    extra = {}
-    Env.data = json.loads(Template(s).safe_substitute(**extra))
-    Env.initialized = True
-
-
-  @staticmethod
-  def _reset() -> None: Env.data = {}; Env.initialized = False
-
-  @staticmethod
-  def glob(path, default=None) -> Any: return deepget(path, Env.data, default=default)
-  @staticmethod
-  def glob_int(path, default: int = 0) -> int: return deepget_int(path, Env.data, default=default)
-  @staticmethod
-  def glob_list(path, default=[]) -> list: return deepget_list(path, Env.data, default=default)
-  @staticmethod
-  def glob_dict(path, default={}) -> dict: return deepget_dict(path, Env.data, default=default)
-  @staticmethod
-  @sync
-  async def dump():
-    Dump('Env.data', Env.data)
-    return await asyncio.sleep(0)  # Make it truly async
-
-
 # endregion
 
 # Global aliases for Env.glob* methods
@@ -870,6 +851,7 @@ glob = Env.glob
 glob_int = Env.glob_int
 glob_list = Env.glob_list
 glob_dict = Env.glob_dict
+
 
 
 # region Mixins
@@ -966,8 +948,7 @@ class App(_Base):
     caller_file = Path(inspect.stack()[1].filename).resolve()
     self.name = name or caller_file.stem
     if not Env.initialized:
-      Env(name=self.name, app_path=caller_file.parent)
-      Env.load()
+      Env.from_env(name=self.name, app_path=caller_file.parent)
     super().__init__(**kw)
 # endregion
 
