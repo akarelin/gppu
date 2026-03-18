@@ -65,9 +65,6 @@ class PrettyColoredHandler(logging.StreamHandler):
     if not silent: super().emit(record)
 
 
-# @@      mixin class                                                           ==
-# _mixin, mixin_Config, Logger, protocol_Logger, mixin_Logger are now defined in gppu.py and imported above
-
 # region y2xxx
 # xx
 # xx y2list, y2path and y2slug
