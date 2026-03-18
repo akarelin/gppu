@@ -27,6 +27,7 @@ test-tui = ["pytest", "pytest-asyncio", "textual"]
 statusline = "statusline.status_line:main"
 
 [tool.setuptools_scm]
+tag_regex = "^gppu/v(?P<version>.*)$"
 
 [tool.setuptools.packages.find]
 where = ["."]
