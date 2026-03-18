@@ -154,10 +154,14 @@ jobs:
       - name: Create tag
         if: inputs.bump != 'none'
         run: |
-          git config user.name "Alex AI Actions"
-          git config user.email "actions@karelin.ai"
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
           git tag "${TAG}"
           git push origin "${TAG}"
+
+      - name: Checkout tag for rebuild
+        if: inputs.bump == 'none'
+        run: git checkout "${TAG}"
 
       - name: Build and release
         run: |
