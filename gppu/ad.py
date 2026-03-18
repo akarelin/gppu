@@ -293,37 +293,4 @@ class DC(UserDict):
 # endregion
 
 
-# region Environment
-class Environment:
-  data: dict[str, Any] = {}
-  initialized: bool = False
-
-  @staticmethod
-  def from_env(name: str | None = None, app_path: str | Path | None = None) -> None:
-    if Environment.initialized or Environment.data: Environment.reset()
-    env = Env(name=name, app_path=Path(app_path) if app_path else None)
-    env.load()
-    Environment.data = env.data
-    Environment.initialized = True
-
-  @staticmethod
-  def from_dict(d: dict) -> None:
-    if Environment.initialized or Environment.data: Environment.reset()
-    Environment.data = d
-    Environment.initialized = True
-
-  @staticmethod
-  def reset() -> None: Environment.data = {}; Environment.initialized = False
-
-  @staticmethod
-  def glob(path, default=None) -> Any: return deepget(path, Environment.data, default=default)
-  @staticmethod
-  def glob_int(path, default: int = 0) -> int: return deepget_int(path, Environment.data, default=default)
-  @staticmethod
-  def glob_list(path, default=[]) -> list: return deepget_list(path, Environment.data, default=default)
-  @staticmethod
-  def glob_dict(path, default={}) -> dict: return deepget_dict(path, Environment.data, default=default)
-  @staticmethod
-  async def dump(): Logger.Dump('Environment.data', Environment.data)
-# endregion
 
