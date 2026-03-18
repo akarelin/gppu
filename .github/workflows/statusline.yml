@@ -24,7 +24,7 @@ permissions:
 jobs:
   bump:
     runs-on: [self-hosted, linux]
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.bump != 'none'
     outputs:
       tag: ${{ steps.version.outputs.tag }}
 
@@ -159,7 +159,7 @@ jobs:
 
   release:
     needs: [bump, build]
-    if: always() && needs.build.result == 'success'
+    if: always() && needs.build.result == 'success' && (needs.bump.result == 'success' || startsWith(github.ref, 'refs/tags/'))
     runs-on: [self-hosted, linux]
 
     steps:
