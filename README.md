@@ -7,7 +7,7 @@ This repo contains **3 independent products**:
 # GPPU - General Purpose Python Utilities
 
 A utility library for configuration management, logging, data manipulation, type safety, database access, caching, TUI framework, and browser automation.
-> _All the things_
+Version 3.0.0, codename _All the things_
 
 # Modules
 
@@ -57,8 +57,84 @@ Debug('GRAY4', 'trace', 'NONE', 'processing item')
 Dump('debug_state.yml', data)
 ```
 
-## Data
-[DATA.md]
+## How Apps Work
+
+Every app follows the same pattern: a YAML config file is the single source of truth, and `Env.from_env()` loads it at startup. The app reads all its settings from `Env.glob()`.
+
+### 1. Create a config — `myapp.yaml` next to your script:
+
+```yaml
+logs:
+  - Application
+  - System
+level: Warning
+days: 30
+error_rules: !include error_rules.yaml
+```
+
+### 2. Initialize and read config:
+
+```python
+from gppu import Env, Info, glob, glob_int, glob_list
+from pathlib import Path
+
+Env.from_env(name='myapp', app_path=Path(__file__).parent)
+
+logs  = glob_list('logs')
+level = glob('level', default='Warning')
+days  = glob_int('days', default=10)
+
+Info('WBLUE', 'myapp', 'NONE', 'loaded', 'BG', str(len(logs)), 'NONE', 'logs')
+```
+
+### 3. For TUI apps — subclass `TUIApp` and use `Env` the same way:
+
+```python
+from gppu import Env
+from gppu.tui import TUIApp
+
+class MyApp(TUIApp):
+    TITLE = 'My App'
+    def compose(self):
+        ...
+
+Env.from_env(name='myapp', app_path=Path(__file__).parent)
+MyApp.main()  # TUI if terminal available, CLI fallback otherwise
+```
+
+### 4. For superapp launchers — a launcher config lists sub-apps, each with its own YAML:
+
+```yaml
+# launcher.yaml
+apps:
+  events: events.yaml
+  onedrive: onedrive.yaml
+```
+
+Each sub-app YAML has a `manifest:` section (name, icon, script, modes) plus app-specific config below it. The launcher loads all manifests and presents a menu.
+
+```python
+from gppu import Env
+from gppu.tui import TUILauncher, launcher_main, load_app_registry
+
+APP_DIR = Path(__file__).parent
+
+class MyLauncher(TUILauncher):
+    TITLE = 'My Tools'
+
+Env.from_env(name='launcher', app_path=APP_DIR)
+apps = load_app_registry(APP_DIR)
+launcher_main(apps, MyLauncher, APP_DIR, 'My Tools')
+```
+
+See [w11/app.py](w11/app.py) for a real example.
+
+# Other Prodducts
+
+[Statusline](statusline/) — Claude Code status line tool
+
+[W11](w11/README.md) — Windows 11 utilities
+
 
 # Appendix
 ## Installation
