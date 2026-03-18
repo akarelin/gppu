@@ -32,6 +32,7 @@ from .gppu import (
     deepget,
     deepget_dict,
     deepget_int,
+    deepget_float,
     deepget_list,
     deepdict,
     dict_all_paths,
@@ -67,8 +68,16 @@ from .gppu import (
     Error,
     Dump,
 
+    # Mixins
+    _mixin,
+    mixin_Config,
+    Logger,
+    protocol_Logger,
+    mixin_Logger,
+
     # Environment configuration
     Env,
+    Environment,
 
     # Config access (aliases for Env.glob*)
     glob,
@@ -76,7 +85,9 @@ from .gppu import (
     glob_list,
     glob_dict,
 
-    # Foundation class
+    # Foundation classes
+    _Logger,
+    _Config,
     _Base,
 )
 
@@ -97,7 +108,7 @@ __all__ = [
     'template_populate', 'dict_template_populate',
 
     # Dictionary utilities
-    'deepget', 'deepget_dict', 'deepget_int', 'deepget_list',
+    'deepget', 'deepget_dict', 'deepget_float', 'deepget_int', 'deepget_list',
     'deepdict', 'dict_all_paths', 'dict_element_append', 'dict_sort_keylen',
 
     # Type utilities
@@ -115,12 +126,16 @@ __all__ = [
     # Logging
     'Debug', 'Info', 'Warn', 'Error', 'Dump',
 
+    # Mixins
+    '_mixin', 'mixin_Config',
+    'Logger', 'protocol_Logger', 'mixin_Logger',
+
     # Environment configuration
-    'Env',
+    'Env', 'Environment',
 
     # Config access
     'glob', 'glob_int', 'glob_list', 'glob_dict',
 
-    # Foundation class
-    '_Base',
+    # Foundation classes
+    '_Logger', '_Config', '_Base',
 ]
