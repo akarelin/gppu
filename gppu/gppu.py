@@ -756,19 +756,55 @@ async def Dump(filename: str, data={}, **kw) -> None:
 
 
 # region Environment
+class _Env:
+  data: dict[str, Any] = {}
+  initialized: bool = False
+  @staticmethod
+  def _from_dict(d: dict) -> None:   # * Loader
+    if Env.initialized or Env.data: Env._reset(); Logger.Info('INFO', 'Environment', 'WRED', 'reset()')
+    
+    s = json.dumps(d)
+    extra = {}
+    Env.data = json.loads(Template(s).safe_substitute(**extra))
+    Env.initialized = True
+
+
+  @staticmethod
+  def _reset() -> None: Env.data = {}; Env.initialized = False
+
+  @staticmethod
+  def glob(path, default=None) -> Any: return deepget(path, Env.data, default=default)
+  @staticmethod
+  def glob_int(path, default: int = 0) -> int: return deepget_int(path, Env.data, default=default)
+  @staticmethod
+  def glob_list(path, default=[]) -> list: return deepget_list(path, Env.data, default=default)
+  @staticmethod
+  def glob_dict(path, default={}) -> dict: return deepget_dict(path, Env.data, default=default)
+  @staticmethod
+  @sync
+  async def dump():
+    Dump('Env.data', Env.data)
+    return await asyncio.sleep(0)  # Make it truly async
+
+
+# endregion
+
+# Global aliases for Env.glob* methods
+glob = _Env.glob
+glob_int = _Env.glob_int
+glob_list = _Env.glob_list
+glob_dict = _Env.glob_dict
+
 class Env:
   name: str
   app_path: Path
   data_path: Path
-  data: dict[str, Any] = {}
-  initialized: bool = False
 
   home: Path = Path.home()
   user: str = getpass.getuser()
   os: OSType = detect_os()
 
   _logger: logging.Logger
-
 
   @staticmethod
   def _detect_data_path() -> Path:
@@ -835,41 +871,7 @@ class Env:
     Env._from_dict(config_data)
 
 
-  @staticmethod
-  def _from_dict(d: dict) -> None:   # * Loader
-    if Env.initialized or Env.data: Env._reset(); Logger.Info('INFO', 'Environment', 'WRED', 'reset()')
-    
-    s = json.dumps(d)
-    extra = {}
-    Env.data = json.loads(Template(s).safe_substitute(**extra))
-    Env.initialized = True
 
-
-  @staticmethod
-  def _reset() -> None: Env.data = {}; Env.initialized = False
-
-  @staticmethod
-  def glob(path, default=None) -> Any: return deepget(path, Env.data, default=default)
-  @staticmethod
-  def glob_int(path, default: int = 0) -> int: return deepget_int(path, Env.data, default=default)
-  @staticmethod
-  def glob_list(path, default=[]) -> list: return deepget_list(path, Env.data, default=default)
-  @staticmethod
-  def glob_dict(path, default={}) -> dict: return deepget_dict(path, Env.data, default=default)
-  @staticmethod
-  @sync
-  async def dump():
-    Dump('Env.data', Env.data)
-    return await asyncio.sleep(0)  # Make it truly async
-
-
-# endregion
-
-# Global aliases for Env.glob* methods
-glob = Env.glob
-glob_int = Env.glob_int
-glob_list = Env.glob_list
-glob_dict = Env.glob_dict
 
 
 # region Mixins

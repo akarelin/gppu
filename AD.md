@@ -1,6 +1,6 @@
-# gppu.ad - Advanced Types and Base Classes
+# gppu.ad - Home Automation Types and Base Classes
 
-`gppu.ad` provides the Logger infrastructure, mixin classes, the `_Base` foundation, tokenized list types, entity IDs, and the `DC` pseudo-dataclass.
+`gppu.ad` provides the Logger infrastructure, mixin classes, the `_Base` foundation, tokenized list types (paths, topics, slugs), entity IDs, and the `DC` pseudo-dataclass. Originally built for home automation (AppDaemon/HASS), but the base classes and types are general-purpose.
 
 ```python
 from gppu.ad import (
