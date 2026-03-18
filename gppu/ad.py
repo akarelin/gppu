@@ -296,15 +296,14 @@ class DC(UserDict):
 # region Environment
 class Environment:
   data: dict[str, Any] = {}
-  _env: Env
   initialized: bool = False
 
   @staticmethod
   def from_env(name: str | None = None, app_path: str | Path | None = None) -> None:
     if Environment.initialized or Environment.data: Environment.reset()
-    Environment._env = Env(name=name, app_path=Path(app_path) if app_path else None)
-    Environment._env.load()
-    Environment.data = Environment._env.data
+    env = Env(name=name, app_path=Path(app_path) if app_path else None)
+    env.load()
+    Environment.data = env.data
     Environment.initialized = True
 
   @staticmethod
@@ -328,7 +327,3 @@ class Environment:
   async def dump(): Logger.Dump('Environment.data', Environment.data)
 # endregion
 
-
-# region Foundation
-# _Logger, _Config, App (_Base) are defined in gppu.py and imported above
-# endregion

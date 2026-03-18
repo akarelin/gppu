@@ -34,9 +34,9 @@ Requires Python >= 3.11. Core dependency: PyYAML.
 | Module | Purpose |
 |--------|---------|
 | `gppu` (core) | `Env` config loader, type coercion, dict utilities, YAML/JSON I/O, colored logging, time helpers, OS detection, async helpers, template population |
-| [`gppu.ad`](AD.md) | `Logger`/`init_logger`, mixins (`mixin_Logger`, `mixin_Config`), `_Base` foundation class, advanced types (`y2list`, `y2path`, `y2topic`, `y2slug`, `y2eid`), `DC` pseudo-dataclass |
+| [`gppu.ad`](AD.md) | `Logger`/`init_logger`, mixins (`mixin_Logger`, `mixin_Config`), `_Base` foundation class, home automation types (`y2list`, `y2path`, `y2topic`, `y2slug`, `y2eid`), `DC` pseudo-dataclass |
 | [`gppu.data`](DATA.md) | `Cache` unified caching (JSON/pickle/sqlite/diskcache/DB backends), database base classes: `_PGBase` (psycopg2) and `_SQABase` (SQLAlchemy) |
-| [`gppu.tui`](#tui-framework) | `TUIApp`, `TUILauncher`, `ConfigEditorApp`, selector widgets — Textual-based TUI framework |
+| [`gppu.tui`](TUI.md) | `TUIApp`, `TUILauncher`, `ConfigEditorApp`, selector widgets — Textual-based TUI framework |
 | [`gppu.chrome`](CHROME.md) | Selenium Chrome driver setup with profile management, process lifecycle, crash recovery, stale lock cleanup, mobile/desktop emulation |
 
 ## Public API
@@ -226,27 +226,24 @@ def expensive(x):
 # Env-var bypass: set skip_env='SKIP_CACHE' to disable caching via env var
 ```
 
-### TUI Framework
+### TUI Framework (gppu.tui)
 
-Textual-based TUI framework for building app launchers and config editors. Requires `tui` extra.
+Textual-based framework for building app launchers, config editors, and interactive selectors. Supports web mode (`--serve`), CLI fallback when no TTY is available, and embedding TUI apps as screens within a launcher. Requires `tui` extra.
 
 ```python
 from gppu.tui import TUILauncher, TUIApp, ConfigEditorApp
 from gppu.tui import ui_select, ui_select_rows
 ```
 
-- `TUIApp` — base Textual app with gppu config mixin
-- `TUILauncher` — framework for building app launchers from YAML manifests
-- `ConfigEditorApp` — TUI editor for YAML configs with `!include` tree view and validation
-- `ui_select()` / `ui_select_rows()` — standalone interactive selectors
+See [TUI.md](TUI.md) for full documentation of `TUIApp`, `TUILauncher`, `ConfigEditorApp`, YAML manifests, execution modes, selectors, and widgets.
 
-### Advanced Types (gppu.ad)
+### Home Automation Types (gppu.ad)
 
-See [AD.md](AD.md) for full documentation of `y2list`, `y2path`, `y2topic`, `y2slug`, `y2eid`, `DC`, `Logger`, `init_logger`, mixins, and `_Base`.
+See [AD.md](AD.md) for `Logger`, `init_logger`, mixins (`mixin_Logger`, `mixin_Config`), `_Base` foundation, tokenized list types (`y2list`, `y2path`, `y2topic`, `y2slug`), entity IDs (`y2eid`), and `DC` pseudo-dataclass.
 
-### Database Access (gppu.data)
+### Database & Caching (gppu.data)
 
-See [DATA.md](DATA.md) for `_PGBase` (psycopg2) and `_SQABase` (SQLAlchemy) with lazy connections, context managers, auto-commit/rollback.
+See [DATA.md](DATA.md) for `Cache` (multi-backend key/value cache with TTL), `_PGBase` (psycopg2), and `_SQABase` (SQLAlchemy).
 
 ### Chrome Automation (gppu.chrome)
 
