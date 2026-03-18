@@ -6,14 +6,14 @@
 
 [![release](https://img.shields.io/github/v/release/akarelin/gppu?filter=gppu/v*&label=&color=blue)](https://github.com/akarelin/gppu/releases?q=gppu)
 
----
 
-| | CI | |
+# Apps
+| |  | |
 |---|---|---|
-| **gppu** |  | Core library |
 | [**Statusline**](statusline/) | [![CI](https://github.com/akarelin/gppu/actions/workflows/statusline.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/statusline.yml) | Claude Code status line (Linux, macOS, Windows) |
 | [**W11**](w11/README.md) | [![CI](https://github.com/akarelin/gppu/actions/workflows/w11.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/w11.yml) | Windows 11 utilities & diagnostics |
 
+---
 # Modules
 
 | Module | Purpose |
