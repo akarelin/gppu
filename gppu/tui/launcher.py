@@ -38,6 +38,7 @@ from textual.content import Content
 from textual.dom import NoScreen
 from textual.events import Mount
 from textual import work
+from textual.screen import Screen
 from textual.widgets import (
     Footer, Header, Input, ListItem, ListView, OptionList, RichLog, Static,
 )
@@ -234,6 +235,36 @@ class SpinnerIndicator(Static):
 
 
 
+class InfoScreen(Screen):
+    """Modal screen showing Env config and app state."""
+
+    CSS = """
+    #info-panel {
+        width: 80%;
+        height: 80%;
+        border: round $primary;
+        padding: 1 2;
+        background: $boost;
+    }
+    """
+
+    def __init__(self, text: str) -> None:
+        super().__init__()
+        self._text = text
+
+    def compose(self) -> ComposeResult:
+        yield RichLog(id='info-panel', markup=True)
+
+    def on_mount(self) -> None:
+        panel = self.query_one('#info-panel', RichLog)
+        for line in self._text.splitlines():
+            panel.write(line)
+
+    async def on_key(self, event) -> None:
+        if event.key in ('escape', 'i', 'q'):
+            self.app.pop_screen()
+
+
 class ProcessRow(Horizontal):
     """A row in the process bar representing one background process.
 
@@ -366,7 +397,7 @@ class TUILauncher(TUIApp):
         Binding('enter', 'launch', 'Launch', show=False),
         Binding('d', 'toggle_dark', 'Dark/Light'),
         Binding('o', 'toggle_output', 'Output', show=False),
-        Binding('i', 'show_info', 'Info', show=False),
+        Binding('i', 'show_info', 'Info'),
     ]
 
     def __init__(self, apps: dict[str, dict], app_dir: Path) -> None:
@@ -382,7 +413,7 @@ class TUILauncher(TUIApp):
     def compose(self) -> ComposeResult:
         yield StatusHeader()
         yield Vertical(id='process-bar')
-        yield RichLog(id='output-panel')
+        yield RichLog(id='output-panel', markup=True)
         with Vertical(id='menu'):
             yield Static(self.MENU_TITLE, id='menu-title')
             yield ListView(
@@ -424,10 +455,12 @@ class TUILauncher(TUIApp):
         ask_for = mode_def.get('ask_for')
         if ask_for:
             self._show_ask_form(ask_for, base_args)
-        elif mode_def.get('inline'):
-            self._run_inline(base_args)
-        else:
+        elif mode_def.get('direct'):
+            # Exit TUI and hand control to the subprocess (needs a terminal)
             self.exit(result={'app': self._selected_app, 'args': base_args})
+        else:
+            # Run inline with output capture (default for all modes)
+            self._run_inline(base_args)
 
     # ── Inline / background execution ────────────────────────────────────
 
@@ -568,14 +601,18 @@ class TUILauncher(TUIApp):
             self.show_process_logs(proc_id)
 
     def action_show_info(self) -> None:
-        """Show current app config (self._my) in the output panel."""
+        """Show Env config and app state in a modal screen."""
         import pprint
-        panel = self.query_one('#output-panel', RichLog)
-        panel.clear()
-        panel.write('[bold]App config (self._my)[/bold]')
-        for line in pprint.pformat(self._my).splitlines():
-            panel.write(line)
-        panel.add_class('visible')
+        lines = [
+            f'[bold]Env[/bold]  name={Env.name}  initialized={Env.initialized}',
+            f'[bold]app_path[/bold]  {Env.app_path}',
+            '',
+            '[bold]Env.data[/bold]',
+            pprint.pformat(Env.data),
+        ]
+        if self._my:
+            lines += ['', '[bold]self._my[/bold]', pprint.pformat(self._my)]
+        self.push_screen(InfoScreen('\n'.join(lines)))
 
     # ── Ask form ─────────────────────────────────────────────────────────
 
