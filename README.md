@@ -2,21 +2,23 @@
 
 <h3><code>v3</code> — <em>All the things</em></h3>
 
-> A utility library for configuration management, logging, data manipulation, type safety, database access, caching, TUI framework, and browser automation.
+> YAML-driven configuration with `!include`, colored structured logging, type coercion, deep dict access, YAML/JSON I/O, template population, time helpers, OS detection, async-to-sync, multi-backend caching, PostgreSQL and SQLAlchemy base classes, Textual TUI framework with superapp launchers, nested apps, config editors, web UI via `--serve`, and CLI fallback, Selenium Chrome automation, and home automation types.
+
+[![release](https://img.shields.io/github/v/release/akarelin/gppu?filter=gppu/v*&label=&color=blue)](https://github.com/akarelin/gppu/releases?q=gppu)
 
 ---
 
-| | CI | Release | |
-|---|---|---|---|
-| **gppu** | [![CI](https://github.com/akarelin/gppu/actions/workflows/gppu.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/gppu.yml) | [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=gppu/v*&label=release&color=blue)](https://github.com/akarelin/gppu/releases?q=gppu) | Core library |
-| [**Statusline**](statusline/) | [![CI](https://github.com/akarelin/gppu/actions/workflows/statusline.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/statusline.yml) | [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=statusline/v*&label=release&color=blue)](https://github.com/akarelin/gppu/releases?q=statusline) | Claude Code status line (Linux, macOS, Windows) |
-| [**W11**](w11/README.md) | [![CI](https://github.com/akarelin/gppu/actions/workflows/w11.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/w11.yml) | [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=w11/v*&label=release&color=blue)](https://github.com/akarelin/gppu/releases?q=w11) | Windows 11 utilities & diagnostics |
+| | CI | |
+|---|---|---|
+| **gppu** |  | Core library |
+| [**Statusline**](statusline/) | [![CI](https://github.com/akarelin/gppu/actions/workflows/statusline.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/statusline.yml) | Claude Code status line (Linux, macOS, Windows) |
+| [**W11**](w11/README.md) | [![CI](https://github.com/akarelin/gppu/actions/workflows/w11.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/w11.yml) | Windows 11 utilities & diagnostics |
 
 # Modules
 
 | Module | Purpose |
 |--------|---------|
-| `gppu` (core) | **Environment**: `Env` config loader with `!include`, typed path access (`glob`, `glob_int`, `glob_list`, `glob_dict`). **Logger**: colored `Info`/`Warn`/`Error`/`Debug`/`Dump`. Plus: type coercion, dict utilities, YAML/JSON I/O, time helpers, OS detection, async helpers, template population |
+| `gppu` (core)<br>[![CI](https://github.com/akarelin/gppu/actions/workflows/gppu.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/gppu.yml) | **Environment**: `Env` config loader with `!include`, typed path access (`glob`, `glob_int`, `glob_list`, `glob_dict`). **Logger**: colored `Info`/`Warn`/`Error`/`Debug`/`Dump`. Plus: type coercion, dict utilities, YAML/JSON I/O, time helpers, OS detection, async helpers, template population |
 | [`gppu.data`](DATA.md) | `Cache` unified caching (JSON/pickle/sqlite/diskcache/DB backends), database base classes: `_PGBase` (psycopg2) and `_SQABase` (SQLAlchemy) |
 | [`gppu.tui`](TUI.md) | `TUIApp`, `TUILauncher`, `ConfigEditorApp`, `ui_select`, `ui_select_rows` — Textual-based TUI framework with web mode (`--serve`), CLI fallback, app embedding. Requires `tui` extra |
 | [`gppu.chrome`](CHROME.md) | `prepare_driver`, `switch_to_mobile`, `switch_to_desktop` — Selenium Chrome driver setup with profile management, crash recovery, mobile/desktop emulation |
