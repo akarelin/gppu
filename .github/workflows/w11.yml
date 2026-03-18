@@ -132,7 +132,7 @@ jobs:
           tag_name: w11/latest
           name: w11-latest
           files: artifacts/*
-          prerelease: true
+          prerelease: ${{ github.ref != 'refs/heads/master' }}
           make_latest: false
 
       - run: |
