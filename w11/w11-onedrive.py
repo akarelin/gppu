@@ -676,7 +676,7 @@ def _escape(text: str) -> str:
     return text.replace('[', '\\[').replace(']', '\\]')
 
 
-class OneDriveDiagApp(App):
+class OneDriveDiagApp(TUIApp):
     CSS = """
     #main-layout { height: 1fr; }
     #tabs { height: 1fr; }
@@ -1376,7 +1376,7 @@ class HostnamePicker(App):
         self.exit(result=[])
 
 
-class ConflictApp(App):
+class ConflictApp(TUIApp):
     CSS = """
     #main-layout {
         height: 1fr;
