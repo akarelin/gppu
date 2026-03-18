@@ -1,28 +1,31 @@
 This repo contains **3 independent products**:
 
-[![gppu](https://github.com/akarelin/gppu/actions/workflows/gppu.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/gppu.yml) [![version](https://img.shields.io/github/v/release/akarelin/gppu?filter=v*&label=version&color=blue)](https://github.com/akarelin/gppu/releases/latest) Core Python utility library<br>
-[![Statusline](https://github.com/akarelin/gppu/actions/workflows/statusline.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/statusline.yml) [![version](https://img.shields.io/github/v/release/akarelin/gppu?filter=sl-*&display_name=release&label=version&color=blue)](https://github.com/akarelin/gppu/releases/tag/sl-latest) Claude Code 2-line status line tool (Linux, macOS, Windows)<br>
-[![W11](https://github.com/akarelin/gppu/actions/workflows/w11.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/w11.yml) [![version](https://img.shields.io/github/v/release/akarelin/gppu?filter=w11-*&display_name=release&label=version&color=blue)](https://github.com/akarelin/gppu/releases/tag/w11-latest) [**w11**](w11/README.md) Windows 11 utilities & diagnostics (Windows x64)
+[![gppu](https://github.com/akarelin/gppu/actions/workflows/gppu.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/gppu.yml) [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=gppu/v*&exclude_prerelease&label=stable&color=blue)](https://github.com/akarelin/gppu/releases?q=gppu) [![dev](https://img.shields.io/github/v/release/akarelin/gppu?filter=gppu/v*&include_prereleases&label=dev&color=orange)](https://github.com/akarelin/gppu/releases?q=gppu+prerelease%3Atrue) Core Python utility library<br>
+[![Statusline](https://github.com/akarelin/gppu/actions/workflows/statusline.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/statusline.yml) [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=statusline/v*&exclude_prerelease&label=stable&color=blue)](https://github.com/akarelin/gppu/releases?q=statusline) [![dev](https://img.shields.io/github/v/release/akarelin/gppu?filter=statusline/v*&include_prereleases&label=dev&color=orange)](https://github.com/akarelin/gppu/releases?q=statusline+prerelease%3Atrue) Claude Code 2-line status line tool (Linux, macOS, Windows)<br>
+[![W11](https://github.com/akarelin/gppu/actions/workflows/w11.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/w11.yml) [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=w11/v*&exclude_prerelease&label=stable&color=blue)](https://github.com/akarelin/gppu/releases?q=w11) [![dev](https://img.shields.io/github/v/release/akarelin/gppu?filter=w11/v*&include_prereleases&label=dev&color=orange)](https://github.com/akarelin/gppu/releases?q=w11+prerelease%3Atrue) [**w11**](w11/README.md) Windows 11 utilities & diagnostics (Windows x64)
 
 # GPPU - General Purpose Python Utilities
 
-A utility library for configuration management, logging, data manipulation, type safety, database access, and browser automation.
+A utility library for configuration management, logging, data manipulation, type safety, database access, caching, TUI framework, and browser automation.
 
 ## Installation
 
 ```bash
-# From GitHub
-pip install "gppu @ git+ssh://git@github.com/akarelin/gppu.git@latest"
+# From GitHub (stable)
+pip install "gppu @ git+ssh://git@github.com/akarelin/gppu.git@gppu/latest"
+
+# From GitHub (dev)
+pip install "gppu @ git+ssh://git@github.com/akarelin/gppu.git@gppu/dev-latest"
 
 # With optional extras
-pip install "gppu[pg] @ git+ssh://git@github.com/akarelin/gppu.git@latest"
-pip install "gppu[all] @ git+ssh://git@github.com/akarelin/gppu.git@latest"
+pip install "gppu[pg] @ git+ssh://git@github.com/akarelin/gppu.git@gppu/latest"
+pip install "gppu[all] @ git+ssh://git@github.com/akarelin/gppu.git@gppu/latest"
 
 # Local development
 pip install -e ".[all,test]"
 ```
 
-**Optional extras**: `pg` (psycopg2), `sql` (SQLAlchemy), `cache` (diskcache), `chrome` (Selenium), `all`, `test` (pytest).
+**Optional extras**: `pg` (psycopg2), `sql` (SQLAlchemy), `cache` (diskcache), `chrome` (Selenium), `tui` (Textual), `serve` (textual-serve), `statusline` (Jinja2), `all`, `test` (pytest).
 
 Requires Python >= 3.11. Core dependency: PyYAML.
 
@@ -32,7 +35,8 @@ Requires Python >= 3.11. Core dependency: PyYAML.
 |--------|---------|
 | `gppu` (core) | `Env` config loader, type coercion, dict utilities, YAML/JSON I/O, colored logging, time helpers, OS detection, async helpers, template population |
 | [`gppu.ad`](AD.md) | `Logger`/`init_logger`, mixins (`mixin_Logger`, `mixin_Config`), `_Base` foundation class, advanced types (`y2list`, `y2path`, `y2topic`, `y2slug`, `y2eid`), `DC` pseudo-dataclass |
-| [`gppu.data`](DATA.md) | Database base classes: `_PGBase` (psycopg2) and `_SQABase` (SQLAlchemy) with lazy connections, context managers, auto-commit/rollback; `DiskCache` disk-backed key/value cache with TTL |
+| [`gppu.data`](DATA.md) | `Cache` unified caching (JSON/pickle/sqlite/diskcache/DB backends), database base classes: `_PGBase` (psycopg2) and `_SQABase` (SQLAlchemy) |
+| [`gppu.tui`](#tui-framework) | `TUIApp`, `TUILauncher`, `ConfigEditorApp`, selector widgets — Textual-based TUI framework |
 | [`gppu.chrome`](CHROME.md) | Selenium Chrome driver setup with profile management, process lifecycle, crash recovery, stale lock cleanup, mobile/desktop emulation |
 
 ## Public API
@@ -201,13 +205,48 @@ append_timestamp('report.csv')         # Path("report 260314-1530.csv")
 prepend_datestamp('report.csv', '_')    # Path("260314_report.csv")
 ```
 
+### Cache (gppu.data)
+
+Unified caching with multiple backends. Standalone — does not require `Env`.
+
+```python
+from gppu.data import Cache
+
+# SQLite backend (default, no extra deps)
+cache = Cache('/tmp/my_cache', ttl=3600, backend='sqlite')
+cache.set('key', {'data': [1, 2, 3]})
+val = cache.get('key')  # returns None if expired
+
+# Decorator for function memoization
+@cache
+def expensive(x):
+    return x ** 2
+
+# Other backends: 'json', 'pickle', 'diskcache', 'db' (SQLAlchemy URL)
+# Env-var bypass: set skip_env='SKIP_CACHE' to disable caching via env var
+```
+
+### TUI Framework
+
+Textual-based TUI framework for building app launchers and config editors. Requires `tui` extra.
+
+```python
+from gppu.tui import TUILauncher, TUIApp, ConfigEditorApp
+from gppu.tui import ui_select, ui_select_rows
+```
+
+- `TUIApp` — base Textual app with gppu config mixin
+- `TUILauncher` — framework for building app launchers from YAML manifests
+- `ConfigEditorApp` — TUI editor for YAML configs with `!include` tree view and validation
+- `ui_select()` / `ui_select_rows()` — standalone interactive selectors
+
 ### Advanced Types (gppu.ad)
 
 See [AD.md](AD.md) for full documentation of `y2list`, `y2path`, `y2topic`, `y2slug`, `y2eid`, `DC`, `Logger`, `init_logger`, mixins, and `_Base`.
 
-### Database Access & Caching (gppu.data)
+### Database Access (gppu.data)
 
-See [DATA.md](DATA.md) for `_PGBase` (psycopg2), `_SQABase` (SQLAlchemy), and `DiskCache` (disk-backed key/value cache with TTL and env-var bypass).
+See [DATA.md](DATA.md) for `_PGBase` (psycopg2) and `_SQABase` (SQLAlchemy) with lazy connections, context managers, auto-commit/rollback.
 
 ### Chrome Automation (gppu.chrome)
 
@@ -245,9 +284,8 @@ See [AGENTS.md](AGENTS.md) for config-first workflow, initialization patterns, a
 
 ## Branches
 
-- **master** (v2.52.x): Production. Used by: Y2 dev, RAN, CRAP
-- **3.0** (v3.0.0.x): Semi-abandoned refactor (Pydantic/Rich). Used by: Y3
-- **LTS**: Original v2.18.3 backup
+- **master**: Stable releases. Tag convention: `gppu/vX.Y.Z`
+- **dev**: Pre-release (alpha/beta/rc). Tag convention: `gppu/vX.Y.Za1`
 
 ## License
 
