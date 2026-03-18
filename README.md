@@ -1,8 +1,8 @@
 This repo contains **3 independent products**:
 
-[![gppu](https://github.com/akarelin/gppu/actions/workflows/gppu.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/gppu.yml) [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=gppu/v*&exclude_prerelease&label=stable&color=blue)](https://github.com/akarelin/gppu/releases?q=gppu) [![dev](https://img.shields.io/github/v/release/akarelin/gppu?filter=gppu/v*&include_prereleases&label=dev&color=orange)](https://github.com/akarelin/gppu/releases?q=gppu+prerelease%3Atrue) Core Python utility library<br>
-[![Statusline](https://github.com/akarelin/gppu/actions/workflows/statusline.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/statusline.yml) [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=statusline/v*&exclude_prerelease&label=stable&color=blue)](https://github.com/akarelin/gppu/releases?q=statusline) [![dev](https://img.shields.io/github/v/release/akarelin/gppu?filter=statusline/v*&include_prereleases&label=dev&color=orange)](https://github.com/akarelin/gppu/releases?q=statusline+prerelease%3Atrue) Claude Code 2-line status line tool (Linux, macOS, Windows)<br>
-[![W11](https://github.com/akarelin/gppu/actions/workflows/w11.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/w11.yml) [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=w11/v*&exclude_prerelease&label=stable&color=blue)](https://github.com/akarelin/gppu/releases?q=w11) [![dev](https://img.shields.io/github/v/release/akarelin/gppu?filter=w11/v*&include_prereleases&label=dev&color=orange)](https://github.com/akarelin/gppu/releases?q=w11+prerelease%3Atrue) [**w11**](w11/README.md) Windows 11 utilities & diagnostics (Windows x64)
+[![gppu](https://github.com/akarelin/gppu/actions/workflows/gppu.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/gppu.yml) [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=gppu/v*&exclude_prerelease&label=stable&color=blue)](https://github.com/akarelin/gppu/releases?q=gppu) Core Python utility library<br>
+[![Statusline](https://github.com/akarelin/gppu/actions/workflows/statusline.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/statusline.yml) [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=statusline/v*&exclude_prerelease&label=stable&color=blue)](https://github.com/akarelin/gppu/releases?q=statusline) Claude Code 2-line status line tool (Linux, macOS, Windows)<br>
+[![W11](https://github.com/akarelin/gppu/actions/workflows/w11.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/w11.yml) [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=w11/v*&exclude_prerelease&label=stable&color=blue)](https://github.com/akarelin/gppu/releases?q=w11) [**w11**](w11/README.md) Windows 11 utilities & diagnostics (Windows x64)
 
 # GPPU - General Purpose Python Utilities
 
@@ -11,11 +11,8 @@ A utility library for configuration management, logging, data manipulation, type
 ## Installation
 
 ```bash
-# From GitHub (stable)
+# From GitHub
 pip install "gppu @ git+ssh://git@github.com/akarelin/gppu.git@gppu/latest"
-
-# From GitHub (dev)
-pip install "gppu @ git+ssh://git@github.com/akarelin/gppu.git@gppu/dev-latest"
 
 # With optional extras
 pip install "gppu[pg] @ git+ssh://git@github.com/akarelin/gppu.git@gppu/latest"
@@ -33,13 +30,11 @@ Requires Python >= 3.11. Core dependency: PyYAML.
 
 | Module | Purpose |
 |--------|---------|
-| `gppu` (core) | `Env` config loader, type coercion, dict utilities, YAML/JSON I/O, colored logging, time helpers, OS detection, async helpers, template population |
+| `gppu` (core) | **Environment**: `Env` config loader with `!include`, typed path access (`glob`, `glob_int`, `glob_list`, `glob_dict`). **Logger**: colored `Info`/`Warn`/`Error`/`Debug`/`Dump`. Plus: type coercion, dict utilities, YAML/JSON I/O, time helpers, OS detection, async helpers, template population |
 | [`gppu.ad`](AD.md) | `Logger`/`init_logger`, mixins (`mixin_Logger`, `mixin_Config`), `_Base` foundation class, home automation types (`y2list`, `y2path`, `y2topic`, `y2slug`, `y2eid`), `DC` pseudo-dataclass |
 | [`gppu.data`](DATA.md) | `Cache` unified caching (JSON/pickle/sqlite/diskcache/DB backends), database base classes: `_PGBase` (psycopg2) and `_SQABase` (SQLAlchemy) |
-| [`gppu.tui`](TUI.md) | `TUIApp`, `TUILauncher`, `ConfigEditorApp`, selector widgets — Textual-based TUI framework |
-| [`gppu.chrome`](CHROME.md) | Selenium Chrome driver setup with profile management, process lifecycle, crash recovery, stale lock cleanup, mobile/desktop emulation |
-
-## Public API
+| [`gppu.tui`](TUI.md) | `TUIApp`, `TUILauncher`, `ConfigEditorApp`, `ui_select`, `ui_select_rows` — Textual-based TUI framework with web mode (`--serve`), CLI fallback, app embedding. Requires `tui` extra |
+| [`gppu.chrome`](CHROME.md) | `prepare_driver`, `switch_to_mobile`, `switch_to_desktop` — Selenium Chrome driver setup with profile management, crash recovery, mobile/desktop emulation |
 
 ### Env - Configuration Management
 
@@ -66,10 +61,6 @@ Env.data  # {'database': {'host': 'localhost', ...}}
 
 # Dump config to YAML for debugging
 Env.dump()
-
-# Env also gets bound logging methods after init
-Env.Info('status', 'loaded config')
-Env.Error('db', 'connection failed')
 ```
 
 Config file resolution: looks for `<name>.yaml` then `config.yaml` in the app path. Base paths are OS-aware via `PathBuilder` (e.g. `/home/alex` on Linux, `D:\Dev` on Windows).
@@ -98,8 +89,6 @@ Debug('GRAY4', 'trace', 'NONE', 'processing item')  # controlled by TRACE_RULES
 # Dump object to YAML file for inspection
 Dump('debug_state.yml', data)
 ```
-
-For `Logger`, `init_logger`, mixin classes, and `_Base` see [AD.md](AD.md).
 
 ### pfy
 
@@ -226,29 +215,6 @@ def expensive(x):
 # Env-var bypass: set skip_env='SKIP_CACHE' to disable caching via env var
 ```
 
-### TUI Framework (gppu.tui)
-
-Textual-based framework for building app launchers, config editors, and interactive selectors. Supports web mode (`--serve`), CLI fallback when no TTY is available, and embedding TUI apps as screens within a launcher. Requires `tui` extra.
-
-```python
-from gppu.tui import TUILauncher, TUIApp, ConfigEditorApp
-from gppu.tui import ui_select, ui_select_rows
-```
-
-See [TUI.md](TUI.md) for full documentation of `TUIApp`, `TUILauncher`, `ConfigEditorApp`, YAML manifests, execution modes, selectors, and widgets.
-
-### Home Automation Types (gppu.ad)
-
-See [AD.md](AD.md) for `Logger`, `init_logger`, mixins (`mixin_Logger`, `mixin_Config`), `_Base` foundation, tokenized list types (`y2list`, `y2path`, `y2topic`, `y2slug`), entity IDs (`y2eid`), and `DC` pseudo-dataclass.
-
-### Database & Caching (gppu.data)
-
-See [DATA.md](DATA.md) for `Cache` (multi-backend key/value cache with TTL), `_PGBase` (psycopg2), and `_SQABase` (SQLAlchemy).
-
-### Chrome Automation (gppu.chrome)
-
-See [CHROME.md](CHROME.md) for `prepare_driver`, `switch_to_mobile`, `switch_to_desktop`.
-
 ### Other Utilities
 
 ```python
@@ -278,11 +244,6 @@ Hex values computed from ANSI codes in `gppu/gppu.py` (xterm-256color palette).
 ## LLM Development Guide
 
 See [AGENTS.md](AGENTS.md) for config-first workflow, initialization patterns, anti-patterns, and agent interaction rules.
-
-## Branches
-
-- **master**: Stable releases. Tag convention: `gppu/vX.Y.Z`
-- **dev**: Pre-release (alpha/beta/rc). Tag convention: `gppu/vX.Y.Za1`
 
 ## License
 

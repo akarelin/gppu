@@ -6,14 +6,11 @@ on:
   workflow_dispatch:
     inputs:
       bump:
-        description: 'Version bump (master: patch/minor, dev: alpha/beta/rc/minor)'
+        description: 'Version bump'
         required: true
         type: choice
         options:
           - none
-          - alpha
-          - beta
-          - rc
           - patch
           - minor
 
@@ -37,55 +34,16 @@ jobs:
         id: version
         run: |
           BUMP="${{ inputs.bump }}"
-          BRANCH="${GITHUB_REF#refs/heads/}"
-
-          if [ "$BRANCH" = "master" ]; then
-            if [ "$BUMP" != "patch" ] && [ "$BUMP" != "minor" ]; then
-              echo "::error::Only patch/minor bumps allowed on master"
-              exit 1
-            fi
-            LATEST_TAG=$(git tag -l 'w11/v*' --sort=-v:refname | grep -E '^w11/v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 | sed 's|^w11/v||')
-            if [ -z "$LATEST_TAG" ]; then LATEST_TAG="0.1.0"; fi
-            IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_TAG"
-            if [ "$BUMP" = "minor" ]; then
-              MINOR=$((MINOR + 1))
-              PATCH=0
-            else
-              PATCH=$((PATCH + 1))
-            fi
-            echo "tag=w11/v${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_OUTPUT
-
-          elif [ "$BRANCH" = "dev" ]; then
-            if [ "$BUMP" = "patch" ]; then
-              echo "::error::Use alpha/beta/rc/minor bumps on dev"
-              exit 1
-            fi
-            LATEST_PRE=$(git tag -l 'w11/v0.3.*' --sort=-v:refname | grep -E '^w11/v0\.3\.[0-9]+(a|b|rc)[0-9]+$' | head -1)
-            if [ -z "$LATEST_PRE" ]; then
-              echo "tag=w11/v0.3.0a1" >> $GITHUB_OUTPUT
-            else
-              TAG_BODY="${LATEST_PRE#w11/v}"
-              BASE=$(echo "$TAG_BODY" | sed -E 's/(a|b|rc)[0-9]+$//')
-              SUFFIX_TYPE=$(echo "$TAG_BODY" | sed -E 's/.*[0-9](a|b|rc)[0-9]+$/\1/')
-              SUFFIX_NUM=$(echo "$TAG_BODY" | sed -E 's/.*(a|b|rc)([0-9]+)$/\2/')
-              IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
-
-              if [ "$BUMP" = "minor" ]; then
-                MINOR=$((MINOR + 1))
-                PATCH=0
-                echo "tag=w11/v${MAJOR}.${MINOR}.${PATCH}a1" >> $GITHUB_OUTPUT
-              elif [ "$BUMP" = "$SUFFIX_TYPE" ]; then
-                NEW_NUM=$((SUFFIX_NUM + 1))
-                echo "tag=w11/v${BASE}${SUFFIX_TYPE}${NEW_NUM}" >> $GITHUB_OUTPUT
-              elif [ "$BUMP" = "alpha" ]; then
-                echo "tag=w11/v${BASE}a$((SUFFIX_NUM + 1))" >> $GITHUB_OUTPUT
-              elif [ "$BUMP" = "beta" ]; then
-                echo "tag=w11/v${BASE}b1" >> $GITHUB_OUTPUT
-              elif [ "$BUMP" = "rc" ]; then
-                echo "tag=w11/v${BASE}rc1" >> $GITHUB_OUTPUT
-              fi
-            fi
+          LATEST_TAG=$(git tag -l 'w11/v*' --sort=-v:refname | grep -E '^w11/v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 | sed 's|^w11/v||')
+          if [ -z "$LATEST_TAG" ]; then LATEST_TAG="0.1.0"; fi
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_TAG"
+          if [ "$BUMP" = "minor" ]; then
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          else
+            PATCH=$((PATCH + 1))
           fi
+          echo "tag=w11/v${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_OUTPUT
 
       - name: Create tag
         run: |
@@ -164,20 +122,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.bump.outputs.tag || github.ref_name }}
-          name: w11 v${{ steps.version.outputs.clean }}${{ github.ref != 'refs/heads/master' && format(' (gppu {0})', steps.version.outputs.gppu) || '' }}
+          name: w11 v${{ steps.version.outputs.clean }} (gppu ${{ steps.version.outputs.gppu }})
           files: artifacts/*
           generate_release_notes: true
-          prerelease: ${{ github.ref != 'refs/heads/master' }}
           make_latest: false
 
-      - name: Update git tags
+      - name: Update w11/latest tag
         run: |
           git config user.name "Alex AI Actions"
           git config user.email "actions@karelin.ai"
-          if [ "${{ github.ref_name }}" = "master" ]; then
-            TAG="w11/latest"
-          else
-            TAG="w11/dev-latest"
-          fi
-          git tag -f "$TAG"
-          git push -f origin "$TAG"
+          git tag -f w11/latest
+          git push -f origin w11/latest
