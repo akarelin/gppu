@@ -14,13 +14,13 @@ Usage:
 from __future__ import annotations
 
 from gppu import Env
-from gppu.tui import LauncherApp, launcher_main, load_app_registry
+from gppu.tui import TUILauncher, launcher_main, load_app_registry
 from w11 import resolve_app_dir
 
 APP_DIR = resolve_app_dir()
 
 
-class W11App(LauncherApp):
+class W11App(TUILauncher):
     TITLE = 'w11'
     MENU_TITLE = 'Windows 11 Tools'
 

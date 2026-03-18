@@ -29,9 +29,9 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from gppu import Env, dict_from_yml, dict_to_yml
-from gppu.tui import StatusHeader
+from gppu.tui import TUIApp, StatusHeader
 from textual import work
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Footer, RichLog, Static
 
@@ -735,7 +735,7 @@ class LiveTail:
 
 # ── TUI ──────────────────────────────────────────────────────────────────────
 
-class EventLogApp(App):
+class EventLogApp(TUIApp):
     CSS = """
     #main-layout {
         height: 1fr;
