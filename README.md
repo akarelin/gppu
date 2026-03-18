@@ -1,6 +1,6 @@
 This repo contains **3 independent products**:
 
-[![gppu](https://github.com/akarelin/gppu/actions/workflows/gppu.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/gppu.yml) [![version](https://img.shields.io/github/v/release/akarelin/gppu?filter=v*&label=version&color=blue)](https://github.com/akarelin/gppu/releases/latest) Core Python utility library<br>
+[![gppu](https://github.com/akarelin/gppu/actions/workflows/gppu.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/gppu.yml) [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=v*&label=stable&color=blue)](https://github.com/akarelin/gppu/releases/latest) [![dev](https://img.shields.io/github/v/release/akarelin/gppu?include_prereleases&filter=v3*&label=dev&color=orange)](https://github.com/akarelin/gppu/releases) Core Python utility library<br>
 [![Statusline](https://github.com/akarelin/gppu/actions/workflows/statusline.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/statusline.yml) [![version](https://img.shields.io/github/v/release/akarelin/gppu?filter=sl-*&display_name=release&label=version&color=blue)](https://github.com/akarelin/gppu/releases/tag/sl-latest) Claude Code 2-line status line tool (Linux, macOS, Windows)<br>
 [![W11](https://github.com/akarelin/gppu/actions/workflows/w11.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/w11.yml) [![version](https://img.shields.io/github/v/release/akarelin/gppu?filter=w11-*&display_name=release&label=version&color=blue)](https://github.com/akarelin/gppu/releases/tag/w11-latest) [**w11**](w11/README.md) Windows 11 utilities & diagnostics (Windows x64)
 
@@ -245,9 +245,8 @@ See [AGENTS.md](AGENTS.md) for config-first workflow, initialization patterns, a
 
 ## Branches
 
-- **master** (v2.52.x): Production. Used by: Y2 dev, RAN, CRAP
-- **3.0** (v3.0.0.x): Semi-abandoned refactor (Pydantic/Rich). Used by: Y3
-- **LTS**: Original v2.18.3 backup
+- **master** (v2.x): Stable production. Used by: Y2 dev, RAN, CRAP
+- **dev** (v3.0.0-alpha): Active development — gppu 3.0 with Env, mixins, TUI
 
 ## License
 
