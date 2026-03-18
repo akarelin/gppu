@@ -1,13 +1,16 @@
-This repo contains **3 independent products**:
+# GPPU — General Purpose Python Utilities
 
-[![gppu](https://github.com/akarelin/gppu/actions/workflows/gppu.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/gppu.yml) [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=gppu/v*&exclude_prerelease&label=stable&color=blue)](https://github.com/akarelin/gppu/releases?q=gppu) Core Python utility library<br>
-[![Statusline](https://github.com/akarelin/gppu/actions/workflows/statusline.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/statusline.yml) [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=statusline/v*&exclude_prerelease&label=stable&color=blue)](https://github.com/akarelin/gppu/releases?q=statusline) Claude Code 2-line status line tool (Linux, macOS, Windows)<br>
-[![W11](https://github.com/akarelin/gppu/actions/workflows/w11.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/w11.yml) [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=w11/v*&exclude_prerelease&label=stable&color=blue)](https://github.com/akarelin/gppu/releases?q=w11) [**w11**](w11/README.md) Windows 11 utilities & diagnostics (Windows x64)
+> A utility library for configuration management, logging, data manipulation, type safety, database access, caching, TUI framework, and browser automation.
+>
+> **v3** — _All the things_
 
-# GPPU - General Purpose Python Utilities
+---
 
-A utility library for configuration management, logging, data manipulation, type safety, database access, caching, TUI framework, and browser automation.
-Version 3.0.0, codename _All the things_
+| | CI | Release | |
+|---|---|---|---|
+| **gppu** | [![CI](https://github.com/akarelin/gppu/actions/workflows/gppu.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/gppu.yml) | [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=gppu/v*&exclude_prerelease&label=stable&color=blue)](https://github.com/akarelin/gppu/releases?q=gppu) | Core library |
+| [**Statusline**](statusline/) | [![CI](https://github.com/akarelin/gppu/actions/workflows/statusline.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/statusline.yml) | [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=statusline/v*&exclude_prerelease&label=stable&color=blue)](https://github.com/akarelin/gppu/releases?q=statusline) | Claude Code status line (Linux, macOS, Windows) |
+| [**W11**](w11/README.md) | [![CI](https://github.com/akarelin/gppu/actions/workflows/w11.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/w11.yml) | [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=w11/v*&exclude_prerelease&label=stable&color=blue)](https://github.com/akarelin/gppu/releases?q=w11) | Windows 11 utilities & diagnostics |
 
 # Modules
 
