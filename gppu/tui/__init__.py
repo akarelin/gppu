@@ -4,6 +4,7 @@ from .launcher import (
     TUIApp,
     TUILauncher,
     AppItem,
+    InfoScreen,
     ModeItem,
     ProcessRow,
     SpinnerIndicator,
@@ -29,6 +30,7 @@ __all__ = [
     'TUILauncher',
     # Launcher framework
     'AppItem',
+    'InfoScreen',
     'ModeItem',
     'ProcessRow',
     'SpinnerIndicator',
