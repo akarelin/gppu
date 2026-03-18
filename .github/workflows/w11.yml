@@ -99,6 +99,11 @@ jobs:
     runs-on: [self-hosted, linux]
 
     steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-tags: true
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v8
         with:
           path: artifacts/
@@ -109,12 +114,14 @@ jobs:
         run: |
           TAG="${{ needs.bump.outputs.tag || github.ref_name }}"
           echo "clean=${TAG#w11/v}" >> $GITHUB_OUTPUT
+          GPPU_VER=$(git describe --tags --match 'gppu/v*' --abbrev=0 2>/dev/null | sed 's|^gppu/||')
+          echo "gppu=${GPPU_VER}" >> $GITHUB_OUTPUT
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.bump.outputs.tag || github.ref_name }}
-          name: w11 ${{ steps.version.outputs.clean }}${{ github.ref != 'refs/heads/master' && ' (dev)' || '' }}
+          name: w11 ${{ steps.version.outputs.clean }}${{ github.ref != 'refs/heads/master' && format(' (gppu {0})', steps.version.outputs.gppu) || '' }}
           files: artifacts/*
           generate_release_notes: true
           prerelease: ${{ github.ref != 'refs/heads/master' }}
@@ -128,11 +135,6 @@ jobs:
           prerelease: true
           make_latest: false
 
-      - name: Force-update w11/latest tag
-        uses: actions/checkout@v6
-        with:
-          fetch-tags: true
-          fetch-depth: 0
       - run: |
           git config user.name "Alex AI Actions"
           git config user.email "actions@karelin.ai"
