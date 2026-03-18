@@ -32,10 +32,50 @@ Requires Python >= 3.11. Core dependency: PyYAML.
 | Module | Purpose |
 |--------|---------|
 | `gppu` (core) | **Environment**: `Env` config loader with `!include`, typed path access (`glob`, `glob_int`, `glob_list`, `glob_dict`). **Logger**: colored `Info`/`Warn`/`Error`/`Debug`/`Dump`. Plus: type coercion, dict utilities, YAML/JSON I/O, time helpers, OS detection, async helpers, template population |
-| [`gppu.ad`](AD.md) | Mixins (`mixin_Logger`, `mixin_Config`), `_Base` foundation class, home automation types (`y2list`, `y2path`, `y2topic`, `y2slug`, `y2eid`), `DC` pseudo-dataclass |
 | [`gppu.data`](DATA.md) | `Cache` unified caching (JSON/pickle/sqlite/diskcache/DB backends), database base classes: `_PGBase` (psycopg2) and `_SQABase` (SQLAlchemy) |
 | [`gppu.tui`](TUI.md) | `TUIApp`, `TUILauncher`, `ConfigEditorApp`, `ui_select`, `ui_select_rows` — Textual-based TUI framework with web mode (`--serve`), CLI fallback, app embedding. Requires `tui` extra |
 | [`gppu.chrome`](CHROME.md) | `prepare_driver`, `switch_to_mobile`, `switch_to_desktop` — Selenium Chrome driver setup with profile management, crash recovery, mobile/desktop emulation |
+| [`gppu.ad`](AD.md) | Home automation types (`y2list`, `y2path`, `y2topic`, `y2slug`, `y2eid`), `DC` pseudo-dataclass |
+
+## Usage
+
+### Environment
+
+```python
+from gppu import Env
+from pathlib import Path
+
+# Initialize: resolves config file, loads YAML (with !include support)
+Env.from_env(name='myapp', app_path=Path('CRAP/file_indexer'))
+
+# Typed access via "/" path
+db_host = Env.glob('database/host', default='localhost')
+port    = Env.glob_int('database/port', default=5432)
+tags    = Env.glob_list('metadata/tags')
+options = Env.glob_dict('database/options')
+```
+
+Config file resolution: looks for `<name>.yaml` then `config.yaml` in the app path. Base paths are OS-aware (e.g. `/home/alex` on Linux, `D:\Dev` on Windows).
+
+YAML `!include` support:
+```yaml
+app:
+  name: MyApp
+  database: !include database.yaml
+```
+
+### Logger
+
+```python
+from gppu import Info, Warn, Error, Debug, Dump
+
+Info('WBLUE', 'server', 'NONE', 'started on port', 'BG', '8080')
+Warn('WYELLOW', 'config', 'NONE', 'key missing, using default')
+Error('WRED', 'database', 'NONE', 'connection refused')
+Debug('GRAY4', 'trace', 'NONE', 'processing item')
+
+Dump('debug_state.yml', data)
+```
 
 ## TColor Reference
 
@@ -58,41 +98,14 @@ Hex values computed from ANSI codes in `gppu/gppu.py` (xterm-256color palette).
 -   **Consult on Missing Features:** If a required feature is not in `gppu`, **stop and ask** the user. Do not implement workarounds.
 -   **Consult on Configuration Changes:** If a new config key is needed, **stop and ask**. Do not modify config files without permission.
 
-### Configuration: Two-Tier System
-
--   **`RAN/Keys`** — central secure repository for all secrets (DB credentials, API keys). Source of truth.
--   **Application config** — lean, app-specific `.yaml` that imports from `RAN/Keys` via `!include`.
-
-```yaml
-db: !include D:\Dev\RAN\Keys\postgres\file_indexer.yaml
-imessage_workflow:
-  mode: 'full'
-  max_age_days: 365
-```
-
-### Two Usage Patterns
-
-**Pattern 1: Direct Calls** — for scripts:
+### Usage Pattern
 
 ```python
 from gppu import Env, Info, Error, glob
-Env(name='my-app', app_path=Path('CRAP/my_app'))
-Env.load()
+
+Env.from_env(name='my-app', app_path=Path('CRAP/my_app'))
 Info('INFO', 'Started', 'WGREEN', 'OK')
 db_connection = glob('db/connection_string')
-```
-
-**Pattern 2: Class-Based** — inheriting `_Base` gives logging + config:
-
-```python
-from gppu import _Base, Env
-class DataProcessor(_Base):
-    def __init__(self, **kw):
-        super().__init__(**kw)
-        self._config_from_key('data_processor')
-        self._host = self.my('host')
-    def process(self):
-        self.Info('INFO', 'Processing', 'BRIGHT', self._host)
 ```
 
 ### Strict Anti-Patterns
@@ -100,9 +113,8 @@ class DataProcessor(_Base):
 -   **NEVER use fallback defaults.** Missing value = config error. Fix the `.yaml`.
 -   **NEVER hardcode placeholders** like `user@hostname` or `/path/to/`.
 -   **NEVER parse config directly.** Use `Env`, not `dict_from_yml('config.yaml')`.
--   **NEVER use `ConfigLoader`.** Deprecated.
 -   **NEVER use CLI arguments for config.** All settings go in `.yaml`.
--   **NEVER build paths manually.** `PathBuilder` handles OS-specific resolution.
+-   **NEVER build paths manually.** `Env` handles OS-specific path resolution.
 
 ## License
 
