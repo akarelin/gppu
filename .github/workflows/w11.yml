@@ -2,7 +2,7 @@ name: W11
 
 on:
   push:
-    tags: ['w11-*']
+    tags: ['w11/v*']
   workflow_dispatch:
     inputs:
       bump:
@@ -33,7 +33,7 @@ jobs:
       - name: Compute next version
         id: version
         run: |
-          LATEST_TAG=$(git tag -l 'w11-[0-9]*' --sort=-v:refname | head -1 | sed 's/^w11-//')
+          LATEST_TAG=$(git tag -l 'w11/v*' --sort=-v:refname | head -1 | sed 's|^w11/v||')
           if [ -z "$LATEST_TAG" ]; then LATEST_TAG="0.1.0"; fi
           IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_TAG"
           if [ "${{ inputs.bump }}" = "minor" ]; then
@@ -42,7 +42,7 @@ jobs:
           else
             PATCH=$((PATCH + 1))
           fi
-          echo "tag=w11-${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_OUTPUT
+          echo "tag=w11/v${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_OUTPUT
 
       - name: Create tag
         run: |
@@ -108,26 +108,26 @@ jobs:
         id: version
         run: |
           TAG="${{ needs.bump.outputs.tag || github.ref_name }}"
-          echo "clean=${TAG#w11-}" >> $GITHUB_OUTPUT
+          echo "clean=${TAG#w11/v}" >> $GITHUB_OUTPUT
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.bump.outputs.tag || github.ref_name }}
-          name: ${{ steps.version.outputs.clean }}
+          name: w11 ${{ steps.version.outputs.clean }}
           files: artifacts/*
           generate_release_notes: true
 
-      - name: Update w11-latest release
+      - name: Update w11/latest release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: w11-latest
+          tag_name: w11/latest
           name: w11-latest
           files: artifacts/*
           prerelease: true
           make_latest: false
 
-      - name: Force-update w11-latest tag
+      - name: Force-update w11/latest tag
         uses: actions/checkout@v6
         with:
           fetch-tags: true
@@ -135,5 +135,5 @@ jobs:
       - run: |
           git config user.name "Alex AI Actions"
           git config user.email "actions@karelin.ai"
-          git tag -f w11-latest
-          git push -f origin w11-latest
+          git tag -f w11/latest
+          git push -f origin w11/latest
