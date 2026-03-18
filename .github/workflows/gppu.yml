@@ -43,7 +43,26 @@ jobs:
           .venv/bin/pip install -e ".${{ matrix.extras && format('[{0}]', matrix.extras) || '' }}"
 
       - name: Run tests
-        run: .venv/bin/python -m pytest tests/ -v
+        run: .venv/bin/python -m pytest tests/ -v --ignore=tests/test_tui.py
+
+  test-tui:
+    if: github.event_name == 'pull_request' || inputs.run_tests
+    runs-on: [self-hosted, linux]
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-tags: true
+          fetch-depth: 0
+
+      - name: Setup venv and install
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install setuptools-scm
+          .venv/bin/pip install -e ".[test-tui]"
+
+      - name: Run TUI tests
+        run: .venv/bin/python -m pytest tests/test_tui.py -v
 
   test-windows:
     if: github.event_name == 'pull_request' || inputs.run_tests
@@ -69,11 +88,11 @@ jobs:
           .venv\Scripts\pip install -e ".${{ matrix.extras && format('[{0}]', matrix.extras) || '' }}"
 
       - name: Run tests
-        run: .venv\Scripts\python -m pytest tests/ -v
+        run: .venv\Scripts\python -m pytest tests/ -v --ignore=tests/test_tui.py
 
   release:
-    needs: [test, test-windows]
-    if: always() && github.event_name == 'workflow_dispatch' && (needs.test.result == 'success' || needs.test.result == 'skipped') && (needs.test-windows.result == 'success' || needs.test-windows.result == 'skipped')
+    needs: [test, test-tui, test-windows]
+    if: always() && github.event_name == 'workflow_dispatch' && (needs.test.result == 'success' || needs.test.result == 'skipped') && (needs.test-tui.result == 'success' || needs.test-tui.result == 'skipped') && (needs.test-windows.result == 'success' || needs.test-windows.result == 'skipped')
     runs-on: [self-hosted, linux]
 
     steps:

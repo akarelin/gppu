@@ -872,8 +872,129 @@ glob_list = Env.glob_list
 glob_dict = Env.glob_dict
 
 
+# region Mixins
+class _mixin: pass
+
+
+class mixin_Config(_mixin):
+  _my: dict[str, Any] = {}
+
+  def _config_from_key(self, key: str) -> None: self._my.update(Env.glob_dict(key))
+  def _config_copy(self, other: mixin_Config) -> None: self._my = dict(other._my)
+  def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
+  def _config_from_env(self) -> None: self._my = deepcopy(Env.data)
+
+  def my(self, path, default=None) -> Any: return deepget(path, self._my, default=default)
+  def my_int(self, path, default: int = 0) -> int: return deepget_int(path, self._my, default=default)
+  def my_float(self, path, default: float = float('nan')) -> float: return deepget_float(path, self._my, default=default)
+  def my_list(self, path, default: list = []) -> list: return deepget_list(path, self._my, default=default or [])
+  def my_dict(self, path, default: dict = {}) -> dict: return deepget_dict(path, self._my, default=default or {})
+
+
+class Logger:
+  """Namespace wrapper exposing logging helpers."""
+  trace_folder: str = ''
+  trace_rules: dict = TRACE_RULES
+
+  @staticmethod
+  def Debug(*a, **kw): Debug(*a, **kw)
+  @staticmethod
+  def Info(*a, **kw): Info(*a, **kw)
+  @staticmethod
+  def Warn(*a, **kw): Warn(*a, **kw)
+  @staticmethod
+  def Error(*a, **kw): Error(*a, **kw)
+  @staticmethod
+  def Dump(*a, **kw): Dump(*a, **kw)
+
+
+class protocol_Logger:
+  Debug: Callable[..., Any]
+  Info : Callable[..., Any]
+  Warn : Callable[..., Any]
+  Error: Callable[..., Any]
+  Dump : Callable[..., Any]
+
+
+class mixin_Logger(protocol_Logger, _mixin):
+  _logger: logging.Logger
+
+  @classmethod
+  def __init_subclass__(cls, **kw):
+    super().__init_subclass__(**kw)
+    cls._logger = _logger.getChild(cls.__name__)
+    for name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)): setattr(cls, name, staticmethod(partial(fn, logger=cls._logger)))
+
+  def __init__(self, *a, **kw):
+    super(mixin_Logger, self).__init__(*a, **kw)
+    # instance shortcuts re-use the class-level bound functions
+    for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'): setattr(self, name, getattr(self.__class__, name))
+# endregion
+
+
+# region Environment
+class Environment:
+  data: dict[str, Any] = {}
+  _env: Env
+  initialized: bool = False
+
+  @staticmethod
+  def from_env(name: str | None = None, app_path: str | Path | None = None) -> None:
+    if Environment.initialized or Environment.data: Environment.reset()
+    Environment._env = Env(name=name, app_path=app_path)
+    Environment._env.load()
+    Environment.data = Environment._env.data
+    Environment.initialized = True
+
+  @staticmethod
+  def from_dict(d: dict) -> None:
+    if Environment.initialized or Environment.data: Environment.reset()
+    Environment.data = d
+    Environment.initialized = True
+
+  @staticmethod
+  def reset() -> None: Environment.data = {}; Environment.initialized = False
+
+  @staticmethod
+  def glob(path, default=None) -> Any: return deepget(path, Environment.data, default=default)
+  @staticmethod
+  def glob_int(path, default: int = 0) -> int: return deepget_int(path, Environment.data, default=default)
+  @staticmethod
+  def glob_list(path, default=[]) -> list: return deepget_list(path, Environment.data, default=default)
+  @staticmethod
+  def glob_dict(path, default={}) -> dict: return deepget_dict(path, Environment.data, default=default)
+  @staticmethod
+  async def dump(): Dump('Environment.data', Environment.data)
+# endregion
+
+
+# region Foundation
+class _Logger(mixin_Logger): pass
+
+
+class _Config(mixin_Config):
+  _base_path: Path
+
+  def __init__(self, **kw) -> None:
+    super().__init__()
+    assert Env.initialized, "Env must be initialized"
+    key = kw.get('config_key', None)
+
+    if key:
+      self._config_from_key(key)
+      self._base_path = Path(self.my('base_dir'))
+    else:
+      self._config_from_env()
+      self._base_path = Path('.')
+
+  def my_path(self, path) -> Path: return self._base_path / self.my(path)
+
+
+class _Base(_Logger, _Config): pass
+# endregion
+
+
 # Re-exports for backward compatibility with `from gppu.gppu import ...`
 from .ad import y2list, y2path, y2topic, y2slug, y2eid  # noqa: F401,E402
-from .ad import _mixin, Logger, protocol_Logger, mixin_Logger, mixin_Config, init_logger  # noqa: F401,E402
-from .ad import _Base  # noqa: F401,E402
+from .ad import init_logger  # noqa: F401,E402
 from .ad import DC, _DC_BASE_TYPE_MAP  # noqa: F401,E402
