@@ -2,7 +2,7 @@ name: Statusline
 
 on:
   push:
-    tags: ['sl-*']
+    tags: ['statusline/v*']
   workflow_dispatch:
     inputs:
       bump:
@@ -33,7 +33,7 @@ jobs:
       - name: Compute next version
         id: version
         run: |
-          LATEST_TAG=$(git tag -l 'sl-[0-9]*' --sort=-v:refname | head -1 | sed 's/^sl-//')
+          LATEST_TAG=$(git tag -l 'statusline/v*' --sort=-v:refname | head -1 | sed 's|^statusline/v||')
           if [ -z "$LATEST_TAG" ]; then LATEST_TAG="0.0.0"; fi
           IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_TAG"
           if [ "${{ inputs.bump }}" = "minor" ]; then
@@ -42,7 +42,7 @@ jobs:
           else
             PATCH=$((PATCH + 1))
           fi
-          echo "tag=sl-${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_OUTPUT
+          echo "tag=statusline/v${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_OUTPUT
 
       - name: Create tag
         run: |
@@ -149,17 +149,17 @@ jobs:
         id: version
         run: |
           TAG="${{ needs.bump.outputs.tag || github.ref_name }}"
-          echo "clean=${TAG#sl-}" >> $GITHUB_OUTPUT
+          echo "clean=${TAG#statusline/v}" >> $GITHUB_OUTPUT
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.bump.outputs.tag || github.ref_name }}
-          name: ${{ steps.version.outputs.clean }}
+          name: statusline ${{ steps.version.outputs.clean }}
           files: artifacts/*
           generate_release_notes: true
 
-      - name: Update sl-latest tag
+      - name: Update statusline/latest tag
         uses: actions/checkout@v6
         with:
           fetch-tags: true
@@ -167,5 +167,5 @@ jobs:
       - run: |
           git config user.name "Alex AI Actions"
           git config user.email "actions@karelin.ai"
-          git tag -f sl-latest
-          git push -f origin sl-latest
+          git tag -f statusline/latest
+          git push -f origin statusline/latest
