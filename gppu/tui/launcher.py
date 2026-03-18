@@ -236,7 +236,13 @@ class SpinnerIndicator(Static):
 
 
 class InfoScreen(Screen):
-    """Modal screen showing Env config and app state."""
+    """Modal screen showing Env config as sections."""
+
+    BINDINGS = [
+        Binding('escape', 'dismiss', 'Back', show=False),
+        Binding('i', 'dismiss', 'Close', show=False),
+        Binding('q', 'dismiss', 'Close', show=False),
+    ]
 
     CSS = """
     #info-panel {
@@ -248,21 +254,24 @@ class InfoScreen(Screen):
     }
     """
 
-    def __init__(self, text: str) -> None:
+    def __init__(self, sections: list[tuple[str, str]]) -> None:
         super().__init__()
-        self._text = text
+        self._sections = sections
 
     def compose(self) -> ComposeResult:
         yield RichLog(id='info-panel', markup=True)
 
     def on_mount(self) -> None:
         panel = self.query_one('#info-panel', RichLog)
-        for line in self._text.splitlines():
-            panel.write(line)
+        for i, (heading, body) in enumerate(self._sections):
+            if i > 0:
+                panel.write('')
+            panel.write(f'[bold underline]{heading}[/bold underline]')
+            for line in body.splitlines():
+                panel.write(f'  {line}')
 
-    async def on_key(self, event) -> None:
-        if event.key in ('escape', 'i', 'q'):
-            self.app.pop_screen()
+    def action_dismiss(self) -> None:
+        self.app.pop_screen()
 
 
 class ProcessRow(Horizontal):
@@ -295,10 +304,45 @@ class ProcessRow(Horizontal):
 # ── Base TUI App Classes ─────────────────────────────────────────────────────
 
 class TUIApp(mixin_Config, TextualApp):
-  """Textual App with per-instance config via self.my()."""
+  """Textual App with per-instance config via self.my().
+
+  Works standalone (``app.run()``) or embedded in a TUILauncher via AppScreen.
+  Use ``self.done(result)`` to finish — it calls ``exit()`` or ``dismiss()``
+  depending on context.
+  """
+
+  _screen_wrapper: Screen | None = None
 
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
+
+  def done(self, result=None) -> None:
+    """Finish this app. Works in both standalone and embedded mode."""
+    if self._screen_wrapper is not None:
+      self._screen_wrapper.dismiss(result=result)
+    else:
+      self.exit(result=result)
+
+
+class AppScreen(Screen):
+  """Wraps a TUIApp instance as a pushable Screen within a TUILauncher."""
+
+  BINDINGS = [Binding('escape', 'back', 'Back')]
+
+  def __init__(self, wrapped: TUIApp) -> None:
+    super().__init__()
+    self._wrapped = wrapped
+    self._wrapped._screen_wrapper = self
+
+  def compose(self) -> ComposeResult:
+    yield from self._wrapped.compose()
+
+  def on_mount(self) -> None:
+    if hasattr(self._wrapped, 'on_mount'):
+      self._wrapped.on_mount()
+
+  def action_back(self) -> None:
+    self.dismiss(result=None)
 
 
 class TUILauncher(TUIApp):
@@ -409,6 +453,7 @@ class TUILauncher(TUIApp):
         self._processes: dict[int, ProcessRow] = {}
         self._proc_counter = 0
         self._active_log: int | None = None
+        self._running_apps: dict[str, AppScreen] = {}  # name → screen
 
     def compose(self) -> ComposeResult:
         yield StatusHeader()
@@ -455,12 +500,41 @@ class TUILauncher(TUIApp):
         ask_for = mode_def.get('ask_for')
         if ask_for:
             self._show_ask_form(ask_for, base_args)
+        elif self._selected_app.get('module') and self._selected_app.get('class'):
+            self._launch_tui_app(self._selected_app, base_args)
         elif mode_def.get('direct'):
             # Exit TUI and hand control to the subprocess (needs a terminal)
             self.exit(result={'app': self._selected_app, 'args': base_args})
         else:
             # Run inline with output capture (default for all modes)
             self._run_inline(base_args)
+
+    def _launch_tui_app(self, app_def: dict, cli_args: list[str]) -> None:
+        """Import a TUIApp class and push it as a screen."""
+        import importlib
+        module_name = app_def['module']
+        class_name = app_def['class']
+        app_name = app_def.get('name', class_name)
+
+        # If already running, switch to it
+        if app_name in self._running_apps:
+            self.push_screen(self._running_apps[app_name])
+            return
+
+        mod = importlib.import_module(module_name)
+        cls = getattr(mod, class_name)
+        instance = cls()
+        screen = AppScreen(instance)
+        self._running_apps[app_name] = screen
+        self.install_screen(screen, name=f'app-{app_name}')
+
+        def on_result(result):
+            self._running_apps.pop(app_name, None)
+            if result is not None:
+                _log.info('App %s returned: %s', app_name, result)
+
+        self.push_screen(screen, callback=on_result)
+        self._phase = 'apps'
 
     # ── Inline / background execution ────────────────────────────────────
 
@@ -550,6 +624,7 @@ class TUILauncher(TUIApp):
         row.log_lines.append(line)
         status = row.query_one('.proc-status', Static)
         display = line if len(line) <= 70 else line[:67] + '…'
+        display = display.replace('[', '\\[')
         status.update(f' [dim]{display}[/dim]')
         # Live-append if this process's logs are currently shown
         if self._active_log == proc_id:
@@ -603,16 +678,15 @@ class TUILauncher(TUIApp):
     def action_show_info(self) -> None:
         """Show Env config and app state in a modal screen."""
         import pprint
-        lines = [
-            f'[bold]Env[/bold]  name={Env.name}  initialized={Env.initialized}',
-            f'[bold]app_path[/bold]  {Env.app_path}',
-            '',
-            '[bold]Env.data[/bold]',
-            pprint.pformat(Env.data),
+        sections: list[tuple[str, str]] = [
+            ('Env', f'name={Env.name}  initialized={Env.initialized}\n'
+                    f'app_path={Env.app_path}'),
         ]
+        for key, val in Env.data.items():
+            sections.append((key, pprint.pformat(val)))
         if self._my:
-            lines += ['', '[bold]self._my[/bold]', pprint.pformat(self._my)]
-        self.push_screen(InfoScreen('\n'.join(lines)))
+            sections.append(('Instance config', pprint.pformat(self._my)))
+        self.push_screen(InfoScreen(sections))
 
     # ── Ask form ─────────────────────────────────────────────────────────
 
