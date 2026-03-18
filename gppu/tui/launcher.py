@@ -13,8 +13,7 @@ Usage::
         MENU_TITLE = 'My Tools'
 
     def main():
-        Env(name='myapp', app_path=APP_DIR)
-        Env.load()
+        Env.from_env(name='myapp', app_path=APP_DIR)
         apps = load_app_registry(APP_DIR)
         launcher_main(apps, MyApp, APP_DIR, 'My Tools — launcher')
 
