@@ -956,12 +956,18 @@ class _Base(_Logger, _Config): pass
 
 
 class App(_Base):
-  """Base class for all apps. Inherits logging (_Logger) and config (_Config) with self.my()."""
+  """Base class for all apps. Inherits logging (_Logger) and config (_Config) with self.my().
+
+  Auto-initializes Env from name + caller's directory if Env is not already initialized.
+  """
   name: str = ''
 
   def __init__(self, name: str = '', **kw) -> None:
-    import inspect
-    self.name = name or Path(inspect.stack()[1].filename).stem
+    caller_file = Path(inspect.stack()[1].filename).resolve()
+    self.name = name or caller_file.stem
+    if not Env.initialized:
+      Env(name=self.name, app_path=caller_file.parent)
+      Env.load()
     super().__init__(**kw)
 # endregion
 
