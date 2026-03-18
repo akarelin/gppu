@@ -170,16 +170,26 @@ jobs:
           prerelease: ${{ github.ref != 'refs/heads/master' }}
 
       - name: Update w11/latest release
+        if: github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: w11/latest
           name: w11-latest
           files: artifacts/*
-          prerelease: ${{ github.ref != 'refs/heads/master' }}
           make_latest: false
 
-      - run: |
+      - name: Update w11/latest tag
+        if: github.ref == 'refs/heads/master'
+        run: |
           git config user.name "Alex AI Actions"
           git config user.email "actions@karelin.ai"
           git tag -f w11/latest
           git push -f origin w11/latest
+
+      - name: Update w11/dev-latest tag
+        if: github.ref == 'refs/heads/dev'
+        run: |
+          git config user.name "Alex AI Actions"
+          git config user.email "actions@karelin.ai"
+          git tag -f w11/dev-latest
+          git push -f origin w11/dev-latest
