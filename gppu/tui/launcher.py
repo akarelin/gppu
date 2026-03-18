@@ -17,6 +17,8 @@ Usage::
         Env.load()
         apps = load_app_registry(APP_DIR)
         launcher_main(apps, MyApp, APP_DIR, 'My Tools — launcher')
+
+    # Serve as a web app:  python myapp.py --serve [--port 8566] [--host localhost]
 """
 
 from __future__ import annotations
@@ -728,6 +730,18 @@ def launcher_main(
             name = app_def.get('name', key)
             desc = app_def.get('description', '')
             print(f'  {icon}  {key:12s}  {name} — {desc}')
+        return
+
+    if args.serve:
+        try:
+            from textual_serve.server import Server
+        except ImportError:
+            print('textual-serve is required for --serve.')
+            print('Install with:  pip install gppu[serve]')
+            sys.exit(1)
+        cmd = shlex.join([sys.executable, sys.argv[0]])
+        server = Server(cmd, host=args.host, port=args.port, title=description)
+        server.serve()
         return
 
     # Direct launch
