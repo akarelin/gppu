@@ -10,12 +10,12 @@
 <table>
 <tr>
 <td width="140"><strong><a href="statusline/">Statusline</a></strong></td>
-<td width="120"><a href="https://github.com/akarelin/gppu/actions/workflows/statusline.yml"><img src="https://img.shields.io/github/actions/workflow/status/akarelin/gppu/statusline.yml?label=&style=flat-square" alt="CI"></a></td>
+<td><a href="https://github.com/akarelin/gppu/actions/workflows/statusline.yml"><img src="https://img.shields.io/github/actions/workflow/status/akarelin/gppu/statusline.yml?label=&style=flat-square" alt="CI"></a> <a href="https://github.com/akarelin/gppu/releases?q=statusline"><img src="https://img.shields.io/github/v/release/akarelin/gppu?filter=statusline/v*&label=&color=blue&style=flat-square" alt="release"></a></td>
 <td>Claude Code 2-line status line (Linux, macOS, Windows)</td>
 </tr>
 <tr>
 <td><strong><a href="w11/README.md">W11</a></strong></td>
-<td><a href="https://github.com/akarelin/gppu/actions/workflows/w11.yml"><img src="https://img.shields.io/github/actions/workflow/status/akarelin/gppu/w11.yml?label=&style=flat-square" alt="CI"></a></td>
+<td><a href="https://github.com/akarelin/gppu/actions/workflows/w11.yml"><img src="https://img.shields.io/github/actions/workflow/status/akarelin/gppu/w11.yml?label=&style=flat-square" alt="CI"></a> <a href="https://github.com/akarelin/gppu/releases?q=w11"><img src="https://img.shields.io/github/v/release/akarelin/gppu?filter=w11/v*&label=&color=blue&style=flat-square" alt="release"></a></td>
 <td>Windows 11 utilities &amp; diagnostics</td>
 </tr>
 </table>
