@@ -11,7 +11,7 @@ from functools import partial
 from typing import Any, Optional, ClassVar, List, Callable
 
 from .gppu import (
-    TRACE_RULES, Env, Environment,
+    TRACE_RULES, Env,
     VER_GPPU,
     deepget, deepget_int, deepget_float, deepget_list, deepget_dict,
     Debug, Info, Warn, Error, Dump,
@@ -293,6 +293,42 @@ class DC(UserDict):
 # endregion
 
 
+# region Environment
+class Environment:
+  data: dict[str, Any] = {}
+  _env: Env
+  initialized: bool = False
+
+  @staticmethod
+  def from_env(name: str | None = None, app_path: str | Path | None = None) -> None:
+    if Environment.initialized or Environment.data: Environment.reset()
+    Environment._env = Env(name=name, app_path=Path(app_path) if app_path else None)
+    Environment._env.load()
+    Environment.data = Environment._env.data
+    Environment.initialized = True
+
+  @staticmethod
+  def from_dict(d: dict) -> None:
+    if Environment.initialized or Environment.data: Environment.reset()
+    Environment.data = d
+    Environment.initialized = True
+
+  @staticmethod
+  def reset() -> None: Environment.data = {}; Environment.initialized = False
+
+  @staticmethod
+  def glob(path, default=None) -> Any: return deepget(path, Environment.data, default=default)
+  @staticmethod
+  def glob_int(path, default: int = 0) -> int: return deepget_int(path, Environment.data, default=default)
+  @staticmethod
+  def glob_list(path, default=[]) -> list: return deepget_list(path, Environment.data, default=default)
+  @staticmethod
+  def glob_dict(path, default={}) -> dict: return deepget_dict(path, Environment.data, default=default)
+  @staticmethod
+  async def dump(): Logger.Dump('Environment.data', Environment.data)
+# endregion
+
+
 # region Foundation
-# _Logger, _Config, _Base are now defined in gppu.py and imported above
+# _Logger, _Config, App (_Base) are defined in gppu.py and imported above
 # endregion
