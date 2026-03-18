@@ -26,8 +26,7 @@ class W11App(TUILauncher):
 
 
 def main() -> None:
-    Env(name='w11', app_path=APP_DIR)
-    Env.load()
+    Env.from_env(name='w11', app_path=APP_DIR)
     apps = load_app_registry(APP_DIR)
     launcher_main(apps, W11App, APP_DIR, 'w11 — Windows 11 Superapp')
 
