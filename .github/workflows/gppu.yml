@@ -21,58 +21,77 @@ on:
         description: 'Run tests before release'
         type: boolean
         default: true
+      test_windows:
+        description: 'Run Windows tests'
+        type: boolean
+        default: false
+      test_sql:
+        description: 'Run SQL/PG extra tests'
+        type: boolean
+        default: false
+      test_tui:
+        description: 'Run TUI tests'
+        type: boolean
+        default: true
 
 permissions:
   contents: write
 
 jobs:
+  matrix:
+    runs-on: [self-hosted, linux]
+    if: github.event_name == 'pull_request' || inputs.run_tests
+    outputs:
+      tests: ${{ steps.build.outputs.tests }}
+    steps:
+      - id: build
+        shell: python3 {0}
+        run: |
+          import json, os
+
+          is_pr = "${{ github.event_name }}" == "pull_request"
+          sql = is_pr or "${{ inputs.test_sql }}" == "true"
+          win = is_pr or "${{ inputs.test_windows }}" == "true"
+          tui = is_pr or "${{ inputs.test_tui }}" == "true"
+
+          L = ["self-hosted", "linux"]
+          W = ["self-hosted", "Windows"]
+          MAIN = "tests/ --ignore=tests/test_tui.py"
+
+          tests = [
+              {"os": "linux", "runner": L, "extras": "", "test_path": MAIN, "label": "linux"},
+          ]
+          if sql:
+              tests += [
+                  {"os": "linux", "runner": L, "extras": "[pg]",  "test_path": MAIN, "label": "linux-pg"},
+                  {"os": "linux", "runner": L, "extras": "[sql]", "test_path": MAIN, "label": "linux-sql"},
+              ]
+          if tui:
+              tests += [
+                  {"os": "linux", "runner": L, "extras": "[test-tui]", "test_path": "tests/test_tui.py", "label": "linux-tui"},
+              ]
+          if win:
+              tests += [
+                  {"os": "windows", "runner": W, "extras": "", "test_path": MAIN, "label": "windows"},
+              ]
+              if sql:
+                  tests += [
+                      {"os": "windows", "runner": W, "extras": "[pg]",  "test_path": MAIN, "label": "windows-pg"},
+                      {"os": "windows", "runner": W, "extras": "[sql]", "test_path": MAIN, "label": "windows-sql"},
+                  ]
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"tests={json.dumps(tests)}\n")
+
   test:
-    if: github.event_name == 'pull_request' || inputs.run_tests
-    runs-on: [self-hosted, linux]
+    needs: matrix
+    if: needs.matrix.result == 'success'
+    name: test (${{ matrix.label }})
+    runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
-        extras: ['', 'pg', 'sql']
-
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-tags: true
-          fetch-depth: 0
-
-      - name: Setup venv and install
-        run: |
-          python3 -m venv .venv
-          .venv/bin/pip install PyYAML pytest setuptools-scm
-          .venv/bin/pip install -e ".${{ matrix.extras && format('[{0}]', matrix.extras) || '' }}"
-
-      - name: Run tests
-        run: .venv/bin/python -m pytest tests/ -v --ignore=tests/test_tui.py
-
-  test-tui:
-    if: github.event_name == 'pull_request' || inputs.run_tests
-    runs-on: [self-hosted, linux]
-
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-tags: true
-          fetch-depth: 0
-
-      - name: Setup venv and install
-        run: |
-          python3 -m venv .venv
-          .venv/bin/pip install setuptools-scm
-          .venv/bin/pip install -e ".[test-tui]"
-
-      - name: Run TUI tests
-        run: .venv/bin/python -m pytest tests/test_tui.py -v
-
-  test-windows:
-    if: github.event_name == 'pull_request' || inputs.run_tests
-    runs-on: [self-hosted, Windows]
-    strategy:
-      matrix:
-        extras: ['', 'pg', 'sql']
+        include: ${{ fromJSON(needs.matrix.outputs.tests) }}
 
     steps:
       - uses: actions/checkout@v6
@@ -81,28 +100,35 @@ jobs:
           fetch-depth: 0
 
       - uses: actions/setup-python@v6
+        if: matrix.os == 'windows'
         with:
           python-version: '3.13'
 
-      - name: Setup venv and install
+      - name: Setup and test (Linux)
+        if: matrix.os == 'linux'
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install PyYAML pytest setuptools-scm
+          .venv/bin/pip install -e ".${{ matrix.extras }}"
+          .venv/bin/python -m pytest ${{ matrix.test_path }} -v
+
+      - name: Setup and test (Windows)
+        if: matrix.os == 'windows'
         run: |
           python -m venv .venv
           .venv\Scripts\pip install PyYAML pytest setuptools-scm
-          .venv\Scripts\pip install -e ".${{ matrix.extras && format('[{0}]', matrix.extras) || '' }}"
-
-      - name: Run tests
-        run: .venv\Scripts\python -m pytest tests/ -v --ignore=tests/test_tui.py
+          .venv\Scripts\pip install -e ".${{ matrix.extras }}"
+          .venv\Scripts\python -m pytest ${{ matrix.test_path }} -v
 
   release:
-    needs: [test, test-tui, test-windows]
+    needs: [matrix, test]
     if: >-
       always()
       && github.event_name == 'workflow_dispatch'
       && inputs.bump != 'none'
       && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/dev')
+      && (needs.matrix.result == 'success' || needs.matrix.result == 'skipped')
       && (needs.test.result == 'success' || needs.test.result == 'skipped')
-      && (needs.test-tui.result == 'success' || needs.test-tui.result == 'skipped')
-      && (needs.test-windows.result == 'success' || needs.test-windows.result == 'skipped')
     runs-on: [self-hosted, linux]
 
     steps:
