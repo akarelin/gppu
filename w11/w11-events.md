@@ -2,15 +2,11 @@
 
 ## Overview
 
-Python TUI application (`w11_events.py`) that queries Windows Event Viewer logs, deduplicates events, classifies them by category/source rules, and displays them in an interactive terminal UI. Uses `gppu` for config management and `textual` for TUI.
-
-## Location
-
-`D:\Dev\RAN\Win11\`
+Python TUI application (`w11-events.py`) that queries Windows Event Viewer logs, deduplicates events, classifies them by category/source rules, and displays them in an interactive terminal UI. Uses `gppu` for config management and `textual` for TUI.
 
 ## Dependencies
 
-- **gppu** — config loading (`Env`, `dict_from_yml`, `dict_to_yml`, YAML `!include`)
+- **gppu** — config loading (`Env`, YAML `!include`)
 - **textual** — TUI framework (DataTable, RichLog, panels)
 - **wevtutil** — Windows event log queries (rendered XML)
 - **PyYAML** — stats file I/O
@@ -118,15 +114,15 @@ Stats are loaded on startup for instant display; recalculated from events in bac
 ## CLI Modes
 
 ```bash
-python w11_events.py                     # TUI (default)
-python w11_events.py --stats             # Recalculate stats, print summary, exit
-python w11_events.py --clear-logs        # Clear all configured logs (needs admin)
-python w11_events.py --days 30           # Override time window
-python w11_events.py --level Error       # Override severity
-python w11_events.py --all-logs          # Scan all 1200+ log channels
-python w11_events.py --logs System       # Specific logs
-python w11_events.py --no-dedup          # Disable dedup
-python w11_events.py --export events.json # Export to JSON
+python w11-events.py                     # TUI (default)
+python w11-events.py --stats             # Recalculate stats, print summary, exit
+python w11-events.py --clear-logs        # Clear all configured logs (needs admin)
+python w11-events.py --days 30           # Override time window
+python w11-events.py --level Error       # Override severity
+python w11-events.py --all-logs          # Scan all 1200+ log channels
+python w11-events.py --logs System       # Specific logs
+python w11-events.py --no-dedup          # Disable dedup
+python w11-events.py --export events.json # Export to JSON
 ```
 
 ## Overlap Analyzer (`o` key)
