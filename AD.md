@@ -1,37 +1,13 @@
 # gppu.ad - Home Automation Types and Base Classes
 
-`gppu.ad` provides the Logger infrastructure, mixin classes, the `_Base` foundation, tokenized list types (paths, topics, slugs), entity IDs, and the `DC` pseudo-dataclass. Originally built for home automation (AppDaemon/HASS), but the base classes and types are general-purpose.
+`gppu.ad` provides mixin classes, the `_Base` foundation, tokenized list types (paths, topics, slugs), entity IDs, and the `DC` pseudo-dataclass. Originally built for home automation (AppDaemon/HASS), but the base classes and types are general-purpose.
 
 ```python
 from gppu.ad import (
-    Logger, init_logger, init_logger_ad,
     mixin_Logger, mixin_Config, _Base,
     y2list, y2path, y2topic, y2slug, y2eid,
     DC,
 )
-```
-
-## Logger and init_logger
-
-`Logger` is a static namespace for colored log output. `init_logger` configures the global logger with trace rules and rebinds all `mixin_Logger` subclasses.
-
-```python
-from gppu.ad import Logger, init_logger
-
-# Initialize logger with app name and trace rules
-init_logger('MyApp', trace_rules={'MyClass.method': True, 'all': False})
-
-# Logger namespace
-Logger.Info('status', 'ready')
-Logger.Warn('config', 'using defaults')
-Logger.Error('db', 'connection failed')
-Logger.Debug('trace', 'processing item')  # controlled by TRACE_RULES
-
-# Dump object to YAML file for inspection
-Logger.Dump('debug_state.yml', data)
-
-# init_logger_ad: same as init_logger but also sets Logger.trace_folder
-init_logger_ad('MyApp', trace_rules={...}, trace_folder='/tmp/traces')
 ```
 
 ## Mixin Classes and _Base

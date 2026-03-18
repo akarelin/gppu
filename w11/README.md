@@ -1,32 +1,10 @@
 # W11 — Windows 11 Utilities
 
-[![W11](https://github.com/akarelin/gppu/actions/workflows/w11-release.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/w11-release.yml)
+[![W11](https://github.com/akarelin/gppu/actions/workflows/w11.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/w11.yml)
 
 Windows 11 utilities and diagnostics. Windows-only (Intel/amd64). Part of the [gppu](../README.md) repository.
 
-## W11 — Windows 11 Utilities
-
-Windows-only (Intel) diagnostics and management tools. Separate package with its own release cycle (`w11-*` tags).
-
-See [w11/README.md](w11/README.md) for full documentation. Sub-apps:
-
-| Tool | Purpose |
-|------|---------|
-| [w11-events](w11/w11-events.md) | TUI for Windows Event Viewer — log analysis, deduplication, error categorization |
-| [w11-onedrive](w11/w11-onedrive.md) | OneDrive sync diagnostics & conflict analysis |
-
 ## Installation
-
-```bash
-# Install from source
-cd w11 && pip install -e .
-
-# Run
-w11                    # TUI launcher
-w11 events             # launch events directly
-w11 onedrive           # launch onedrive directly
-```
-
 
 ```bash
 # From source
@@ -34,15 +12,6 @@ cd w11 && pip install -e .
 
 # Binary release (Windows x64)
 # Download from https://github.com/akarelin/gppu/releases?q=w11
-```
-
-## Usage
-
-```bash
-w11                    # TUI superapp launcher
-w11 events             # launch w11-events directly
-w11 onedrive           # launch w11-onedrive directly
-w11 --list             # list available tools
 ```
 
 ## Tools
@@ -93,7 +62,7 @@ Reference: [OD4B-Sync-Diagnostics.md](OD4B-Sync-Diagnostics.md) — OneDrive for
 
 Uses [gppu](../README.md) `Env` for configuration:
 ```python
-Env(name='w11_events', app_path=Path('RAN/Win11'))
+Env(name='w11', app_path=APP_DIR)
 Env.load()
 ```
 Resolves config path per OS. YAML `!include` for modular configs.

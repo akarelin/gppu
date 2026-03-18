@@ -6,7 +6,7 @@ Selenium Chrome driver setup with profile management, process lifecycle handling
 from gppu.chrome import prepare_driver, switch_to_mobile, switch_to_desktop
 ```
 
-Requires `selenium>=4.0.0`: `pip install "gppu[chrome] @ git+ssh://git@github.com/akarelin/gppu.git@latest"`
+Requires `selenium>=4.0.0`: `pip install "gppu[chrome] @ git+ssh://git@github.com/akarelin/gppu.git@gppu/latest"`
 
 ## prepare_driver
 
