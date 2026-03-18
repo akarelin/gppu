@@ -114,9 +114,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.bump.outputs.tag || github.ref_name }}
-          name: w11 ${{ steps.version.outputs.clean }}
+          name: w11 ${{ steps.version.outputs.clean }}${{ github.ref != 'refs/heads/master' && ' (dev)' || '' }}
           files: artifacts/*
           generate_release_notes: true
+          prerelease: ${{ github.ref != 'refs/heads/master' }}
 
       - name: Update w11/latest release
         uses: softprops/action-gh-release@v2
