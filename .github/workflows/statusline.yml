@@ -142,7 +142,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.bump.outputs.tag || github.ref_name }}
-          name: statusline v${{ steps.version.outputs.clean }} (gppu ${{ steps.version.outputs.gppu }})
+          name: statusline v${{ steps.version.outputs.clean }}
           files: artifacts/*
           generate_release_notes: true
           make_latest: false
