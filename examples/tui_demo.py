@@ -22,7 +22,7 @@ import tempfile
 import textwrap
 from pathlib import Path
 
-from gppu.tui import LauncherApp, launch_app
+from gppu.tui import TUILauncher, launch_app
 
 # ── Create temporary sub-app scripts ────────────────────────────────────────
 
@@ -148,7 +148,7 @@ def _simulate_worker(*, log, worker_id, items=6):
     log(f'[W{worker_id}] finished')
 
 
-class DemoApp(LauncherApp):
+class DemoApp(TUILauncher):
     TITLE = 'gppu.tui Demo'
     MENU_TITLE = '\U0001f3aa  Feature Demo'
 

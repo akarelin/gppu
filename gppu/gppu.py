@@ -891,6 +891,8 @@ class mixin_Config(_mixin):
   def my_dict(self, path, default: dict = {}) -> dict: return deepget_dict(path, self._my, default=default or {})
 
 
+
+
 class Logger:
   """Namespace wrapper exposing logging helpers."""
   trace_folder: str = ''
@@ -932,40 +934,6 @@ class mixin_Logger(protocol_Logger, _mixin):
 # endregion
 
 
-# region Environment
-class Environment:
-  data: dict[str, Any] = {}
-  _env: Env
-  initialized: bool = False
-
-  @staticmethod
-  def from_env(name: str | None = None, app_path: str | Path | None = None) -> None:
-    if Environment.initialized or Environment.data: Environment.reset()
-    Environment._env = Env(name=name, app_path=app_path)
-    Environment._env.load()
-    Environment.data = Environment._env.data
-    Environment.initialized = True
-
-  @staticmethod
-  def from_dict(d: dict) -> None:
-    if Environment.initialized or Environment.data: Environment.reset()
-    Environment.data = d
-    Environment.initialized = True
-
-  @staticmethod
-  def reset() -> None: Environment.data = {}; Environment.initialized = False
-
-  @staticmethod
-  def glob(path, default=None) -> Any: return deepget(path, Environment.data, default=default)
-  @staticmethod
-  def glob_int(path, default: int = 0) -> int: return deepget_int(path, Environment.data, default=default)
-  @staticmethod
-  def glob_list(path, default=[]) -> list: return deepget_list(path, Environment.data, default=default)
-  @staticmethod
-  def glob_dict(path, default={}) -> dict: return deepget_dict(path, Environment.data, default=default)
-  @staticmethod
-  async def dump(): Dump('Environment.data', Environment.data)
-# endregion
 
 
 # region Foundation
@@ -977,20 +945,24 @@ class _Config(mixin_Config):
 
   def __init__(self, **kw) -> None:
     super().__init__()
-    assert Env.initialized, "Env must be initialized"
-    key = kw.get('config_key', None)
-
-    if key:
-      self._config_from_key(key)
-      self._base_path = Path(self.my('base_dir'))
-    else:
+    if Env.initialized:
       self._config_from_env()
-      self._base_path = Path('.')
+    self._base_path = Path('.')
 
   def my_path(self, path) -> Path: return self._base_path / self.my(path)
 
 
 class _Base(_Logger, _Config): pass
+
+
+class App(_Base):
+  """Base class for all apps. Inherits logging (_Logger) and config (_Config) with self.my()."""
+  name: str = ''
+
+  def __init__(self, name: str = '', **kw) -> None:
+    import inspect
+    self.name = name or Path(inspect.stack()[1].filename).stem
+    super().__init__(**kw)
 # endregion
 
 

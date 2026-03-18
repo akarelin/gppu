@@ -16,7 +16,7 @@ pytest.importorskip('pytest_asyncio', reason='pytest-asyncio not installed — s
 
 from gppu.tui import (  # noqa: E402
     AppItem,
-    LauncherApp,
+    TUILauncher,
     ModeItem,
     ProcessRow,
     SpinnerIndicator,
@@ -85,7 +85,7 @@ def _make_apps(tmp_path: Path) -> dict[str, dict]:
     }
 
 
-class _TestApp(LauncherApp):
+class _TestApp(TUILauncher):
     TITLE = 'Test'
     MENU_TITLE = 'Test Menu'
 
@@ -162,7 +162,7 @@ class TestModeItem:
         assert item.mode_def == {}
 
 
-# ── LauncherApp composition ─────────────────────────────────────────────────
+# ── TUILauncher composition ─────────────────────────────────────────────────
 
 class TestLauncherCompose:
     @pytest.mark.asyncio
