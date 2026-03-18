@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -701,6 +702,18 @@ def launcher_main(
     parser.add_argument(
         '--list', action='store_true',
         help='List available apps and exit',
+    )
+    parser.add_argument(
+        '--serve', action='store_true',
+        help='Serve the TUI as a web app on localhost',
+    )
+    parser.add_argument(
+        '--port', type=int, default=8566,
+        help='Port for the web server (default: 8566)',
+    )
+    parser.add_argument(
+        '--host', default='localhost',
+        help='Host to bind the web server to (default: localhost)',
     )
     parser.add_argument(
         'extra', nargs=argparse.REMAINDER,
