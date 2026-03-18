@@ -14,4 +14,4 @@ dependencies = [
 ]
 
 [project.scripts]
-w11 = "w11.w11:main"
+w11 = "w11.app:main"
