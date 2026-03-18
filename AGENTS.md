@@ -12,16 +12,6 @@
 -   **Consult on Missing Features:** If a required feature is not in `gppu`, **stop and ask** the user. Do not implement workarounds.
 -   **Consult on Configuration Changes:** If a new config key is needed, **stop and ask**. Do not modify config files without permission.
 
-## Usage
-
-```python
-from gppu import Env, Info, Error, glob
-
-Env.from_env(name='my-app', app_path=Path('CRAP/my_app'))
-Info('INFO', 'Started', 'WGREEN', 'OK')
-db_connection = glob('db/connection_string')
-```
-
 ## Strict Anti-Patterns
 
 -   **NEVER use fallback defaults.** Missing value = config error. Fix the `.yaml`.
