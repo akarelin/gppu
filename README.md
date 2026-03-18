@@ -1,16 +1,16 @@
 # GPPU — General Purpose Python Utilities
 
+<h3><code>v3</code> — <em>All the things</em></h3>
+
 > A utility library for configuration management, logging, data manipulation, type safety, database access, caching, TUI framework, and browser automation.
->
-> **v3** — _All the things_
 
 ---
 
 | | CI | Release | |
 |---|---|---|---|
-| **gppu** | [![CI](https://github.com/akarelin/gppu/actions/workflows/gppu.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/gppu.yml) | [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=gppu/v*&exclude_prerelease&label=stable&color=blue)](https://github.com/akarelin/gppu/releases?q=gppu) | Core library |
-| [**Statusline**](statusline/) | [![CI](https://github.com/akarelin/gppu/actions/workflows/statusline.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/statusline.yml) | [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=statusline/v*&exclude_prerelease&label=stable&color=blue)](https://github.com/akarelin/gppu/releases?q=statusline) | Claude Code status line (Linux, macOS, Windows) |
-| [**W11**](w11/README.md) | [![CI](https://github.com/akarelin/gppu/actions/workflows/w11.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/w11.yml) | [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=w11/v*&exclude_prerelease&label=stable&color=blue)](https://github.com/akarelin/gppu/releases?q=w11) | Windows 11 utilities & diagnostics |
+| **gppu** | [![CI](https://github.com/akarelin/gppu/actions/workflows/gppu.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/gppu.yml) | [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=gppu/v*&label=release&color=blue)](https://github.com/akarelin/gppu/releases?q=gppu) | Core library |
+| [**Statusline**](statusline/) | [![CI](https://github.com/akarelin/gppu/actions/workflows/statusline.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/statusline.yml) | [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=statusline/v*&label=release&color=blue)](https://github.com/akarelin/gppu/releases?q=statusline) | Claude Code status line (Linux, macOS, Windows) |
+| [**W11**](w11/README.md) | [![CI](https://github.com/akarelin/gppu/actions/workflows/w11.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/w11.yml) | [![stable](https://img.shields.io/github/v/release/akarelin/gppu?filter=w11/v*&label=release&color=blue)](https://github.com/akarelin/gppu/releases?q=w11) | Windows 11 utilities & diagnostics |
 
 # Modules
 
