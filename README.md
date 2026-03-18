@@ -84,38 +84,6 @@ Hex values computed from ANSI codes in `gppu/gppu.py` (xterm-256color palette).
 <img src="docs/tcolor-reference.svg" alt="TColor reference" width="640">
 
 
-## LLM Development Guide
-
-### Config-First Workflow
-
-1.  **Define the Configuration**: User and LLM collaborate on the `.yaml` file. **User must approve the final structure.** This is the single source of truth.
-2.  **Configuration is Everything**: Paths, credentials, API keys, settings, flags — all in `.yaml`.
-3.  **Begin Development**: Only after the config is finalized.
-4.  **Zero-Parameter Execution**: All scripts **must** run without parameters. Everything comes from `Env`.
-
-### Interaction Rules
-
--   **Consult on Missing Features:** If a required feature is not in `gppu`, **stop and ask** the user. Do not implement workarounds.
--   **Consult on Configuration Changes:** If a new config key is needed, **stop and ask**. Do not modify config files without permission.
-
-### Usage Pattern
-
-```python
-from gppu import Env, Info, Error, glob
-
-Env.from_env(name='my-app', app_path=Path('CRAP/my_app'))
-Info('INFO', 'Started', 'WGREEN', 'OK')
-db_connection = glob('db/connection_string')
-```
-
-### Strict Anti-Patterns
-
--   **NEVER use fallback defaults.** Missing value = config error. Fix the `.yaml`.
--   **NEVER hardcode placeholders** like `user@hostname` or `/path/to/`.
--   **NEVER parse config directly.** Use `Env`, not `dict_from_yml('config.yaml')`.
--   **NEVER use CLI arguments for config.** All settings go in `.yaml`.
--   **NEVER build paths manually.** `Env` handles OS-specific path resolution.
-
 ## License
 
 Extracted from RAN project for reuse across Alex Karelin's automation and data processing tools.

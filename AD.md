@@ -1,66 +1,9 @@
 # gppu.ad - Home Automation Types and Base Classes
 
-`gppu.ad` provides mixin classes, the `_Base` foundation, tokenized list types (paths, topics, slugs), entity IDs, and the `DC` pseudo-dataclass. Originally built for home automation (AppDaemon/HASS), but the base classes and types are general-purpose.
+`gppu.ad` provides home automation types (paths, topics, slugs, entity IDs) and the `DC` pseudo-dataclass. Originally built for home automation (AppDaemon/HASS), but the types are general-purpose.
 
 ```python
-from gppu.ad import (
-    mixin_Logger, mixin_Config, _Base,
-    y2list, y2path, y2topic, y2slug, y2eid,
-    DC,
-)
-```
-
-## Mixin Classes and _Base
-
-The mixin system provides reusable logging and config access for classes.
-
-### mixin_Logger
-
-Adds `Debug`/`Info`/`Warn`/`Error`/`Dump` as class methods. Each subclass automatically gets its own named child logger.
-
-```python
-from gppu.ad import mixin_Logger
-
-class MyService(mixin_Logger):
-    def run(self):
-        self.Info('status', 'running')  # logs as "MyService: running"
-```
-
-### mixin_Config
-
-Adds `self._my` dict with typed accessors. Config can be loaded from Env by key, from another object, or from a dict.
-
-```python
-from gppu.ad import mixin_Config
-
-class MyWorker(mixin_Config):
-    def setup(self):
-        self._config_from_key('worker')        # from Env.glob_dict('worker')
-        self._config_from_dict({'timeout': 30}) # from a dict
-        self._config_from_env()                 # copy entire Env.data
-        self._config_copy(other_worker)         # copy from another mixin_Config
-
-        # Typed access (same "path/syntax" as Env.glob)
-        timeout = self.my_int('timeout', default=30)
-        rate = self.my_float('rate', default=1.0)
-        hosts = self.my_list('hosts', default=[])
-        db = self.my_dict('database')
-        name = self.my('name', default='unnamed')
-```
-
-### _Base
-
-Combines `mixin_Logger` + `mixin_Config` (via internal `_Logger` + `_Config`). Requires `Env` to be initialized. Reads `config_key` from kwargs to load a config subsection, or copies entire `Env.data` if no key given.
-
-```python
-from gppu.ad import _Base
-
-class MyComponent(_Base):
-    def __init__(self):
-        super().__init__(config_key='my_component')
-        # self.Info(), self.my(), self.my_int(), etc. all available
-        # self._base_path set from self.my('base_dir')
-        path = self.my_path('output_dir')  # self._base_path / self.my('output_dir')
+from gppu.ad import y2list, y2path, y2topic, y2slug, y2eid, DC
 ```
 
 ## y2list Family
