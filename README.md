@@ -9,25 +9,7 @@ This repo contains **3 independent products**:
 A utility library for configuration management, logging, data manipulation, type safety, database access, caching, TUI framework, and browser automation.
 > _All the things_
 
-## Installation
-
-```bash
-# From GitHub
-pip install "gppu @ git+ssh://git@github.com/akarelin/gppu.git@gppu/latest"
-
-# With optional extras
-pip install "gppu[pg] @ git+ssh://git@github.com/akarelin/gppu.git@gppu/latest"
-pip install "gppu[all] @ git+ssh://git@github.com/akarelin/gppu.git@gppu/latest"
-
-# Local development
-pip install -e ".[all,test]"
-```
-
-**Optional extras**: `pg` (psycopg2), `sql` (SQLAlchemy), `cache` (diskcache), `chrome` (Selenium), `tui` (Textual), `serve` (textual-serve), `statusline` (Jinja2), `all`, `test` (pytest).
-
-Requires Python >= 3.11. Core dependency: PyYAML.
-
-## Modules
+# Modules
 
 | Module | Purpose |
 |--------|---------|
@@ -37,9 +19,7 @@ Requires Python >= 3.11. Core dependency: PyYAML.
 | [`gppu.chrome`](CHROME.md) | `prepare_driver`, `switch_to_mobile`, `switch_to_desktop` — Selenium Chrome driver setup with profile management, crash recovery, mobile/desktop emulation |
 | [`gppu.ad`](AD.md) | Home automation types (`y2list`, `y2path`, `y2topic`, `y2slug`, `y2eid`), `DC` pseudo-dataclass |
 
-## Usage
-
-### Environment
+## Environment
 
 ```python
 from gppu import Env
@@ -64,7 +44,7 @@ app:
   database: !include database.yaml
 ```
 
-### Logger
+## Logger
 
 ```python
 from gppu import Info, Warn, Error, Debug, Dump
@@ -76,6 +56,28 @@ Debug('GRAY4', 'trace', 'NONE', 'processing item')
 
 Dump('debug_state.yml', data)
 ```
+
+## Data
+[DATA.md]
+
+# Appendix
+## Installation
+
+```bash
+# From GitHub
+pip install "gppu @ git+ssh://git@github.com/akarelin/gppu.git@gppu/latest"
+
+# With optional extras
+pip install "gppu[pg] @ git+ssh://git@github.com/akarelin/gppu.git@gppu/latest"
+pip install "gppu[all] @ git+ssh://git@github.com/akarelin/gppu.git@gppu/latest"
+
+# Local development
+pip install -e ".[all,test]"
+```
+
+**Optional extras**: `pg` (psycopg2), `sql` (SQLAlchemy), `cache` (diskcache), `chrome` (Selenium), `tui` (Textual), `serve` (textual-serve), `statusline` (Jinja2), `all`, `test` (pytest).
+
+Requires Python >= 3.11. Core dependency: PyYAML.
 
 ## TColor Reference
 
