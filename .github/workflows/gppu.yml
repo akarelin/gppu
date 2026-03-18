@@ -11,12 +11,12 @@ on:
         required: true
         type: choice
         options:
-          - patch
-          - minor
+          - none
           - alpha
           - beta
           - rc
-          - none
+          - patch
+          - minor
       run_tests:
         description: 'Run tests before release'
         type: boolean
