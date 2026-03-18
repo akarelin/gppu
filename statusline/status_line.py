@@ -49,8 +49,7 @@ def _config_dir() -> Path:
 
 # ── Initialize gppu ────────────────────────────────────────────────────────
 
-Env(name="status_line", app_path=_config_dir())
-Env.load()
+Env.from_env(name="status_line", app_path=_config_dir())
 glob = Env.glob
 glob_dict = Env.glob_dict
 glob_int = Env.glob_int
