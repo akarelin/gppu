@@ -1,2 +1,2 @@
-gppu @ git+ssh://git@github.com/akarelin/gppu.git@latest
+gppu @ https://github.com/akarelin/gppu/releases/download/gppu/v3.0.0/gppu-3.0.0-py3-none-any.whl
 textual
