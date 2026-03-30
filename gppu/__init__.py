@@ -5,6 +5,8 @@ A comprehensive utility library providing configuration loading, logging,
 data manipulation, and type safety utilities.
 """
 
+from .vault import resolve_secret, clear_cache as clear_secret_cache
+
 from .gppu import (
     # Version info
     VER_GPPU,
@@ -129,6 +131,9 @@ __all__ = [
     # Mixins
     '_mixin', 'mixin_Config',
     'Logger', 'protocol_Logger', 'mixin_Logger',
+
+    # Vault / Secrets
+    'resolve_secret', 'clear_secret_cache',
 
     # Env
     'Env',
