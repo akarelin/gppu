@@ -4,6 +4,8 @@ on:
   pull_request:
     branches: [master]
     paths: ['gppu/**', 'tests/**', 'pyproject.toml', 'setup.cfg']
+  push:
+    tags: ['gppu/v*']
   workflow_dispatch:
     inputs:
       bump:
@@ -121,8 +123,13 @@ jobs:
     needs: [matrix, test]
     if: >-
       always()
-      && github.event_name == 'workflow_dispatch'
-      && github.ref == 'refs/heads/master'
+      && (
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/gppu/v'))
+        || (
+          github.event_name == 'workflow_dispatch'
+          && github.ref == 'refs/heads/master'
+        )
+      )
       && (needs.matrix.result == 'success' || needs.matrix.result == 'skipped')
       && (needs.test.result == 'success' || needs.test.result == 'skipped')
     runs-on: [self-hosted, linux]
@@ -133,34 +140,41 @@ jobs:
           fetch-tags: true
           fetch-depth: 0
 
-      - name: Compute version
+      - name: Resolve tag
         run: |
-          BUMP="${{ inputs.bump }}"
-          LATEST_TAG=$(git tag -l 'gppu/v*' --sort=-v:refname | grep -E '^gppu/v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 | sed 's|^gppu/v||')
-          if [ -z "$LATEST_TAG" ]; then LATEST_TAG="0.0.0"; fi
-          if [ "$BUMP" = "none" ]; then
-            echo "TAG=gppu/v${LATEST_TAG}" >> $GITHUB_ENV
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+            echo "TAG_EXISTS=true" >> $GITHUB_ENV
           else
-            IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_TAG"
-            if [ "$BUMP" = "minor" ]; then
-              MINOR=$((MINOR + 1))
-              PATCH=0
+            BUMP="${{ inputs.bump }}"
+            LATEST_TAG=$(git tag -l 'gppu/v*' --sort=-v:refname | grep -E '^gppu/v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 | sed 's|^gppu/v||')
+            if [ -z "$LATEST_TAG" ]; then LATEST_TAG="0.0.0"; fi
+            if [ "$BUMP" = "none" ]; then
+              echo "TAG=gppu/v${LATEST_TAG}" >> $GITHUB_ENV
+              echo "TAG_EXISTS=true" >> $GITHUB_ENV
             else
-              PATCH=$((PATCH + 1))
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_TAG"
+              if [ "$BUMP" = "minor" ]; then
+                MINOR=$((MINOR + 1))
+                PATCH=0
+              else
+                PATCH=$((PATCH + 1))
+              fi
+              echo "TAG=gppu/v${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_ENV
+              echo "TAG_EXISTS=false" >> $GITHUB_ENV
             fi
-            echo "TAG=gppu/v${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_ENV
           fi
 
       - name: Create tag
-        if: inputs.bump != 'none'
+        if: env.TAG_EXISTS == 'false'
         run: |
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
           git tag "${TAG}"
           git push origin "${TAG}"
 
-      - name: Checkout tag for rebuild
-        if: inputs.bump == 'none'
+      - name: Checkout tag
+        if: env.TAG_EXISTS == 'true'
         run: git checkout "${TAG}"
 
       - name: Build and release
@@ -173,21 +187,16 @@ jobs:
         run: echo "VERSION=${TAG#gppu/v}" >> $GITHUB_ENV
 
       - name: Create Release
-        if: inputs.bump != 'none'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
           name: gppu v${{ env.VERSION }}
           files: dist/*
           generate_release_notes: true
-
-      - name: Upload assets to existing release
-        if: inputs.bump == 'none'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${TAG}" dist/* --clobber
+          prerelease: ${{ contains(env.VERSION, 'a') || contains(env.VERSION, 'b') || contains(env.VERSION, 'rc') }}
 
       - name: Update gppu/latest tag
+        if: ${{ !contains(env.VERSION, 'a') && !contains(env.VERSION, 'b') && !contains(env.VERSION, 'rc') }}
         run: |
           git tag -f gppu/latest
           git push -f origin gppu/latest
