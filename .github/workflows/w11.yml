@@ -1,8 +1,6 @@
 name: W11
 
 on:
-  push:
-    tags: ['w11/v*']
   workflow_dispatch:
     inputs:
       bump:
