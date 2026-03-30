@@ -206,13 +206,13 @@ jobs:
         run: echo "VERSION=${TAG#gppu/v}" >> $GITHUB_ENV
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.TAG }}
-          name: gppu v${{ env.VERSION }}
-          files: dist/*
-          generate_release_notes: true
-          prerelease: ${{ contains(env.VERSION, 'a') || contains(env.VERSION, 'b') || contains(env.VERSION, 'rc') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IS_PRE: ${{ contains(env.VERSION, 'a') || contains(env.VERSION, 'b') || contains(env.VERSION, 'rc') }}
+        run: |
+          FLAGS=(--title "gppu v${VERSION}" --generate-notes)
+          if [[ "$IS_PRE" == "true" ]]; then FLAGS+=(--prerelease); fi
+          gh release create "${TAG}" dist/* "${FLAGS[@]}"
 
       - name: Update gppu/latest tag
         if: ${{ !contains(env.VERSION, 'a') && !contains(env.VERSION, 'b') && !contains(env.VERSION, 'rc') }}
