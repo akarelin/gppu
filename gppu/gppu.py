@@ -3,6 +3,8 @@ from __future__ import annotations
 import pprint
 import yaml
 import re
+import os
+import subprocess
 import inspect
 import logging
 import sys
@@ -218,6 +220,29 @@ def dict_to_yml(filename:str, data=None, sort_keys=False):
       with open(filename+'_error.txt','w+', encoding='utf-8') as ferr: ferr.write(error)
 
 
+_secret_cache: dict[str, str] = {}
+
+def _resolve_secret(name: str) -> str:
+  if name in _secret_cache:
+    return _secret_cache[name]
+  # 1. Env var override: SECRET_NEO4J_DEFAULT_PASSWORD
+  env_key = 'SECRET_' + name.upper().replace('-', '_')
+  val = os.environ.get(env_key)
+  # 2. Azure Key Vault
+  vault = os.environ.get('AZURE_KEYVAULT_NAME', 'karelin')
+  if val is None:
+    try:
+      result = subprocess.run(
+        ['az', 'keyvault', 'secret', 'show', '--vault-name', vault, '--name', name, '--query', 'value', '-o', 'tsv'],
+        capture_output=True, text=True, timeout=10)
+      if result.returncode == 0: val = result.stdout.strip()
+    except Exception: pass
+  if val is None:
+    raise ValueError(f"!secret '{name}' not found (checked env ${env_key} and Azure KV '{vault}')")
+  _secret_cache[name] = val
+  return val
+
+
 def dict_from_yml(filename: str | Path):
   filename = str(filename)
   # OLD: yml_root = filename.rsplit('/', 1)[0]
@@ -237,6 +262,9 @@ def dict_from_yml(filename: str | Path):
   yaml.add_representer(set, yaml.representer.Representer.represent_list)
   yaml.add_representer(tuple, _tuple_representer)
   yaml.add_constructor("!include", yml_include, Loader=yaml.FullLoader)
+
+  def yml_secret(loader, node): return _resolve_secret(node.value)
+  yaml.add_constructor("!secret", yml_secret, Loader=yaml.FullLoader)
 
   with open(filename, encoding='utf-8') as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
 
