@@ -13,6 +13,7 @@ on:
         type: choice
         options:
           - none
+          - prerelease
           - patch
           - minor
       run_tests:
@@ -132,29 +133,56 @@ jobs:
           fetch-depth: 0
 
       - name: Resolve tag
+        shell: python3 {0}
         run: |
-          INPUT_TAG="${{ inputs.tag }}"
-          BUMP="${{ inputs.bump }}"
-          if [[ -n "$INPUT_TAG" ]]; then
-            echo "TAG=${INPUT_TAG}" >> $GITHUB_ENV
-            echo "TAG_EXISTS=true" >> $GITHUB_ENV
-          elif [[ "$BUMP" != "none" ]]; then
-            LATEST_TAG=$(git tag -l 'gppu/v*' --sort=-v:refname | grep -E '^gppu/v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 | sed 's|^gppu/v||')
-            if [ -z "$LATEST_TAG" ]; then LATEST_TAG="0.0.0"; fi
-            IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_TAG"
-            if [ "$BUMP" = "minor" ]; then
-              MINOR=$((MINOR + 1))
-              PATCH=0
-            else
-              PATCH=$((PATCH + 1))
-            fi
-            echo "TAG=gppu/v${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_ENV
-            echo "TAG_EXISTS=false" >> $GITHUB_ENV
-          else
-            LATEST_TAG=$(git tag -l 'gppu/v*' --sort=-v:refname | head -1)
-            echo "TAG=${LATEST_TAG}" >> $GITHUB_ENV
-            echo "TAG_EXISTS=true" >> $GITHUB_ENV
-          fi
+          import re, subprocess, os
+
+          tag_input = "${{ inputs.tag }}"
+          bump = "${{ inputs.bump }}"
+
+          tags = subprocess.check_output(
+              ["git", "tag", "-l", "gppu/v*", "--sort=-v:refname"],
+              text=True
+          ).strip().splitlines()
+
+          def write(k, v):
+              with open(os.environ["GITHUB_ENV"], "a") as f:
+                  f.write(f"{k}={v}\n")
+
+          if tag_input:
+              write("TAG", tag_input)
+              write("TAG_EXISTS", "true")
+          elif bump == "prerelease":
+              # Find latest prerelease tag: gppu/v1.2.3a4, gppu/v1.2.3b1, gppu/v1.2.3rc2
+              pat = re.compile(r'^gppu/v(\d+\.\d+\.\d+)(a|b|rc)(\d+)$')
+              for t in tags:
+                  m = pat.match(t)
+                  if m:
+                      base, suffix, num = m.group(1), m.group(2), int(m.group(3))
+                      write("TAG", f"gppu/v{base}{suffix}{num + 1}")
+                      write("TAG_EXISTS", "false")
+                      break
+              else:
+                  raise SystemExit("No prerelease tag found to increment")
+          elif bump in ("patch", "minor"):
+              pat = re.compile(r'^gppu/v(\d+)\.(\d+)\.(\d+)$')
+              for t in tags:
+                  m = pat.match(t)
+                  if m:
+                      major, minor, patch = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                      if bump == "minor":
+                          minor += 1; patch = 0
+                      else:
+                          patch += 1
+                      write("TAG", f"gppu/v{major}.{minor}.{patch}")
+                      write("TAG_EXISTS", "false")
+                      break
+              else:
+                  write("TAG", "gppu/v0.0.1")
+                  write("TAG_EXISTS", "false")
+          else:
+              write("TAG", tags[0] if tags else "")
+              write("TAG_EXISTS", "true")
 
       - name: Create tag
         if: env.TAG_EXISTS == 'false'
