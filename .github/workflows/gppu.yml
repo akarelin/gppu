@@ -121,7 +121,6 @@ jobs:
     needs: [matrix, test]
     if: >-
       always()
-      && github.ref == 'refs/heads/master'
       && (needs.matrix.result == 'success' || needs.matrix.result == 'skipped')
       && (needs.test.result == 'success' || needs.test.result == 'skipped')
     runs-on: [self-hosted, linux]
