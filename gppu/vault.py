@@ -90,6 +90,55 @@ def resolve_secret(name: str) -> str:
   return val
 
 
+def set_secret(name: str, value: str) -> None:
+  """Write a secret to the first available cloud provider.
+
+  Writes to Azure Key Vault or GCP Secret Manager (auto-detected from env).
+  Also updates the local cache.
+  """
+  vault_name = os.environ.get('AZURE_KEYVAULT_NAME')
+  if vault_name:
+    _set_azure(vault_name, name, value)
+    _secret_cache[name] = value
+    return
+
+  gcp_project = os.environ.get('GCP_SECRET_PROJECT')
+  if gcp_project:
+    _set_gcp(gcp_project, name, value)
+    _secret_cache[name] = value
+    return
+
+  raise ValueError(f"Cannot set secret '{name}': no cloud provider configured "
+                   "(set AZURE_KEYVAULT_NAME or GCP_SECRET_PROJECT)")
+
+
+def _set_azure(vault_name: str, name: str, value: str) -> None:
+  global _azure_client
+  from azure.identity import DefaultAzureCredential
+  from azure.keyvault.secrets import SecretClient
+  if _azure_client is None or _azure_client[0] != vault_name:
+    credential = DefaultAzureCredential()
+    client = SecretClient(vault_url=f"https://{vault_name}.vault.azure.net", credential=credential)
+    _azure_client = (vault_name, client)
+  _azure_client[1].set_secret(name, value)
+
+
+def _set_gcp(project: str, name: str, value: str) -> None:
+  global _gcp_client
+  from google.cloud.secretmanager import SecretManagerServiceClient
+  if _gcp_client is None or _gcp_client[0] != project:
+    _gcp_client = (project, SecretManagerServiceClient())
+  parent = f"projects/{project}/secrets/{name}"
+  try:
+    _gcp_client[1].create_secret(request={"parent": f"projects/{project}",
+                                           "secret_id": name,
+                                           "secret": {"replication": {"automatic": {}}}})
+  except Exception:
+    pass  # secret already exists
+  _gcp_client[1].add_secret_version(request={"parent": parent,
+                                               "payload": {"data": value.encode("utf-8")}})
+
+
 def clear_cache() -> None:
   global _azure_client, _gcp_client
   _secret_cache.clear()
