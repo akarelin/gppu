@@ -1,0 +1,8 @@
+[package]
+name = "w11"
+version = "3.5.0-alpha.1"
+edition = "2021"
+description = "Rust port scaffold for w11 utilities"
+
+[dependencies]
+gpru = { version = "3.5.0-alpha.1", path = "../gpru" }
