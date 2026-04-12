@@ -128,7 +128,7 @@ dependencies = [
 
 [[package]]
 name = "gpru"
-version = "6.0.0-experimental"
+version = "3.5.0-alpha.1"
 dependencies = [
  "chrono",
  "regex",
@@ -421,7 +421,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "statusline"
-version = "6.0.0-experimental"
+version = "3.5.0-alpha.1"
 dependencies = [
  "gpru",
 ]
@@ -490,7 +490,7 @@ checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "w11"
-version = "6.0.0-experimental"
+version = "3.5.0-alpha.1"
 dependencies = [
  "gpru",
 ]

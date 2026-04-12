@@ -1,16 +1,16 @@
-name: GPRU Full Pipeline (Experimental v6.0.0)
+name: GPRU Full Pipeline (Experimental v3.5.0alpha1)
 
 on:
   push:
     branches:
-      - '**'
+      - 'dev'
     tags-ignore:
       - 'gpru/v*'
       - 'statusline/v*'
       - 'w11/v*'
   pull_request:
     branches:
-      - '**'
+      - 'dev'
   workflow_dispatch:
 
 permissions:
@@ -30,7 +30,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Verify experimental version marker
         run: |
-          grep -q 'version = "6.0.0-experimental"' crates/gpru/Cargo.toml
+          grep -q 'version = "3.5.0-alpha.1"' crates/gpru/Cargo.toml
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Run clippy (deny warnings)

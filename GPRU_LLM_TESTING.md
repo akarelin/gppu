@@ -1,4 +1,4 @@
-# GPRU LLM Testing Guide (v6.0.0-experimental)
+# GPRU LLM Testing Guide (v3.5.0-alpha.1)
 
 Use this checklist whenever you modify Rust code in `crates/gpru`, `crates/statusline`, or `crates/w11`.
 
@@ -50,5 +50,8 @@ Include:
 
 ## Current version marker
 
-- Rust migration track: `6.0.0-experimental`
+- Rust migration track: `3.5.0-alpha.1`
 - Primary crate: `gpru` (General Purpose Rusty Utilities)
+
+
+- Release tag convention: `v3.5.0alpha1` from `dev` (crate semver: `3.5.0-alpha.1`).

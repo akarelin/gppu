@@ -1,6 +1,6 @@
 [package]
 name = "gpru"
-version = "6.0.0-experimental"
+version = "3.5.0-alpha.1"
 edition = "2021"
 description = "General Purpose Rusty Utilities (ЖПRU)"
 

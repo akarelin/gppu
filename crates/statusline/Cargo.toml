@@ -1,8 +1,8 @@
 [package]
 name = "statusline"
-version = "6.0.0-experimental"
+version = "3.5.0-alpha.1"
 edition = "2021"
 description = "Rust port scaffold for statusline"
 
 [dependencies]
-gpru = { version = "6.0.0-experimental", path = "../gpru" }
+gpru = { version = "3.5.0-alpha.1", path = "../gpru" }

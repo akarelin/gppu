@@ -1,4 +1,4 @@
-# Rust Port Plan — gpru v6.0.0 (Experimental)
+# Rust Port Plan — gpru v3.5.0alpha1 (Experimental)
 
 This repository now includes a Rust workspace that starts porting:
 
@@ -22,7 +22,7 @@ This repository now includes a Rust workspace that starts porting:
 
 ## Release channel
 
-- This Rust migration track is marked **experimental** and versioned as **6.0.0-experimental**.
+- This Rust migration track is marked **experimental** and versioned as **3.5.0-alpha.1**.
 - It is intended for **branch build validation** before any stable release tags are created.
 
 ## Parity status checkpoint
@@ -35,3 +35,5 @@ This repository now includes a Rust workspace that starts porting:
 ## LLM testing instructions
 
 - See `GPRU_LLM_TESTING.md` for required local validation, parity checks, and PR reporting format.
+
+- Release tag target: `v3.5.0alpha1` on branch `dev`.
