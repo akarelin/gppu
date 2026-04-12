@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from gppu.gppu import PathBuilder; print\\('base_path:', PathBuilder.base_path\\(\\)\\); print\\('data_path:', PathBuilder.data_path\\(\\)\\); print\\('app_path:', PathBuilder.app_path\\(\\)\\); print\\('os:', PathBuilder.os\\); print\\('user:', PathBuilder.user\\)\")",
+      "Bash(cd D:/Dev/gppu && pip install -e . -q 2>&1 | tail -3)",
+      "Bash(python -c \"from gppu.gppu import PathBuilder; from pathlib import Path; print\\(PathBuilder.app_path\\(Path\\('RAN/Win11'\\)\\)\\)\")",
+      "Bash(python -c \"from gppu.gppu import Env; print\\('base_path:', Env.base_path\\(\\)\\); print\\('data_path:', Env.data_path\\(\\)\\); print\\('os:', Env.os\\); print\\('user:', Env.user\\)\")",
+      "Bash(python -c \"from gppu.gppu import Env; print\\('home:', Env.home\\); print\\('user:', Env.user\\); print\\('os:', Env.os\\)\")",
+      "Bash(gh run:*)",
+      "Bash(gh api:*)",
+      "Bash(xxd:*)",
+      "Bash(gh workflow:*)",
+      "Bash(git checkout:*)",
+      "Bash(gh variable:*)",
+      "Bash(curl:*)",
+      "Bash(find:*)",
+      "Bash(pip show:*)",
+      "Bash(python:*)"
+    ]
+  }
+}
