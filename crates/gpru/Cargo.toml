@@ -1,0 +1,16 @@
+[package]
+name = "gpru"
+version = "6.0.0-experimental"
+edition = "2021"
+description = "General Purpose Rusty Utilities (ЖПRU)"
+
+[dependencies]
+chrono = { version = "0.4", features = ["clock"] }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+thiserror = "1"
+
+[dev-dependencies]
+tempfile = "3"
+regex = "1"

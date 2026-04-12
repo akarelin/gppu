@@ -1,3 +1,16 @@
+# GPRU — General Purpose Rusty Utilities (ЖПRU)
+
+`v6.0.0-experimental` — Rust migration track with full branch CI (fmt, clippy, cross-platform build/test, packaging sanity).
+
+```text
+  _ _  ____  ____  _  _ 
+/( ( \/    \(  _ \/ )( \
+)    () /\ ( )   /) \/ (
+\_)_)/\_)(_/(__\_)\____/
+```
+
+> Legacy Python `gppu` documentation and module details are preserved below.
+
 # GPPU — General Purpose Python Utilities
 
 <h3><code>v3</code> — <em>All the things</em></h3>
