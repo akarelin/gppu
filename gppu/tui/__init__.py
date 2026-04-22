@@ -85,6 +85,20 @@ from .icons import (
 
 from .viz import Heatmap, render_heatmap_lines
 
+from .modals import ConfirmScreen, InputScreen
+
+from .loaders import LoaderMixin
+
+from .cache import CachedFetcher, PaginatedFetcher, CacheRefreshMixin
+
+from .tree import (
+    TreeEntry,
+    TreeAdapter,
+    FilesystemAdapter,
+    GDriveAdapter,
+    TreeBrowser,
+)
+
 
 __all__ = [
     # Base TUI classes
@@ -139,4 +153,19 @@ __all__ = [
     # Viz
     'Heatmap',
     'render_heatmap_lines',
+    # Modals
+    'ConfirmScreen',
+    'InputScreen',
+    # Loaders
+    'LoaderMixin',
+    # Cache
+    'CachedFetcher',
+    'PaginatedFetcher',
+    'CacheRefreshMixin',
+    # Tree
+    'TreeEntry',
+    'TreeAdapter',
+    'FilesystemAdapter',
+    'GDriveAdapter',
+    'TreeBrowser',
 ]
