@@ -31,6 +31,7 @@ import sys
 from pathlib import Path
 
 from gppu import Env, App, mixin_Config, dict_from_yml
+from gppu.gppu import OSType
 from textual.app import App as TextualApp, ComposeResult
 from textual.binding import Binding
 from textual.command import Hit, Hits, Provider
@@ -115,6 +116,36 @@ def build_args(mode_def: dict | None) -> list[str]:
     return list(mode_def.get('args', []) or [])
 
 
+def _platform_spec(d: dict | None) -> list[str]:
+    """Read the manifest 'platform:' key as a normalized list of OSType names.
+
+    Empty list ⇒ no restriction (all platforms allowed).
+    """
+    if not d:
+        return []
+    spec = d.get('platform')
+    if spec is None or spec == '':
+        return []
+    if isinstance(spec, str):
+        spec = [spec]
+    return [str(s).upper() for s in spec]
+
+
+def platform_ok(d: dict | None, current_os: OSType | None = None) -> bool:
+    """True if `d['platform']` permits running on the current OS."""
+    spec = _platform_spec(d)
+    if not spec:
+        return True
+    cur = (current_os or Env.os).name.upper()
+    return cur in spec
+
+
+def _platform_label(d: dict | None) -> str:
+    """Render 'platform:' for a help/list suffix; empty string if unrestricted."""
+    spec = _platform_spec(d)
+    return ', '.join(spec) if spec else ''
+
+
 def resolve_cwd(app_dir: Path, app_def: dict) -> Path:
     """Resolve working directory for a sub-app.
 
@@ -175,25 +206,51 @@ class AppItem(ListItem):
         super().__init__()
         self.app_key = key
         self.app_def = app_def
+        self.enabled = platform_ok(app_def)
+        if not self.enabled:
+            self.add_class('platform-disabled')
 
     def compose(self) -> ComposeResult:
         icon = self.app_def.get('icon', '')
         name = self.app_def.get('name', self.app_key)
         desc = self.app_def.get('description', '')
-        yield Static(f' {icon}  [bold]{name}[/bold]   [dim]{desc}[/dim]')
+        if self.enabled:
+            yield Static(f' {icon}  [bold]{name}[/bold]   [dim]{desc}[/dim]')
+        else:
+            plat = _platform_label(self.app_def)
+            yield Static(
+                f' [dim]{icon}  {name}[/]   '
+                f'[dim italic]({plat} only — current: {Env.os.name})[/]'
+            )
 
 
 class ModeItem(ListItem):
     """A selectable mode entry."""
 
-    def __init__(self, mode_key: str, mode_def: dict | None) -> None:
+    def __init__(self, mode_key: str, mode_def: dict | None,
+                 app_def: dict | None = None) -> None:
         super().__init__()
         self.mode_key = mode_key
         self.mode_def = mode_def or {}
+        # Mode-level platform overrides app-level; otherwise inherit app-level.
+        if 'platform' in self.mode_def:
+            self.enabled = platform_ok(self.mode_def)
+            self._effective_platform = self.mode_def
+        else:
+            self.enabled = platform_ok(app_def or {})
+            self._effective_platform = app_def or {}
+        if not self.enabled:
+            self.add_class('platform-disabled')
 
     def compose(self) -> ComposeResult:
         label = self.mode_def.get('name', self.mode_key)
-        yield Static(f'  {label}')
+        if self.enabled:
+            yield Static(f'  {label}')
+        else:
+            plat = _platform_label(self._effective_platform)
+            yield Static(
+                f'  [dim]{label}   [italic]({plat} only)[/][/]'
+            )
 
 
 class SpinnerIndicator(Static):
@@ -650,6 +707,9 @@ class TUILauncher(TUIApp):
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if self._phase == 'apps':
             item: AppItem = event.item  # type: ignore[assignment]
+            if not item.enabled:
+                self.bell()
+                return
             self._selected_app = item.app_def
             modes = item.app_def.get('modes')
             if not modes:
@@ -661,6 +721,9 @@ class TUILauncher(TUIApp):
                 self._show_modes(item.app_def, modes)
         elif self._phase == 'modes':
             mode_item: ModeItem = event.item  # type: ignore[assignment]
+            if not mode_item.enabled:
+                self.bell()
+                return
             self._resolve_mode(mode_item.mode_key, mode_item.mode_def)
 
     def _show_modes(self, app_def: dict, modes: dict) -> None:
@@ -670,7 +733,7 @@ class TUILauncher(TUIApp):
         lv = self.query_one('#app-list', ListView)
         lv.clear()
         for mk, md in modes.items():
-            lv.append(ModeItem(mk, md))
+            lv.append(ModeItem(mk, md, app_def=app_def))
 
     def _resolve_mode(self, mode_key: str, mode_def: dict | None) -> None:
         mode_def = mode_def or {}
@@ -789,6 +852,7 @@ class TUILauncher(TUIApp):
         if not getattr(sys, 'frozen', False):
             cmd.insert(1, '-u')
         cmd += cli_args
+        rc: int | None = None
         try:
             proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -800,11 +864,12 @@ class TUILauncher(TUIApp):
                 if line:
                     self.call_from_thread(self._append_output, proc_id, line)
             proc.wait()
+            rc = proc.returncode
         except Exception as e:
             self.call_from_thread(
                 self._append_output, proc_id, f'Error: {e}',
             )
-        self.call_from_thread(self._process_done, proc_id)
+        self.call_from_thread(self._process_done, proc_id, rc)
 
     def _append_output(self, proc_id: int, line: str) -> None:
         """Append a line to a process's log buffer and update its status."""
@@ -821,7 +886,7 @@ class TUILauncher(TUIApp):
             panel = self.query_one('#output-panel', RichLog)
             panel.write(line)
 
-    def _process_done(self, proc_id: int) -> None:
+    def _process_done(self, proc_id: int, rc: int | None = None) -> None:
         """Called when a background process finishes."""
         row = self._processes.get(proc_id)
         if not row:
@@ -829,8 +894,14 @@ class TUILauncher(TUIApp):
         spinner = row.query_one(SpinnerIndicator)
         spinner.stop()
         status = row.query_one('.proc-status', Static)
+        if rc == 0:
+            verdict = '[green]done[/green]'
+        elif rc is None:
+            verdict = '[red]error[/red]'
+        else:
+            verdict = f'[red]failed (rc={rc})[/red]'
         status.update(
-            f' [bold]{row.app_name}[/bold] [green]done[/green]'
+            f' [bold]{row.app_name}[/bold] {verdict}'
             f'  [dim]click for logs[/dim]'
         )
 
@@ -1084,7 +1155,10 @@ def launcher_main(
             icon = app_def.get('icon', '')
             name = app_def.get('name', key)
             desc = app_def.get('description', '')
-            print(f'  {icon}  {key:12s}  {name} — {desc}')
+            suffix = ''
+            if not platform_ok(app_def):
+                suffix = f'  [{_platform_label(app_def)} only]'
+            print(f'  {icon}  {key:12s}  {name} — {desc}{suffix}')
         return
 
     if args.serve:
@@ -1101,7 +1175,15 @@ def launcher_main(
 
     # Direct launch
     if args.app:
-        launch_app(app_dir, apps[args.app], args.extra or None)
+        app_def = apps[args.app]
+        if not platform_ok(app_def):
+            print(
+                f"{args.app!r} is restricted to {_platform_label(app_def)}; "
+                f"current OS is {Env.os.name}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        launch_app(app_dir, app_def, args.extra or None)
         return
 
     # CLI fallback when no TUI available
