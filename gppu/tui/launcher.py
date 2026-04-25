@@ -316,6 +316,53 @@ def _tui_available() -> bool:
   return sys.stdin.isatty() and sys.stdout.isatty()
 
 
+class _DebugLogHandler(logging.Handler):
+  """Logging handler that appends formatted records to a list."""
+
+  def __init__(self, lines: list[str]) -> None:
+    super().__init__()
+    self._lines = lines
+
+  def emit(self, record: logging.LogRecord) -> None:
+    try:
+      self._lines.append(self.format(record))
+    except Exception:
+      self.handleError(record)
+
+
+class _DebugScreen(Screen):
+  """Modal screen showing the captured debug log. Toggled via Ctrl-O."""
+
+  BINDINGS = [
+    Binding('escape', 'app.pop_screen', 'Close'),
+    Binding('ctrl+o', 'app.pop_screen', 'Close'),
+    Binding('q', 'app.pop_screen', 'Close'),
+  ]
+
+  CSS = """
+  #debug-title { dock: top; height: 1; padding: 0 1; background: $boost; }
+  #debug-output { height: 1fr; border: solid $primary; }
+  """
+
+  def __init__(self, lines: list[str]) -> None:
+    super().__init__()
+    self._lines = lines
+
+  def compose(self) -> ComposeResult:
+    yield Static('Debug Output  (Esc / Ctrl-O / q to close)', id='debug-title')
+    yield RichLog(id='debug-output', highlight=True, markup=False)
+    yield Footer()
+
+  def on_mount(self) -> None:
+    log = self.query_one('#debug-output', RichLog)
+    if not self._lines:
+      log.write('(no debug messages)')
+    else:
+      for line in self._lines:
+        log.write(line)
+    log.scroll_end(animate=False)
+
+
 class TUIApp(mixin_Config, TextualApp):
   """Textual App with per-instance config via self.my().
 
@@ -325,15 +372,81 @@ class TUIApp(mixin_Config, TextualApp):
 
   Override ``cli()`` to provide a CLI fallback when textual is unavailable.
   Use ``MyApp.main()`` as the unified entry point.
+
+  Built-in bindings (inherited by all subclasses):
+    q       — quit (calls done())
+    Ctrl-O  — toggle debug log overlay (shows captured logging output)
+
+  Async helper:
+    ``with self.loading('#widget-id'): ...`` — overlay Textual's animated
+    loading indicator on a widget while a slow operation runs.
   """
+
+  BINDINGS = [
+    Binding('q', 'tuiapp_done', 'Quit', show=False),
+    Binding('ctrl+o', 'tuiapp_toggle_debug', 'Debug', show=False),
+  ]
 
   _screen_wrapper: Screen | None = None
 
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
+    self._debug_lines: list[str] = []
+    self._log_handler = _DebugLogHandler(self._debug_lines)
+    self._log_handler.setLevel(logging.DEBUG)
+    self._log_handler.setFormatter(
+      logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s', '%H:%M:%S'),
+    )
+    logging.getLogger().addHandler(self._log_handler)
+
+  def debug(self, msg: str) -> None:
+    """Append a line to the debug buffer (visible via Ctrl-O)."""
+    self._debug_lines.append(str(msg))
+
+  def action_tuiapp_done(self) -> None:
+    self.done(result=None)
+
+  def action_tuiapp_toggle_debug(self) -> None:
+    if isinstance(self.screen, _DebugScreen):
+      self.pop_screen()
+    else:
+      self.push_screen(_DebugScreen(self._debug_lines))
+
+  def loading(self, selector: str | None = None):
+    """Context manager — overlay Textual's loading indicator while running.
+
+    Usage::
+
+        with self.loading('#video-table'):
+            items = expensive_fetch()
+    """
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _cm():
+      try:
+        widget = self.query_one(selector) if selector else self.screen
+      except Exception:
+        widget = None
+      if widget is not None:
+        widget.loading = True
+      try:
+        yield
+      finally:
+        if widget is not None:
+          try:
+            widget.loading = False
+          except Exception:
+            pass
+
+    return _cm()
 
   def done(self, result=None) -> None:
     """Finish this app. Works in both standalone and embedded mode."""
+    try:
+      logging.getLogger().removeHandler(self._log_handler)
+    except Exception:
+      pass
     if self._screen_wrapper is not None:
       self._screen_wrapper.dismiss(result=result)
     else:
@@ -417,7 +530,7 @@ class TUILauncher(TUIApp):
 
     CSS = """
     Screen {
-        align: center middle;
+        align: center top;
     }
     #process-bar {
         dock: top;
@@ -458,10 +571,11 @@ class TUILauncher(TUIApp):
         display: block;
     }
     #menu {
-        width: 80;
-        max-height: 24;
-        border: solid $primary;
-        padding: 1 2;
+        width: 1fr;
+        max-height: 100%;
+        margin: 0;
+        border: none;
+        padding: 1 4;
     }
     #menu-title {
         text-align: center;
@@ -473,9 +587,13 @@ class TUILauncher(TUIApp):
     }
     ListItem {
         padding: 0;
+        height: 1;
     }
     ListItem > Static {
         width: 100%;
+        height: 1;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
     }
     Input {
         border: none;
