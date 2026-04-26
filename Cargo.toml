@@ -1,0 +1,7 @@
+[workspace]
+members = [
+  "crates/gpru",
+  "crates/statusline",
+  "crates/w11",
+]
+resolver = "2"

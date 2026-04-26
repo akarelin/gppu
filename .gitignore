@@ -32,3 +32,6 @@ msg*.xlsx
 *.egg-info/
 dist/
 build/
+
+# Rust build artifacts
+target/

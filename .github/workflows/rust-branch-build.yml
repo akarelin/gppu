@@ -1,0 +1,66 @@
+name: GPRU Full Pipeline (Experimental v3.5.0alpha1)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: quality (fmt + clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+      - name: Verify experimental version marker
+        run: |
+          grep -q 'version = "3.5.0-alpha.1"' crates/gpru/Cargo.toml
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  build-and-test:
+    name: build/test (${{ matrix.os }})
+    needs: quality
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: windows-latest
+          - os: macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+      - name: Build workspace
+        run: cargo build --workspace --all-targets --locked
+      - name: Test workspace
+        run: cargo test --workspace --all-targets --locked
+
+  package-dry-run:
+    name: package dry-run
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+      - name: Package gpru crate (dry run)
+        run: cargo package -p gpru --allow-dirty
+      - name: Validate statusline crate builds in workspace
+        run: cargo check -p statusline --all-targets --locked
+      - name: Validate w11 crate builds in workspace
+        run: cargo check -p w11 --all-targets --locked
