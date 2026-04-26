@@ -23,6 +23,14 @@ class TestInitLogger:
         init_logger("test_app", trace_rules=rules)
         assert Logger.trace_rules == rules
 
+    def test_init_logger_importable_from_gppu(self):
+        from gppu import init_logger as top_init_logger
+        assert top_init_logger is init_logger
+
+    def test_init_logger_in_all(self):
+        import gppu
+        assert 'init_logger' in gppu.__all__
+
 
 class TestMixinLogger:
     def test_subclass_gets_logger(self):
