@@ -225,15 +225,22 @@ def dict_from_yml(filename: str | Path):
   filename = str(filename)
   # OLD: yml_root = filename.rsplit('/', 1)[0]
   # ^^ Bug: returns filename itself when no '/' present (e.g., 'config.yaml' -> 'config.yaml')
-  yml_root = str(Path(filename).parent)
+  # Stack of "current file's parent dir", so nested !include resolves relative
+  # to the file containing the directive (not the outermost root).
+  dir_stack = [str(Path(filename).parent)]
 
   def yml_include(loader, node):
-    # OLD: if node.value[0] == '/': filename = node.value
-    # OLD: else: filename = yml_root+'/'+node.value
-    # ^^ Bug: shadowed outer 'filename' variable; used string concat instead of Path
-    if node.value[0] == '/': inc_filename = node.value
-    else: inc_filename = str(Path(yml_root) / node.value)
-    with open(inc_filename, "r", encoding='utf-8') as f: return yaml.load(f, Loader=yaml.FullLoader)
+    raw = node.value
+    if raw.startswith('/') or (len(raw) > 1 and raw[1] == ':'):
+      inc_filename = raw                           # absolute (POSIX or Windows)
+    else:
+      inc_filename = str(Path(dir_stack[-1]) / raw)
+    dir_stack.append(str(Path(inc_filename).parent))
+    try:
+      with open(inc_filename, "r", encoding='utf-8') as f:
+        return yaml.load(f, Loader=yaml.FullLoader)
+    finally:
+      dir_stack.pop()
 
   yaml.add_representer(defaultdict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(UserDict, yaml.representer.Representer.represent_dict)
