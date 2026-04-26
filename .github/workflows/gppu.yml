@@ -58,7 +58,10 @@ jobs:
 
           L = ["self-hosted", "linux"]
           W = ["self-hosted", "Windows"]
-          MAIN = "tests/ --ignore=tests/test_tui.py"
+          # Exclude all TUI tests from non-tui matrix entries — every
+          # test_tui*.py imports gppu.tui which needs textual at collect time.
+          MAIN = "tests/ --ignore-glob=tests/test_tui*.py"
+          TUI = "tests/test_tui.py tests/test_tui_cache.py tests/test_tui_heatmap.py tests/test_tui_icons.py tests/test_tui_progress.py tests/test_tui_tree.py"
 
           tests = [
               {"os": "linux", "runner": L, "extras": "", "test_path": MAIN, "label": "linux"},
@@ -70,7 +73,7 @@ jobs:
               ]
           if tui:
               tests += [
-                  {"os": "linux", "runner": L, "extras": "[test-tui]", "test_path": "tests/test_tui.py", "label": "linux-tui"},
+                  {"os": "linux", "runner": L, "extras": "[test-tui]", "test_path": TUI, "label": "linux-tui"},
               ]
           if win:
               tests += [
