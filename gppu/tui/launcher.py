@@ -869,6 +869,13 @@ class TUILauncher(TUIApp):
 
         # Return to apps list so user can keep navigating
         self._phase = 'apps'
+        self._selected_app = None
+        title = self.query_one('#menu-title', Static)
+        title.update(self.MENU_TITLE)
+        lv = self.query_one('#app-list', ListView)
+        lv.clear()
+        for k, v in self._apps.items():
+            lv.append(AppItem(k, v))
         self._run_inline_cmd(cli_args, proc_id, app_def)
 
     @work(thread=True)
