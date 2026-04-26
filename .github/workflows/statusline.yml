@@ -1,13 +1,15 @@
 name: Statusline
 
 on:
-  push:
-    tags: ['statusline/v*']
   workflow_dispatch:
     inputs:
+      tag:
+        description: 'Tag to build (e.g. statusline/v1.2.3). Leave empty + set bump to create new tag.'
+        required: false
+        type: string
       bump:
-        description: 'Version bump'
-        required: true
+        description: 'Version bump (ignored if tag is set)'
+        required: false
         type: choice
         options:
           - none
@@ -20,7 +22,7 @@ permissions:
 jobs:
   bump:
     runs-on: [self-hosted, linux]
-    if: github.event_name == 'workflow_dispatch' && inputs.bump != 'none'
+    if: inputs.tag == '' && inputs.bump != 'none' && inputs.bump != ''
     outputs:
       tag: ${{ steps.version.outputs.tag }}
 
@@ -77,7 +79,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.bump.outputs.tag || github.ref }}
+          ref: ${{ inputs.tag || needs.bump.outputs.tag || github.ref }}
           fetch-tags: true
           fetch-depth: 0
 
@@ -116,7 +118,7 @@ jobs:
 
   release:
     needs: [bump, build]
-    if: always() && needs.build.result == 'success' && (needs.bump.result == 'success' || startsWith(github.ref, 'refs/tags/'))
+    if: always() && needs.build.result == 'success' && (needs.bump.result == 'success' || inputs.tag != '')
     runs-on: [self-hosted, linux]
 
     steps:
@@ -133,13 +135,14 @@ jobs:
       - name: Compute version
         id: version
         run: |
-          TAG="${{ needs.bump.outputs.tag || github.ref_name }}"
+          TAG="${{ inputs.tag || needs.bump.outputs.tag }}"
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "clean=${TAG#statusline/v}" >> $GITHUB_OUTPUT
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.bump.outputs.tag || github.ref_name }}
+          tag_name: ${{ steps.version.outputs.tag }}
           name: statusline v${{ steps.version.outputs.clean }}
           files: artifacts/*
           generate_release_notes: true
