@@ -383,3 +383,78 @@ class Cache:
 
   def __enter__(self): return self
   def __exit__(self, *_): self.close()
+
+
+# region Human-readable formatters
+
+def format_size(size: int | float) -> str:
+  """Format byte count as '0 B', '1.5 KB', '2.3 MB', '4.5 GB', '7.8 TB'.
+
+  Powers-of-1024 (binary). One decimal for KB+, two for TB.
+  """
+  size = float(size)
+  if size < 1024:                  return f"{int(size)} B"
+  if size < 1024 ** 2:             return f"{size / 1024:.1f} KB"
+  if size < 1024 ** 3:             return f"{size / 1024 ** 2:.1f} MB"
+  if size < 1024 ** 4:             return f"{size / 1024 ** 3:.1f} GB"
+  return f"{size / 1024 ** 4:.2f} TB"
+
+
+def format_duration(seconds: int | float) -> str:
+  """Format a duration as '0s' / '5s' / '12m 30s' / '2h 5m'.
+
+  Input is seconds (use ``ms / 1000`` for millisecond inputs).  Returns
+  ``'-'`` for negative values; ``0`` formats as ``'0s'`` so callers using
+  this for uptime get a legitimate zero rather than a placeholder.
+  """
+  seconds = float(seconds)
+  if seconds < 0: return "-"
+  if seconds < 60: return f"{seconds:.0f}s"
+  if seconds < 3600:
+    m, s = divmod(seconds, 60)
+    return f"{int(m)}m {int(s)}s"
+  h, rem = divmod(seconds, 3600)
+  m, _ = divmod(rem, 60)
+  return f"{int(h)}h {int(m)}m"
+
+
+def format_since(when) -> str:
+  """Compact "time since" — '5s', '5m', '2h', '3d', '4w', '6mo', '2y'.
+
+  Accepts ISO-8601 string, ``datetime``, or epoch seconds (int/float).
+  Returns empty string on parse failure.  Negative deltas (future timestamps)
+  return ``'0s'``.
+  """
+  from datetime import datetime, timezone
+
+  dt = None
+  if isinstance(when, datetime):
+    dt = when
+  elif isinstance(when, (int, float)):
+    dt = datetime.fromtimestamp(float(when), tz=timezone.utc)
+  elif isinstance(when, str):
+    s = when.strip()
+    if not s: return ""
+    if s.endswith('Z'): s = s[:-1] + '+00:00'
+    try: dt = datetime.fromisoformat(s)
+    except ValueError: return ""
+  else:
+    return ""
+
+  if dt.tzinfo is None:
+    dt = dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
+
+  secs = int((datetime.now(timezone.utc) - dt).total_seconds())
+  if secs < 0:    return "0s"
+  if secs < 60:   return f"{secs}s"
+  mins = secs // 60
+  if mins < 60:   return f"{mins}m"
+  hrs = mins // 60
+  if hrs < 24:    return f"{hrs}h"
+  days = hrs // 24
+  if days < 7:    return f"{days}d"
+  if days < 30:   return f"{days // 7}w"
+  if days < 365:  return f"{days // 30}mo"
+  return f"{days // 365}y"
+
+# endregion

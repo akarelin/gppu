@@ -7,6 +7,8 @@ data manipulation, and type safety utilities.
 
 from .vault import resolve_secret, set_secret, clear_cache as clear_secret_cache
 
+from .data import format_size, format_duration, format_since
+
 from .gppu import (
     # Version info
     VER_GPPU,
@@ -145,6 +147,9 @@ __all__ = [
 
     # Vault / Secrets
     'resolve_secret', 'set_secret', 'clear_secret_cache',
+
+    # Human-readable formatters
+    'format_size', 'format_duration', 'format_since',
 
     # Env
     'Env',
