@@ -1,16 +1,6 @@
 name: GPRU Full Pipeline (Experimental v3.5.0alpha1)
 
 on:
-  push:
-    branches:
-      - 'dev'
-    tags-ignore:
-      - 'gpru/v*'
-      - 'statusline/v*'
-      - 'w11/v*'
-  pull_request:
-    branches:
-      - 'dev'
   workflow_dispatch:
 
 permissions:
