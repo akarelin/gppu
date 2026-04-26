@@ -14,6 +14,7 @@ on:
         options:
           - none
           - patch
+          - minor
       beta:
         description: 'Beta release — produces bN suffix and marks as pre-release'
         type: boolean
@@ -159,7 +160,7 @@ jobs:
           if tag_input:
               write("TAG", tag_input)
               write("TAG_EXISTS", "true")
-          elif bump == "patch":
+          elif bump in ("patch", "minor"):
               # Latest tag (stable vX.Y.Z or beta vX.Y.ZbN) drives the next.
               pat = re.compile(r'^gppu/v(\d+)\.(\d+)\.(\d+)(b\d+)?$')
               latest = None
@@ -171,15 +172,19 @@ jobs:
                       latest = (x, y, z, n)
                       break
               if latest is None:
-                  new = "gppu/v0.0.1b1" if beta else "gppu/v0.0.1"
+                  base = "gppu/v0.1.0" if bump == "minor" else "gppu/v0.0.1"
+                  new = base + "b1" if beta else base
               else:
                   x, y, z, n = latest
-                  if beta:
-                      # stable → next patch's first beta; beta → next beta
+                  if bump == "minor":
+                      # bump minor: increment Y, reset Z. Beta status decides suffix.
+                      new = f"gppu/v{x}.{y+1}.0" + ("b1" if beta else "")
+                  elif beta:
+                      # patch + beta: stable → next patch's first beta; beta → next beta
                       new = (f"gppu/v{x}.{y}.{z+1}b1" if n is None
                              else f"gppu/v{x}.{y}.{z}b{n+1}")
                   else:
-                      # beta → finalize that version; stable → next patch
+                      # patch + stable: beta → finalize that version; stable → next patch
                       new = (f"gppu/v{x}.{y}.{z+1}" if n is None
                              else f"gppu/v{x}.{y}.{z}")
               write("TAG", new)
