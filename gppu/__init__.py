@@ -13,7 +13,12 @@ from .gppu import (
     VER_GPPU_BASE,
     VER_GPPU_BUILD,
 
+    # OS detection
+    OSType,
     detect_os,
+
+    # Logger setup
+    init_logger,
 
     # Async helpers
     sync,
@@ -98,6 +103,12 @@ __version__ = VER_GPPU
 __all__ = [
     # Version
     'VER_GPPU', 'VER_GPPU_BASE', 'VER_GPPU_BUILD', '__version__',
+
+    # OS detection
+    'OSType', 'detect_os',
+
+    # Logger setup
+    'init_logger',
 
     # Async helpers
     'sync',
