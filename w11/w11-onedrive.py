@@ -30,7 +30,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from gppu import Env
+from gppu import Env, format_size, format_duration
 from gppu.tui import TUIApp, StatusHeader
 from textual import work
 from textual.app import App, ComposeResult
@@ -531,26 +531,6 @@ def assess_health(diag: dict, stuck_dl: list, postponed: list) -> tuple[str, str
     return f'ACTIVE (state={progress})', 'cyan'
 
 
-def format_bytes(n: int) -> str:
-    if n < 1024:
-        return f'{n} B'
-    if n < 1024 * 1024:
-        return f'{n / 1024:.1f} KB'
-    if n < 1024 * 1024 * 1024:
-        return f'{n / 1024 / 1024:.1f} MB'
-    return f'{n / 1024 / 1024 / 1024:.1f} GB'
-
-
-def format_uptime(secs: int) -> str:
-    if secs < 60:
-        return f'{secs}s'
-    if secs < 3600:
-        return f'{secs // 60}m {secs % 60}s'
-    h = secs // 3600
-    m = (secs % 3600) // 60
-    return f'{h}h {m}m'
-
-
 # ── Filename issue detection ─────────────────────────────────────────────────
 
 def detect_filename_issues(name: str) -> list[str]:
@@ -862,10 +842,10 @@ class OneDriveDiagApp(TUIApp):
         disk_free = int(data.diag.get('bytesAvailableOnDiskDrive', '0'))
 
         log.write(
-            f'Uptime: {format_uptime(uptime)}  '
+            f'Uptime: {format_duration(uptime)}  '
             f'Files: {files}  Folders: {folders}  '
             f'FOD: {placeholder}  '
-            f'Disk free: {format_bytes(disk_free)}  '
+            f'Disk free: {format_size(disk_free)}  '
             f'PID: {pid}  v{version}'
         )
 
@@ -877,7 +857,7 @@ class OneDriveDiagApp(TUIApp):
         if bytes_dled == bytes_to_dl and bytes_to_dl > 0 and files_dl > 0:
             log.write(
                 f'[bold yellow]STUCK FINALIZING: {files_dl} files, '
-                f'{format_bytes(bytes_to_dl)} downloaded (100%) but not finalized[/]'
+                f'{format_size(bytes_to_dl)} downloaded (100%) but not finalized[/]'
             )
 
     def _render_stuck_table(self, acc: str) -> None:
@@ -898,7 +878,7 @@ class OneDriveDiagApp(TUIApp):
             folder = item['folder']
             if len(folder) > 40:
                 folder = '...' + folder[-37:]
-            size_str = format_bytes(item['size']) if item['size'] else '-'
+            size_str = format_size(item['size']) if item['size'] else '-'
             table.add_row(
                 item['type'],
                 fname,
@@ -935,9 +915,9 @@ class OneDriveDiagApp(TUIApp):
 
             display_val = val
             if 'Bytes' in field and val.isdigit():
-                display_val = f'{val} ({format_bytes(int(val))})'
+                display_val = f'{val} ({format_size(int(val))})'
             elif 'Speed' in field and val.isdigit():
-                display_val = f'{format_bytes(int(val))}/s'
+                display_val = f'{format_size(int(val))}/s'
 
             close = '[/]' if style else ''
             log.write(f'  {style}{field}: {display_val}{close}')
@@ -966,7 +946,7 @@ class OneDriveDiagApp(TUIApp):
         log.write(f'[bold]File:[/]   {_escape(item["file"])}')
         log.write(f'[bold]Folder:[/] {_escape(item["folder"])}')
         if item['size']:
-            log.write(f'[bold]Size:[/]   {format_bytes(item["size"])}')
+            log.write(f'[bold]Size:[/]   {format_size(item["size"])}')
         if item['retries'] != '-':
             log.write(f'[bold]Retries:[/] {item["retries"]}')
 
@@ -1487,7 +1467,7 @@ class ConflictApp(TUIApp):
         label.update(f'Conflict Summary — [bold yellow]{n} conflicts[/] for [bold]{hosts_str}[/]')
         log.write(
             f'Total: {n} conflict files  '
-            f'Size: {format_bytes(total_bytes)}  '
+            f'Size: {format_size(total_bytes)}  '
             f'With base: {with_base}  '
             f'Orphaned (no base): {orphans}'
         )
@@ -1538,8 +1518,8 @@ class ConflictApp(TUIApp):
             base_date = c['base_mtime'].strftime('%Y-%m-%d %H:%M') if c['base_mtime'] else '-'
             conf_date = c['conflict_mtime'].strftime('%Y-%m-%d %H:%M') if c['conflict_mtime'] else '-'
 
-            base_size = format_bytes(c['base_size']) if c['base_exists'] else '-'
-            conf_size = format_bytes(c['conflict_size'])
+            base_size = format_size(c['base_size']) if c['base_exists'] else '-'
+            conf_size = format_size(c['conflict_size'])
 
             table.add_row(base, conflict, host, folder, base_date, conf_date, base_size, conf_size)
 
@@ -1560,12 +1540,12 @@ class ConflictApp(TUIApp):
         log.write('')
 
         if c['base_exists']:
-            log.write(f'[bold]Base:[/]     {format_bytes(c["base_size"])}  '
+            log.write(f'[bold]Base:[/]     {format_size(c["base_size"])}  '
                       f'{c["base_mtime"].strftime("%Y-%m-%d %H:%M:%S") if c["base_mtime"] else "?"}')
         else:
             log.write('[bold red]Base file does NOT exist (orphaned conflict)[/]')
 
-        log.write(f'[bold]Conflict:[/] {format_bytes(c["conflict_size"])}  '
+        log.write(f'[bold]Conflict:[/] {format_size(c["conflict_size"])}  '
                   f'{c["conflict_mtime"].strftime("%Y-%m-%d %H:%M:%S") if c["conflict_mtime"] else "?"}')
 
         if c['base_exists'] and c['base_mtime'] and c['conflict_mtime']:
@@ -1577,7 +1557,7 @@ class ConflictApp(TUIApp):
                 log.write('[dim]Same modification time[/]')
 
             if c['size_diff'] != 0:
-                log.write(f'Size difference: {format_bytes(abs(c["size_diff"]))} '
+                log.write(f'Size difference: {format_size(abs(c["size_diff"]))} '
                           f'({"conflict larger" if c["size_diff"] > 0 else "base larger"})')
             elif c['base_size'] == c['conflict_size']:
                 log.write('[green]Same size — likely identical content[/]')
@@ -1627,7 +1607,7 @@ class ConflictApp(TUIApp):
             log.write('[bold red]Delete ALL conflict files?[/]')
             log.write('')
             log.write(f'This will delete {len(self._conflicts)} files '
-                      f'({format_bytes(sum(c["conflict_size"] for c in self._conflicts))})')
+                      f'({format_size(sum(c["conflict_size"] for c in self._conflicts))})')
             log.write('')
             log.write('[bold red]>>> Press "a" again to confirm, Esc to cancel <<<[/]')
         else:
@@ -1698,7 +1678,7 @@ def db_explore(accounts: list[str], output_dir: str | None = None) -> str | None
                                           diag.get('syncProgressState', '0')))
             progress_flags = decode_sync_progress(progress_state)
             uptime = int(diag.get('uptimeSecs', '0'))
-            out(f'  Uptime: {format_uptime(uptime)}  '
+            out(f'  Uptime: {format_duration(uptime)}  '
                 f'PID: {diag.get("pid", "?")}  '
                 f'v{diag.get("clientVersion", "?")}')
             out(f'  SyncProgressState: {progress_state} '
@@ -1764,7 +1744,7 @@ def db_explore(accounts: list[str], output_dir: str | None = None) -> str | None
                     if row:
                         folder = resolve_folder(cur, row[0])
                         out(f'      folder: {folder}  '
-                            f'size: {format_bytes(row[1] or 0)}')
+                            f'size: {format_size(row[1] or 0)}')
                 except sqlite3.Error:
                     pass
                 conn.close()
