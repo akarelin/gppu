@@ -51,7 +51,7 @@ from .selectors import (
 )
 
 from .progress import (
-    Vendor,
+    Marker,
     TickProgress,
     MarkerProgress,
     marker_rich,
@@ -126,7 +126,7 @@ __all__ = [
     'ui_select',
     'ui_select_rows',
     # Progress
-    'Vendor',
+    'Marker',
     'TickProgress',
     'MarkerProgress',
     'marker_rich',

@@ -1,10 +1,10 @@
-"""Tests for gppu.tui.progress — TickProgress, MarkerProgress, Vendor helpers."""
+"""Tests for gppu.tui.progress — TickProgress, MarkerProgress, Marker helpers."""
 from __future__ import annotations
 
 import pytest
 
 from gppu.tui.progress import (
-    TickProgress, MarkerProgress, Vendor,
+    TickProgress, MarkerProgress, Marker,
     marker_rich, marker_ansi, legend_rich, legend_ansi,
 )
 
@@ -41,12 +41,12 @@ class TestTickProgress:
 
 # ── MarkerProgress ────────────────────────────────────────────────────────
 
-_RED   = Vendor('red',  'Red',  '●', 'red',  '31')
-_BLUE  = Vendor('blue', 'Blue', '◆', 'blue', '34')
-_UNK   = Vendor('other', 'other', '·', 'dim', '90')
+_RED   = Marker('red',  'Red',  '●', 'red',  '31')
+_BLUE  = Marker('blue', 'Blue', '◆', 'blue', '34')
+_UNK   = Marker('other', 'other', '·', 'dim', '90')
 
 
-def _classify(n: int) -> Vendor:
+def _classify(n: int) -> Marker:
     if n < 5:
         return _RED
     if n < 10:
