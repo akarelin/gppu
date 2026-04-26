@@ -18,24 +18,24 @@ string per line).  Markup mode is controlled by a ``rich`` flag:
 Two classes:
 
 - :class:`TickProgress` — dim ``·`` per item, no classification.  For
-  generic per-item discovery where vendor/category is irrelevant.
+  generic per-item discovery where category is irrelevant.
 - :class:`MarkerProgress` — one colored glyph per item, classified by a
   caller-supplied classifier.  Used for preservator's LLM-session source
-  (vendor = Claude/Codex/Gemini/…) but fully generic — the classifier is
-  an injected callable plus a ``Vendor`` tuple, no LLM knowledge in gppu.
+  (marker = Claude/Codex/Gemini/…) but fully generic — the classifier is
+  an injected callable plus a ``Marker`` tuple, no LLM knowledge in gppu.
 
 Example — using MarkerProgress for anything category-typed::
 
-    from gppu.tui.progress import Vendor, MarkerProgress
+    from gppu.tui.progress import Marker, MarkerProgress
 
     CATEGORIES = (
-        Vendor('hot',  'Hot',  '●', 'bright_red',    '38;5;9'),
-        Vendor('warm', 'Warm', '◉', 'bright_yellow', '38;5;11'),
-        Vendor('cold', 'Cold', '○', 'bright_blue',   '38;5;12'),
+        Marker('hot',  'Hot',  '●', 'bright_red',    '38;5;9'),
+        Marker('warm', 'Warm', '◉', 'bright_yellow', '38;5;11'),
+        Marker('cold', 'Cold', '○', 'bright_blue',   '38;5;12'),
     )
-    UNKNOWN = Vendor('other', 'other', '·', 'dim white', '38;5;8')
+    UNKNOWN = Marker('other', 'other', '·', 'dim white', '38;5;8')
 
-    def classify(temp: float) -> Vendor:
+    def classify(temp: float) -> Marker:
         if temp > 70:  return CATEGORIES[0]
         if temp > 40:  return CATEGORIES[1]
         return CATEGORIES[2]
@@ -57,12 +57,12 @@ T = TypeVar('T')
 
 
 @dataclass(frozen=True)
-class Vendor:
+class Marker:
     """A classification bucket with visual identity.
 
-    Used by :class:`MarkerProgress`.  Named ``Vendor`` for historical
-    reasons (preservator's original llm-vendor use case); nothing here is
-    LLM-specific — any category enum with a colored glyph works.
+    Used by :class:`MarkerProgress`.  Any category enum with a colored
+    glyph works — preservator uses it for LLM vendors, but the type
+    itself carries no domain knowledge.
     """
     key: str                          # 'claude', 'hot', 'db1' — sort/group key
     label: str                        # 'Claude', 'Hot zone' — human label
@@ -71,23 +71,23 @@ class Vendor:
     ansi_code: str                    # '38;5;14' — SGR params for plain ANSI
 
 
-def marker_rich(vendor: Vendor) -> str:
+def marker_rich(marker: Marker) -> str:
     """Rich-markup symbol — ``[bright_cyan]✻[/]``."""
-    return f'[{vendor.rich_color}]{vendor.symbol}[/]'
+    return f'[{marker.rich_color}]{marker.symbol}[/]'
 
 
-def marker_ansi(vendor: Vendor) -> str:
+def marker_ansi(marker: Marker) -> str:
     """Raw ANSI-escaped symbol — used when writing to a plain terminal."""
-    return f'\x1b[{vendor.ansi_code}m{vendor.symbol}\x1b[0m'
+    return f'\x1b[{marker.ansi_code}m{marker.symbol}\x1b[0m'
 
 
-def legend_rich(vendors: tuple[Vendor, ...]) -> str:
+def legend_rich(markers: tuple[Marker, ...]) -> str:
     """One-line key — ``✻=Claude  ▲=Codex  ...`` in Rich markup."""
-    return '  '.join(f'{marker_rich(v)}={v.label}' for v in vendors)
+    return '  '.join(f'{marker_rich(m)}={m.label}' for m in markers)
 
 
-def legend_ansi(vendors: tuple[Vendor, ...]) -> str:
-    return '  '.join(f'{marker_ansi(v)}={v.label}' for v in vendors)
+def legend_ansi(markers: tuple[Marker, ...]) -> str:
+    return '  '.join(f'{marker_ansi(m)}={m.label}' for m in markers)
 
 
 # ── streaming trackers ─────────────────────────────────────────────────────
@@ -153,7 +153,7 @@ class MarkerProgress(_BatchedStrip, Generic[T]):
     """One colored glyph per item, classified by a caller-supplied function.
 
     ``classify`` takes whatever :meth:`note` gets passed (a path, a record,
-    anything) and returns a :class:`Vendor` — usually drawn from
+    anything) and returns a :class:`Marker` — usually drawn from
     ``categories`` but may return ``unknown`` for items that fall through.
 
     Per-category counts are tracked and surfaced via :meth:`summary`; the
@@ -161,9 +161,9 @@ class MarkerProgress(_BatchedStrip, Generic[T]):
     """
 
     def __init__(self, log: Callable[[str], None],
-                 categories: tuple[Vendor, ...],
-                 unknown: Vendor,
-                 classify: Callable[[T], Vendor],
+                 categories: tuple[Marker, ...],
+                 unknown: Marker,
+                 classify: Callable[[T], Marker],
                  *,
                  rich: bool = True,
                  tick_every: int = 50,
@@ -179,7 +179,7 @@ class MarkerProgress(_BatchedStrip, Generic[T]):
         self._unknown = unknown
         self._classify = classify
         self._noun = noun
-        self._pending: list[Vendor] = []
+        self._pending: list[Marker] = []
         self._counts: dict[str, int] = {}
         self._total = 0
 
