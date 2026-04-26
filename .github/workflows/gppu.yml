@@ -3,13 +3,9 @@ name: gppu
 on:
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Existing tag to rebuild (e.g. gppu/v3.2.0). Leave empty to auto-create from bump + beta.'
-        required: false
-        type: string
       bump:
-        description: 'Version bump (ignored if tag is set)'
-        required: false
+        description: 'Version bump'
+        required: true
         type: choice
         options:
           - none
@@ -142,8 +138,8 @@ jobs:
         run: |
           import re, subprocess, os
 
-          tag_input = "${{ inputs.tag }}"
           bump = "${{ inputs.bump }}"
+          beta = "${{ inputs.beta }}" == "true"
 
           tags = subprocess.check_output(
               ["git", "tag", "-l", "gppu/v*", "--sort=-v:refname"],
@@ -154,12 +150,7 @@ jobs:
               with open(os.environ["GITHUB_ENV"], "a") as f:
                   f.write(f"{k}={v}\n")
 
-          beta = "${{ inputs.beta }}" == "true"
-
-          if tag_input:
-              write("TAG", tag_input)
-              write("TAG_EXISTS", "true")
-          elif bump == "patch":
+          if bump == "patch":
               # Latest tag (stable vX.Y.Z or beta vX.Y.ZbN) drives the next.
               pat = re.compile(r'^gppu/v(\d+)\.(\d+)\.(\d+)(b\d+)?$')
               latest = None
@@ -185,7 +176,10 @@ jobs:
               write("TAG", new)
               write("TAG_EXISTS", "false")
           else:
-              write("TAG", tags[0] if tags else "")
+              # bump=none → rebuild latest tag, no new tag created
+              if not tags:
+                  raise SystemExit("No existing tag to rebuild and bump=none")
+              write("TAG", tags[0])
               write("TAG_EXISTS", "true")
 
       - name: Create tag
