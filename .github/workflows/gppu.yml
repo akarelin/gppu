@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to build (e.g. gppu/v3.0.1a1). Leave empty + set bump to create new tag.'
+        description: 'Existing tag to rebuild (e.g. gppu/v3.2.0). Leave empty to auto-create from bump + beta.'
         required: false
         type: string
       bump:
