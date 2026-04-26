@@ -146,6 +146,30 @@ def _platform_label(d: dict | None) -> str:
     return ', '.join(spec) if spec else ''
 
 
+def _script_for_os(app_def: dict) -> str:
+    """Return the platform-specific script path from a manifest.
+
+    `script:` may be a string (single path) or a dict keyed by OSType name
+    (e.g. ``W11: ...``, ``LINUX: ...``).  When dict, the current OS is looked
+    up; falls back to a ``default:`` entry if present.
+    """
+    script = app_def.get('script')
+    if isinstance(script, dict):
+        cur = Env.os.name.upper()
+        if cur in script:
+            return script[cur]
+        for k in script:
+            if k.upper() == cur:
+                return script[k]
+        if 'default' in script:
+            return script['default']
+        raise KeyError(
+            f"Manifest 'script' has no entry for {cur}; "
+            f"keys: {list(script.keys())}"
+        )
+    return script
+
+
 def resolve_cwd(app_dir: Path, app_def: dict) -> Path:
     """Resolve working directory for a sub-app.
 
@@ -154,22 +178,25 @@ def resolve_cwd(app_dir: Path, app_def: dict) -> Path:
     """
     if 'cwd' in app_def:
         return (app_dir / app_def['cwd']).resolve()
-    return (app_dir / app_def['script']).resolve().parent
+    return (app_dir / _script_for_os(app_def)).resolve().parent
 
 
 def _resolve_cmd(app_dir: Path, app_def: dict) -> list[str]:
     """Build the command to launch a sub-app, handling frozen (PyInstaller) mode."""
+    script_str = _script_for_os(app_def)
     if getattr(sys, 'frozen', False):
-        exe_name = Path(app_def['script']).stem + '.exe'
+        exe_name = Path(script_str).stem + '.exe'
         exe = Path(sys.executable).parent / exe_name
         if not exe.exists():
             print(f'Executable not found: {exe}')
             sys.exit(1)
         return [str(exe)]
-    script = (app_dir / app_def['script']).resolve()
+    script = (app_dir / script_str).resolve()
     if not script.exists():
         print(f'Script not found: {script}')
         sys.exit(1)
+    if script.suffix.lower() == '.exe':
+        return [str(script)]
     return [sys.executable, str(script)]
 
 
