@@ -12,8 +12,6 @@ Public surface is organized as:
   (``TickProgress`` dim dots, ``MarkerProgress`` classified colored glyphs).
 - **Workers** (``workers``) — ``WorkerPool`` + ``WorkerRow`` for rendering
   concurrent task state in a stack with aggregate footer.
-- **Debug** (``debug``) — ``DebugSink`` (callable, ring buffer + file),
-  ``DebugScreen`` modal, ``DebugMixin`` wiring both + F12 bindings.
 - **Icons** (``icons``) — canonical state glyphs + spinner frame sets.
 - **Viz** (``viz``) — ``Heatmap`` activity grid (and any future widgets).
 
@@ -64,14 +62,6 @@ from .workers import (
     WorkerPool,
     WorkerRow,
     WorkerState,
-)
-
-from .debug import (
-    DebugLogger,
-    DebugSink,
-    DebugScreen,
-    DebugMixin,
-    make_debug_sink,
 )
 
 from .icons import (
@@ -137,12 +127,6 @@ __all__ = [
     'WorkerPool',
     'WorkerRow',
     'WorkerState',
-    # Debug
-    'DebugLogger',
-    'DebugSink',
-    'DebugScreen',
-    'DebugMixin',
-    'make_debug_sink',
     # Icons
     'Glyph',
     'STATE_GLYPHS',
