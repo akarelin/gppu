@@ -292,7 +292,7 @@ def template_populate(o, data: dict = {}, excludes:list = []) -> Any:
       result = {}
       for k, old in o.items():
         if k in excludes or inspect.isfunction(old): new = old
-        else: new = __tp(old, o | data)
+        else: new = __tp(old, data | o)
         result[k] = new
     elif isinstance(o, list):
       result = []
