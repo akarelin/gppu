@@ -1,4 +1,4 @@
-"""Tests for gppu.data.format_size / format_duration / format_since."""
+"""Tests for gppu.gppu.format_size / format_duration / format_since."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from gppu import format_size, format_duration, format_since
-from gppu.data import (
+from gppu.gppu import (
     format_size as _data_format_size,
     format_duration as _data_format_duration,
     format_since as _data_format_since,

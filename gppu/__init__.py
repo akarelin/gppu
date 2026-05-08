@@ -7,13 +7,16 @@ data manipulation, and type safety utilities.
 
 from .vault import resolve_secret, set_secret, clear_cache as clear_secret_cache
 
-from .data import format_size, format_duration, format_since
-
 from .gppu import (
     # Version info
     VER_GPPU,
     VER_GPPU_BASE,
     VER_GPPU_BUILD,
+
+    # Human-readable formatters
+    format_size,
+    format_duration,
+    format_since,
 
     # OS detection
     OSType,
