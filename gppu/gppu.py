@@ -1009,7 +1009,7 @@ class _Config(mixin_Config):
   _base_path: Path
 
   def __init__(self, **kw) -> None:
-    super().__init__()
+    super().__init__(**kw)
     if Env.initialized:
       self._config_from_env()
     self._base_path = Path('.')
@@ -1020,7 +1020,7 @@ class _Config(mixin_Config):
 class _Base(_Logger, _Config): pass
 
 
-class App(_Base):
+class _App(_Base):
   """Base class for all apps. Inherits logging (_Logger) and config (_Config) with self.my().
 
   Auto-initializes Env from name + caller's directory if Env is not already initialized.
@@ -1032,7 +1032,7 @@ class App(_Base):
     self.name = name or caller_file.stem
     if not Env.initialized:
       Env.from_env(name=self.name, app_path=caller_file.parent)
-    super().__init__(**kw)
+    super().__init__(name=self.name, **kw)
 # endregion
 
 
@@ -1045,7 +1045,7 @@ from .ad import init_logger  # noqa: F401,E402
 _DC_BASE_TYPE_MAP = {'str': str, 'list': list, 'dict': dict, 'set': set, 'int': int, 'float': float, 'bool': bool, 'None': type(None), 'y2eid': y2eid}
 
 
-class DC(UserDict):
+class _DC(UserDict):
   _DC_TYPE_MAP: dict[str, type] = _DC_BASE_TYPE_MAP.copy()
   _DC_EXCLUDE_NAMES: list[str] = []
 
@@ -1090,4 +1090,7 @@ class DC(UserDict):
   def __init__(self, **kw):
     self.data = {}
     for step in self._INIT_STEPS: step(self, **kw)
+
+
+class App(_App, _DC): pass
 # endregion

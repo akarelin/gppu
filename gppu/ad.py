@@ -42,6 +42,7 @@ def init_logger_ad(name: str, trace_rules: dict, trace_folder: str = '.') -> Non
   init_logger(name, trace_rules)
   Logger.trace_folder = trace_folder
 
+
 class PrettyColoredFormatter(logging.Formatter):
   def format(self, record):
     verbose = getattr(record, 'verbose', False)
