@@ -357,6 +357,78 @@ def pretty_timedelta(ts) -> str:
   elif hours > 0: return '%dh %dm %ds' % (hours, minutes, seconds)
   elif minutes > 0: return '%dm %ds' % (minutes, seconds)
   else: return '%ds' % (seconds,)
+
+# region Human-readable formatters
+
+def format_size(size: int | float) -> str:
+  """Format byte count as '0 B', '1.5 KB', '2.3 MB', '4.5 GB', '7.8 TB'.
+
+  Powers-of-1024 (binary). One decimal for KB+, two for TB.
+  """
+  size = float(size)
+  if size < 1024:                  return f"{int(size)} B"
+  if size < 1024 ** 2:             return f"{size / 1024:.1f} KB"
+  if size < 1024 ** 3:             return f"{size / 1024 ** 2:.1f} MB"
+  if size < 1024 ** 4:             return f"{size / 1024 ** 3:.1f} GB"
+  return f"{size / 1024 ** 4:.2f} TB"
+
+
+def format_duration(seconds: int | float) -> str:
+  """Format a duration as '0s' / '5s' / '12m 30s' / '2h 5m'.
+
+  Input is seconds (use ``ms / 1000`` for millisecond inputs).  Returns
+  ``'-'`` for negative values; ``0`` formats as ``'0s'`` so callers using
+  this for uptime get a legitimate zero rather than a placeholder.
+  """
+  seconds = float(seconds)
+  if seconds < 0: return "-"
+  if seconds < 60: return f"{seconds:.0f}s"
+  if seconds < 3600:
+    m, s = divmod(seconds, 60)
+    return f"{int(m)}m {int(s)}s"
+  h, rem = divmod(seconds, 3600)
+  m, _ = divmod(rem, 60)
+  return f"{int(h)}h {int(m)}m"
+
+
+def format_since(when) -> str:
+  """Compact "time since" — '5s', '5m', '2h', '3d', '4w', '6mo', '2y'.
+
+  Accepts ISO-8601 string, ``datetime``, or epoch seconds (int/float).
+  Returns empty string on parse failure.  Negative deltas (future timestamps)
+  return ``'0s'``.
+  """
+  from datetime import datetime, timezone
+
+  dt = None
+  if isinstance(when, datetime):
+    dt = when
+  elif isinstance(when, (int, float)):
+    dt = datetime.fromtimestamp(float(when), tz=timezone.utc)
+  elif isinstance(when, str):
+    s = when.strip()
+    if not s: return ""
+    if s.endswith('Z'): s = s[:-1] + '+00:00'
+    try: dt = datetime.fromisoformat(s)
+    except ValueError: return ""
+  else:
+    return ""
+
+  if dt.tzinfo is None:
+    dt = dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
+
+  secs = int((datetime.now(timezone.utc) - dt).total_seconds())
+  if secs < 0:    return "0s"
+  if secs < 60:   return f"{secs}s"
+  mins = secs // 60
+  if mins < 60:   return f"{mins}m"
+  hrs = mins // 60
+  if hrs < 24:    return f"{hrs}h"
+  days = hrs // 24
+  if days < 7:    return f"{days}d"
+  if days < 30:   return f"{days // 7}w"
+  if days < 365:  return f"{days // 30}mo"
+  return f"{days // 365}y"
 # endregion
 
 
@@ -457,8 +529,6 @@ def sync(func: Callable) -> Callable:
     return loop.run_until_complete(coro)
   return wrapper
 # endregion
-
-
 
 
 # region PCP - Pretty Colored Print and colorize - utility
@@ -931,6 +1001,58 @@ class mixin_Logger(protocol_Logger, _mixin):
 
 
 
+# region DC - pseudo DataClass
+_DC_BASE_TYPE_MAP = {'str': str, 'list': list, 'dict': dict, 'set': set, 'int': int, 'float': float, 'bool': bool, 'None': type(None), 'y2eid': y2eid}
+
+
+class DC(UserDict):
+  _DC_TYPE_MAP: dict[str, type] = _DC_BASE_TYPE_MAP.copy()
+  _DC_EXCLUDE_NAMES: list[str] = []
+
+
+  def _init_from_kw(self, **kw) -> None:
+    data = kw.pop('data', {})
+    if isinstance(data, str): data = {'data': data}
+    self.data = kw | data
+
+
+  _INIT_STEPS: list[Callable] = [_init_from_kw]
+
+
+  def __init_subclass__(cls, **kw) -> None:
+    def _simple_type(typ: type | str) -> str:
+      typ = str(typ)
+      if typ.startswith('list['): return 'list'
+      return typ
+
+    super().__init_subclass__(**kw)
+
+    annotations_raw = [(n, t if type(t) == str else str(t.__name__)) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items() if n[0] != '_' and n not in cls._DC_EXCLUDE_NAMES]
+    annotations = {n: _simple_type(t) for n, t in annotations_raw}
+
+    mro = [(n, t) for n, t in annotations.items() if n[0] != '_' and t in cls._DC_TYPE_MAP]
+    for aname, atype in mro:
+      def getter(self, name=aname, atype=atype):
+        result = self.data.get(name)
+        if result is not None and isinstance(result, cls._DC_TYPE_MAP[atype]): return result
+        if not result:
+          if atype == 'str': result = ''
+          elif atype == 'list': result = []
+          elif atype == 'dict': result = {}
+          elif atype == 'set': result = set()
+        return result
+      def setter(self, value, name=aname, type_hint=atype, _owner_mod=sys.modules[cls.__module__]):
+        if not hasattr(self, 'data'): self.data = {}
+        self.data[name] = value
+      setattr(cls, aname, property(getter, setter))
+
+
+  def __init__(self, **kw):
+    self.data = {}
+    for step in self._INIT_STEPS: step(self, **kw)
+# endregion
+
+
 # region Foundation
 class _Logger(mixin_Logger): pass
 
@@ -944,7 +1066,7 @@ class _Config(mixin_Config):
       self._config_from_env()
     self._base_path = Path('.')
 
-  def my_path(self, path) -> Path: return self._base_path / self.my(path)
+  # def my_path(self, path) -> Path: return self._base_path / self.my(path)
 
 
 class _Base(_Logger, _Config): pass
