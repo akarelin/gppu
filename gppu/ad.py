@@ -25,6 +25,8 @@ from .gppu import (
     # Mixins, Logger, Foundation (canonical definitions in gppu.py, re-exported here for backward compat)
     _mixin, mixin_Config, Logger, protocol_Logger, mixin_Logger,
     _Logger, _Config, _Base,
+    # y2xxx classes (moved from ad.py to gppu.py, re-exported for backward compat)
+    y2list, y2path, y2topic, y2slug,
 )
 
 
@@ -66,123 +68,7 @@ class PrettyColoredHandler(logging.StreamHandler):
     if not silent: super().emit(record)
 
 
-# region y2xxx
-# xx
-# xx y2list, y2path and y2slug
-# xx
-""" y2list-based: y2path, y2slug"""
-class y2list(UserList):
-  data: List[Any]
-  token: str
-
-
-  def _any2list(self, o) -> list:
-    result = []
-    if o:
-      if hasattr(o, 'data'): o = o.data
-      if isinstance(o, (list, tuple)): result = [_ for _ in o if _]
-      elif self.token: result = str(o).split(self.token)
-      else: result = re.findall('[a-zA-Z0-9]+', str(o))
-    return result
-
-
-  def __init__(self, o: Optional[Any] = None) -> None:
-    super().__init__()
-    self.token = ""
-    self.data = self._any2list(o)
-
-
-  def __str__(self): return self.token.join(self.data)
-  def __repr__(self): return self.token.join(self.data)
-  def __eq__(self, other: Any) -> bool:
-    if hasattr(other, 'data'): return self.data == other.data
-    else: return str(self) == str(other)
-  def __hash__(self): return hash(str(self))  # type: ignore
-
-
-  def upper(self): return str(self).upper()
-  def lower(self): return str(self).lower()
-  def encode(self, encoding='utf-8', errors='strict'): return str(self.data).encode(encoding, errors)
-  def iadd(self, o): self.data += self._any2list(o)
-  def to_json(self): return str(self)
-
-
-  @property
-  def head(self) -> Optional[str]: return self.data[0] if len(self.data) > 0 else None
-  @property
-  def tail(self) -> Optional[str]: return self.data[-1] if len(self.data) > 0 else None
-
-
-  def endswith(self, ix) -> bool:
-    slow = str(self).lower()
-    if isinstance(ix, list):
-      for element in ix:
-        if slow.endswith(element.lower()): return True
-      return False
-    if '_' in ix: six = ix.replace('_',self.token)
-    elif '/' in ix: six = ix.replace('/',self.token)
-    else: six = ix.lower()
-    return slow.endswith(six)
-  def startswith(self, ix) -> bool:
-    slow = str(self).lower()
-    if isinstance(ix, list):
-      for element in ix:
-        if slow.startswith(element.lower()): return True
-      return False
-    if '_' in ix: six = ix.replace('_', self.token)
-    elif '/' in ix: six = ix.replace('/', self.token)
-    else: six = ix.lower()
-    return slow.startswith(six)
-
-
-  def extract(self, s:str, default=None):
-    """
-    Removes element by value and returns it or default
-    ! modifies self.data
-    """
-    if s in self.data: return self.data.pop(self.data.index(s))
-    return default
-
-
-  def discard(self, element): self.data = [e for e in self.data if not e == element]
-  def pophead(self) -> Optional[str]: return self.data.pop(0) if len(self.data) > 0 else None
-  def poptail(self) -> Optional[str]: return self.data.pop(-1) if len(self.data) > 0 else None
-  def popsuffix(self, ix):
-    if self.endswith(ix):
-      if '_' in ix and self.token != '_': ix = ix.replace('_',self.token)
-      elif '/' in ix and self.token != '/': ix = ix.replace('/',self.token)
-      self.data = self._any2list(str(self).replace(ix, ''))
-      return self.token.join(self._any2list(ix))
-  def popprefix(self, ix):
-    if self.startswith(ix):
-      if '_' in ix and self.token != '_': ix = ix.replace('_', self.token)
-      elif '/' in ix and self.token != '/': ix = ix.replace('/', self.token)
-      self.data = self._any2list(str(self).replace(ix, ''))
-      return self.token.join(self._any2list(ix))
-  def popxfix(self, ix): return self.popsuffix(ix) or self.popprefix(ix)
-
-
-class y2path(y2list):
-  def __init__(self, *args):
-    data = []
-    self.token = '/'
-
-    for a in args: data += self._any2list(a)
-    self.data = self._any2list(data)
-
-
-class y2topic(y2path):
-  def is_wildcard(self) -> bool: return bool(set(self.data) & {"#", "+"})
-
-
-class y2slug(y2list):
-  def __init__(self, o):
-    self.token = '_'
-
-    if '@' in str(o): o = str(o).split('@')[0]
-    self.data = self._any2list(o)
-
-
+# region y2eid
 class y2eid:
   ns: str
   domain: str

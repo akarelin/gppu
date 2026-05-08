@@ -7,6 +7,15 @@ data manipulation, and type safety utilities.
 
 from .vault import resolve_secret, set_secret, clear_cache as clear_secret_cache
 
+from .ymro import (
+    _YMRO,
+    YInit,
+    YLoad,
+    YStart,
+    YStepper,
+    mixin_Stepper,
+)
+
 from .gppu import (
     # Version info
     VER_GPPU,
@@ -101,6 +110,12 @@ from .gppu import (
     _Config,
     _Base,
     App,
+
+    # y2xxx classes
+    y2list,
+    y2path,
+    y2topic,
+    y2slug,
 )
 
 
@@ -162,4 +177,10 @@ __all__ = [
 
     # Foundation classes
     '_Logger', '_Config', '_Base', 'App',
+
+    # y2xxx classes
+    'y2list', 'y2path', 'y2topic', 'y2slug',
+
+    # YMRO lifecycle
+    '_YMRO', 'YInit', 'YLoad', 'YStart', 'YStepper', 'mixin_Stepper',
 ]
