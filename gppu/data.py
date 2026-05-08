@@ -4,7 +4,7 @@ from typing import Any
 from contextlib import contextmanager
 
 from .gppu import Env
-from .ad import _Base
+from .gppu import _Base
 
 
 class _PersistentBase(_Base):

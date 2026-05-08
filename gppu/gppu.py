@@ -941,6 +941,8 @@ def _init_logger_base(name: str = 'gppu', trace_rules: dict | None = None) -> No
   new_logger.addHandler(_sh)
   _logger = new_logger
 
+init_logger = _init_logger_base
+
 
 def Debug(*a, logger=None, **kw): (logger or _logger).debug(*a, **kw)
 def Info(*a, logger=None, **kw): (logger or _logger).info(*a, **kw)
@@ -1154,8 +1156,55 @@ class _App(_Base):
 
 
 
-# Re-exports from ad.py (must come before DC which references y2eid in its type map)
-from .ad import y2eid, init_logger  # noqa: F401,E402
+# region y2eid
+class y2eid:
+  ns: str
+  domain: str
+  slug: y2slug
+  default_ns: ClassVar[str] = 'yala'
+  default_domain: ClassVar[str] = 'entity'
+  _ready: bool = False
+
+  def __bool__(self) -> bool: return self._ready
+
+  def __init__(self, o: Any, ns: Optional[str] = None, **kw):
+    self._ready = False
+    if not o: raise ValueError("y2eid: empty input")
+    ns = ns or self.default_ns
+    if isinstance(o, y2eid): s = str(o)
+    elif isinstance(o, dict): s = str(o.get('entity_id', ""))
+    elif isinstance(o, str): s = o
+    elif hasattr(o, 'entity_id') and hasattr(o, 'namespace'): s = f"{o.entity_id}@{o.namespace}"
+    elif hasattr(o, 'entity_id') and hasattr(o, 'ns'): s = f"{o.entity_id}@{o.ns}"
+    elif hasattr(o, 'seid'): s = o.seid
+    else: raise ValueError
+    self.ns = ns
+    self.domain = ''
+    if '.' in s: self.domain, s = s.split('.', 1)
+    if '@' in s: s, self.ns = s.rsplit('@', 1)
+    self.ns = self.ns or self.default_ns
+    self.domain = self.domain or self.default_domain
+    self.slug = y2slug(s)
+    for k in ['tail', 'head']: setattr(self, k, getattr(self.slug, k))
+    self._ready = True
+
+  def __str__(self):
+    s = str(self.slug)
+    if self.domain: s = self.domain + '.' + s
+    if self.ns: s += '@' + self.ns
+    return s
+  def __repr__(self): return str(self)
+  def __hash__(self): return hash(str(self))
+  def __eq__(self, other): return str(self) == str(other)
+  def __lt__(self, other): return str(self) < str(other)
+
+  def endswith(self, ix) -> bool: return self.slug.endswith(ix)
+  def startswith(self, ix) -> bool: return self.slug.startswith(ix)
+  @property
+  def entity_id(self) -> str: return f"{self.domain}.{self.slug}" if self._ready else ""
+  @property
+  def seid(self): return str(self)
+# endregion
 
 
 # region DC - pseudo DataClass

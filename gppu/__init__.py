@@ -33,6 +33,7 @@ from .gppu import (
 
     # Logger setup
     init_logger,
+    _init_logger_base,
 
     # Async helpers
     sync,
@@ -116,6 +117,7 @@ from .gppu import (
     y2path,
     y2topic,
     y2slug,
+    y2eid,
 )
 
 
@@ -179,7 +181,7 @@ __all__ = [
     '_Logger', '_Config', '_Base', 'App',
 
     # y2xxx classes
-    'y2list', 'y2path', 'y2topic', 'y2slug',
+    'y2list', 'y2path', 'y2topic', 'y2slug', 'y2eid',
 
     # YMRO lifecycle
     '_YMRO', 'YInit', 'YLoad', 'YStart', 'YStepper', 'mixin_Stepper',
