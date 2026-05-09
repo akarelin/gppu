@@ -178,7 +178,7 @@ __all__ = [
     'glob', 'glob_int', 'glob_list', 'glob_dict',
 
     # Foundation classes
-    '_Logger', '_Config', '_Base', 'App',
+    '_Logger', '_Config', '_Base', 'App', '_init_logger_base',
 
     # y2xxx classes
     'y2list', 'y2path', 'y2topic', 'y2slug', 'y2eid',
