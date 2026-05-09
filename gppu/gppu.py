@@ -24,7 +24,7 @@ from typing import TypeAlias, ClassVar, Callable, Protocol
 from string import Template
 
 from collections import defaultdict, UserDict, UserList
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from contextlib import contextmanager
@@ -446,6 +446,55 @@ class y2slug(y2list):
     if '@' in str(o): o = str(o).split('@')[0]
     self.data = self._any2list(o)
 # endregion
+# region y2eid
+class y2eid:
+  ns: str
+  domain: str
+  slug: y2slug
+  default_ns: ClassVar[str] = 'yala'
+  default_domain: ClassVar[str] = 'entity'
+  _ready: bool = False
+
+  def __bool__(self) -> bool: return self._ready
+
+  def __init__(self, o: Any, ns: Optional[str] = None, **kw):
+    self._ready = False
+    if not o: raise ValueError("y2eid: empty input")
+    ns = ns or self.default_ns
+    if isinstance(o, y2eid): s = str(o)
+    elif isinstance(o, dict): s = str(o.get('entity_id', ""))
+    elif isinstance(o, str): s = o
+    elif hasattr(o, 'entity_id') and hasattr(o, 'namespace'): s = f"{o.entity_id}@{o.namespace}"
+    elif hasattr(o, 'entity_id') and hasattr(o, 'ns'): s = f"{o.entity_id}@{o.ns}"
+    elif hasattr(o, 'seid'): s = o.seid
+    else: raise ValueError
+    self.ns = ns
+    self.domain = ''
+    if '.' in s: self.domain, s = s.split('.', 1)
+    if '@' in s: s, self.ns = s.rsplit('@', 1)
+    self.ns = self.ns or self.default_ns
+    self.domain = self.domain or self.default_domain
+    self.slug = y2slug(s)
+    for k in ['tail', 'head']: setattr(self, k, getattr(self.slug, k))
+    self._ready = True
+
+  def __str__(self):
+    s = str(self.slug)
+    if self.domain: s = self.domain + '.' + s
+    if self.ns: s += '@' + self.ns
+    return s
+  def __repr__(self): return str(self)
+  def __hash__(self): return hash(str(self))
+  def __eq__(self, other): return str(self) == str(other)
+  def __lt__(self, other): return str(self) < str(other)
+
+  def endswith(self, ix) -> bool: return self.slug.endswith(ix)
+  def startswith(self, ix) -> bool: return self.slug.startswith(ix)
+  @property
+  def entity_id(self) -> str: return f"{self.domain}.{self.slug}" if self._ready else ""
+  @property
+  def seid(self): return str(self)
+# endregion
 
 
 # region Time helpers
@@ -518,7 +567,6 @@ def format_since(when) -> str:
   Returns empty string on parse failure.  Negative deltas (future timestamps)
   return ``'0s'``.
   """
-  from datetime import datetime, timezone
 
   dt = None
   if isinstance(when, datetime):
@@ -902,7 +950,6 @@ class _LogColorizer(logging.Formatter):
 # endregion
 
 
-
 # region Logger
 # ^~            Logger                                            
 TRACE_RULES: dict = {}
@@ -1118,7 +1165,6 @@ class mixin_Logger(protocol_Logger, _mixin):
 # endregion
 
 
-
 # region Foundation
 class _Logger(mixin_Logger): pass
 
@@ -1151,59 +1197,6 @@ class _App(_Base):
     if not Env.initialized:
       Env.from_env(name=self.name, app_path=caller_file.parent)
     super().__init__(name=self.name, **kw)
-# endregion
-
-
-
-
-# region y2eid
-class y2eid:
-  ns: str
-  domain: str
-  slug: y2slug
-  default_ns: ClassVar[str] = 'yala'
-  default_domain: ClassVar[str] = 'entity'
-  _ready: bool = False
-
-  def __bool__(self) -> bool: return self._ready
-
-  def __init__(self, o: Any, ns: Optional[str] = None, **kw):
-    self._ready = False
-    if not o: raise ValueError("y2eid: empty input")
-    ns = ns or self.default_ns
-    if isinstance(o, y2eid): s = str(o)
-    elif isinstance(o, dict): s = str(o.get('entity_id', ""))
-    elif isinstance(o, str): s = o
-    elif hasattr(o, 'entity_id') and hasattr(o, 'namespace'): s = f"{o.entity_id}@{o.namespace}"
-    elif hasattr(o, 'entity_id') and hasattr(o, 'ns'): s = f"{o.entity_id}@{o.ns}"
-    elif hasattr(o, 'seid'): s = o.seid
-    else: raise ValueError
-    self.ns = ns
-    self.domain = ''
-    if '.' in s: self.domain, s = s.split('.', 1)
-    if '@' in s: s, self.ns = s.rsplit('@', 1)
-    self.ns = self.ns or self.default_ns
-    self.domain = self.domain or self.default_domain
-    self.slug = y2slug(s)
-    for k in ['tail', 'head']: setattr(self, k, getattr(self.slug, k))
-    self._ready = True
-
-  def __str__(self):
-    s = str(self.slug)
-    if self.domain: s = self.domain + '.' + s
-    if self.ns: s += '@' + self.ns
-    return s
-  def __repr__(self): return str(self)
-  def __hash__(self): return hash(str(self))
-  def __eq__(self, other): return str(self) == str(other)
-  def __lt__(self, other): return str(self) < str(other)
-
-  def endswith(self, ix) -> bool: return self.slug.endswith(ix)
-  def startswith(self, ix) -> bool: return self.slug.startswith(ix)
-  @property
-  def entity_id(self) -> str: return f"{self.domain}.{self.slug}" if self._ready else ""
-  @property
-  def seid(self): return str(self)
 # endregion
 
 
