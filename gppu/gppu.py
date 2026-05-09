@@ -1251,5 +1251,5 @@ class _DC(UserDict):
     for step in self._INIT_STEPS: step(self, **kw)
 
 
-# class App(_App, _DC): pass
+class App(_App, _DC): pass
 # endregion
