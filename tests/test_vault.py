@@ -92,10 +92,10 @@ class TestProviderDetection:
         monkeypatch.setenv("GCP_SECRET_PROJECT", "myproj")
         assert isinstance(Vault.provider(), VaultProviderAzure)
 
-    def test_no_provider_when_no_env(self, monkeypatch):
+    def test_default_provider_is_os_environ(self, monkeypatch):
         monkeypatch.delenv("AZURE_KEYVAULT_NAME", raising=False)
         monkeypatch.delenv("GCP_SECRET_PROJECT", raising=False)
-        assert Vault.provider() is None
+        assert isinstance(Vault.provider(), VaultProviderOSEnviron)
 
 
 class TestProviderExplicitSet:
@@ -155,18 +155,44 @@ class TestCreateUpdate:
         assert writes == [("upsert", "v1")]
 
 
-class TestCreateDesignation:
-    """Vault.create(designation=...) appends '-<designation>' to disambiguate names."""
+class TestList:
+    """Vault.list() unions env-var SECRET_* names with the persistent provider's list."""
 
-    def test_designation_appended_to_name(self):
-        writes = []
-        with patch.object(VaultProviderAzure, "get", return_value=None), \
-             patch.object(VaultProviderAzure, "set", side_effect=lambda n, v: writes.append((n, v))):
+    def test_lists_env_var_secrets(self, monkeypatch):
+        monkeypatch.delenv("AZURE_KEYVAULT_NAME", raising=False)
+        monkeypatch.delenv("GCP_SECRET_PROJECT", raising=False)
+        # Clear any pre-existing SECRET_* in the test env so we get a clean baseline
+        for k in list(__import__("os").environ):
+            if k.startswith("SECRET_"): monkeypatch.delenv(k, raising=False)
+        monkeypatch.setenv("SECRET_FOO_BAR", "v1")
+        monkeypatch.setenv("SECRET_BAZ", "v2")
+        assert Vault.list() == ["baz", "foo-bar"]
+
+    def test_unions_env_and_provider(self, monkeypatch):
+        for k in list(__import__("os").environ):
+            if k.startswith("SECRET_"): monkeypatch.delenv(k, raising=False)
+        monkeypatch.setenv("SECRET_LOCAL_ONLY", "v")
+        with patch.object(VaultProviderAzure, "list", return_value=["az-key-1", "az-key-2"]):
             Vault.provider_set(VaultProviderAzure("myvault"))
-            Vault.create("slack-bot-token", "xxx", designation="T01")
-        assert writes == [("slack-bot-token-t01", "xxx")]
+            assert Vault.list() == ["az-key-1", "az-key-2", "local-only"]
 
-    def test_no_designation_uses_bare_name(self):
+    def test_provider_list_not_implemented_falls_back_to_env(self, monkeypatch):
+        for k in list(__import__("os").environ):
+            if k.startswith("SECRET_"): monkeypatch.delenv(k, raising=False)
+        monkeypatch.setenv("SECRET_ONLY", "v")
+
+        class _NoList(VaultProvider):
+            def get(self, name): return None
+            # list() inherits NotImplementedError
+
+        Vault.provider_set(_NoList())
+        assert Vault.list() == ["only"]
+
+
+class TestCreateDesignation:
+    """Vault.create(designation=...) appends '-<designation>' only on base-name collision."""
+
+    def test_no_collision_uses_bare_name(self):
         writes = []
         with patch.object(VaultProviderAzure, "get", return_value=None), \
              patch.object(VaultProviderAzure, "set", side_effect=lambda n, v: writes.append((n, v))):
@@ -174,16 +200,41 @@ class TestCreateDesignation:
             Vault.create("slack-bot-token", "xxx")
         assert writes == [("slack-bot-token", "xxx")]
 
-    def test_designation_kebab_lowered(self):
+    def test_no_collision_designation_ignored(self):
+        # Designation is a disambiguator — not applied if base name is free.
         writes = []
         with patch.object(VaultProviderAzure, "get", return_value=None), \
+             patch.object(VaultProviderAzure, "set", side_effect=lambda n, v: writes.append((n, v))):
+            Vault.provider_set(VaultProviderAzure("myvault"))
+            Vault.create("slack-bot-token", "xxx", designation="T01")
+        assert writes == [("slack-bot-token", "xxx")]
+
+    def test_collision_with_designation_appends(self):
+        existing = {"slack-bot-token"}
+        writes = []
+        with patch.object(VaultProviderAzure, "get", side_effect=lambda n: "x" if n in existing else None), \
+             patch.object(VaultProviderAzure, "set", side_effect=lambda n, v: writes.append((n, v))):
+            Vault.provider_set(VaultProviderAzure("myvault"))
+            Vault.create("slack-bot-token", "xxx", designation="T01")
+        assert writes == [("slack-bot-token-t01", "xxx")]
+
+    def test_collision_no_designation_raises(self):
+        with patch.object(VaultProviderAzure, "get", return_value="existing"):
+            Vault.provider_set(VaultProviderAzure("myvault"))
+            with pytest.raises(ValueError, match="already exists"):
+                Vault.create("slack-bot-token", "xxx")
+
+    def test_designation_kebab_lowered(self):
+        existing = {"slack-bot-token"}
+        writes = []
+        with patch.object(VaultProviderAzure, "get", side_effect=lambda n: "x" if n in existing else None), \
              patch.object(VaultProviderAzure, "set", side_effect=lambda n, v: writes.append((n, v))):
             Vault.provider_set(VaultProviderAzure("myvault"))
             Vault.create("slack-bot-token", "xxx", designation="My_Workspace")
         assert writes == [("slack-bot-token-my-workspace", "xxx")]
 
     def test_designated_collision_raises(self):
-        existing = {"slack-bot-token-t01"}
+        existing = {"slack-bot-token", "slack-bot-token-t01"}
         with patch.object(VaultProviderAzure, "get", side_effect=lambda n: "x" if n in existing else None):
             Vault.provider_set(VaultProviderAzure("myvault"))
             with pytest.raises(ValueError, match="already exists"):

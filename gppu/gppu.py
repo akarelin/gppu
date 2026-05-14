@@ -1111,30 +1111,30 @@ glob_dict = Env.glob_dict
 # subject-hierarchy convention: VaultProvider, VaultProviderAzure, etc.
 
 class VaultProvider:
-  """Abstract secret-backend provider. Subclass and override get; override set if writable."""
-
-  name: str = '?'
+  """Abstract secret-backend provider. Subclass and override get; override set/list if writable/enumerable."""
 
   def get(self, name: str) -> str | None:
     raise NotImplementedError
 
   def set(self, name: str, value: str) -> None:
-    raise NotImplementedError(f"VaultProvider '{self.name}' is read-only")
+    raise NotImplementedError(f"{type(self).__name__} is read-only")
+
+  def list(self) -> list[str]:
+    raise NotImplementedError(f"{type(self).__name__} does not support listing")
 
 
 class VaultProviderOSEnviron(VaultProvider):
   """Reads from environment variables: SECRET_<NAME> (hyphens → underscores, uppercased). Read-only."""
 
-  name = 'env'
-
   def get(self, name: str) -> str | None:
-    env_key = 'SECRET_' + name.upper().replace('-', '_')
-    return os.environ.get(env_key)
+    return os.environ.get('SECRET_' + name.upper().replace('-', '_'))
+
+  def list(self) -> list[str]:
+    prefix = 'SECRET_'
+    return sorted(k[len(prefix):].lower().replace('_', '-') for k in os.environ if k.startswith(prefix))
 
 
 class VaultProviderAzure(VaultProvider):
-  name = 'Azure KV'
-
   def __init__(self, vault_name: str):
     self._vault_name = vault_name
     self._client = None
@@ -1149,18 +1149,17 @@ class VaultProviderAzure(VaultProvider):
     return self._client
 
   def get(self, name: str) -> str | None:
-    try:
-      return self._ensure_client().get_secret(name).value
-    except Exception:
-      return None
+    try: return self._ensure_client().get_secret(name).value
+    except Exception: return None
 
   def set(self, name: str, value: str) -> None:
     self._ensure_client().set_secret(name, value)
 
+  def list(self) -> list[str]:
+    return [s.name for s in self._ensure_client().list_properties_of_secrets()]
+
 
 class VaultProviderGcp(VaultProvider):
-  name = 'GCP SM'
-
   def __init__(self, project: str):
     self._project = project
     self._client = None
@@ -1173,12 +1172,9 @@ class VaultProviderGcp(VaultProvider):
 
   def get(self, name: str) -> str | None:
     try:
-      client = self._ensure_client()
       resource = f"projects/{self._project}/secrets/{name}/versions/latest"
-      response = client.access_secret_version(request={"name": resource})
-      return response.payload.data.decode("utf-8")
-    except Exception:
-      return None
+      return self._ensure_client().access_secret_version(request={"name": resource}).payload.data.decode("utf-8")
+    except Exception: return None
 
   def set(self, name: str, value: str) -> None:
     client = self._ensure_client()
@@ -1188,11 +1184,12 @@ class VaultProviderGcp(VaultProvider):
         "parent": f"projects/{self._project}",
         "secret_id": name,
         "secret": {"replication": {"automatic": {}}}})
-    except Exception:
-      pass  # secret already exists
-    client.add_secret_version(request={
-      "parent": parent,
-      "payload": {"data": value.encode("utf-8")}})
+    except Exception: pass  # secret already exists
+    client.add_secret_version(request={"parent": parent, "payload": {"data": value.encode("utf-8")}})
+
+  def list(self) -> list[str]:
+    parent = f"projects/{self._project}"
+    return [s.name.rsplit('/', 1)[-1] for s in self._ensure_client().list_secrets(request={"parent": parent})]
 
 
 class Vault:
@@ -1213,37 +1210,36 @@ class Vault:
     Vault._cache.clear()
 
   @staticmethod
-  def provider() -> VaultProvider | None:
-    """Return the active persistent provider, auto-detecting from env on first call."""
+  def provider() -> VaultProvider:
+    """Return the active persistent provider, auto-detecting from env on first call.
+
+    Falls back to VaultProviderOSEnviron when neither AZURE_KEYVAULT_NAME nor
+    GCP_SECRET_PROJECT is set.
+    """
     if Vault._provider is None:
       Vault._provider = Vault._detect()
     return Vault._provider
 
   @staticmethod
-  def _detect() -> VaultProvider | None:
-    """AZURE_KEYVAULT_NAME → VaultProviderAzure; else GCP_SECRET_PROJECT → VaultProviderGcp; else None."""
+  def _detect() -> VaultProvider:
+    """AZURE_KEYVAULT_NAME → VaultProviderAzure; else GCP_SECRET_PROJECT → VaultProviderGcp; else env-var fallback."""
     vault_name = os.environ.get('AZURE_KEYVAULT_NAME')
-    if vault_name:
-      return VaultProviderAzure(vault_name)
+    if vault_name: return VaultProviderAzure(vault_name)
     project = os.environ.get('GCP_SECRET_PROJECT')
-    if project:
-      return VaultProviderGcp(project)
-    return None
+    if project: return VaultProviderGcp(project)
+    return Vault._env_provider
 
   @staticmethod
   def get(name: str) -> str:
-    if name in Vault._cache:
-      return Vault._cache[name]
+    if name in Vault._cache: return Vault._cache[name]
 
-    checked: list[str] = []
+    checked: list[str] = [type(Vault._env_provider).__name__]
     val = Vault._env_provider.get(name)
-    checked.append(Vault._env_provider.name)
 
-    if val is None:
-      p = Vault.provider()
-      if p is not None:
-        val = p.get(name)
-        checked.append(p.name)
+    p = Vault.provider()
+    if val is None and p is not Vault._env_provider:
+      val = p.get(name)
+      checked.append(type(p).__name__)
 
     if val is None:
       raise ValueError(f"!secret '{name}' not found (checked {', '.join(checked)})")
@@ -1258,7 +1254,8 @@ class Vault:
     designation: optional suffix appended as '-<designation>' (kebab-lower) to disambiguate
     when the base name collides with an existing secret.
     """
-    if designation: name = f"{name}-{designation.lower().replace('_', '-')}"
+    if Vault._exists(name) and designation:
+      name = f"{name}-{designation.lower().replace('_', '-')}"
     if Vault._exists(name):
       raise ValueError(f"Secret '{name}' already exists. Use Vault.update to overwrite.")
     Vault._write(name, value)
@@ -1269,25 +1266,31 @@ class Vault:
 
     Raises if the name does not exist, unless create=True — in which case it falls through to create.
     """
-    if not Vault._exists(name):
-      if not create:
-        raise ValueError(f"Secret '{name}' does not exist. Pass create=True to add it, or use Vault.create.")
+    if not Vault._exists(name) and not create:
+      raise ValueError(f"Secret '{name}' does not exist. Pass create=True to add it, or use Vault.create.")
     Vault._write(name, value)
 
   @staticmethod
   def _exists(name: str) -> bool:
-    p = Vault.provider()
-    if p is None:
-      raise ValueError("No provider configured")
-    return p.get(name) is not None
+    return Vault.provider().get(name) is not None
 
   @staticmethod
   def _write(name: str, value: str) -> None:
-    p = Vault.provider()
-    if p is None:
-      raise ValueError("No provider configured")
-    p.set(name, value)  # raises NotImplementedError if no writable provider available
+    Vault.provider().set(name, value)  # raises NotImplementedError if provider is read-only
     Vault._cache[name] = value
+
+  @staticmethod
+  def list() -> list[str]:
+    """List secret names available from the active provider.
+
+    Union of env-var fallback names + persistent provider names; sorted, deduped.
+    """
+    names = set(Vault._env_provider.list())
+    p = Vault.provider()
+    if p is not Vault._env_provider:
+      try: names.update(p.list())
+      except NotImplementedError: pass
+    return sorted(names)
 
   @staticmethod
   def cache_clear() -> None:
