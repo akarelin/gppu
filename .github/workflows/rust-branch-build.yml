@@ -1,10 +1,30 @@
 name: GPRU Full Pipeline (Experimental v3.5.0alpha1)
 
 on:
+  push:
+    branches:
+      - 'dev'
+    paths:
+      - 'rust/**'
+      - '.github/workflows/rust-branch-build.yml'
+    tags-ignore:
+      - 'gpru/v*'
+      - 'statusline/v*'
+      - 'w11/v*'
+  pull_request:
+    branches:
+      - 'dev'
+    paths:
+      - 'rust/**'
+      - '.github/workflows/rust-branch-build.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
+
+defaults:
+  run:
+    working-directory: rust
 
 jobs:
   quality:
@@ -18,6 +38,8 @@ jobs:
           components: rustfmt, clippy
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
       - name: Verify experimental version marker
         run: |
           grep -q 'version = "3.5.0-alpha.1"' crates/gpru/Cargo.toml
@@ -43,6 +65,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
       - name: Build workspace
         run: cargo build --workspace --all-targets --locked
       - name: Test workspace
@@ -58,6 +82,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
       - name: Package gpru crate (dry run)
         run: cargo package -p gpru --allow-dirty
       - name: Validate statusline crate builds in workspace
