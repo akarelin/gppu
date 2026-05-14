@@ -1112,22 +1112,15 @@ glob_dict = Env.glob_dict
 
 class VaultProvider:
   """Abstract secret-backend provider. Subclass and override get; override set/list if writable/enumerable."""
-
-  def get(self, name: str) -> str | None:
-    raise NotImplementedError
-
-  def set(self, name: str, value: str) -> None:
-    raise NotImplementedError(f"{type(self).__name__} is read-only")
-
-  def list(self) -> list[str]:
-    raise NotImplementedError(f"{type(self).__name__} does not support listing")
+  def get(self, name: str) -> str | None: raise NotImplementedError
+  def set(self, name: str, value: str) -> None: raise NotImplementedError(f"{type(self).__name__} is read-only")
+  def list(self) -> list[str]: raise NotImplementedError(f"{type(self).__name__} does not support listing")
 
 
 class VaultProviderOSEnviron(VaultProvider):
   """Reads from environment variables: SECRET_<NAME> (hyphens → underscores, uppercased). Read-only."""
 
-  def get(self, name: str) -> str | None:
-    return os.environ.get('SECRET_' + name.upper().replace('-', '_'))
+  def get(self, name: str) -> str | None: return os.environ.get('SECRET_' + name.upper().replace('-', '_'))
 
   def list(self) -> list[str]:
     prefix = 'SECRET_'
