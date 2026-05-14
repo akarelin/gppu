@@ -1,6 +1,6 @@
 # GPRU — General Purpose Rusty Utilities (ЖПRU)
 
-`v3.5.0-alpha.1` — Rust migration track with full branch CI (fmt, clippy, cross-platform build/test, packaging sanity).
+`v3.5.0-alpha.1` — Rust migration track with manually-triggered CI (fmt, clippy, cross-platform build/test, packaging sanity).
 
 Release tag target: `v3.5.0alpha1` on `dev` branch.
 
@@ -24,7 +24,7 @@ Release tag target: `v3.5.0alpha1` on `dev` branch.
 
 <table>
 <tr>
-<td width="140"><strong><a href="statusline/">Statusline</a></strong></td>
+<td width="140"><strong><a href="statusline/status_line.py">Statusline</a></strong></td>
 <td><a href="https://github.com/akarelin/gppu/actions/workflows/statusline.yml"><img src="https://img.shields.io/github/actions/workflow/status/akarelin/gppu/statusline.yml?label=&style=flat-square" alt="CI"></a> <a href="https://github.com/akarelin/gppu/releases?q=statusline"><img src="https://img.shields.io/github/v/release/akarelin/gppu?filter=statusline/v*&label=&color=blue&style=flat-square" alt="release"></a></td>
 <td>Claude Code 2-line status line (Linux, macOS, Windows)</td>
 </tr>
@@ -173,7 +173,7 @@ See [w11/app.py](w11/app.py) for a real example.
 
 # Other Products
 
-[Statusline](statusline/) — Claude Code status line tool
+[Statusline](statusline/status_line.py) — Claude Code status line tool
 
 [W11](w11/README.md) — Windows 11 utilities
 
@@ -193,7 +193,7 @@ pip install "gppu[all] @ git+ssh://git@github.com/akarelin/gppu.git@gppu/latest"
 pip install -e ".[all,test]"
 ```
 
-**Optional extras**: `pg` (psycopg2), `sql` (SQLAlchemy), `cache` (diskcache), `chrome` (Selenium), `tui` (Textual), `serve` (textual-serve), `statusline` (Jinja2), `vault-azure`, `vault-gcp`, `vault` (both), `all`, `test` (pytest).
+**Optional extras**: `pg` (psycopg2), `sql` (SQLAlchemy), `cache` (diskcache), `chrome` (Selenium), `tui` (Textual), `serve` (textual-serve), `statusline` (Jinja2), `vault-azure`, `vault-gcp`, `vault` (both), `all`, `test` (pytest), `test-tui` (pytest + pytest-asyncio + textual).
 
 Requires Python >= 3.11. Core dependency: PyYAML.
 
