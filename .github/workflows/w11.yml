@@ -117,6 +117,7 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          token: ${{ secrets.RELEASE_PAT }}
           tag_name: ${{ needs.bump.outputs.tag || github.ref_name }}
           name: w11 v${{ steps.version.outputs.clean }}
           files: artifacts/*
