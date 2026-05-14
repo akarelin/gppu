@@ -18,6 +18,11 @@
 <td><a href="https://github.com/akarelin/gppu/actions/workflows/w11.yml"><img src="https://img.shields.io/github/actions/workflow/status/akarelin/gppu/w11.yml?label=&style=flat-square" alt="CI"></a> <a href="https://github.com/akarelin/gppu/releases?q=w11"><img src="https://img.shields.io/github/v/release/akarelin/gppu?filter=w11/v*&label=&color=blue&style=flat-square" alt="release"></a></td>
 <td>Windows 11 utilities &amp; diagnostics</td>
 </tr>
+<tr>
+<td><strong><a href="rust/README.md">GPRU</a></strong></td>
+<td><a href="https://github.com/akarelin/gppu/actions/workflows/rust-branch-build.yml"><img src="https://img.shields.io/github/actions/workflow/status/akarelin/gppu/rust-branch-build.yml?label=&style=flat-square" alt="CI"></a> <img src="https://img.shields.io/badge/status-in%20progress-yellow?style=flat-square" alt="in progress"></td>
+<td>Rust port of <code>gppu</code> (in progress)</td>
+</tr>
 </table>
 
 ---
