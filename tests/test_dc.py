@@ -1,5 +1,5 @@
 """Tests for DC (pseudo-DataClass)."""
-from gppu.gppu import DC
+from gppu.gppu import _DC as DC
 
 
 class TestDC:

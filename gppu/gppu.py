@@ -979,8 +979,10 @@ _logger.addHandler(_sh)
 
 def _init_logger_base(name: str = 'gppu', trace_rules: dict | None = None) -> None:
   """Initialize global logger with a specific name and optional trace rules."""
-  global _logger, TRACE_RULES
-  if trace_rules is not None: TRACE_RULES = trace_rules
+  global _logger
+  if trace_rules is not None:
+    TRACE_RULES.clear()
+    TRACE_RULES.update(trace_rules)
   new_logger = logging.getLogger(name)
   new_logger.setLevel(logging.DEBUG)
   new_logger.handlers = []
