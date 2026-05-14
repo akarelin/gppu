@@ -2,6 +2,7 @@
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from gppu import (
     Vault,
@@ -16,7 +17,7 @@ from gppu import (
 @pytest.fixture(autouse=True)
 def _clean():
     Vault.provider_set(None)
-    Vault.yaml_register()
+    yaml.add_constructor("!secret", lambda l, n: Vault.get(n.value), Loader=yaml.FullLoader)
     yield
     Vault.provider_set(None)
 
@@ -153,3 +154,38 @@ class TestCreateUpdate:
             Vault.provider_set(VaultProviderAzure("myvault"))
             Vault.update("upsert", "v1", create=True)
         assert writes == [("upsert", "v1")]
+
+
+class TestCreateDesignation:
+    """Vault.create(designation=...) appends '-<designation>' to disambiguate names."""
+
+    def test_designation_appended_to_name(self):
+        writes = []
+        with patch.object(VaultProviderAzure, "get", return_value=None), \
+             patch.object(VaultProviderAzure, "set", side_effect=lambda n, v: writes.append((n, v))):
+            Vault.provider_set(VaultProviderAzure("myvault"))
+            Vault.create("slack-bot-token", "xxx", designation="T01")
+        assert writes == [("slack-bot-token-t01", "xxx")]
+
+    def test_no_designation_uses_bare_name(self):
+        writes = []
+        with patch.object(VaultProviderAzure, "get", return_value=None), \
+             patch.object(VaultProviderAzure, "set", side_effect=lambda n, v: writes.append((n, v))):
+            Vault.provider_set(VaultProviderAzure("myvault"))
+            Vault.create("slack-bot-token", "xxx")
+        assert writes == [("slack-bot-token", "xxx")]
+
+    def test_designation_kebab_lowered(self):
+        writes = []
+        with patch.object(VaultProviderAzure, "get", return_value=None), \
+             patch.object(VaultProviderAzure, "set", side_effect=lambda n, v: writes.append((n, v))):
+            Vault.provider_set(VaultProviderAzure("myvault"))
+            Vault.create("slack-bot-token", "xxx", designation="My_Workspace")
+        assert writes == [("slack-bot-token-my-workspace", "xxx")]
+
+    def test_designated_collision_raises(self):
+        existing = {"slack-bot-token-t01"}
+        with patch.object(VaultProviderAzure, "get", side_effect=lambda n: "x" if n in existing else None):
+            Vault.provider_set(VaultProviderAzure("myvault"))
+            with pytest.raises(ValueError, match="already exists"):
+                Vault.create("slack-bot-token", "xxx", designation="T01")

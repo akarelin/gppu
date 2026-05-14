@@ -242,13 +242,14 @@ def dict_from_yml(filename: str | Path):
     finally:
       dir_stack.pop()
 
+  def yml_secret(loader, node): return Vault.get(node.value)
+
   yaml.add_representer(defaultdict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(UserDict, yaml.representer.Representer.represent_dict)
   yaml.add_representer(set, yaml.representer.Representer.represent_list)
   yaml.add_representer(tuple, _tuple_representer)
   yaml.add_constructor("!include", yml_include, Loader=yaml.FullLoader)
-
-  Vault.yaml_register()
+  yaml.add_constructor("!secret", yml_secret, Loader=yaml.FullLoader)
 
   with open(filename, encoding='utf-8') as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
 
@@ -1255,8 +1256,13 @@ class Vault:
     return val
 
   @staticmethod
-  def create(name: str, value: str) -> None:
-    """Create a new secret. Raises if name already exists — use update to overwrite."""
+  def create(name: str, value: str, designation: str | None = None) -> None:
+    """Create a new secret. Raises if name already exists — use update to overwrite.
+
+    designation: optional suffix appended as '-<designation>' (kebab-lower) to disambiguate
+    when the base name collides with an existing secret.
+    """
+    if designation: name = f"{name}-{designation.lower().replace('_', '-')}"
     if Vault._exists(name):
       raise ValueError(f"Secret '{name}' already exists. Use Vault.update to overwrite.")
     Vault._write(name, value)
@@ -1290,12 +1296,6 @@ class Vault:
   @staticmethod
   def cache_clear() -> None:
     Vault._cache.clear()
-
-  @staticmethod
-  def yaml_register():
-    """Register !secret YAML tag so dict_from_yml can resolve secrets inline."""
-    def yml_secret(loader, node): return Vault.get(node.value)
-    yaml.add_constructor("!secret", yml_secret, Loader=yaml.FullLoader)
 # endregion
 
 
