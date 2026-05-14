@@ -17,7 +17,7 @@ Release tag target: `v3.5.0alpha1` on `dev` branch.
 
 <h3><code>v3</code> — <em>All the things</em></h3>
 
-> YAML-driven configuration with `!include`, colored structured logging, type coercion, deep dict access, YAML/JSON I/O, template population, time helpers, OS detection, async-to-sync, multi-backend caching, PostgreSQL and SQLAlchemy base classes, Textual TUI framework with superapp launchers, nested apps, config editors, web UI via `--serve`, and CLI fallback, Selenium Chrome automation, and home automation types.
+> YAML-driven configuration with `!include` and `!secret`, colored structured logging, secret management (Azure Key Vault / GCP Secret Manager / env-vars), type coercion, deep dict access, YAML/JSON I/O, template population, time helpers, OS detection, async-to-sync, multi-backend caching, PostgreSQL and SQLAlchemy base classes, Textual TUI framework with superapp launchers, nested apps, config editors, web UI via `--serve`, and CLI fallback, Selenium Chrome automation, and home automation types.
 
 [![CI](https://github.com/akarelin/gppu/actions/workflows/gppu.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/gppu.yml) [![release](https://img.shields.io/github/v/release/akarelin/gppu?filter=gppu/v*&label=&color=blue&style=flat-square)](https://github.com/akarelin/gppu/releases?q=gppu)
 
@@ -51,8 +51,8 @@ Release tag target: `v3.5.0alpha1` on `dev` branch.
 from gppu import Env
 from pathlib import Path
 
-# Initialize: resolves config file, loads YAML (with !include support)
-Env.from_env(name='myapp', app_path=Path('CRAP/file_indexer'))
+# Initialize: resolves config file, loads YAML (with !include and !secret support)
+Env.from_env(name='myapp', app_path=Path(__file__).parent)
 
 # Typed access via "/" path
 db_host = Env.glob('database/host', default='localhost')
@@ -61,7 +61,7 @@ tags    = Env.glob_list('metadata/tags')
 options = Env.glob_dict('database/options')
 ```
 
-Config file resolution: looks for `<name>.yaml` then `config.yaml` in the app path. Base paths are OS-aware (e.g. `/home/alex` on Linux, `D:\Dev` on Windows).
+Config file resolution: looks for `<name>.yaml` then `config.yaml` in the app path. Relative `app_path` values are resolved by walking up from the calling script's directory until a matching subpath is found.
 
 YAML `!include` support:
 ```yaml
