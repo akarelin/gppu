@@ -1114,7 +1114,6 @@ class VaultProvider:
   """Abstract secret-backend provider. Subclass and override get; override set if writable."""
 
   name: str = '?'
-  writable: bool = False
 
   def get(self, name: str) -> str | None:
     raise NotImplementedError
@@ -1127,7 +1126,6 @@ class VaultProviderOSEnviron(VaultProvider):
   """Reads from environment variables: SECRET_<NAME> (hyphens → underscores, uppercased). Read-only."""
 
   name = 'env'
-  # writable stays False — env vars are runtime-only, not a persistence backend
 
   def get(self, name: str) -> str | None:
     env_key = 'SECRET_' + name.upper().replace('-', '_')
@@ -1136,7 +1134,6 @@ class VaultProviderOSEnviron(VaultProvider):
 
 class VaultProviderAzure(VaultProvider):
   name = 'Azure KV'
-  writable = True
 
   def __init__(self, vault_name: str):
     self._vault_name = vault_name
@@ -1163,7 +1160,6 @@ class VaultProviderAzure(VaultProvider):
 
 class VaultProviderGcp(VaultProvider):
   name = 'GCP SM'
-  writable = True
 
   def __init__(self, project: str):
     self._project = project

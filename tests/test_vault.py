@@ -72,7 +72,6 @@ class TestYamlIntegration:
 class TestOSEnvironProvider:
     def test_read_only(self):
         p = VaultProviderOSEnviron()
-        assert p.writable is False
         with pytest.raises(NotImplementedError, match="read-only"):
             p.set("foo", "bar")
 
