@@ -220,7 +220,6 @@ def dict_to_yml(filename:str, data=None, sort_keys=False):
       with open(filename+'_error.txt','w+', encoding='utf-8') as ferr: ferr.write(error)
 
 
-
 def dict_from_yml(filename: str | Path):
   filename = str(filename)
   # OLD: yml_root = filename.rsplit('/', 1)[0]
