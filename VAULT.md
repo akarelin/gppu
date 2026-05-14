@@ -17,20 +17,11 @@ Intended outcome: clean yaml registration, a `Vault.name_for(env_var, **context)
 ## A. Inline the `!secret` yaml constructor
 
 **File:** `/home/alex/gppu/gppu/gppu.py`
-
+No lambdas. Create yml_secret exacly like yml_include
 Around line 249–251, replace:
 ```python
 yaml.add_constructor("!include", yml_include, Loader=yaml.FullLoader)
 
-Vault.yaml_register()
-```
-with:
-```python
-yaml.add_constructor("!include", yml_include, Loader=yaml.FullLoader)
-yaml.add_constructor("!secret",
-                    lambda loader, node: Vault.get(node.value),
-                    Loader=yaml.FullLoader)
-```
 
 **Delete** the `Vault.yaml_register` static method (the four-line `@staticmethod def yaml_register():` block near the bottom of the Vault class). No external callers.
 
