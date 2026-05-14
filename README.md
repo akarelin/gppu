@@ -40,11 +40,10 @@ Release tag target: `v3.5.0alpha1` on `dev` branch.
 
 | Module | Purpose |
 |--------|---------|
-| `gppu` (core)<br> | **Environment**: `Env` config loader with `!include`, typed path access (`glob`, `glob_int`, `glob_list`, `glob_dict`). <br>**Logger**: colored `Info`/`Warn`/`Error`/`Debug`/`Dump`. <br>Plus: type coercion, dict utilities, YAML/JSON I/O, time helpers, OS detection, async helpers, template population |
+| `gppu` (core)<br> | **Environment**: `Env` config loader with `!include`, typed path access (`glob`, `glob_int`, `glob_list`, `glob_dict`). <br>**Logger**: colored `Info`/`Warn`/`Error`/`Debug`/`Dump`. <br>**Vault**: `Vault.get`/`create`/`update`/`list` with Azure Key Vault, GCP Secret Manager, and `SECRET_*` env-var backends; `!secret` YAML tag.<br>Plus: type coercion, dict utilities, YAML/JSON I/O, time helpers, OS detection, async helpers, template population |
 | [`gppu.data`](DATA.md) | `Cache` unified caching (JSON/pickle/sqlite/diskcache/DB backends), <br>database base classes: `_PGBase` (psycopg2) and `_SQABase` (SQLAlchemy) |
 | [`gppu.tui`](TUI.md) | `TUIApp`, `TUILauncher`, `ConfigEditorApp`, `ui_select`, `ui_select_rows`<br> Textual-based TUI framework with web mode (`--serve`), CLI fallback, app embedding. Requires `tui` extra |
 | [`gppu.chrome`](CHROME.md) | `prepare_driver`, `switch_to_mobile`, `switch_to_desktop`<br>Selenium Chrome driver setup with profile management, crash recovery, mobile/desktop emulation |
-| [`gppu.ad`](AD.md) | Home automation types (`y2list`, `y2path`, `y2topic`, `y2slug`, `y2eid`), `DC` pseudo-dataclass |
 
 ## Environment
 
@@ -83,6 +82,22 @@ Debug('GRAY4', 'trace', 'NONE', 'processing item')
 
 Dump('debug_state.yml', data)
 ```
+
+## Vault
+
+Static facade over a pluggable provider chain. Provider auto-detected on first use: `AZURE_KEYVAULT_NAME` → Azure Key Vault, else `GCP_SECRET_PROJECT` → GCP Secret Manager, else `SECRET_*` env-vars. `SECRET_<NAME>` env vars always win over the persistent provider.
+
+```python
+from gppu import Vault
+
+token   = Vault.get('anthropic-api-key')           # checks SECRET_ANTHROPIC_API_KEY first
+Vault.create('slack-bot-token', 'xoxb-...')         # raises if it already exists
+Vault.create('slack-bot-token', 'xoxb-...', designation='T01')  # collision → slack-bot-token-t01
+Vault.update('openai-api-key', 'sk-...', create=True)
+names = Vault.list()                                # env-var union with provider listing
+```
+
+In YAML: `password: !secret db-pass` resolves at load time via `Vault.get`. Requires the `vault` (or `vault-azure` / `vault-gcp`) extra.
 
 ## How Apps Work
 
@@ -156,7 +171,7 @@ launcher_main(apps, MyLauncher, APP_DIR, 'My Tools')
 
 See [w11/app.py](w11/app.py) for a real example.
 
-# Other Prodducts
+# Other Products
 
 [Statusline](statusline/) — Claude Code status line tool
 
@@ -178,7 +193,7 @@ pip install "gppu[all] @ git+ssh://git@github.com/akarelin/gppu.git@gppu/latest"
 pip install -e ".[all,test]"
 ```
 
-**Optional extras**: `pg` (psycopg2), `sql` (SQLAlchemy), `cache` (diskcache), `chrome` (Selenium), `tui` (Textual), `serve` (textual-serve), `statusline` (Jinja2), `all`, `test` (pytest).
+**Optional extras**: `pg` (psycopg2), `sql` (SQLAlchemy), `cache` (diskcache), `chrome` (Selenium), `tui` (Textual), `serve` (textual-serve), `statusline` (Jinja2), `vault-azure`, `vault-gcp`, `vault` (both), `all`, `test` (pytest).
 
 Requires Python >= 3.11. Core dependency: PyYAML.
 
