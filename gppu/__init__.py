@@ -5,8 +5,6 @@ A comprehensive utility library providing configuration loading, logging,
 data manipulation, and type safety utilities.
 """
 
-from .vault import resolve_secret, set_secret, clear_cache as clear_secret_cache
-
 from .ymro import (
     _YMRO,
     YInit,
@@ -17,6 +15,13 @@ from .ymro import (
 )
 
 from .gppu import (
+    # Vault / Secrets
+    Vault,
+    VaultProvider,
+    VaultProviderOSEnviron,
+    VaultProviderAzure,
+    VaultProviderGcp,
+
     # Version info
     VER_GPPU,
     VER_GPPU_BASE,
@@ -166,7 +171,8 @@ __all__ = [
     'Logger', 'protocol_Logger', 'mixin_Logger',
 
     # Vault / Secrets
-    'resolve_secret', 'set_secret', 'clear_secret_cache',
+    'Vault', 'VaultProvider',
+    'VaultProviderOSEnviron', 'VaultProviderAzure', 'VaultProviderGcp',
 
     # Human-readable formatters
     'format_size', 'format_duration', 'format_since',

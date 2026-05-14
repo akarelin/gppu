@@ -1,52 +1,61 @@
-"""Tests for vault secret resolution."""
-import os
-from unittest.mock import MagicMock, patch
+"""Tests for Vault facade + VaultProvider chain."""
+from unittest.mock import patch
 
 import pytest
 
-from gppu.vault import resolve_secret, clear_cache, register_yaml_secret_constructor
-from gppu import dict_from_yml
+from gppu import (
+    Vault,
+    VaultProvider,
+    VaultProviderOSEnviron,
+    VaultProviderAzure,
+    VaultProviderGcp,
+    dict_from_yml,
+)
 
 
 @pytest.fixture(autouse=True)
-def _clean_cache():
-    clear_cache()
+def _clean():
+    Vault.provider_set(None)
+    Vault.yaml_register()
     yield
-    clear_cache()
+    Vault.provider_set(None)
 
 
 class TestEnvVarResolution:
+    """OSEnviron provider resolves SECRET_<NAME> env vars; included in the default chain."""
+
     def test_resolve_from_env(self, monkeypatch):
         monkeypatch.setenv("SECRET_MY_PASSWORD", "s3cret")
-        assert resolve_secret("my-password") == "s3cret"
+        assert Vault.get("my-password") == "s3cret"
 
     def test_hyphen_to_underscore(self, monkeypatch):
         monkeypatch.setenv("SECRET_NEO4J_DEFAULT_PASSWORD", "neo")
-        assert resolve_secret("neo4j-default-password") == "neo"
+        assert Vault.get("neo4j-default-password") == "neo"
 
     def test_uppercase_conversion(self, monkeypatch):
         monkeypatch.setenv("SECRET_LOWER_CASE", "val")
-        assert resolve_secret("lower-case") == "val"
+        assert Vault.get("lower-case") == "val"
 
-    def test_missing_secret_raises(self):
+    def test_missing_secret_raises(self, monkeypatch):
+        monkeypatch.delenv("AZURE_KEYVAULT_NAME", raising=False)
+        monkeypatch.delenv("GCP_SECRET_PROJECT", raising=False)
         with pytest.raises(ValueError, match="not found"):
-            resolve_secret("nonexistent-secret")
+            Vault.get("nonexistent-secret")
 
 
 class TestCache:
     def test_cache_returns_same_value(self, monkeypatch):
         monkeypatch.setenv("SECRET_CACHED", "original")
-        assert resolve_secret("cached") == "original"
+        assert Vault.get("cached") == "original"
         monkeypatch.delenv("SECRET_CACHED")
-        # Should still return cached value
-        assert resolve_secret("cached") == "original"
+        assert Vault.get("cached") == "original"
 
     def test_clear_cache_forces_reresolution(self, monkeypatch):
         monkeypatch.setenv("SECRET_REFRESH", "old")
-        assert resolve_secret("refresh") == "old"
+        assert Vault.get("refresh") == "old"
         monkeypatch.setenv("SECRET_REFRESH", "new")
-        clear_cache()
-        assert resolve_secret("refresh") == "new"
+        Vault.cache_clear()
+        assert Vault.get("refresh") == "new"
 
 
 class TestYamlIntegration:
@@ -59,65 +68,88 @@ class TestYamlIntegration:
         assert result["db"]["host"] == "localhost"
 
 
-class TestAzureProvider:
-    def test_azure_called_when_env_set(self, monkeypatch):
+class TestOSEnvironProvider:
+    def test_read_only(self):
+        p = VaultProviderOSEnviron()
+        assert p.writable is False
+        with pytest.raises(NotImplementedError, match="read-only"):
+            p.set("foo", "bar")
+
+
+class TestProviderDetection:
+    def test_azure_detected_from_env(self, monkeypatch):
         monkeypatch.setenv("AZURE_KEYVAULT_NAME", "myvault")
-        mock_secret = MagicMock()
-        mock_secret.value = "azure-val"
-        mock_client = MagicMock()
-        mock_client.get_secret.return_value = mock_secret
-
-        with patch("gppu.vault._get_azure", return_value="azure-val"):
-            assert resolve_secret("my-key") == "azure-val"
-
-    def test_azure_skipped_when_no_env(self, monkeypatch):
-        monkeypatch.delenv("AZURE_KEYVAULT_NAME", raising=False)
         monkeypatch.delenv("GCP_SECRET_PROJECT", raising=False)
-        with pytest.raises(ValueError, match="not found"):
-            resolve_secret("some-key")
+        assert isinstance(Vault.provider(), VaultProviderAzure)
 
-
-class TestGcpProvider:
-    def test_gcp_called_when_env_set(self, monkeypatch):
+    def test_gcp_detected_from_env(self, monkeypatch):
+        monkeypatch.delenv("AZURE_KEYVAULT_NAME", raising=False)
         monkeypatch.setenv("GCP_SECRET_PROJECT", "my-project")
+        assert isinstance(Vault.provider(), VaultProviderGcp)
 
-        with patch("gppu.vault._get_gcp", return_value="gcp-val"):
-            assert resolve_secret("my-key") == "gcp-val"
+    def test_azure_priority_over_gcp(self, monkeypatch):
+        monkeypatch.setenv("AZURE_KEYVAULT_NAME", "myvault")
+        monkeypatch.setenv("GCP_SECRET_PROJECT", "myproj")
+        assert isinstance(Vault.provider(), VaultProviderAzure)
 
-    def test_gcp_skipped_when_no_env(self, monkeypatch):
-        monkeypatch.delenv("GCP_SECRET_PROJECT", raising=False)
+    def test_no_provider_when_no_env(self, monkeypatch):
         monkeypatch.delenv("AZURE_KEYVAULT_NAME", raising=False)
-        with pytest.raises(ValueError, match="not found"):
-            resolve_secret("some-key")
+        monkeypatch.delenv("GCP_SECRET_PROJECT", raising=False)
+        assert Vault.provider() is None
 
 
-class TestProviderFallback:
-    def test_env_var_takes_priority_over_cloud(self, monkeypatch):
+class TestProviderExplicitSet:
+    def test_explicit_provider_overrides_env(self, monkeypatch):
+        monkeypatch.setenv("AZURE_KEYVAULT_NAME", "envvault")
+        explicit = VaultProviderGcp("explicit-project")
+        Vault.provider_set(explicit)
+        assert Vault.provider() is explicit
+
+    def test_provider_set_none_re_detects(self, monkeypatch):
+        monkeypatch.setenv("AZURE_KEYVAULT_NAME", "myvault")
+        Vault.provider_set(VaultProviderGcp("ignored"))
+        Vault.provider_set(None)
+        assert isinstance(Vault.provider(), VaultProviderAzure)
+
+
+class TestEnvAlwaysWinsOverProvider:
+    def test_env_resolves_before_provider(self, monkeypatch):
         monkeypatch.setenv("SECRET_PRIO_TEST", "from-env")
-        monkeypatch.setenv("AZURE_KEYVAULT_NAME", "myvault")
-        assert resolve_secret("prio-test") == "from-env"
+        with patch.object(VaultProviderAzure, "get", return_value="from-azure"):
+            Vault.provider_set(VaultProviderAzure("myvault"))
+            assert Vault.get("prio-test") == "from-env"
 
-    def test_azure_before_gcp(self, monkeypatch):
-        monkeypatch.setenv("AZURE_KEYVAULT_NAME", "myvault")
-        monkeypatch.setenv("GCP_SECRET_PROJECT", "myproj")
+    def test_provider_called_when_env_absent(self):
+        with patch.object(VaultProviderAzure, "get", return_value="from-azure"):
+            Vault.provider_set(VaultProviderAzure("myvault"))
+            assert Vault.get("only-in-azure") == "from-azure"
 
-        with patch("gppu.vault._get_azure", return_value="azure-val"), \
-             patch("gppu.vault._get_gcp", return_value="gcp-val"):
-            assert resolve_secret("my-key") == "azure-val"
 
-    def test_falls_through_to_gcp_when_azure_fails(self, monkeypatch):
-        monkeypatch.setenv("AZURE_KEYVAULT_NAME", "myvault")
-        monkeypatch.setenv("GCP_SECRET_PROJECT", "myproj")
+class TestCreateUpdate:
+    def test_create_writes_when_absent(self):
+        writes = []
+        with patch.object(VaultProviderAzure, "get", return_value=None), \
+             patch.object(VaultProviderAzure, "set", side_effect=lambda n, v: writes.append((n, v))):
+            Vault.provider_set(VaultProviderAzure("myvault"))
+            Vault.create("new-key", "v1")
+        assert writes == [("new-key", "v1")]
 
-        with patch("gppu.vault._get_azure", return_value=None), \
-             patch("gppu.vault._get_gcp", return_value="gcp-val"):
-            assert resolve_secret("my-key") == "gcp-val"
+    def test_create_raises_on_collision(self):
+        with patch.object(VaultProviderAzure, "get", return_value="existing"):
+            Vault.provider_set(VaultProviderAzure("myvault"))
+            with pytest.raises(ValueError, match="already exists"):
+                Vault.create("dup", "x")
 
-    def test_error_lists_all_checked_sources(self, monkeypatch):
-        monkeypatch.setenv("AZURE_KEYVAULT_NAME", "myvault")
-        monkeypatch.setenv("GCP_SECRET_PROJECT", "myproj")
+    def test_update_raises_when_missing_and_no_create_flag(self):
+        with patch.object(VaultProviderAzure, "get", return_value=None):
+            Vault.provider_set(VaultProviderAzure("myvault"))
+            with pytest.raises(ValueError, match="does not exist"):
+                Vault.update("absent", "x")
 
-        with patch("gppu.vault._get_azure", return_value=None), \
-             patch("gppu.vault._get_gcp", return_value=None), \
-             pytest.raises(ValueError, match="Azure KV.*GCP SM"):
-            resolve_secret("missing-key")
+    def test_update_upserts_with_create_flag(self):
+        writes = []
+        with patch.object(VaultProviderAzure, "get", return_value=None), \
+             patch.object(VaultProviderAzure, "set", side_effect=lambda n, v: writes.append((n, v))):
+            Vault.provider_set(VaultProviderAzure("myvault"))
+            Vault.update("upsert", "v1", create=True)
+        assert writes == [("upsert", "v1")]

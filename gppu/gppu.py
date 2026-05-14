@@ -248,8 +248,7 @@ def dict_from_yml(filename: str | Path):
   yaml.add_representer(tuple, _tuple_representer)
   yaml.add_constructor("!include", yml_include, Loader=yaml.FullLoader)
 
-  from .vault import register_yaml_secret_constructor
-  register_yaml_secret_constructor()
+  Vault.yaml_register()
 
   with open(filename, encoding='utf-8') as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
 
@@ -1100,6 +1099,203 @@ glob = Env.glob
 glob_int = Env.glob_int
 glob_list = Env.glob_list
 glob_dict = Env.glob_dict
+# endregion
+
+
+# region Vault / Secrets
+# Vault is a static facade over a VaultProvider chain. The default chain assembles
+# VaultProviderOSEnviron + (VaultProviderAzure or VaultProviderGcp), auto-detected
+# from env (AZURE_KEYVAULT_NAME / GCP_SECRET_PROJECT) on first use. Override the
+# active provider via Vault.provider_set(...). Class names follow the
+# subject-hierarchy convention: VaultProvider, VaultProviderAzure, etc.
+
+class VaultProvider:
+  """Abstract secret-backend provider. Subclass and override get; override set if writable."""
+
+  name: str = '?'
+  writable: bool = False
+
+  def get(self, name: str) -> str | None:
+    raise NotImplementedError
+
+  def set(self, name: str, value: str) -> None:
+    raise NotImplementedError(f"VaultProvider '{self.name}' is read-only")
+
+
+class VaultProviderOSEnviron(VaultProvider):
+  """Reads from environment variables: SECRET_<NAME> (hyphens → underscores, uppercased). Read-only."""
+
+  name = 'env'
+  # writable stays False — env vars are runtime-only, not a persistence backend
+
+  def get(self, name: str) -> str | None:
+    env_key = 'SECRET_' + name.upper().replace('-', '_')
+    return os.environ.get(env_key)
+
+
+class VaultProviderAzure(VaultProvider):
+  name = 'Azure KV'
+  writable = True
+
+  def __init__(self, vault_name: str):
+    self._vault_name = vault_name
+    self._client = None
+
+  def _ensure_client(self):
+    if self._client is None:
+      from azure.identity import DefaultAzureCredential
+      from azure.keyvault.secrets import SecretClient
+      self._client = SecretClient(
+        vault_url=f"https://{self._vault_name}.vault.azure.net",
+        credential=DefaultAzureCredential())
+    return self._client
+
+  def get(self, name: str) -> str | None:
+    try:
+      return self._ensure_client().get_secret(name).value
+    except Exception:
+      return None
+
+  def set(self, name: str, value: str) -> None:
+    self._ensure_client().set_secret(name, value)
+
+
+class VaultProviderGcp(VaultProvider):
+  name = 'GCP SM'
+  writable = True
+
+  def __init__(self, project: str):
+    self._project = project
+    self._client = None
+
+  def _ensure_client(self):
+    if self._client is None:
+      from google.cloud.secretmanager import SecretManagerServiceClient
+      self._client = SecretManagerServiceClient()
+    return self._client
+
+  def get(self, name: str) -> str | None:
+    try:
+      client = self._ensure_client()
+      resource = f"projects/{self._project}/secrets/{name}/versions/latest"
+      response = client.access_secret_version(request={"name": resource})
+      return response.payload.data.decode("utf-8")
+    except Exception:
+      return None
+
+  def set(self, name: str, value: str) -> None:
+    client = self._ensure_client()
+    parent = f"projects/{self._project}/secrets/{name}"
+    try:
+      client.create_secret(request={
+        "parent": f"projects/{self._project}",
+        "secret_id": name,
+        "secret": {"replication": {"automatic": {}}}})
+    except Exception:
+      pass  # secret already exists
+    client.add_secret_version(request={
+      "parent": parent,
+      "payload": {"data": value.encode("utf-8")}})
+
+
+class Vault:
+  """Static facade for secret operations.
+
+  Resolution order on get: OSEnviron (SECRET_<NAME> env var) → persistent provider.
+  Writes go to the persistent provider (Vault.provider). OSEnviron is read-only.
+  """
+
+  _cache: dict[str, str] = {}
+  _provider: VaultProvider | None = None
+  _env_provider: VaultProvider = VaultProviderOSEnviron()
+
+  @staticmethod
+  def provider_set(provider: VaultProvider | None) -> None:
+    """Set the active persistent provider. Pass None to clear and re-detect from env on next use."""
+    Vault._provider = provider
+    Vault._cache.clear()
+
+  @staticmethod
+  def provider() -> VaultProvider | None:
+    """Return the active persistent provider, auto-detecting from env on first call."""
+    if Vault._provider is None:
+      Vault._provider = Vault._detect()
+    return Vault._provider
+
+  @staticmethod
+  def _detect() -> VaultProvider | None:
+    """AZURE_KEYVAULT_NAME → VaultProviderAzure; else GCP_SECRET_PROJECT → VaultProviderGcp; else None."""
+    vault_name = os.environ.get('AZURE_KEYVAULT_NAME')
+    if vault_name:
+      return VaultProviderAzure(vault_name)
+    project = os.environ.get('GCP_SECRET_PROJECT')
+    if project:
+      return VaultProviderGcp(project)
+    return None
+
+  @staticmethod
+  def get(name: str) -> str:
+    if name in Vault._cache:
+      return Vault._cache[name]
+
+    checked: list[str] = []
+    val = Vault._env_provider.get(name)
+    checked.append(Vault._env_provider.name)
+
+    if val is None:
+      p = Vault.provider()
+      if p is not None:
+        val = p.get(name)
+        checked.append(p.name)
+
+    if val is None:
+      raise ValueError(f"!secret '{name}' not found (checked {', '.join(checked)})")
+
+    Vault._cache[name] = val
+    return val
+
+  @staticmethod
+  def create(name: str, value: str) -> None:
+    """Create a new secret. Raises if name already exists — use update to overwrite."""
+    if Vault._exists(name):
+      raise ValueError(f"Secret '{name}' already exists. Use Vault.update to overwrite.")
+    Vault._write(name, value)
+
+  @staticmethod
+  def update(name: str, value: str, create: bool = False) -> None:
+    """Update an existing secret (creates a new version).
+
+    Raises if the name does not exist, unless create=True — in which case it falls through to create.
+    """
+    if not Vault._exists(name):
+      if not create:
+        raise ValueError(f"Secret '{name}' does not exist. Pass create=True to add it, or use Vault.create.")
+    Vault._write(name, value)
+
+  @staticmethod
+  def _exists(name: str) -> bool:
+    p = Vault.provider()
+    if p is None:
+      raise ValueError("No provider configured")
+    return p.get(name) is not None
+
+  @staticmethod
+  def _write(name: str, value: str) -> None:
+    p = Vault.provider()
+    if p is None:
+      raise ValueError("No provider configured")
+    p.set(name, value)  # raises NotImplementedError if no writable provider available
+    Vault._cache[name] = value
+
+  @staticmethod
+  def cache_clear() -> None:
+    Vault._cache.clear()
+
+  @staticmethod
+  def yaml_register():
+    """Register !secret YAML tag so dict_from_yml can resolve secrets inline."""
+    def yml_secret(loader, node): return Vault.get(node.value)
+    yaml.add_constructor("!secret", yml_secret, Loader=yaml.FullLoader)
 # endregion
 
 
