@@ -219,8 +219,31 @@ jobs:
           if [[ "${IS_PRE}" == "true" ]]; then FLAGS+=(--prerelease); fi
           gh release create "${TAG}" dist/* "${FLAGS[@]}"
 
-      - name: Update gppu/latest tag
+      - name: Update gppu/latest tag and Release assets
         if: env.IS_PRE == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
+          # Move the git tag forward to this stable release
           git tag -f gppu/latest
           git push -f origin gppu/latest
+
+          # Stage assets with stable "latest" filenames so the download URL stays constant:
+          #   releases/download/gppu/latest/gppu-latest-py3-none-any.whl
+          # GitHub does not auto-refresh Release assets when the tag moves, so we
+          # must clobber-upload here or consumers pinned to the URL get the stale wheel.
+          mkdir -p dist-latest
+          for f in dist/*; do
+            base="$(basename "$f")"
+            cp "$f" "dist-latest/${base/${VERSION}/latest}"
+          done
+
+          if ! gh release view gppu/latest >/dev/null 2>&1; then
+            gh release create gppu/latest \
+              --title "gppu latest" \
+              --notes "Rolling pointer to the latest stable gppu release. Currently: v${VERSION}."
+          else
+            gh release edit gppu/latest \
+              --notes "Rolling pointer to the latest stable gppu release. Currently: v${VERSION}."
+          fi
+          gh release upload --clobber gppu/latest dist-latest/*
