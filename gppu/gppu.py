@@ -1426,7 +1426,8 @@ class _App(_Base):
 
 
 # region DC - pseudo DataClass
-_DC_BASE_TYPE_MAP = {'str': str, 'list': list, 'dict': dict, 'set': set, 'int': int, 'float': float, 'bool': bool, 'None': type(None), 'y2eid': y2eid}
+_DC_BASE_TYPE_MAP = {'str': str, 'list': list, 'dict': dict, 'set': set, 'int': int, 'float': float, 'bool': bool, 'None': type(None)}
+_DC_BASE_TYPE_MAP |= {'y2eid': y2eid, 'y2topic': y2topic}  # Custom types can be added here
 
 
 class _DC(UserDict):
