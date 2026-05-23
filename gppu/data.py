@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 from contextlib import contextmanager
 
 from .gppu import Env
@@ -383,5 +383,203 @@ class Cache:
 
   def __enter__(self): return self
   def __exit__(self, *_): self.close()
+
+
+# region Persistence backends for _PersistentDC
+#
+# Backend interface (duck-typed):
+#   upsert(cls: str, key: str, data: dict) -> None
+#   load(cls: str, key: str) -> dict | None
+#   delete(cls: str, key: str) -> None
+#   close() -> None
+#
+# All backends namespace storage by (cls, key) pair.
+
+class _JsonPersistBackend:
+  """JSON-file backend. One file, nested dict {cls: {key: data}}. No deps."""
+
+  def __init__(self, path: str):
+    import os, json
+    self._path = path
+    os.makedirs(os.path.dirname(path) if not os.path.isdir(path) else path, exist_ok=True)
+    if os.path.isdir(path): self._path = os.path.join(path, '_persist.json')
+    self._data: dict[str, dict[str, dict]] = {}
+    try:
+      with open(self._path) as f: self._data = json.load(f)
+    except Exception: pass
+
+  def _flush(self):
+    import json
+    with open(self._path, 'w') as f: json.dump(self._data, f)
+
+  def upsert(self, cls: str, key: str, data: dict) -> None:
+    self._data.setdefault(cls, {})[key] = data
+    self._flush()
+
+  def load(self, cls: str, key: str) -> Optional[dict]:
+    return self._data.get(cls, {}).get(key)
+
+  def delete(self, cls: str, key: str) -> None:
+    if self._data.get(cls, {}).pop(key, None) is not None: self._flush()
+
+  def close(self): self._flush()
+
+
+class _PicklePersistBackend:
+  """Pickle-file backend. Same shape as _JsonPersistBackend. No deps."""
+
+  def __init__(self, path: str):
+    import os, pickle
+    self._path = path
+    os.makedirs(os.path.dirname(path) if not os.path.isdir(path) else path, exist_ok=True)
+    if os.path.isdir(path): self._path = os.path.join(path, '_persist.pkl')
+    self._data: dict[str, dict[str, dict]] = {}
+    try:
+      with open(self._path, 'rb') as f: self._data = pickle.load(f)
+    except Exception: pass
+
+  def _flush(self):
+    import pickle
+    with open(self._path, 'wb') as f: pickle.dump(self._data, f)
+
+  def upsert(self, cls: str, key: str, data: dict) -> None:
+    self._data.setdefault(cls, {})[key] = data
+    self._flush()
+
+  def load(self, cls: str, key: str) -> Optional[dict]:
+    return self._data.get(cls, {}).get(key)
+
+  def delete(self, cls: str, key: str) -> None:
+    if self._data.get(cls, {}).pop(key, None) is not None: self._flush()
+
+  def close(self): self._flush()
+
+
+class _SqlitePersistBackend:
+  """SQLite backend. One file, one table `persistent_dc(cls, key, data)`. Stdlib only."""
+
+  def __init__(self, path: str):
+    import os, sqlite3, threading
+    os.makedirs(os.path.dirname(path) if not os.path.isdir(path) else path, exist_ok=True)
+    if os.path.isdir(path): path = os.path.join(path, '_persist.db')
+    self._conn = sqlite3.connect(path, check_same_thread=False)
+    self._lock = threading.Lock()
+    self._conn.execute(
+      'CREATE TABLE IF NOT EXISTS persistent_dc '
+      '(cls TEXT NOT NULL, key TEXT NOT NULL, data TEXT NOT NULL, '
+      ' updated_at REAL NOT NULL, PRIMARY KEY (cls, key))')
+    self._conn.commit()
+
+  def upsert(self, cls: str, key: str, data: dict) -> None:
+    import json, time
+    with self._lock:
+      self._conn.execute(
+        'INSERT OR REPLACE INTO persistent_dc (cls, key, data, updated_at) VALUES (?, ?, ?, ?)',
+        (cls, key, json.dumps(data), time.time()))
+      self._conn.commit()
+
+  def load(self, cls: str, key: str) -> Optional[dict]:
+    import json
+    with self._lock:
+      row = self._conn.execute(
+        'SELECT data FROM persistent_dc WHERE cls=? AND key=?', (cls, key)).fetchone()
+    return json.loads(row[0]) if row else None
+
+  def delete(self, cls: str, key: str) -> None:
+    with self._lock:
+      self._conn.execute('DELETE FROM persistent_dc WHERE cls=? AND key=?', (cls, key))
+      self._conn.commit()
+
+  def close(self):
+    if self._conn: self._conn.close(); self._conn = None  # type: ignore[assignment]
+
+
+class _PgPersistBackend(_PGBase):
+  """Postgres backend (psycopg2). Table `persistent_dc(cls, key, data JSONB, updated_at)`."""
+
+  SCHEMA_DDL = """
+  CREATE TABLE IF NOT EXISTS persistent_dc (
+    cls         TEXT NOT NULL,
+    key         TEXT NOT NULL,
+    data        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (cls, key)
+  );
+  CREATE INDEX IF NOT EXISTS persistent_dc_cls_idx ON persistent_dc (cls);
+  """
+
+  def __init__(self, **kw):
+    super().__init__(**kw)
+    import threading
+    self._lock = threading.Lock()
+    with self._lock, self.cursor(dict_cursor=False) as cur:
+      cur.execute(self.SCHEMA_DDL)
+
+  def upsert(self, cls: str, key: str, data: dict) -> None:
+    from psycopg2.extras import Json
+    with self._lock, self.cursor(dict_cursor=False) as cur:
+      cur.execute(
+        "INSERT INTO persistent_dc (cls, key, data, updated_at) "
+        "VALUES (%s, %s, %s, now()) "
+        "ON CONFLICT (cls, key) DO UPDATE SET "
+        "  data=EXCLUDED.data, updated_at=now()",
+        (cls, key, Json(data)))
+
+  def load(self, cls: str, key: str) -> Optional[dict]:
+    with self._lock, self.cursor() as cur:
+      cur.execute(
+        "SELECT data FROM persistent_dc WHERE cls=%s AND key=%s", (cls, key))
+      row = cur.fetchone()
+    return dict(row['data']) if row else None
+
+  def delete(self, cls: str, key: str) -> None:
+    with self._lock, self.cursor(dict_cursor=False) as cur:
+      cur.execute("DELETE FROM persistent_dc WHERE cls=%s AND key=%s", (cls, key))
+
+
+_PERSIST_BACKENDS = {
+  'json':     _JsonPersistBackend,
+  'pickle':   _PicklePersistBackend,
+  'sqlite':   _SqlitePersistBackend,
+  'postgres': _PgPersistBackend,
+}
+
+
+class Persistence:
+  """Storage for `_PersistentDC` instances, multi-backend.
+
+  Mirrors the `Cache` class shape.
+
+  Backends (explicit, no fallback):
+    json      — JSON file, no deps
+    pickle    — pickle file, no deps
+    sqlite    — stdlib sqlite3
+    postgres  — psycopg2 + JSONB; takes a connection string (db kwarg)
+
+  Usage:
+    p = Persistence('/var/lib/y2/persist.db', backend='sqlite')
+    p = Persistence('postgresql://...', backend='postgres')   # target is the DSN
+
+    _PersistentDC.bind_db(p)
+  """
+
+  def __init__(self, target: str, *, backend: str = 'sqlite'):
+    import os
+    if backend not in _PERSIST_BACKENDS:
+      raise ValueError(f"Unknown backend {backend!r}, expected one of: {', '.join(_PERSIST_BACKENDS)}")
+    if backend == 'postgres':
+      self._b = _PgPersistBackend(db=target)
+    else:
+      self._b = _PERSIST_BACKENDS[backend](os.path.expanduser(target))
+
+  def upsert(self, cls: str, key: str, data: dict) -> None: self._b.upsert(cls, key, data)
+  def load(self, cls: str, key: str) -> Optional[dict]: return self._b.load(cls, key)
+  def delete(self, cls: str, key: str) -> None: self._b.delete(cls, key)
+  def close(self):
+    if self._b: self._b.close(); self._b = None  # type: ignore[assignment]
+
+  def __enter__(self): return self
+  def __exit__(self, *_): self.close()
+# endregion
 
 

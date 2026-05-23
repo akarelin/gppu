@@ -326,6 +326,42 @@ def template_populate(o, data: dict = {}, excludes:list = []) -> Any:
   if isinstance(o, dict): _ = o.get('data', {}) | o
   else: _ = str(o)
   return __tp(_, data)
+
+
+_jinja_env = None
+
+def _get_jinja_env():
+  """Lazy-initialized SandboxedEnvironment. Returns None if jinja2 isn't installed."""
+  global _jinja_env
+  if _jinja_env is not None: return _jinja_env
+  try:
+    from jinja2 import Undefined
+    from jinja2.sandbox import SandboxedEnvironment
+  except ImportError:
+    return None
+  env = SandboxedEnvironment(undefined=Undefined, autoescape=False, keep_trailing_newline=False)
+  env.filters['safe_int']         = safe_int
+  env.filters['safe_float']       = safe_float
+  env.filters['safe_list']        = safe_list
+  env.filters['safe_timedelta']   = safe_timedelta
+  env.filters['dict_sanitize']    = dict_sanitize
+  env.filters['pretty_timedelta'] = pretty_timedelta
+  env.filters['pfy']              = pfy
+  env.filters['slugify']          = slugify
+  _jinja_env = env
+  return env
+
+
+def jinja_template(template: str, **data) -> Optional[str]:
+  """Render `template` as a Jinja2 template in a sandboxed environment.
+    Variables are passed as kwargs. Gppu helpers registered as filters:
+    safe_int, safe_float, safe_list, safe_timedelta, dict_sanitize,
+    pretty_timedelta, pfy, slugify.
+    Returns None if jinja2 isn't installed; raises jinja2.TemplateError
+    on syntax/runtime errors (caller decides how to handle)."""
+  env = _get_jinja_env()
+  if env is None: return None
+  return env.from_string(template).render(**data)
 # endregion
 
 
@@ -1441,4 +1477,45 @@ class _DC(UserDict):
 
 
 class App(_App, _DC): pass
+
+
+class _PersistentDC(_DC):
+  """_DC subclass that persists self.data through a pluggable backend.
+
+  Storage is namespaced by (type(self).__name__, self.data[_persist_key]).
+  Subclasses wanting custom storage override _do_persist() / load().
+
+  Backend protocol (duck-typed; see `gppu.data.Persistence` for the standard
+  factory and built-in backends: json, pickle, sqlite, postgres):
+    upsert(cls: str, key: str, data: dict) -> None
+    load(cls: str, key: str)   -> dict | None
+    delete(cls: str, key: str) -> None
+    close()                    -> None
+
+  Bind once per process:
+    from gppu.data import Persistence
+    _PersistentDC.bind_db(Persistence('/var/lib/y2.db', backend='sqlite'))
+  """
+
+  _persist_key: ClassVar[str] = 'gppu'
+  _persist_db:  ClassVar[Any] = None
+
+  @classmethod
+  def bind_db(cls, db: Any) -> None: cls._persist_db = db
+
+  def persist(self) -> None:
+    db = type(self)._persist_db
+    if db is None: return
+    pk = self.data.get(self._persist_key)
+    if not pk: return
+    self._do_persist(db, str(pk))
+
+  def _do_persist(self, db: Any, pk: str) -> None:
+    db.upsert(type(self).__name__, pk, dict(self.data))
+
+  @classmethod
+  def load(cls, key: str) -> Optional[dict]:
+    db = cls._persist_db
+    if db is None: return None
+    return db.load(cls.__name__, str(key))
 # endregion
