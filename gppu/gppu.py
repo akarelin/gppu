@@ -1518,4 +1518,11 @@ class _PersistentDC(_DC):
     db = cls._persist_db
     if db is None: return None
     return db.load(cls.__name__, str(key))
+
+  @classmethod
+  def iter_all(cls):
+    """Yield (key, data) for every persisted row of this class. Empty if unbound."""
+    db = cls._persist_db
+    if db is None: return
+    yield from db.iter(cls.__name__)
 # endregion

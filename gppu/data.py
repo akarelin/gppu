@@ -419,6 +419,9 @@ class _JsonPersistBackend:
   def load(self, cls: str, key: str) -> Optional[dict]:
     return self._data.get(cls, {}).get(key)
 
+  def iter(self, cls: str):
+    for k, v in self._data.get(cls, {}).items(): yield k, dict(v)
+
   def delete(self, cls: str, key: str) -> None:
     if self._data.get(cls, {}).pop(key, None) is not None: self._flush()
 
@@ -448,6 +451,9 @@ class _PicklePersistBackend:
 
   def load(self, cls: str, key: str) -> Optional[dict]:
     return self._data.get(cls, {}).get(key)
+
+  def iter(self, cls: str):
+    for k, v in self._data.get(cls, {}).items(): yield k, dict(v)
 
   def delete(self, cls: str, key: str) -> None:
     if self._data.get(cls, {}).pop(key, None) is not None: self._flush()
@@ -484,6 +490,13 @@ class _SqlitePersistBackend:
       row = self._conn.execute(
         'SELECT data FROM persistent_dc WHERE cls=? AND key=?', (cls, key)).fetchone()
     return json.loads(row[0]) if row else None
+
+  def iter(self, cls: str):
+    import json
+    with self._lock:
+      rows = self._conn.execute(
+        'SELECT key, data FROM persistent_dc WHERE cls=? ORDER BY key', (cls,)).fetchall()
+    for k, d in rows: yield k, json.loads(d)
 
   def delete(self, cls: str, key: str) -> None:
     with self._lock:
@@ -532,6 +545,13 @@ class _PgPersistBackend(_PGBase):
       row = cur.fetchone()
     return dict(row['data']) if row else None
 
+  def iter(self, cls: str):
+    with self._lock, self.cursor() as cur:
+      cur.execute(
+        "SELECT key, data FROM persistent_dc WHERE cls=%s ORDER BY key", (cls,))
+      rows = cur.fetchall()
+    for r in rows: yield r['key'], dict(r['data'])
+
   def delete(self, cls: str, key: str) -> None:
     with self._lock, self.cursor(dict_cursor=False) as cur:
       cur.execute("DELETE FROM persistent_dc WHERE cls=%s AND key=%s", (cls, key))
@@ -574,6 +594,7 @@ class Persistence:
 
   def upsert(self, cls: str, key: str, data: dict) -> None: self._b.upsert(cls, key, data)
   def load(self, cls: str, key: str) -> Optional[dict]: return self._b.load(cls, key)
+  def iter(self, cls: str): yield from self._b.iter(cls)
   def delete(self, cls: str, key: str) -> None: self._b.delete(cls, key)
   def close(self):
     if self._b: self._b.close(); self._b = None  # type: ignore[assignment]
