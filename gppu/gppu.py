@@ -166,20 +166,21 @@ def dict_sanitize(data: dict | list, sort_keys=False) -> dict | list:
     elif hasattr(o, 'data') and isinstance(o.data, dict): d = o.data
     else: d = dict(o)
 
-    _ = [k for k in KEYS_FIRST if k in d]
-    # ! Support for Null keys is not finished and its unclear if it is needed anymore
-    ordered_keys = _ + sorted([str(k) if k else '?' for k in d.keys() if k not in KEYS_FIRST and k not in KEYS_DROP])
-    for k in ordered_keys:
-      if k == '?': v = d.get(None)
-      else: v = d.get(k)
-      
+    first_keys = [k for k in KEYS_FIRST if k in d]
+    rest_keys = sorted(
+      (k for k in d.keys() if k not in KEYS_FIRST and k not in KEYS_DROP),
+      key=lambda k: str(k) if k else '?',
+    )
+    for k in first_keys + rest_keys:
       if k in KEYS_DROP: continue
-      elif k in KEYS_FORCE_STRING: _ = str(v)
+      v = d.get(k)
+      display_k = str(k) if k else '?'
+      if display_k in KEYS_FORCE_STRING: _ = str(v)
       elif _isdict(v): _ = _sanitize_dict(v)
       elif _islist(v): _ = _sanitize_list(v)
       elif _isnumber(v): _ = v
       else: _ = str(v) if v else None
-      result[str(k)] = _
+      result[display_k] = _
     return result
 
   def _isstring(o) -> bool:
