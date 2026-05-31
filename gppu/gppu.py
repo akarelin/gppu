@@ -12,7 +12,9 @@ import platform
 import asyncio
 import json
 import getpass
+import ast
 
+from types import CodeType
 from pathlib import Path
 from copy import deepcopy
 
@@ -363,6 +365,74 @@ def jinja_template(template: str, **data) -> Optional[str]:
   env = _get_jinja_env()
   if env is None: return None
   return env.from_string(template).render(**data)
+# endregion
+
+
+# region Safe expression eval: compile_expr, eval_expr
+# AST node types allowed in a config expression. Anything outside this set
+# (statements, lambda, comprehensions, walrus, starred, f-strings, ...) is
+# rejected at compile time, so a config string can never reach assignment,
+# import, or arbitrary execution — it can only compute a value.
+_EXPR_ALLOWED_NODES: Tuple[type, ...] = (
+  ast.Expression,
+  ast.BoolOp, ast.And, ast.Or,
+  ast.UnaryOp, ast.Not, ast.USub, ast.UAdd, ast.Invert,
+  ast.BinOp, ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow,
+  ast.IfExp,
+  ast.Compare, ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE,
+  ast.Is, ast.IsNot, ast.In, ast.NotIn,
+  ast.Call, ast.keyword,
+  ast.Attribute, ast.Subscript, ast.Slice, ast.Load,
+  ast.Name, ast.Constant,
+  ast.List, ast.Tuple, ast.Dict, ast.Set,
+)
+
+# Names exposed to expressions in place of real builtins (which are stripped).
+# `default` mirrors the Jinja `default` filter: fall back when value is None.
+_EXPR_BUILTINS: Dict[str, Callable] = {
+  'default': lambda value, fallback=None: fallback if value is None else value,
+  'len': len, 'abs': abs, 'round': round, 'min': min, 'max': max,
+  'int': int, 'float': float, 'str': str, 'bool': bool,
+  'safe_int': safe_int, 'safe_float': safe_float, 'safe_list': safe_list,
+}
+
+_expr_cache: Dict[str, CodeType] = {}
+
+
+def compile_expr(expr: str) -> CodeType:
+  """Compile a single Python expression under a strict AST allow-list.
+
+  A leading/trailing `{{ ... }}` wrapper is stripped, so Jinja-style
+  single-expression templates compile unchanged. Raises `ValueError` on a
+  syntax error or any disallowed construct (statement, lambda, comprehension,
+  dunder name/attribute, ...). Results are cached by source string."""
+  src = expr.strip()
+  if src.startswith('{{') and src.endswith('}}'): src = src[2:-2].strip()
+  cached = _expr_cache.get(src)
+  if cached is not None: return cached
+  try: tree = ast.parse(src, mode='eval')
+  except SyntaxError as e: raise ValueError(f"Invalid expression {expr!r}: {e}") from e
+  for node in ast.walk(tree):
+    if not isinstance(node, _EXPR_ALLOWED_NODES):
+      raise ValueError(f"Disallowed expression element {type(node).__name__} in {expr!r}")
+    if isinstance(node, ast.Attribute) and node.attr.startswith('__'):
+      raise ValueError(f"Disallowed dunder attribute {node.attr!r} in {expr!r}")
+    if isinstance(node, ast.Name) and node.id.startswith('__'):
+      raise ValueError(f"Disallowed dunder name {node.id!r} in {expr!r}")
+  code = compile(tree, '<expr>', 'eval')
+  _expr_cache[src] = code
+  return code
+
+
+def eval_expr(expr: str | CodeType, **ctx) -> Any:
+  """Evaluate a restricted expression (see `compile_expr`) against `ctx`.
+
+  `expr` is a source string or a pre-compiled code object. The eval namespace
+  is `_EXPR_BUILTINS` plus `ctx` (ctx wins on name clash); real `__builtins__`
+  are removed. Raises `ValueError` for a bad expression, or whatever the
+  expression itself raises at runtime (NameError, TypeError, ...)."""
+  code = expr if isinstance(expr, CodeType) else compile_expr(expr)
+  return eval(code, {'__builtins__': {}}, {**_EXPR_BUILTINS, **ctx})
 # endregion
 
 
