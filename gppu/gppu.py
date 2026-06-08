@@ -394,6 +394,7 @@ _EXPR_BUILTINS: Dict[str, Callable] = {
   'len': len, 'round': round, 'min': min, 'max': max,
   'int': int, 'float': float, 'str': str, 'bool': bool,
   'safe_int': safe_int, 'safe_float': safe_float, 'safe_list': safe_list,
+  're': re,
 }
 
 _expr_cache: Dict[str, CodeType] = {}
