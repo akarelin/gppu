@@ -391,7 +391,7 @@ _EXPR_ALLOWED_NODES: Tuple[type, ...] = (
 # `default` mirrors the Jinja `default` filter: fall back when value is None.
 _EXPR_BUILTINS: Dict[str, Callable] = {
   'default': lambda value, fallback=None: fallback if value is None else value,
-  'len': len, 'abs': abs, 'round': round, 'min': min, 'max': max,
+  'len': len, 'round': round, 'min': min, 'max': max,
   'int': int, 'float': float, 'str': str, 'bool': bool,
   'safe_int': safe_int, 'safe_float': safe_float, 'safe_list': safe_list,
 }
