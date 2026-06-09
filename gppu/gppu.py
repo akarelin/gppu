@@ -269,7 +269,8 @@ def dict_to_json(filename: str | Path, data=None, indent=2):
 def dict_from_json(filename: str | Path):
   with open(filename, encoding='utf-8') as f: return json.load(f)
 
-
+## _________Code below has deviated from the golden rule                                                  
+## !! templates are simple inline functtions that return lists, dicts or scalars to be merged into dicts.
 def dict_template_populate(o, data: dict = {}, excludes:list = []) -> dict:
   """ 
     Returns new dictionary, copy of o with all templatable elements filled-in from data 
