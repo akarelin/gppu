@@ -20,7 +20,6 @@ from .gppu import (
     VaultProvider,
     VaultProviderOSEnviron,
     VaultProviderAzure,
-    VaultProviderGcp,
 
     # Version info
     VER_GPPU,
@@ -176,7 +175,7 @@ __all__ = [
 
     # Vault / Secrets
     'Vault', 'VaultProvider',
-    'VaultProviderOSEnviron', 'VaultProviderAzure', 'VaultProviderGcp',
+    'VaultProviderOSEnviron', 'VaultProviderAzure',
 
     # Human-readable formatters
     'format_size', 'format_duration', 'format_since',
