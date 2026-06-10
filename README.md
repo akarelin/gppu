@@ -2,7 +2,7 @@
 
 <h3><code>v3</code> — <em>All the things</em></h3>
 
-> YAML-driven configuration with `!include` and `!secret`, colored structured logging, secret management (Azure Key Vault / GCP Secret Manager / env-vars), type coercion, deep dict access, YAML/JSON I/O, template population, time helpers, OS detection, async-to-sync, multi-backend caching, PostgreSQL and SQLAlchemy base classes, Textual TUI framework with superapp launchers, nested apps, config editors, web UI via `--serve`, and CLI fallback, Selenium Chrome automation, and home automation types.
+> YAML-driven configuration with `!include` and `!secret`, colored structured logging, secret management (Azure Key Vault / env-vars), type coercion, deep dict access, YAML/JSON I/O, template population, time helpers, OS detection, async-to-sync, multi-backend caching, PostgreSQL and SQLAlchemy base classes, Textual TUI framework with superapp launchers, nested apps, config editors, web UI via `--serve`, and CLI fallback, Selenium Chrome automation, and home automation types.
 
 [![CI](https://github.com/akarelin/gppu/actions/workflows/gppu.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/gppu.yml) [![release](https://img.shields.io/github/v/release/akarelin/gppu?filter=gppu/v*&label=&color=blue&style=flat-square)](https://github.com/akarelin/gppu/releases?q=gppu)
 
@@ -30,7 +30,7 @@
 
 | Module | Purpose |
 |--------|---------|
-| `gppu` (core)<br> | **Environment**: `Env` config loader with `!include`, typed path access (`glob`, `glob_int`, `glob_list`, `glob_dict`). <br>**Logger**: colored `Info`/`Warn`/`Error`/`Debug`/`Dump`. <br>**Vault**: `Vault.get`/`create`/`update`/`list` with Azure Key Vault, GCP Secret Manager, and `SECRET_*` env-var backends; `!secret` YAML tag.<br>Plus: type coercion, dict utilities, YAML/JSON I/O, time helpers, OS detection, async helpers, template population |
+| `gppu` (core)<br> | **Environment**: `Env` config loader with `!include`, typed path access (`glob`, `glob_int`, `glob_list`, `glob_dict`). <br>**Logger**: colored `Info`/`Warn`/`Error`/`Debug`/`Dump`. <br>**Vault**: `Vault.get`/`create`/`update`/`list` with Azure Key Vault and `SECRET_*` env-var backends; `!secret` YAML tag.<br>Plus: type coercion, dict utilities, YAML/JSON I/O, time helpers, OS detection, async helpers, template population |
 | [`gppu.data`](DATA.md) | `Cache` unified caching (JSON/pickle/sqlite/diskcache/DB backends), <br>database base classes: `_PGBase` (psycopg2) and `_SQABase` (SQLAlchemy) |
 | [`gppu.tui`](TUI.md) | `TUIApp`, `TUILauncher`, `ConfigEditorApp`, `ui_select`, `ui_select_rows`<br> Textual-based TUI framework with web mode (`--serve`), CLI fallback, app embedding. Requires `tui` extra |
 | [`gppu.chrome`](CHROME.md) | `prepare_driver`, `switch_to_mobile`, `switch_to_desktop`<br>Selenium Chrome driver setup with profile management, crash recovery, mobile/desktop emulation |
@@ -87,7 +87,7 @@ Vault.update('openai-api-key', 'sk-...', create=True)
 names = Vault.list()                                # env-var union with provider listing
 ```
 
-In YAML: `password: !secret db-pass` resolves at load time via `Vault.get`. Requires the `vault` (or `vault-azure` / `vault-gcp`) extra.
+In YAML: `password: !secret db-pass` resolves at load time via `Vault.get`. Requires the `vault` (or `vault-azure`) extra.
 
 ## How Apps Work
 
@@ -183,7 +183,7 @@ pip install "gppu[all] @ git+ssh://git@github.com/akarelin/gppu.git@gppu/latest"
 pip install -e ".[all,test]"
 ```
 
-**Optional extras**: `pg` (psycopg2), `sql` (SQLAlchemy), `cache` (diskcache), `chrome` (Selenium), `tui` (Textual), `serve` (textual-serve), `statusline` (Jinja2), `vault-azure`, `vault-gcp`, `vault` (both), `all`, `test` (pytest), `test-tui` (pytest + pytest-asyncio + textual).
+**Optional extras**: `pg` (psycopg2), `sql` (SQLAlchemy), `cache` (diskcache), `chrome` (Selenium), `tui` (Textual), `serve` (textual-serve), `statusline` (Jinja2), `vault-azure`, `vault` (= `vault-azure`), `all`, `test` (pytest), `test-tui` (pytest + pytest-asyncio + textual).
 
 Requires Python >= 3.11. Core dependency: PyYAML.
 
