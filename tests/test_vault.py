@@ -9,7 +9,6 @@ from gppu import (
     VaultProvider,
     VaultProviderOSEnviron,
     VaultProviderAzure,
-    VaultProviderGcp,
     dict_from_yml,
 )
 
@@ -39,7 +38,6 @@ class TestEnvVarResolution:
 
     def test_missing_secret_raises(self, monkeypatch):
         monkeypatch.delenv("AZURE_KEYVAULT_NAME", raising=False)
-        monkeypatch.delenv("GCP_SECRET_PROJECT", raising=False)
         with pytest.raises(ValueError, match="not found"):
             Vault.get("nonexistent-secret")
 
