@@ -54,10 +54,8 @@ from .gppu import (
     template_populate,
     dict_template_populate,
     jinja_template,
-    compile_expr,
-    eval_expr,
+    _py_compile,
     py_evaluate,
-    compile_gen,
     py_generate,
 
     # Dictionary utilities
@@ -151,7 +149,7 @@ __all__ = [
     # Configuration
     'dict_from_yml', 'dict_to_yml', 'dict_from_json', 'dict_to_json', 'dict_sanitize',
     'template_populate', 'dict_template_populate', 'jinja_template',
-    'compile_expr', 'eval_expr', 'py_evaluate', 'compile_gen', 'py_generate',
+    'py_evaluate', 'py_generate',
 
     # Dictionary utilities
     'deepget', 'deepget_dict', 'deepget_float', 'deepget_int', 'deepget_list',
