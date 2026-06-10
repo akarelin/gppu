@@ -75,7 +75,7 @@ Dump('debug_state.yml', data)
 
 ## Vault
 
-Static facade over a pluggable provider chain. Provider auto-detected on first use: `AZURE_KEYVAULT_NAME` → Azure Key Vault, else `GCP_SECRET_PROJECT` → GCP Secret Manager, else `SECRET_*` env-vars. `SECRET_<NAME>` env vars always win over the persistent provider.
+Static facade over a pluggable provider chain. Provider auto-detected on first use: `AZURE_KEYVAULT_NAME` → Azure Key Vault, else `SECRET_*` env-vars. `SECRET_<NAME>` env vars always win over the persistent provider.
 
 ```python
 from gppu import Vault

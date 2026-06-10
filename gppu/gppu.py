@@ -1241,10 +1241,10 @@ glob_dict = Env.glob_dict
 
 # region Vault / Secrets
 # Vault is a static facade over a VaultProvider chain. The default chain assembles
-# VaultProviderOSEnviron + (VaultProviderAzure or VaultProviderGcp), auto-detected
-# from env (AZURE_KEYVAULT_NAME / GCP_SECRET_PROJECT) on first use. Override the
-# active provider via Vault.provider_set(...). Class names follow the
-# subject-hierarchy convention: VaultProvider, VaultProviderAzure, etc.
+# VaultProviderOSEnviron + VaultProviderAzure, auto-detected from env
+# (AZURE_KEYVAULT_NAME) on first use. Override the active provider via
+# Vault.provider_set(...). Class names follow the subject-hierarchy convention:
+# VaultProvider, VaultProviderAzure, etc.
 
 class VaultProvider:
   """Abstract secret-backend provider. Subclass and override get; override set/list if writable/enumerable."""
@@ -1310,8 +1310,7 @@ class Vault:
   def provider() -> VaultProvider:
     """Return the active persistent provider, auto-detecting from env on first call.
 
-    Falls back to VaultProviderOSEnviron when neither AZURE_KEYVAULT_NAME nor
-    GCP_SECRET_PROJECT is set.
+    Falls back to VaultProviderOSEnviron when AZURE_KEYVAULT_NAME is not set.
     """
     if Vault._provider is None:
       Vault._provider = Vault._detect()
@@ -1319,10 +1318,10 @@ class Vault:
 
   @staticmethod
   def _detect() -> VaultProvider:
+    """AZURE_KEYVAULT_NAME → VaultProviderAzure; else env-var fallback."""
     vault_name = os.environ.get('AZURE_KEYVAULT_NAME')
-    if vault_name: return VaultProviderAzure(vault_name)    
+    if vault_name: return VaultProviderAzure(vault_name)
     return Vault._env_provider
-
 
   @staticmethod
   def get(name: str) -> str:
