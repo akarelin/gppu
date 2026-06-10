@@ -5,7 +5,7 @@ import types
 
 import pytest
 
-from gppu import py_evaluate, py_generate, py_register, py_template
+from gppu import py_evaluate, py_generate, py_register, py_template, py_construct
 from gppu.gppu import _py_compile, _py_templates
 
 
@@ -122,6 +122,52 @@ class TestNamedTemplates:
         templates(t_x="1")
         templates(t_x="2")
         assert py_evaluate("t_x") == 2
+
+
+class TestPyConstruct:
+    """template dict (+ optional generator) + row -> .data, with inline defaults."""
+
+    INLINE = {
+        'slug': "re.sub('[ -]+', '_', name.lower())",
+        'eid': "domain + '.' + slug",
+        'flags': "({'on_level': int(brightness)} | default(flags, {}))",
+    }
+
+    def test_pure_data_template(self):
+        data = py_construct({'class': 'IDevice', 'domain': 'light'}, {'name': 'AO Lamp'}, self.INLINE)
+        assert data['class'] == 'IDevice' and data['slug'] == 'ao_lamp' and data['eid'] == 'light.ao_lamp'
+
+    def test_generator_computes(self, templates):
+        templates(t_gen="{'topic': 'dev/' + slug}")
+        data = py_construct({'generator': 't_gen', 'domain': 'light'}, {'name': 'AO Lamp'}, self.INLINE)
+        assert data['topic'] == 'dev/ao_lamp'      # prepass slug visible inside the generator
+
+    def test_row_wins_over_template_wins_over_generator(self, templates):
+        templates(t_gen="{'a': 'gen', 'b': 'gen', 'c': 'gen'}")
+        data = py_construct({'generator': 't_gen', 'b': 'tmpl', 'c': 'tmpl'}, {'c': 'row', 'name': 'x'}, {})
+        assert (data['a'], data['b'], data['c']) == ('gen', 'tmpl', 'row')
+
+    def test_generator_beats_inline_generated(self, templates):
+        templates(t_gen="{'eid': 'btn.special'}")
+        data = py_construct({'generator': 't_gen', 'domain': 'light'}, {'name': 'AO Lamp'}, self.INLINE)
+        assert data['eid'] == 'btn.special'
+
+    def test_inline_skips_when_reference_absent(self):
+        data = py_construct({'class': 'IDevice'}, {'name': 'AO Lamp'}, self.INLINE)   # no domain
+        assert 'eid' not in data
+
+    def test_self_merge_inline(self):
+        data = py_construct({'flags': {'backlight': 127}}, {'name': 'x', 'brightness': 50}, self.INLINE)
+        assert data['flags'] == {'on_level': 50, 'backlight': 127}
+
+    def test_values_are_context_not_result(self):
+        data = py_construct({'domain': 'light'}, {'name': 'AO Lamp'}, self.INLINE, parent_only=1)
+        assert 'parent_only' not in data
+
+    def test_helpers_callable(self, templates):
+        templates(t_gen="{'topic': topic('state_topic')}")
+        data = py_construct({'generator': 't_gen'}, {'name': 'x'}, {}, topic=lambda k: f"T/{k}")
+        assert data['topic'] == 'T/state_topic'
 
 
 class TestCompileCaching:
