@@ -423,37 +423,55 @@ _EXPR_BUILTINS: Dict[str, Callable | ModuleType] = {
   're': re,
 }
 
-_expr_cache: Dict[str, CodeType] = {}
+_py_cache: Dict[str, CodeType] = {}
+
+# A Generator is a function body, so on top of the expression nodes it needs
+# assignment, `if`, and `return` (plus the `def` wrapper). Same bans otherwise
+# (no import / lambda / comprehension / walrus / dunder).
+_PY_ALLOWED_NODES: Tuple[type, ...] = _EXPR_ALLOWED_NODES + (
+  ast.Module, ast.FunctionDef, ast.arguments, ast.arg,
+  ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Store,
+  ast.If, ast.Return, ast.Expr, ast.Pass,
+)
 
 
-def compile_expr(expr: str) -> CodeType:
-  """Compile a single Python expression under a strict AST allow-list.
+def _py_compile(src: str) -> CodeType:
+  """Internal unified compiler → code that defines `_gen()`. Handles both forms:
+  an Evaluator (a single expression, wrapped as `return <expr>`) and a Generator
+  (a multi-statement function body that `return`s an object). A `{{ ... }}` wrapper
+  is stripped. Strict AST allow-list (`_PY_ALLOWED_NODES`); same dunder / import /
+  lambda / comprehension bans. Cached by source."""
+  body = src.strip()
+  if body.startswith('{{') and body.endswith('}}'): body = body[2:-2].strip()
 
-  A leading/trailing `{{ ... }}` wrapper is stripped, so Jinja-style
-  single-expression templates compile unchanged. Raises `ValueError` on a
-  syntax error or any disallowed construct (statement, lambda, comprehension,
-  dunder name/attribute, ...). Results are cached by source string."""
-  src = expr.strip()
-  if src.startswith('{{') and src.endswith('}}'): src = src[2:-2].strip()
-
-  cached = _expr_cache.get(src)
+  cached = _py_cache.get(body)
   if cached is not None: return cached
 
-  try: tree = ast.parse(src, mode='eval')
-  except SyntaxError as e: raise ValueError(f"Invalid expression {expr!r}: {e}") from e
+  try:                                 # a single expression -> `return <expr>`
+    ast.parse(body, mode='eval')
+    inner = 'return ' + body
+  except SyntaxError:                  # a statement body is used verbatim
+    inner = body
+
+  wrapped = "def _gen():\n" + "\n".join("  " + ln for ln in inner.splitlines())
+  try: tree = ast.parse(wrapped, mode='exec')
+  except SyntaxError as e: raise ValueError(f"Invalid template {src!r}: {e}") from e
 
   for node in ast.walk(tree):
-    if not isinstance(node, _EXPR_ALLOWED_NODES): raise ValueError(f"Disallowed expression element {type(node).__name__} in {expr!r}")
-    if isinstance(node, ast.Attribute) and node.attr.startswith('__'): raise ValueError(f"Disallowed dunder attribute {node.attr!r} in {expr!r}")
-    if isinstance(node, ast.Name) and node.id.startswith('__'): raise ValueError(f"Disallowed dunder name {node.id!r} in {expr!r}")
+    if not isinstance(node, _PY_ALLOWED_NODES): raise ValueError(f"Disallowed element {type(node).__name__} in {src!r}")
+    if isinstance(node, ast.Attribute) and node.attr.startswith('__'): raise ValueError(f"Disallowed dunder attribute {node.attr!r} in {src!r}")
+    if isinstance(node, ast.Name) and node.id.startswith('__'): raise ValueError(f"Disallowed dunder name {node.id!r} in {src!r}")
 
-  code = compile(tree, '<expr>', 'eval')
-  _expr_cache[src] = code
+  code = compile(tree, '<py>', 'exec')
+  _py_cache[body] = code
   return code
 
+compile_expr = _py_compile  # back-compat alias (was the expression-only compiler)
 
-def eval_expr(expr: str | CodeType, **ctx) -> Any:
-  """Evaluate a restricted expression (see `compile_expr`) against `ctx`.
+
+def py_evaluate(expr: str | CodeType, **ctx) -> Any:
+  """The Evaluator: evaluate a single restricted expression (see `compile_expr`)
+  against `ctx` and return its value.
 
   `expr` is a source string or a pre-compiled code object. The eval namespace
   is `_EXPR_BUILTINS` plus `ctx` (ctx wins on name clash); real `__builtins__`
@@ -461,6 +479,57 @@ def eval_expr(expr: str | CodeType, **ctx) -> Any:
   expression itself raises at runtime (NameError, TypeError, ...)."""
   code = expr if isinstance(expr, CodeType) else compile_expr(expr)
   return eval(code, {'__builtins__': {}}, {**_EXPR_BUILTINS, **ctx})
+
+eval_expr = py_evaluate  # back-compat alias; `py_evaluate` is the public name
+# endregion
+
+
+# region Safe function eval: compile_gen, py_generate (the Generator)
+# Like the Evaluator above, but for a multi-statement function body that builds and
+# `return`s an object. Same safety model — no import / lambda / comprehension / walrus
+# / dunder — plus the statement nodes a constructor needs: assignment, `if`, `return`.
+_GEN_ALLOWED_NODES: Tuple[type, ...] = _EXPR_ALLOWED_NODES + (
+  ast.Module, ast.FunctionDef, ast.arguments, ast.arg,
+  ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Store,
+  ast.If, ast.Return, ast.Expr, ast.Pass,
+)
+_gen_cache: Dict[str, CodeType] = {}
+
+
+def compile_gen(body: str) -> CodeType:
+  """Compile a Generator body (statements + `return`) into code that defines `_gen()`.
+  Allow-list = `_EXPR_ALLOWED_NODES` + assignment / `if` / `return`; same dunder /
+  import / lambda / comprehension bans as `compile_expr`. A `{{ expr }}` wrapper
+  becomes `return expr`. Cached by source string."""
+  src = body.strip()
+  if src.startswith('{{') and src.endswith('}}'): src = 'return ' + src[2:-2].strip()
+
+  cached = _gen_cache.get(src)
+  if cached is not None: return cached
+
+  wrapped = "def _gen():\n" + "\n".join("  " + ln for ln in src.splitlines())
+  try: tree = ast.parse(wrapped, mode='exec')
+  except SyntaxError as e: raise ValueError(f"Invalid generator {body!r}: {e}") from e
+
+  for node in ast.walk(tree):
+    if not isinstance(node, _GEN_ALLOWED_NODES): raise ValueError(f"Disallowed element {type(node).__name__} in {body!r}")
+    if isinstance(node, ast.Attribute) and node.attr.startswith('__'): raise ValueError(f"Disallowed dunder attribute {node.attr!r} in {body!r}")
+    if isinstance(node, ast.Name) and node.id.startswith('__'): raise ValueError(f"Disallowed dunder name {node.id!r} in {body!r}")
+
+  code = compile(tree, '<generate>', 'exec')
+  _gen_cache[src] = code
+  return code
+
+
+def py_generate(body: str | CodeType, **ctx) -> Any:
+  """The Generator: run a function body (statements + `return`, see `compile_gen`)
+  against `ctx` and return the object it builds. Namespace is `_EXPR_BUILTINS` + `ctx`
+  (ctx wins); real builtins removed. Evaluators/generators passed in `ctx` are callable
+  as helpers."""
+  code = body if isinstance(body, CodeType) else compile_gen(body)
+  ns: Dict[str, Any] = {'__builtins__': {}, **_EXPR_BUILTINS, **ctx}
+  exec(code, ns)
+  return ns['_gen']()
 # endregion
 
 
