@@ -522,6 +522,56 @@ def py_generate(body: str | CodeType, **data) -> Any:
   template name, or pre-compiled code against `data`, returning the object it
   builds — e.g. the .data dict an object is created / inited / started from."""
   return _py_run(body, data)
+
+
+def _py_idents(d: dict) -> dict:
+  """Subset of d usable as expression names."""
+  return {k: v for k, v in d.items() if isinstance(k, str) and k.isidentifier()}
+
+
+def _py_inline(inline: Dict[str, str | CodeType], base: dict, helpers: Optional[Callable[[dict], dict]] = None) -> dict:
+  """Run the inline templates (key -> expression generating that key's value), in
+  order, against `base`. Returns ONLY the generated values. A value generates as
+  soon as everything it references exists and never overrides one present in
+  `base` — except an expression referencing its own key (self-merge, e.g. flags),
+  which regenerates from it. An expression whose references are absent is skipped."""
+  gen: Dict[str, Any] = {}
+  for key, src in inline.items():
+    code = src if isinstance(src, CodeType) else _py_compile(src)
+    fn = next((c for c in code.co_consts if isinstance(c, CodeType)), None)
+    ctx = {**base, **gen}
+    if key in ctx and not (fn is not None and key in fn.co_names): continue
+    try: gen[key] = _py_run(code, _py_idents(ctx) | (helpers(ctx) if helpers else {}))
+    except Exception: continue
+  return gen
+
+
+def py_construct(template: dict, row: dict = {}, inline: Optional[Dict[str, str | CodeType]] = None,
+                 helpers: Optional[Callable[[dict], dict]] = None, **values) -> dict:
+  """Build an object's .data from a `template` entry — a plain dict whose optional
+  'generator' names a registered Generator, every other key being data — and the
+  `row` that referenced it. `values` is the outer context (a parent's values),
+  visible to expressions but not part of the result. `helpers`, when given, is a
+  factory called with the current context before each evaluation, returning extra
+  callables for the expressions (e.g. a topic() bound to the values known so far).
+
+  Merge order, rightmost wins:
+      inline-generated | generator(values) | template data | row
+  The inline templates run before the generator (name-derived values usable inside
+  it) and again after (values needing generator/template results)."""
+  template = dict(template)
+  gname = template.pop('generator', None)
+  inline = inline or {}
+  explicit = template | dict(row)
+  pre = _py_inline(inline, {**values, **explicit}, helpers)
+  gen = {}
+  if gname:
+    ctx = {**values, **pre, **explicit}
+    gen = py_generate(gname, **_py_idents(ctx) | (helpers(ctx) if helpers else {}))
+    if not isinstance(gen, dict): raise ValueError(f"Generator {gname!r} returned {type(gen).__name__}, not dict")
+  data = pre | gen | explicit
+  data |= _py_inline(inline, {**values, **data}, helpers)
+  return data
 # endregion
 
 
