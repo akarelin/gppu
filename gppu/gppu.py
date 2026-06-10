@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import pprint
 import yaml
+from yaml.dumper import Dumper
+from yaml.representer import SafeRepresenter
+from yaml.loader import FullLoader
+from yaml.nodes import Node
 import re
 import os
 
@@ -14,23 +18,20 @@ import json
 import getpass
 import ast
 
-from types import CodeType
-from pathlib import Path
-from copy import deepcopy
-
-from functools import wraps, partial
-
 from typing import Union, Any, Literal, List, Optional, Tuple, Dict, DefaultDict
 from typing import TypeAlias, ClassVar, Callable, Protocol
+from types import CodeType, ModuleType
+from collections import defaultdict, UserDict, UserList
+from enum import Enum
+from functools import wraps, partial
+from datetime import datetime, timezone
+
+from copy import deepcopy
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from string import Template
 
-from collections import defaultdict, UserDict, UserList
-from datetime import datetime, timezone
-from enum import Enum
-
 from contextlib import contextmanager
-
 
 from importlib.metadata import version as _pkg_version
 _ver_full = _pkg_version('gppu')
@@ -57,6 +58,29 @@ def detect_os() -> OSType:
     if "microsoft" in release or "wsl" in release: return OSType.WSL
     return OSType.LINUX
   else: return OSType.OTHER
+
+def full_path(path: str | Path, base_dir: str | Path | None = None, *, strict: bool = False) -> Path:
+  """
+  Resolve a user-supplied path to a local Path suitable for open()/read/write.
+
+  Expands environment variables and ~.
+  Leaves native absolute paths absolute.
+  Resolves relative paths against base_dir, or cwd when base_dir is None.
+  On Windows, maps WSL-style drive paths like /mnt/d/x to D:\\x.
+  If strict=True, requires the resolved path to exist.
+  """
+  raw = os.path.expandvars(str(path))
+
+  if detect_os() == OSType.W11 and len(raw) >= 7 and raw.startswith('/mnt/') and raw[5].isalpha() and raw[6] == '/':
+    result = Path(f'{raw[5].upper()}:\\') / raw[7:]
+  else:
+    result = Path(raw)
+  result = result.expanduser()
+
+  if not result.is_absolute():
+    result = (Path.cwd() if base_dir is None else full_path(base_dir)) / result
+  
+  return result.resolve(strict=strict)
 # endregion
 
 
@@ -198,62 +222,63 @@ def dict_sanitize(data: dict | list, sort_keys=False) -> dict | list:
   else: raise ValueError(f"Unable to sanitize {data}")
 
 
-def _tuple_representer(dumper: yaml.Dumper, data: tuple) -> yaml.nodes.Node:
+# def _tuple_representer(dumper: yaml.Dumper, data: tuple) -> yaml.nodes.Node:
+#   return dumper.represent_dict(dict(enumerate(data)))
+def _tuple_representer(dumper: Dumper, data: tuple) -> Node:
   return dumper.represent_dict(dict(enumerate(data)))
 
-
-def dict_to_yml(filename:str, data=None, sort_keys=False):
+def dict_to_yml(filename: str | Path, data=None, sort_keys=False):
   class IndentedListDumper(yaml.Dumper):
     def increase_indent(self, flow=False, indentless=False):
       return super(IndentedListDumper, self).increase_indent(flow, False)
 
   assert filename
   if not data: return
-
   redata = dict_sanitize(data, sort_keys=sort_keys)
 
-  yaml.add_representer(defaultdict, yaml.representer.Representer.represent_dict)
-  yaml.add_representer(UserDict, yaml.representer.Representer.represent_dict)
-  yaml.add_representer(set, yaml.representer.Representer.represent_list)
+  yaml.add_representer(defaultdict, SafeRepresenter.represent_dict)
+  yaml.add_representer(UserDict, SafeRepresenter.represent_dict)
+  yaml.add_representer(set, SafeRepresenter.represent_list)
   yaml.add_representer(tuple, _tuple_representer)
+
   with open(filename,'w+', encoding='utf-8') as f:
     try: yaml.dump(redata, f, indent=2, Dumper=IndentedListDumper, sort_keys=False, width=2147483647)
     except Exception as err:
       error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(redata)}\n\n"
-      with open(filename+'_error.txt','w+', encoding='utf-8') as ferr: ferr.write(error)
+      with open(str(filename) + '_error.txt', 'w+', encoding='utf-8') as ferr: ferr.write(error)
 
 
-def dict_from_yml(filename: str | Path):
-  filename = str(filename)
-  # OLD: yml_root = filename.rsplit('/', 1)[0]
-  # ^^ Bug: returns filename itself when no '/' present (e.g., 'config.yaml' -> 'config.yaml')
-  # Stack of "current file's parent dir", so nested !include resolves relative
-  # to the file containing the directive (not the outermost root).
-  dir_stack = [str(Path(filename).parent)]
+def dict_from_yml(filename: str | Path) -> dict:
+  filename = full_path(filename)
+  dir_stack: list[Path] = [filename.parent]
 
-  def yml_include(loader, node):
-    raw = node.value
-    if raw.startswith('/') or (len(raw) > 1 and raw[1] == ':'):
-      inc_filename = raw                           # absolute (POSIX or Windows)
-    else:
-      inc_filename = str(Path(dir_stack[-1]) / raw)
-    dir_stack.append(str(Path(inc_filename).parent))
+  class YmlLoader(FullLoader): pass
+    # def __init__(self, stream: Any) -> None:
+    #   super().__init__(stream)
+
+
+  def yml_include(loader: FullLoader, node: Node) -> Any:
+    fn = full_path(loader.construct_scalar(node), dir_stack[-1])
+
+    dir_stack.append(fn.parent)
+
     try:
-      with open(inc_filename, "r", encoding='utf-8') as f:
-        return yaml.load(f, Loader=yaml.FullLoader)
-    finally:
-      dir_stack.pop()
+      with open(fn, "r", encoding='utf-8') as f:
+        if fn.suffix.lower().endswith('.json'): return json.load(f)                        # JSON (tabs/escapes YAML rejects)
+        return yaml.load(f, Loader=YmlLoader)
+    finally: dir_stack.pop()
 
-  def yml_secret(loader, node): return Vault.get(node.value)
+  def yml_secret(loader: FullLoader, node: Node) -> Any: return Vault.get(loader.construct_scalar(node))
 
-  yaml.add_representer(defaultdict, yaml.representer.Representer.represent_dict)
-  yaml.add_representer(UserDict, yaml.representer.Representer.represent_dict)
-  yaml.add_representer(set, yaml.representer.Representer.represent_list)
-  yaml.add_representer(tuple, _tuple_representer)
-  yaml.add_constructor("!include", yml_include, Loader=yaml.FullLoader)
-  yaml.add_constructor("!secret", yml_secret, Loader=yaml.FullLoader)
+  YmlLoader.add_constructor("!include", yml_include)
+  YmlLoader.add_constructor("!secret", yml_secret)
 
-  with open(filename, encoding='utf-8') as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
+  with open(filename, encoding='utf-8') as f: data = yaml.load(f, Loader=YmlLoader)
+
+  return dict(data or {})
+
+
+  # with open(filename, encoding='utf-8') as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
 
 
 def dict_to_json(filename: str | Path, data=None, indent=2):
@@ -390,7 +415,7 @@ _EXPR_ALLOWED_NODES: Tuple[type, ...] = (
 
 # Names exposed to expressions in place of real builtins (which are stripped).
 # `default` mirrors the Jinja `default` filter: fall back when value is None.
-_EXPR_BUILTINS: Dict[str, Callable] = {
+_EXPR_BUILTINS: Dict[str, Callable | ModuleType] = {
   'default': lambda value, fallback=None: fallback if value is None else value,
   'len': len, 'round': round, 'min': min, 'max': max,
   'int': int, 'float': float, 'str': str, 'bool': bool,
@@ -410,17 +435,18 @@ def compile_expr(expr: str) -> CodeType:
   dunder name/attribute, ...). Results are cached by source string."""
   src = expr.strip()
   if src.startswith('{{') and src.endswith('}}'): src = src[2:-2].strip()
+
   cached = _expr_cache.get(src)
   if cached is not None: return cached
+
   try: tree = ast.parse(src, mode='eval')
   except SyntaxError as e: raise ValueError(f"Invalid expression {expr!r}: {e}") from e
+
   for node in ast.walk(tree):
-    if not isinstance(node, _EXPR_ALLOWED_NODES):
-      raise ValueError(f"Disallowed expression element {type(node).__name__} in {expr!r}")
-    if isinstance(node, ast.Attribute) and node.attr.startswith('__'):
-      raise ValueError(f"Disallowed dunder attribute {node.attr!r} in {expr!r}")
-    if isinstance(node, ast.Name) and node.id.startswith('__'):
-      raise ValueError(f"Disallowed dunder name {node.id!r} in {expr!r}")
+    if not isinstance(node, _EXPR_ALLOWED_NODES): raise ValueError(f"Disallowed expression element {type(node).__name__} in {expr!r}")
+    if isinstance(node, ast.Attribute) and node.attr.startswith('__'): raise ValueError(f"Disallowed dunder attribute {node.attr!r} in {expr!r}")
+    if isinstance(node, ast.Name) and node.id.startswith('__'): raise ValueError(f"Disallowed dunder name {node.id!r} in {expr!r}")
+
   code = compile(tree, '<expr>', 'eval')
   _expr_cache[src] = code
   return code
