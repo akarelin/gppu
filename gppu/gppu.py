@@ -404,6 +404,7 @@ _EXPR_ALLOWED_NODES: Tuple[type, ...] = (
   ast.BoolOp, ast.And, ast.Or,
   ast.UnaryOp, ast.Not, ast.USub, ast.UAdd, ast.Invert,
   ast.BinOp, ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow,
+  ast.BitOr,   # dict-union inheritance: `dimmer | i1`, rightmost wins
   ast.IfExp,
   ast.Compare, ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE,
   ast.Is, ast.IsNot, ast.In, ast.NotIn,
@@ -466,26 +467,61 @@ def _py_compile(src: str) -> CodeType:
   _py_cache[body] = code
   return code
 
-def _py_run(src: str | CodeType, ctx: dict) -> Any:
-  """Internal: compile (if needed) and run `_gen()`, returning its value. Namespace is
-  `_EXPR_BUILTINS` + `ctx` (ctx wins); real `__builtins__` removed. Evaluators /
-  generators passed in `ctx` are callable as helpers."""
+# Named templates: registered once (compiled), then runnable by name — directly
+# (py_evaluate('dimmer_i1', **values)) or by bare-name reference from another
+# template ('dimmer | i1'), resolved with the same values at run time.
+_py_templates: Dict[str, CodeType] = {}
+
+
+def py_register(name: str, src: str | CodeType) -> CodeType:
+  """Register a named template. Re-registering a name replaces it."""
   code = src if isinstance(src, CodeType) else _py_compile(src)
-  ns: Dict[str, Any] = {'__builtins__': {}, **_EXPR_BUILTINS, **ctx}
+  _py_templates[name] = code
+  return code
+
+
+def py_template(name: str) -> Optional[CodeType]:
+  """The compiled code registered under `name`, or None."""
+  return _py_templates.get(name)
+
+
+def _py_run(src: str | CodeType, data: dict, _seen: Tuple[str, ...] = ()) -> Any:
+  """Internal: compile (if needed) and run `_gen()`, returning its value. A `src`
+  string that is a registered template name runs that template. Names the code
+  references resolve, in order: `data` (wins) -> registered templates (each evaluated
+  with this same `data`; cycles raise ValueError) -> `_EXPR_BUILTINS`. Real
+  `__builtins__` removed. Evaluators / generators passed in `data` are callable as
+  helpers."""
+  if isinstance(src, CodeType): code = src
+  elif (named := _py_templates.get(src.strip())) is not None:
+    _seen += (src.strip(),)
+    code = named
+  else: code = _py_compile(src)
+
+  gen = next((c for c in code.co_consts if isinstance(c, CodeType)), None)
+  if gen is not None:   # resolve referenced template names against the same values
+    for n in gen.co_names:
+      if n in data or n in _EXPR_BUILTINS or n not in _py_templates: continue
+      if n in _seen: raise ValueError(f"Template cycle: {' -> '.join(_seen + (n,))}")
+      data = {**data, n: _py_run(_py_templates[n], data, _seen + (n,))}
+
+  ns: Dict[str, Any] = {'__builtins__': {}, **_EXPR_BUILTINS, **data}
   exec(code, ns)
   return ns['_gen']()
 
 
-def py_evaluate(expr: str | CodeType, **ctx) -> Any:
-  """The Evaluator: run a one-line `{{ expr }}` (or its pre-compiled code) against
-  `ctx`, returning its value."""
-  return _py_run(expr, ctx)
+def py_evaluate(expr: str | CodeType, **data) -> Any:
+  """The Evaluator: run a one-line `{{ expr }}`, a registered template name, or
+  pre-compiled code against `data`, returning its value. Useful for state
+  calculation."""
+  return _py_run(expr, data)
 
 
-def py_generate(body: str | CodeType, **ctx) -> Any:
-  """The Generator: run a function body (statements + `return`, or its pre-compiled
-  code) against `ctx`, returning the object it builds."""
-  return _py_run(body, ctx)
+def py_generate(body: str | CodeType, **data) -> Any:
+  """The Generator: run a function body (statements + `return`), a registered
+  template name, or pre-compiled code against `data`, returning the object it
+  builds — e.g. the .data dict an object is created / inited / started from."""
+  return _py_run(body, data)
 # endregion
 
 
