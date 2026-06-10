@@ -87,13 +87,13 @@ class TestProviderDetection:
 class TestProviderExplicitSet:
     def test_explicit_provider_overrides_env(self, monkeypatch):
         monkeypatch.setenv("AZURE_KEYVAULT_NAME", "envvault")
-        explicit = VaultProviderGcp("explicit-project")
+        explicit = VaultProviderOSEnviron()
         Vault.provider_set(explicit)
         assert Vault.provider() is explicit
 
     def test_provider_set_none_re_detects(self, monkeypatch):
         monkeypatch.setenv("AZURE_KEYVAULT_NAME", "myvault")
-        Vault.provider_set(VaultProviderGcp("ignored"))
+        Vault.provider_set(VaultProviderOSEnviron())
         Vault.provider_set(None)
         assert isinstance(Vault.provider(), VaultProviderAzure)
 
@@ -146,7 +146,6 @@ class TestList:
 
     def test_lists_env_var_secrets(self, monkeypatch):
         monkeypatch.delenv("AZURE_KEYVAULT_NAME", raising=False)
-        monkeypatch.delenv("GCP_SECRET_PROJECT", raising=False)
         # Clear any pre-existing SECRET_* in the test env so we get a clean baseline
         for k in list(__import__("os").environ):
             if k.startswith("SECRET_"): monkeypatch.delenv(k, raising=False)
