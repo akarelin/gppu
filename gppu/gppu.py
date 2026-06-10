@@ -394,7 +394,7 @@ def jinja_template(template: str, **data) -> Optional[str]:
 # endregion
 
 
-# region Safe expression eval: compile_expr, eval_expr
+# region Safe template eval: _py_compile (compiler), py_evaluate (Evaluator), py_generate (Generator)
 # AST node types allowed in a config expression. Anything outside this set
 # (statements, lambda, comprehensions, walrus, starred, f-strings, ...) is
 # rejected at compile time, so a config string can never reach assignment,
@@ -466,70 +466,26 @@ def _py_compile(src: str) -> CodeType:
   _py_cache[body] = code
   return code
 
-compile_expr = _py_compile  # back-compat alias (was the expression-only compiler)
-
-
-def py_evaluate(expr: str | CodeType, **ctx) -> Any:
-  """The Evaluator: evaluate a single restricted expression (see `compile_expr`)
-  against `ctx` and return its value.
-
-  `expr` is a source string or a pre-compiled code object. The eval namespace
-  is `_EXPR_BUILTINS` plus `ctx` (ctx wins on name clash); real `__builtins__`
-  are removed. Raises `ValueError` for a bad expression, or whatever the
-  expression itself raises at runtime (NameError, TypeError, ...)."""
-  code = expr if isinstance(expr, CodeType) else compile_expr(expr)
-  return eval(code, {'__builtins__': {}}, {**_EXPR_BUILTINS, **ctx})
-
-eval_expr = py_evaluate  # back-compat alias; `py_evaluate` is the public name
-# endregion
-
-
-# region Safe function eval: compile_gen, py_generate (the Generator)
-# Like the Evaluator above, but for a multi-statement function body that builds and
-# `return`s an object. Same safety model — no import / lambda / comprehension / walrus
-# / dunder — plus the statement nodes a constructor needs: assignment, `if`, `return`.
-_GEN_ALLOWED_NODES: Tuple[type, ...] = _EXPR_ALLOWED_NODES + (
-  ast.Module, ast.FunctionDef, ast.arguments, ast.arg,
-  ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Store,
-  ast.If, ast.Return, ast.Expr, ast.Pass,
-)
-_gen_cache: Dict[str, CodeType] = {}
-
-
-def compile_gen(body: str) -> CodeType:
-  """Compile a Generator body (statements + `return`) into code that defines `_gen()`.
-  Allow-list = `_EXPR_ALLOWED_NODES` + assignment / `if` / `return`; same dunder /
-  import / lambda / comprehension bans as `compile_expr`. A `{{ expr }}` wrapper
-  becomes `return expr`. Cached by source string."""
-  src = body.strip()
-  if src.startswith('{{') and src.endswith('}}'): src = 'return ' + src[2:-2].strip()
-
-  cached = _gen_cache.get(src)
-  if cached is not None: return cached
-
-  wrapped = "def _gen():\n" + "\n".join("  " + ln for ln in src.splitlines())
-  try: tree = ast.parse(wrapped, mode='exec')
-  except SyntaxError as e: raise ValueError(f"Invalid generator {body!r}: {e}") from e
-
-  for node in ast.walk(tree):
-    if not isinstance(node, _GEN_ALLOWED_NODES): raise ValueError(f"Disallowed element {type(node).__name__} in {body!r}")
-    if isinstance(node, ast.Attribute) and node.attr.startswith('__'): raise ValueError(f"Disallowed dunder attribute {node.attr!r} in {body!r}")
-    if isinstance(node, ast.Name) and node.id.startswith('__'): raise ValueError(f"Disallowed dunder name {node.id!r} in {body!r}")
-
-  code = compile(tree, '<generate>', 'exec')
-  _gen_cache[src] = code
-  return code
-
-
-def py_generate(body: str | CodeType, **ctx) -> Any:
-  """The Generator: run a function body (statements + `return`, see `compile_gen`)
-  against `ctx` and return the object it builds. Namespace is `_EXPR_BUILTINS` + `ctx`
-  (ctx wins); real builtins removed. Evaluators/generators passed in `ctx` are callable
-  as helpers."""
-  code = body if isinstance(body, CodeType) else compile_gen(body)
+def _py_run(src: str | CodeType, ctx: dict) -> Any:
+  """Internal: compile (if needed) and run `_gen()`, returning its value. Namespace is
+  `_EXPR_BUILTINS` + `ctx` (ctx wins); real `__builtins__` removed. Evaluators /
+  generators passed in `ctx` are callable as helpers."""
+  code = src if isinstance(src, CodeType) else _py_compile(src)
   ns: Dict[str, Any] = {'__builtins__': {}, **_EXPR_BUILTINS, **ctx}
   exec(code, ns)
   return ns['_gen']()
+
+
+def py_evaluate(expr: str | CodeType, **ctx) -> Any:
+  """The Evaluator: run a one-line `{{ expr }}` (or its pre-compiled code) against
+  `ctx`, returning its value."""
+  return _py_run(expr, ctx)
+
+
+def py_generate(body: str | CodeType, **ctx) -> Any:
+  """The Generator: run a function body (statements + `return`, or its pre-compiled
+  code) against `ctx`, returning the object it builds."""
+  return _py_run(body, ctx)
 # endregion
 
 
