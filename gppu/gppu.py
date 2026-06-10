@@ -1288,38 +1288,6 @@ class VaultProviderAzure(VaultProvider):
     return [s.name for s in self._ensure_client().list_properties_of_secrets()]
 
 
-class VaultProviderGcp(VaultProvider):
-  def __init__(self, project: str):
-    self._project = project
-    self._client = None
-
-  def _ensure_client(self):
-    if self._client is None:
-      from google.cloud.secretmanager import SecretManagerServiceClient
-      self._client = SecretManagerServiceClient()
-    return self._client
-
-  def get(self, name: str) -> str | None:
-    try:
-      resource = f"projects/{self._project}/secrets/{name}/versions/latest"
-      return self._ensure_client().access_secret_version(request={"name": resource}).payload.data.decode("utf-8")
-    except Exception: return None
-
-  def set(self, name: str, value: str) -> None:
-    client = self._ensure_client()
-    parent = f"projects/{self._project}/secrets/{name}"
-    try:
-      client.create_secret(request={
-        "parent": f"projects/{self._project}",
-        "secret_id": name,
-        "secret": {"replication": {"automatic": {}}}})
-    except Exception: pass  # secret already exists
-    client.add_secret_version(request={"parent": parent, "payload": {"data": value.encode("utf-8")}})
-
-  def list(self) -> list[str]:
-    parent = f"projects/{self._project}"
-    return [s.name.rsplit('/', 1)[-1] for s in self._ensure_client().list_secrets(request={"parent": parent})]
-
 
 class Vault:
   """Static facade for secret operations.
@@ -1351,12 +1319,10 @@ class Vault:
 
   @staticmethod
   def _detect() -> VaultProvider:
-    """AZURE_KEYVAULT_NAME → VaultProviderAzure; else GCP_SECRET_PROJECT → VaultProviderGcp; else env-var fallback."""
     vault_name = os.environ.get('AZURE_KEYVAULT_NAME')
-    if vault_name: return VaultProviderAzure(vault_name)
-    project = os.environ.get('GCP_SECRET_PROJECT')
-    if project: return VaultProviderGcp(project)
+    if vault_name: return VaultProviderAzure(vault_name)    
     return Vault._env_provider
+
 
   @staticmethod
   def get(name: str) -> str:
