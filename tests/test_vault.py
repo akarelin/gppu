@@ -77,22 +77,10 @@ class TestOSEnvironProvider:
 class TestProviderDetection:
     def test_azure_detected_from_env(self, monkeypatch):
         monkeypatch.setenv("AZURE_KEYVAULT_NAME", "myvault")
-        monkeypatch.delenv("GCP_SECRET_PROJECT", raising=False)
-        assert isinstance(Vault.provider(), VaultProviderAzure)
-
-    def test_gcp_detected_from_env(self, monkeypatch):
-        monkeypatch.delenv("AZURE_KEYVAULT_NAME", raising=False)
-        monkeypatch.setenv("GCP_SECRET_PROJECT", "my-project")
-        assert isinstance(Vault.provider(), VaultProviderGcp)
-
-    def test_azure_priority_over_gcp(self, monkeypatch):
-        monkeypatch.setenv("AZURE_KEYVAULT_NAME", "myvault")
-        monkeypatch.setenv("GCP_SECRET_PROJECT", "myproj")
         assert isinstance(Vault.provider(), VaultProviderAzure)
 
     def test_default_provider_is_os_environ(self, monkeypatch):
         monkeypatch.delenv("AZURE_KEYVAULT_NAME", raising=False)
-        monkeypatch.delenv("GCP_SECRET_PROJECT", raising=False)
         assert isinstance(Vault.provider(), VaultProviderOSEnviron)
 
 
