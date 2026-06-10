@@ -110,28 +110,18 @@ class YStart(YLoad):
   def started(self, value: bool): self._started = value
 
 
+  @final
+  def stop(self):
+    if self.stopped: return
+    self._callall('stop')
+    self.stopped = True
+
+  @property
+  def stopped(self) -> bool: return getattr(self, '_stopped', False)
+  @stopped.setter
+  def stopped(self, value: bool): self._stopped = value
+
+
 YStepper = YStart
 class mixin_Stepper(YStepper, _mixin): pass
 
-
-# class Application(App, mixin_Stepper):
-#   """App with auto-running init→load→start lifecycle on construction."""
-
-#   def __init__(self, **kw):
-#     super().__init__(**kw)
-#     self.initialize()
-
-#   @final
-#   def initialize(self):
-#     self.init()
-#     self.load()
-#     self.start()
-
-
-# class Entity(App, mixin_Stepper):
-#   """DC entity with YMRO lifecycle. Constructed with ``data=`` and ``parent=``.
-#   Caller invokes ``init()`` (and optionally ``load()``/``start()``) explicitly."""
-
-#   def __init__(self, *, data, parent, **kw):
-#     self._parent = parent
-#     super().__init__(data=data, **kw)
