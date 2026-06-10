@@ -19,7 +19,7 @@ _trace_mro = False
 
 
 class _YMRO:
-  POSSIBLE_STEPS = ['init', 'load', 'start']
+  POSSIBLE_STEPS = ['init', 'load', 'start', 'stop']
 
   @property
   def _trace_mro(self) -> bool:
@@ -114,7 +114,10 @@ class YStart(YLoad):
   def stop(self):
     if self.stopped: return
     self._callall('stop')
+    self.started = False
     self.stopped = True
+    self.loaded = False
+
 
   @property
   def stopped(self) -> bool: return getattr(self, '_stopped', False)
