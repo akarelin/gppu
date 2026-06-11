@@ -133,7 +133,7 @@ from .iot import (
     y2eid,
 
     # mqtt library (aiomqtt optional — gppu[mqtt])
-    MqttConnstring,
+    mqtt_connstring,
     MqttMixin,
     Transformer,
 )
@@ -204,7 +204,7 @@ __all__ = [
     'y2list', 'y2path', 'y2topic', 'y2slug', 'y2eid',
 
     # mqtt library
-    'MqttConnstring', 'MqttMixin', 'Transformer',
+    'mqtt_connstring', 'MqttMixin', 'Transformer',
 
     # YMRO lifecycle
     '_YMRO', 'YInit', 'YLoad', 'YStart', 'YStepper', 'mixin_Stepper',

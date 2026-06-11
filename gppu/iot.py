@@ -1,6 +1,6 @@
 """IoT primitives: y2list/y2path/y2topic/y2slug/y2eid types and the shared
-mqtt service plumbing (MqttConnstring, MqttMixin, Transformer) used by the
-any2mqtt suite. aiomqtt is optional — install gppu[mqtt] for the Mqtt* classes."""
+mqtt service plumbing (mqtt_connstring, MqttMixin, Transformer) used by the
+any2mqtt suite. aiomqtt is optional — install gppu[mqtt] for the mqtt classes."""
 from __future__ import annotations
 
 import asyncio
