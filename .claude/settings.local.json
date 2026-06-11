@@ -17,6 +17,9 @@
       "Bash(pip show:*)",
       "Bash(python:*)",
       "Bash(git commit *)"
+    ],
+    "additionalDirectories": [
+      "/home/alex/RAN"
     ]
   }
 }
