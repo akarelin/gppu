@@ -221,7 +221,7 @@ class MqttMixin(mixin_Logger):
     self._mqtt_lock = asyncio.Lock()
     self._cb_lock = asyncio.Lock()
 
-  async def add_topic_listener(self, cb: Callable, topic: y2topic):
+  async def mqtt_subscribe(self, cb: Callable, topic: y2topic):
     async with self._mqtt_lock:
       cbs = self._callbacks.setdefault(topic, [])
       if cb not in cbs:
@@ -231,7 +231,7 @@ class MqttMixin(mixin_Logger):
         if self._client is not None:
           await self._client.subscribe(topic, qos=0)
 
-  async def remove_topic_listener(self, cb: Callable, topic: y2topic):
+  async def mqtt_unsubscribe(self, cb: Callable, topic: y2topic):
     async with self._mqtt_lock:
       cbs = self._callbacks.get(topic)
       if not cbs:
@@ -272,13 +272,16 @@ class MqttMixin(mixin_Logger):
   def _mqtt_client(self):
     return aiomqtt.Client(**self.connstring)
 
-  async def _mqtt_on_connect(self, client):
+  async def mqtt_connect(self, client):
     self._client = client
     self.Info('connected:', self.connstring.get('hostname'), self.connstring.get('port'))
     async with self._mqtt_lock:
       topics = list(self._active_subscriptions)
     for topic in topics:
       await client.subscribe(topic, qos=0)
+
+  def mqtt_disconnect(self):
+    self._client = None
 
   async def _mqtt_dispatch(self, client):
     async for msg in client.messages:
@@ -312,13 +315,13 @@ class MqttMixin(mixin_Logger):
     while True:
       try:
         async with self._mqtt_client() as client:
-          await self._mqtt_on_connect(client)
+          await self.mqtt_connect(client)
           await self._mqtt_dispatch(client)
       except aiomqtt.MqttError as e:
         self.Warn('mqtt error, reconnect in 5s:', e)
         await asyncio.sleep(5)
       finally:
-        self._client = None
+        self.mqtt_disconnect()
 
   @staticmethod
   def _topic_matches(topic: str, pattern: str) -> bool:
@@ -357,7 +360,7 @@ class Transformer(App, MqttMixin, mixin_Stepper):
     while True:
       try:
         async with aiomqtt.Client(**self.connstring, will=will) as client:
-          await self._mqtt_on_connect(client)
+          await self.mqtt_connect(client)
           if self.status_topic:
             await client.publish(str(self.status_topic), 'online', qos=1, retain=True)
           self._last_message_time = time.monotonic()
@@ -371,7 +374,7 @@ class Transformer(App, MqttMixin, mixin_Stepper):
         self.Warn('mqtt error, reconnect in 5s:', e)
         await asyncio.sleep(5)
       finally:
-        self._client = None
+        self.mqtt_disconnect()
 
   async def _watchdog(self):
     while self._client is not None:
