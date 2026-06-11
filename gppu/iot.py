@@ -194,7 +194,7 @@ _DC._DC_TYPE_MAP |= {'y2eid': y2eid, 'y2topic': y2topic}
 
 # region mqtt
 # xx
-# xx MqttConnstring, MqttMixin, Transformer
+# xx mqtt_connstring, MqttMixin, Transformer
 # xx
 """ Shared mqtt library plumbing for the any2mqtt transform services
 (brul2mqtt, motion2mqtt, ...). The library is not a service: each service owns
@@ -323,7 +323,7 @@ class Transformer(App, MqttMixin, mixin_Stepper):
 
   def __init(self):
     conn = self.data.get('connection', {})
-    self.connstring = MqttConnstring(data=conn)
+    self.connstring = mqtt_connstring(conn)
     self.status_topic = y2topic(conn.get('status_topic', ''))
     self.rules = self.data.get('rules', [])
     self._vals = {}
