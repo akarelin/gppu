@@ -181,3 +181,36 @@ Set the environment variable named in `skip_env` to `true`, `1`, or `yes` to dis
 ```bash
 SKIP_CACHE=true python my_script.py  # all cache reads return default
 ```
+
+## _PersistentDC + Persistence - Persisted Pseudo-Dataclasses
+
+`_PersistentDC` is a `_DC` (from `gppu.gppu`) whose `data` dict survives process restarts through a pluggable backend. Storage is namespaced by `(type(self).__name__, self.data[_persist_key])`.
+
+```python
+from gppu.data import _PersistentDC, Persistence
+
+class Device(_PersistentDC):
+    _persist_key = 'name'      # which data field is the storage key
+
+# Bind once per process (class-level):
+_PersistentDC.bind_db(Persistence('/var/lib/y2/persist.db', backend='sqlite'))
+
+d = Device(data={'name': 'lamp', 'state': 'on'})
+d.persist()                    # upsert under ('Device', 'lamp')
+
+Device.load('lamp')            # -> {'name': 'lamp', 'state': 'on'} (or None)
+for key, data in Device.iter_all(): ...
+```
+
+Unbound (`bind_db` never called) or keyless (`data[_persist_key]` missing) instances are silent no-ops — persistence never breaks the app. Subclasses wanting custom storage override `_do_persist()` / `load()`.
+
+`Persistence` mirrors the `Cache` class shape: explicit backend, no fallback.
+
+| Backend | Target | Dependencies |
+|---------|--------|--------------|
+| `json` | file path (or dir → `_persist.json`) | none |
+| `pickle` | file path | none |
+| `sqlite` (default) | file path | stdlib |
+| `postgres` | DSN connection string | psycopg2 (`pg` extra), JSONB |
+
+Backend protocol (duck-typed — anything with these methods can be bound): `upsert(cls, key, data)`, `load(cls, key)`, `iter(cls)`, `delete(cls, key)`, `close()`. `Persistence` is also a context manager (`with` closes on exit).

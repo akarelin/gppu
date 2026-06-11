@@ -1,14 +1,18 @@
-"""IoT primitives: y2list/y2path/y2topic/y2slug/y2eid types and the shared
+"""IoT primitives: y2list/y2path/y2topic/y2slug/y2eid types, the shared
 mqtt service plumbing (mqtt_connstring, MqttMixin, Transformer) used by the
-any2mqtt suite. aiomqtt is optional — install gppu[mqtt] for the mqtt classes."""
+any2mqtt suite, and device control mixins (HTTP, Serial, Serial-over-HTTP).
+Third-party IO deps are optional — install gppu[iot] (aiomqtt + aiohttp +
+telnetlib3) or just gppu[mqtt] (aiomqtt) for the pieces you use."""
 from __future__ import annotations
 
 import asyncio
 import json
 import re
+import threading
 import time
 from collections import UserList
 from typing import Any, Callable, ClassVar, List, Optional
+from urllib.parse import urlparse
 
 try:
   import aiomqtt
@@ -18,8 +22,16 @@ except ImportError:
   aiomqtt = None  # type: ignore[assignment]
   PacketTypes = None  # type: ignore[assignment]
   Properties = None  # type: ignore[assignment]
+try:
+  import aiohttp
+except ImportError:
+  aiohttp = None  # type: ignore[assignment]
+try:
+  import telnetlib3
+except ImportError:
+  telnetlib3 = None  # type: ignore[assignment]
 
-from .gppu import _DC, _DC_BASE_TYPE_MAP, App, mixin_Logger, safe_float
+from .gppu import _DC, _DC_BASE_TYPE_MAP, App, Error, _mixin, mixin_Logger, safe_float
 from .ymro import mixin_Stepper
 
 
