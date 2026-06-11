@@ -11,7 +11,7 @@ Subclasses can extend the lifecycle by overriding ``POSSIBLE_STEPS``
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import final
+from typing import Any, Callable, Literal, Optional, TypeAlias, final
 
 from .gppu import App, _mixin, Logger
 
@@ -156,11 +156,10 @@ def _tracer(tracer: Optional[Callable[..., Any]] = None, action: Optional[_Trace
 
 # endregion
 
-"""Y2 flight-recorder tracer.
+"""Y2 flight-recorder tracer (relocated from Y2's y2trace into gppu.ymro).
 
-A relocated ``gppu.trace``: lives in Y2 so gppu source stays untouched.  Records,
-as newline-delimited JSON under ``trace_folder``, everything needed to reconstruct
-what happened as a result of an external event:
+Records, as newline-delimited JSON under ``trace_folder``, everything needed
+to reconstruct what happened as a result of an external event:
 
   * ``object``  — each object's data dict at the end of ``init`` and ``start``
                   (creation params + post-step state).
@@ -171,19 +170,17 @@ what happened as a result of an external event:
   * ``state``   — periodic marker; the full global ``State`` is dumped to a yml.
 
 All hooks are installed at runtime from ``Tracer.install`` (called once during
-``Environment.initialize``) by monkeypatching gppu's lifecycle and AppDaemon's
-event/dispatch machinery — no gppu or AppDaemon source is modified.  Disabled by
+``Environment.initialize``) by monkeypatching the lifecycle and AppDaemon's
+event/dispatch machinery — no AppDaemon source is modified.  Disabled by
 default; every write is guarded so tracing can never break the app.
 """
-from __future__ import annotations
-
 import json
 import itertools
 import threading
 from contextvars import ContextVar
 from typing import Any
 
-from gppu import dict_sanitize, dict_to_yml, now_ts
+from .gppu import dict_sanitize, dict_to_yml, now_ts
 
 
 class Tracer:

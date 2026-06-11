@@ -48,3 +48,40 @@ class TestTopLevelExports:
         for name in ('y2list', 'y2path', 'y2topic', 'y2slug', 'y2eid',
                      'mqtt_connstring', 'MqttMixin', 'Transformer'):
             assert hasattr(gppu, name), name
+
+
+class TestIORuntime:
+    def test_io_run_returns_result(self):
+        from gppu.iot import _IORuntime
+
+        class Host(_IORuntime):
+            name = 'test-host'
+
+        async def coro():
+            return 41 + 1
+
+        host = Host()
+        assert host.io_run('key', coro()) == 42
+        host._io_loop.call_soon_threadsafe(host._io_loop.stop)
+
+    def test_io_host_walks_parent_chain(self):
+        from gppu.iot import _IORuntime, _io_host
+
+        class Host(_IORuntime):
+            pass
+
+        class Child:
+            def __init__(self, parent): self.parent = parent
+
+        host = Host()
+        assert _io_host(Child(Child(host))) is host
+
+    def test_io_host_raises_without_ancestor(self):
+        import pytest
+        from gppu.iot import _io_host
+
+        class Orphan:
+            parent = None
+
+        with pytest.raises(RuntimeError):
+            _io_host(Orphan())

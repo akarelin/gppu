@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, ClassVar, Optional
 from contextlib import contextmanager
 
 from .gppu import Env
-from .gppu import _Base
+from .gppu import _Base, _DC
 
 
 class _PersistentBase(_Base):
