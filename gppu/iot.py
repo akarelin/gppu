@@ -12,8 +12,12 @@ from typing import Any, Callable, ClassVar, List, Optional
 
 try:
   import aiomqtt
+  from paho.mqtt.packettypes import PacketTypes
+  from paho.mqtt.properties import Properties
 except ImportError:
   aiomqtt = None  # type: ignore[assignment]
+  PacketTypes = None  # type: ignore[assignment]
+  Properties = None  # type: ignore[assignment]
 
 from .gppu import _DC, _DC_BASE_TYPE_MAP, App, mixin_Logger, safe_float
 from .ymro import mixin_Stepper
@@ -251,13 +255,19 @@ class MqttMixin(mixin_Logger):
         if self._client is not None:
           await self._client.unsubscribe(topic)
 
-  async def mqtt_publish(self, topic: y2topic, payload: str | dict | int | float | None = None, retain: bool = False, **kw):
-    if payload:
-      if isinstance(payload, dict):
-        payload = json.dumps(payload)
-      else:
-        payload = str(payload)
-    await self._client.publish(str(topic), str(payload), **kw)
+  async def mqtt_publish(self, topic: y2topic | str, payload: Any, retain: bool, expiry: int | None = None, qos: int = 0, **data):
+    if isinstance(payload, dict):
+      payload = json.dumps(payload)
+    else:
+      payload = str(payload)
+    props = None
+    if expiry is not None or data:
+      props = Properties(PacketTypes.PUBLISH)
+      if expiry is not None:
+        props.MessageExpiryInterval = int(expiry)
+      if data:
+        props.UserProperty = [(k, str(v)) for k, v in data.items()]
+    await self._client.publish(str(topic), payload, qos=qos, retain=retain, properties=props)
 
   def _mqtt_client(self):
     return aiomqtt.Client(**self.connstring)
@@ -392,7 +402,7 @@ class Transformer(App, MqttMixin, mixin_Stepper):
         self._vals[dest] = round(val, 1)
         if now - self._last_pub.get(dest, 0) >= self.DEBOUNCE:
           self._last_pub[dest] = now
-          await self.mqtt_publish(dest, self._vals[dest], qos=0)
+          await self.mqtt_publish(dest, self._vals[dest], retain=False, qos=0)
 
 
   @staticmethod
