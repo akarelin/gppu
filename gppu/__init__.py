@@ -122,13 +122,20 @@ from .gppu import (
     _Config,
     _Base,
     App,
+)
 
+from .iot import (
     # y2xxx classes
     y2list,
     y2path,
     y2topic,
     y2slug,
     y2eid,
+
+    # mqtt library (aiomqtt optional — gppu[mqtt])
+    MqttConnstring,
+    MqttMixin,
+    Transformer,
 )
 
 
@@ -195,6 +202,9 @@ __all__ = [
 
     # y2xxx classes
     'y2list', 'y2path', 'y2topic', 'y2slug', 'y2eid',
+
+    # mqtt library
+    'MqttConnstring', 'MqttMixin', 'Transformer',
 
     # YMRO lifecycle
     '_YMRO', 'YInit', 'YLoad', 'YStart', 'YStepper', 'mixin_Stepper',
