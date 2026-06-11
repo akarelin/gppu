@@ -430,3 +430,101 @@ class Transformer(App, MqttMixin, mixin_Stepper):
       out[y2topic(rule['dest_prefix'], name)] = totals[0] - sum(totals[1:])
     return out
 # endregion
+
+
+# $$                                                              
+# $$        Control mixins (HTTP, Serial, Serial-over-HTTP)       
+# $$                                                              
+class _ControlBase:
+  _control_address: str
+  _http_timeout: int = 10
+
+
+class _IORuntime(_mixin):
+  """Owns a long-lived asyncio event loop on a daemon thread plus a per-key
+  threading.Lock rate gate. `io_run(key, coro)` submits the coroutine and
+  blocks the calling thread for its result, serialized per `key`. Independent
+  of AppDaemon's event loop — mix into StateManager (or any other host).
+  Lazy: no __init needed, allocates loop/gates dict on first use."""
+
+  _io_start_lock = threading.Lock()
+
+  def _io_get_loop(self) -> asyncio.AbstractEventLoop:
+    loop = getattr(self, '_io_loop', None)
+    if loop is not None: return loop
+    with _IORuntime._io_start_lock:
+      loop = getattr(self, '_io_loop', None)
+      if loop is None:
+        loop = asyncio.new_event_loop()
+        name = f"io-{getattr(self, 'name', type(self).__name__)}"
+        threading.Thread(target=loop.run_forever, daemon=True, name=name).start()
+        self._io_loop = loop
+    return loop
+
+  def _io_get_gate(self, key: str) -> threading.Lock:
+    gates = getattr(self, '_io_gates', None)
+    if gates is None: gates = self._io_gates = {}
+    gate = gates.get(key)
+    if gate is None: gate = gates[key] = threading.Lock()
+    return gate
+
+  def io_run(self, key: str, coro):
+    with self._io_get_gate(key):
+      return asyncio.run_coroutine_threadsafe(coro, self._io_get_loop()).result()
+
+
+def _io_host(obj):
+  """Walk parent chain to find the first mixin_IORuntime ancestor."""
+  cur = obj
+  while cur is not None:
+    if isinstance(cur, _IORuntime): return cur
+    cur = getattr(cur, 'parent', None)
+  raise RuntimeError(f"{obj!r} has no mixin_IORuntime ancestor")
+
+
+class _HTTPControl(_ControlBase, _IORuntime):
+  _http_headers: dict[str, str] | None = None   # extra headers merged into every request (e.g. auth keys)
+  _http_ssl = None                              # ssl.SSLContext for https; None = urllib default (verified)
+
+  def _http_get(self, url: str) -> dict | None:
+    return _io_host(self).io_run(urlparse(url).hostname or url, self._http_request_async('GET', url))
+
+  def _http_put(self, url: str, payload: dict) -> dict | None:
+    return _io_host(self).io_run(urlparse(url).hostname or url, self._http_request_async('PUT', url, payload))
+
+  def _http_post(self, url: str, payload: dict) -> dict | None:
+    return _io_host(self).io_run(urlparse(url).hostname or url, self._http_request_async('POST', url, payload))
+
+  async def _http_request_async(self, method: str, url: str, payload: dict | None = None) -> dict | None:
+    # Genuine async IO (aiohttp) — was a blocking urllib.urlopen inside this async def,
+    # which stalled the StateManager IO loop while it queued the next resource call.
+    try:
+      timeout = aiohttp.ClientTimeout(total=self._http_timeout)
+      async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.request(method, url, json=payload,
+                                   headers=self._http_headers or None, ssl=self._http_ssl) as resp:
+          return json.loads(await resp.text())
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, json.JSONDecodeError): return None
+
+
+class _SerialControl(_mixin):
+  command_suffix: str = "\n\r"
+
+  def _send_serial(self, command: str, **data) -> None:
+    return _io_host(self).io_run(self._control_address, self._send_serial_async(command, **data))
+  async def _send_serial_async(self, command: str, **data) -> None:
+    writer = None
+    try:
+      reader, writer = await telnetlib3.open_connection(host=self._control_address, port=23)
+      assert reader is not None and writer is not None, "Failed to establish telnet connection"
+      writer.write(command + self.command_suffix)
+      await writer.drain()
+    except Exception as e: Error("Error in telnet command", "INFO", command, "DIM", ":", "BRIGHT", e); raise
+    finally:
+      if writer: writer.close()
+
+
+class _SerialHTTPControl(_SerialControl, _HTTPControl):
+  def _send_serial(self, command: str, **data) -> None:
+    url = f"http://{self._control_address}/api/host/modules/1/ports/1/data"
+    self._http_post(url, payload={'data': command + "\n"})

@@ -32,6 +32,7 @@
 |--------|---------|
 | `gppu` (core)<br> | **Environment**: `Env` config loader with `!include`, typed path access (`glob`, `glob_int`, `glob_list`, `glob_dict`). <br>**Logger**: colored `Info`/`Warn`/`Error`/`Debug`/`Dump`. <br>**Vault**: `Vault.get`/`create`/`update`/`list` with Azure Key Vault and `SECRET_*` env-var backends; `!secret` YAML tag.<br>Plus: type coercion, dict utilities, YAML/JSON I/O, time helpers, OS detection, async helpers, template population |
 | [`gppu.data`](DATA.md) | `Cache` unified caching (JSON/pickle/sqlite/diskcache/DB backends), <br>database base classes: `_PGBase` (psycopg2) and `_SQABase` (SQLAlchemy) |
+| [`gppu.iot`](IOT.md) | y2 types: `y2list`, `y2path`, `y2topic`, `y2slug`, `y2eid` (token-list strings for topics/slugs/entity ids).<br>MQTT plumbing for the any2mqtt services: `mqtt_connstring`, `MqttMixin` (reconnecting aiomqtt client with callback dispatch, MQTT5 expiry/user-properties), `Transformer` (config-driven scalar transform stage). aiomqtt requires `mqtt` extra |
 | [`gppu.tui`](TUI.md) | `TUIApp`, `TUILauncher`, `ConfigEditorApp`, `ui_select`, `ui_select_rows`<br> Textual-based TUI framework with web mode (`--serve`), CLI fallback, app embedding. Requires `tui` extra |
 | [`gppu.chrome`](CHROME.md) | `prepare_driver`, `switch_to_mobile`, `switch_to_desktop`<br>Selenium Chrome driver setup with profile management, crash recovery, mobile/desktop emulation |
 
@@ -183,7 +184,7 @@ pip install "gppu[all] @ git+ssh://git@github.com/akarelin/gppu.git@gppu/latest"
 pip install -e ".[all,test]"
 ```
 
-**Optional extras**: `pg` (psycopg2), `sql` (SQLAlchemy), `cache` (diskcache), `chrome` (Selenium), `tui` (Textual), `serve` (textual-serve), `statusline` (Jinja2), `vault-azure`, `vault` (= `vault-azure`), `all`, `test` (pytest), `test-tui` (pytest + pytest-asyncio + textual).
+**Optional extras**: `pg` (psycopg2), `sql` (SQLAlchemy), `cache` (diskcache), `mqtt` (aiomqtt), `chrome` (Selenium), `tui` (Textual), `serve` (textual-serve), `statusline` (Jinja2), `vault-azure`, `vault` (= `vault-azure`), `all`, `test` (pytest), `test-tui` (pytest + pytest-asyncio + textual).
 
 Requires Python >= 3.11. Core dependency: PyYAML.
 

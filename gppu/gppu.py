@@ -575,8 +575,6 @@ def py_construct(template: dict, row: dict = {}, inline: Optional[Dict[str, str 
 # endregion
 
 
-
-
 # region Time helpers
 def now_str(): return datetime.now().strftime("%Y%m%d.%H%M%S")
 def now_ts(): return datetime.now().timestamp()
@@ -688,32 +686,6 @@ def slugify(o) -> str:
 # endregion
 
 
-# region Tracing decorators
-_TracerAction: TypeAlias = Literal['before', 'after', 'instead']
-
-TA_BEFORE: _TracerAction = 'before'
-TA_AFTER: _TracerAction = 'after'
-TA_INSTEAD: _TracerAction = 'instead'
-TAs: list[_TracerAction] = [TA_BEFORE, TA_AFTER, TA_INSTEAD]
-
-
-def _tracer(tracer: Optional[Callable[..., Any]] = None, action: Optional[_TracerAction] = None) -> Callable:
-  def decorator(method: Callable) -> Callable:
-    def wrapper(self, *a, **kw):
-      if not tracer: return method(self, *a, **kw)
-      if action == TA_BEFORE:
-        tracer(self, *a, **kw)
-        return method(self, *a, **kw)
-      if action == TA_AFTER:
-        _ = method(self, *a, **kw)
-        tracer(self, *a, **kw)
-        return _
-      if action == TA_INSTEAD:
-        return tracer(self, *a, **kw)
-    return wrapper
-  return decorator
-
-# endregion
 
 
 # region Async helpers
@@ -1442,50 +1414,3 @@ class _DC(UserDict):
 class App(_App, _DC): pass
 
 
-class _PersistentDC(_DC):
-  """_DC subclass that persists self.data through a pluggable backend.
-
-  Storage is namespaced by (type(self).__name__, self.data[_persist_key]).
-  Subclasses wanting custom storage override _do_persist() / load().
-
-  Backend protocol (duck-typed; see `gppu.data.Persistence` for the standard
-  factory and built-in backends: json, pickle, sqlite, postgres):
-    upsert(cls: str, key: str, data: dict) -> None
-    load(cls: str, key: str)   -> dict | None
-    delete(cls: str, key: str) -> None
-    close()                    -> None
-
-  Bind once per process:
-    from gppu.data import Persistence
-    _PersistentDC.bind_db(Persistence('/var/lib/y2.db', backend='sqlite'))
-  """
-
-  _persist_key: ClassVar[str] = 'gppu'
-  _persist_db:  ClassVar[Any] = None
-
-  @classmethod
-  def bind_db(cls, db: Any) -> None: cls._persist_db = db
-
-  def persist(self) -> None:
-    db = type(self)._persist_db
-    if db is None: return
-    pk = self.data.get(self._persist_key)
-    if not pk: return
-    self._do_persist(db, str(pk))
-
-  def _do_persist(self, db: Any, pk: str) -> None:
-    db.upsert(type(self).__name__, pk, dict(self.data))
-
-  @classmethod
-  def load(cls, key: str) -> Optional[dict]:
-    db = cls._persist_db
-    if db is None: return None
-    return db.load(cls.__name__, str(key))
-
-  @classmethod
-  def iter_all(cls):
-    """Yield (key, data) for every persisted row of this class. Empty if unbound."""
-    db = cls._persist_db
-    if db is None: return
-    yield from db.iter(cls.__name__)
-# endregion
