@@ -267,7 +267,7 @@ class MqttMixin(mixin_Logger):
         if self._client is not None:
           await self._client.unsubscribe(topic)
 
-  async def mqtt_publish(self, topic: y2topic | str, payload: Any, retain: bool, expiry: int | None = None, qos: int = 0, **data):
+  async def mqtt_publish(self, topic: y2topic | str, payload: Any, retain: bool = False, expiry: int | None = None, qos: int = 0, **data):
     if isinstance(payload, dict):
       payload = json.dumps(payload)
     else:
