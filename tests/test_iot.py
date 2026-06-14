@@ -27,7 +27,7 @@ class TestTopLevelExports:
     def test_reexports(self):
         import gppu
         for name in ('y2list', 'y2path', 'y2topic', 'y2slug', 'y2eid',
-                     'mixin_Mqtt', 'Transformer'):
+                     'mixin_Mqtt'):
             assert hasattr(gppu, name), name
 
 

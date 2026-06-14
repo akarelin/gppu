@@ -149,7 +149,6 @@ from .iot import (
 
     # mqtt library (aiomqtt optional — gppu[mqtt])
     mixin_Mqtt,
-    Transformer,
 )
 
 
@@ -218,7 +217,7 @@ __all__ = [
     'y2list', 'y2path', 'y2topic', 'y2slug', 'y2eid',
 
     # mqtt library
-    'mixin_Mqtt', 'Transformer',
+    'mixin_Mqtt',
 
     # lifecycle: sync YMRO (AppDaemon/Y2) + async aYMRO + capability mixins
     '_YMRO', 'YInit', 'YLoad', 'YStart', 'YStepper', 'mixin_Stepper',
