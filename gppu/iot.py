@@ -222,7 +222,7 @@ class mixin_Mqtt(protocol_Async, mixin_Logger):
   MQTT_PROTOCOL = None              # aiomqtt.ProtocolVersion.V5 to opt in (message-expiry)
 
   def __init(self):
-    self._callbacks: dict = {}      # topic pattern -> [cb]
+    self._callbacks: dict = {}      # topic pattern -> [(cb, payload_filter)]
     self._subs: set = set()         # active subscriptions
     self._client = None
     self._lock = asyncio.Lock()
@@ -231,32 +231,31 @@ class mixin_Mqtt(protocol_Async, mixin_Logger):
   def __start(self):
     self._spawn(self._mqtt_loop())
 
-  # ---- public API ----
-  async def mqtt_subscribe(self, cb: Callable, topic: y2topic | str):
+  # ---- public API (y2api-aligned) ----
+  async def mqtt_listen(self, cb: Callable, topic: y2topic | str, payload=None, **data):
+    """Register cb(topic, payload) for a topic pattern and subscribe. cb may be
+    sync or async; `payload`, if given, is an exact-match filter (fire only on
+    that payload). Safe before connect — the reconnect loop replays the
+    subscription. `**data` may carry a `qos` for the subscription."""
     topic = y2topic(topic)
+    entry = (cb, payload)
     async with self._lock:
       cbs = self._callbacks.setdefault(topic, [])
-      if cb not in cbs: cbs.append(cb)
+      if entry not in cbs: cbs.append(entry)
       if topic not in self._subs:
         self._subs.add(topic)
-        if self._client is not None: await self._client.subscribe(str(topic), qos=0)
+        if self._client is not None:
+          await self._client.subscribe(str(topic), qos=int(data.get('qos', 0)))
 
-  async def mqtt_unsubscribe(self, cb: Callable, topic: y2topic | str):
-    topic = y2topic(topic)
-    async with self._lock:
-      cbs = self._callbacks.get(topic)
-      if not cbs: return
-      try: cbs.remove(cb)
-      except ValueError: return
-      if cbs: return
-      del self._callbacks[topic]
-      self._subs.discard(topic)
-      if self._client is not None: await self._client.unsubscribe(str(topic))
-
-  async def mqtt_publish(self, topic: y2topic | str, payload: Any, retain: bool = False,
-                         qos: int = 0, expiry: int | None = None, **data):
-    if self._client is None: return                    # dropped while reconnecting
-    payload = json.dumps(payload) if isinstance(payload, dict) else str(payload)
+  async def mqtt_publish(self, topic: y2topic | str, payload: str | dict | float = "", **data):
+    """Publish. dict/list payloads are JSON-encoded. `**data`: `retain`, `qos`,
+    `expiry` (MQTT5 message-expiry, seconds); any remaining keys become MQTT5
+    UserProperty pairs. Dropped silently while reconnecting (no client)."""
+    if self._client is None: return
+    payload = json.dumps(payload) if isinstance(payload, (dict, list)) else str(payload)
+    retain = bool(data.pop('retain', False))
+    qos = int(data.pop('qos', 0))
+    expiry = data.pop('expiry', None)
     props = None
     if expiry is not None or data:
       props = Properties(PacketTypes.PUBLISH)
@@ -311,15 +310,17 @@ class mixin_Mqtt(protocol_Async, mixin_Logger):
       else:
         payload = raw
       async with self._lock:
-        matches = [cb for pattern, cbs in self._callbacks.items()
-                   if self._topic_matches(topic, str(pattern)) for cb in cbs]
-      for cb in matches:
+        fire = [cb for pattern, cbs in self._callbacks.items()
+                if self._topic_matches(topic, str(pattern))
+                for (cb, filt) in cbs if filt is None or filt == payload]
+      for cb in fire:
         self._spawn(self._safe_cb(cb, y2topic(topic), payload))
 
   async def _safe_cb(self, cb, topic, payload):
     async with self._cb_lock:
       try:
-        await cb(topic, payload)
+        result = cb(topic, payload)
+        if asyncio.iscoroutine(result): await result
       except Exception as e:
         self.Warn('callback error:', topic, e)
 
