@@ -1055,8 +1055,17 @@ class Env:
 
   @staticmethod
   def from_dict(d: dict) -> None:
-    """Initialize Env from a pre-built dict (no file I/O)."""
-    Env._load_dict(d)
+    """Initialize Env from a dict. A ``topology`` key (a yaml path) is loaded as
+    the base data; ``tunables`` (an inline dict) and the remaining keys override
+    it — mirroring Y2's Environment loader. Without ``topology`` the dict itself
+    is the data (back-compatible)."""
+    config = dict(d)
+    topology = config.pop('topology', None)
+    tunables = config.pop('tunables', None)
+    data = dict_from_yml(topology) if topology else {}
+    if isinstance(tunables, dict): data.update(tunables)
+    data.update(config)
+    Env._load_dict(data)
 
   @staticmethod
   def from_env(name: Optional[str] = None, app_path: Optional[Path] = None) -> None:
@@ -1080,7 +1089,7 @@ class Env:
       setattr(Env, attr_name, staticmethod(partial(fn, logger=Env._logger)))
 
     config_data = dict_from_yml(Env.config_file)
-    Env._load_dict(config_data)
+    Env.from_dict(config_data)   # resolves a `topology:` key if the config has one
 
   @staticmethod
   def _resolve_app_path(app_path: Optional[Path] = None) -> Path:
@@ -1096,12 +1105,14 @@ class Env:
 
   @staticmethod
   def _config_file() -> Path:
-    file = Env.app_path / Path(Env.name).with_suffix('.yaml')
-    if not file.exists():
-      file = Env.app_path / 'config.yaml'
-    if not file.exists():
-      raise FileNotFoundError(f"Config file not found for app '{Env.name}' in path '{Env.app_path}'")
-    return file
+    """``<name>.yaml`` then ``config.yaml``, searched from ``app_path`` upward —
+    so a service in a subdir (e.g. /app/brultech) finds the suite's /app/config.yaml."""
+    names = (Path(Env.name).with_suffix('.yaml').name, 'config.yaml')
+    for parent in (Env.app_path, *Env.app_path.parents):
+      for name in names:
+        candidate = parent / name
+        if candidate.exists(): return candidate
+    raise FileNotFoundError(f"Config ({' or '.join(names)}) not found walking up from '{Env.app_path}'")
 
 # Global aliases for Env.glob* methods
 glob = Env.glob
