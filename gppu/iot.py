@@ -31,8 +31,8 @@ try:
 except ImportError:
   telnetlib3 = None  # type: ignore[assignment]
 
-from .gppu import _DC, _DC_BASE_TYPE_MAP, App, Error, _mixin, mixin_Logger, safe_float
-from .ymro import mixin_Stepper
+from .gppu import _DC, _DC_BASE_TYPE_MAP, Error, _mixin, mixin_Logger, safe_float
+from .app import AsyncApp, protocol_Async
 
 
 # region y2xxx
@@ -209,112 +209,113 @@ _DC._DC_TYPE_MAP |= {'y2eid': y2eid, 'y2topic': y2topic}
 
 
 # region mqtt
-# xx
-# xx mqtt_connstring, MqttMixin, Transformer
-# xx
-""" Shared mqtt library plumbing for the any2mqtt transform services
-(brul2mqtt, motion2mqtt, ...). The library is not a service: each service owns
-its broker login, identifier, and status/<service> LWT."""
-MQTT_CONN_FIELDS = {'hostname', 'port', 'username', 'password', 'identifier'}
+""" Shared mqtt plumbing for the any2mqtt transform services (brul2mqtt,
+motion2mqtt, ...). The library is not a service: each service owns its broker
+login, identifier, and status/<service> LWT. mixin_Mqtt is a capability mixin on
+AsyncApp — its reconnecting client runs as a spawned task; the app sets
+self.connection (its config block) in __init, and subscribe/publish are the only
+public surface."""
+_MQTT_KW = ('hostname', 'port', 'username', 'password', 'identifier')
 
 
-def mqtt_connstring(conn: dict) -> dict:
-  """aiomqtt.Client kwargs from a yaml connection: block — extra keys dropped."""
-  return {k: v for k, v in conn.items() if k in MQTT_CONN_FIELDS}
+class mixin_Mqtt(protocol_Async, mixin_Logger):
+  connection: dict                  # broker config block; set by the app's __init
+  MQTT_PROTOCOL = None              # aiomqtt.ProtocolVersion.V5 to opt in (message-expiry)
 
-
-class MqttMixin(mixin_Logger):
-  connstring: dict
-
-  def _mqtt_init(self):
-    self._callbacks = {}
+  def __init(self):
+    self._callbacks: dict = {}      # topic pattern -> [cb]
+    self._subs: set = set()         # active subscriptions
     self._client = None
-    self._active_subscriptions = set()
-    self._mqtt_lock = asyncio.Lock()
+    self._lock = asyncio.Lock()
     self._cb_lock = asyncio.Lock()
 
+  def __start(self):
+    self._spawn(self._mqtt_loop())
+
+  # ---- public API ----
   async def mqtt_subscribe(self, cb: Callable, topic: y2topic):
-    async with self._mqtt_lock:
+    topic = y2topic(topic)
+    async with self._lock:
       cbs = self._callbacks.setdefault(topic, [])
-      if cb not in cbs:
-        cbs.append(cb)
-      if topic not in self._active_subscriptions:
-        self._active_subscriptions.add(topic)
-        if self._client is not None:
-          await self._client.subscribe(topic, qos=0)
+      if cb not in cbs: cbs.append(cb)
+      if topic not in self._subs:
+        self._subs.add(topic)
+        if self._client is not None: await self._client.subscribe(str(topic), qos=0)
 
   async def mqtt_unsubscribe(self, cb: Callable, topic: y2topic):
-    async with self._mqtt_lock:
+    topic = y2topic(topic)
+    async with self._lock:
       cbs = self._callbacks.get(topic)
-      if not cbs:
-        return
-      try:
-        cbs.remove(cb)
-      except ValueError:
-        return
-      if cbs:
-        return
+      if not cbs: return
+      try: cbs.remove(cb)
+      except ValueError: return
+      if cbs: return
       del self._callbacks[topic]
-      self._active_subscriptions.discard(topic)
-      if self._client is not None:
-        await self._client.unsubscribe(topic)
+      self._subs.discard(topic)
+      if self._client is not None: await self._client.unsubscribe(str(topic))
 
-  async def clear_listeners(self, topic: y2topic):
-    async with self._mqtt_lock:
-      self._callbacks.pop(topic, None)
-      if topic in self._active_subscriptions:
-        self._active_subscriptions.remove(topic)
-        if self._client is not None:
-          await self._client.unsubscribe(topic)
-
-  async def mqtt_publish(self, topic: y2topic | str, payload: Any, retain: bool = False, expiry: int | None = None, qos: int = 0, **data):
-    if isinstance(payload, dict):
-      payload = json.dumps(payload)
-    else:
-      payload = str(payload)
+  async def mqtt_publish(self, topic: y2topic, payload: Any, retain: bool = False,
+                         qos: int = 0, expiry: int | None = None, **data):
+    if self._client is None: return                    # dropped while reconnecting
+    payload = json.dumps(payload) if isinstance(payload, dict) else str(payload)
     props = None
     if expiry is not None or data:
       props = Properties(PacketTypes.PUBLISH)
-      if expiry is not None:
-        props.MessageExpiryInterval = int(expiry)
-      if data:
-        props.UserProperty = [(k, str(v)) for k, v in data.items()]
+      if expiry is not None: props.MessageExpiryInterval = int(expiry)
+      if data: props.UserProperty = [(k, str(v)) for k, v in data.items()]
     await self._client.publish(str(topic), payload, qos=qos, retain=retain, properties=props)
 
+  # ---- internal ----
+  @property
+  def _status_topic(self) -> y2topic:
+    return y2topic(self.connection.get('status_topic', ''))
+
   def _mqtt_client(self):
-    return aiomqtt.Client(**self.connstring)
+    kw = {k: self.connection[k] for k in _MQTT_KW if k in self.connection}
+    if self.MQTT_PROTOCOL is not None: kw['protocol'] = self.MQTT_PROTOCOL
+    if self._status_topic:
+      kw['will'] = aiomqtt.Will(topic=str(self._status_topic), payload=b'offline', qos=1, retain=True)
+    return aiomqtt.Client(**kw)
 
-  async def mqtt_connect(self, client):
-    self._client = client
-    self.Info('connected:', self.connstring.get('hostname'), self.connstring.get('port'))
-    async with self._mqtt_lock:
-      topics = list(self._active_subscriptions)
-    for topic in topics:
-      await client.subscribe(topic, qos=0)
+  def _mqtt_tasks(self, client) -> list:
+    return []                       # override: poll loops, control-channel routers
 
-  def mqtt_disconnect(self):
-    self._client = None
+  async def _mqtt_loop(self):
+    while True:
+      try:
+        async with self._mqtt_client() as client:
+          self._client = client
+          self.Info('connected:', self.connection.get('hostname'), self.connection.get('port'))
+          await self._mqtt_replay(client)
+          if self._status_topic:
+            await client.publish(str(self._status_topic), 'online', qos=1, retain=True)
+          async with asyncio.TaskGroup() as tg:
+            tg.create_task(self._mqtt_dispatch(client))
+            for extra in self._mqtt_tasks(client): tg.create_task(extra)
+      except aiomqtt.MqttError as e:
+        self.Warn('mqtt error, reconnect in 5s:', e)
+        await asyncio.sleep(5)
+      finally:
+        self._client = None
+
+  async def _mqtt_replay(self, client):
+    async with self._lock: subs = list(self._subs)
+    for topic in subs: await client.subscribe(str(topic), qos=0)
 
   async def _mqtt_dispatch(self, client):
     async for msg in client.messages:
       topic = str(msg.topic)
       raw = msg.payload.decode() if isinstance(msg.payload, bytes) else str(msg.payload)
       if raw and raw[0] == '{':
-        try:
-          payload = json.loads(raw)
-        except json.JSONDecodeError:
-          payload = raw
+        try: payload = json.loads(raw)
+        except json.JSONDecodeError: payload = raw
       else:
         payload = raw
-      async with self._mqtt_lock:
-        matches = [
-          cb
-          for pattern, cbs in self._callbacks.items()
-          if self._topic_matches(topic, pattern)
-          for cb in cbs
-        ]
+      async with self._lock:
+        matches = [cb for pattern, cbs in self._callbacks.items()
+                   if self._topic_matches(topic, str(pattern)) for cb in cbs]
       for cb in matches:
-        asyncio.create_task(self._safe_cb(cb, y2topic(topic), payload))
+        self._spawn(self._safe_cb(cb, y2topic(topic), payload))
 
   async def _safe_cb(self, cb, topic, payload):
     async with self._cb_lock:
@@ -323,18 +324,6 @@ class MqttMixin(mixin_Logger):
       except Exception as e:
         self.Warn('callback error:', topic, e)
 
-  async def _mqtt_run(self):
-    while True:
-      try:
-        async with self._mqtt_client() as client:
-          await self.mqtt_connect(client)
-          await self._mqtt_dispatch(client)
-      except aiomqtt.MqttError as e:
-        self.Warn('mqtt error, reconnect in 5s:', e)
-        await asyncio.sleep(5)
-      finally:
-        self.mqtt_disconnect()
-
   @staticmethod
   def _topic_matches(topic: str, pattern: str) -> bool:
     if pattern.endswith('/#'):
@@ -342,51 +331,28 @@ class MqttMixin(mixin_Logger):
     return topic == pattern
 
 
-class Transformer(App, MqttMixin, mixin_Stepper):
+class Transformer(AsyncApp, mixin_Mqtt):
   NODATA_TIMEOUT = 60
   DEBOUNCE = 10
 
   def __init(self):
-    conn = self.data.get('connection', {})
-    self.connstring = mqtt_connstring(conn)
-    self.status_topic = y2topic(conn.get('status_topic', ''))
+    self.connection = self.data['connection']
     self.rules = self.data.get('rules', [])
     self._vals = {}
     self._last_pub = {}
     self._last_message_time = 0.0
     self._status = 'offline'
-    self._mqtt_init()
-
-  def __load(self): pass
 
   def __start(self):
-    for pat in self.data.get('connection', {}).get('listen', []):
-      self._callbacks.setdefault(pat, []).append(self._on_message)
-      self._active_subscriptions.add(pat)
-    asyncio.run(self._run())
+    for pat in self.connection.get('listen', []):
+      topic = y2topic(pat)
+      self._callbacks.setdefault(topic, []).append(self._on_message)
+      self._subs.add(topic)
 
-  async def _run(self):
-    will = aiomqtt.Will(
-      topic=str(self.status_topic), payload=b'offline', qos=1, retain=True
-    ) if self.status_topic else None
-    while True:
-      try:
-        async with aiomqtt.Client(**self.connstring, will=will) as client:
-          await self.mqtt_connect(client)
-          if self.status_topic:
-            await client.publish(str(self.status_topic), 'online', qos=1, retain=True)
-          self._last_message_time = time.monotonic()
-          self._status = 'online'
-          watchdog = asyncio.create_task(self._watchdog())
-          try:
-            await self._mqtt_dispatch(client)
-          finally:
-            watchdog.cancel()
-      except aiomqtt.MqttError as e:
-        self.Warn('mqtt error, reconnect in 5s:', e)
-        await asyncio.sleep(5)
-      finally:
-        self.mqtt_disconnect()
+  def _mqtt_tasks(self, client):
+    self._last_message_time = time.monotonic()
+    self._status = 'online'
+    return [self._watchdog()]
 
   async def _watchdog(self):
     while self._client is not None:
@@ -394,16 +360,16 @@ class Transformer(App, MqttMixin, mixin_Stepper):
       if self._status == 'online' and time.monotonic() - self._last_message_time > self.NODATA_TIMEOUT:
         self._status = 'no-data'
         self.Warn('no data for', self.NODATA_TIMEOUT, 's')
-        if self.status_topic:
-          await self.mqtt_publish(self.status_topic, 'no-data', qos=1, retain=True)
+        if self._status_topic:
+          await self.mqtt_publish(self._status_topic, 'no-data', qos=1, retain=True)
 
   async def _on_message(self, topic, payload):
     self._last_message_time = time.monotonic()
     if self._status == 'no-data':
       self._status = 'online'
       self.Info('data resumed')
-      if self.status_topic:
-        await self.mqtt_publish(self.status_topic, 'online', qos=1, retain=True)
+      if self._status_topic:
+        await self.mqtt_publish(self._status_topic, 'online', qos=1, retain=True)
     raw = payload.get('value') if isinstance(payload, dict) else payload
     if isinstance(raw, (int, float)):
       value = float(raw)

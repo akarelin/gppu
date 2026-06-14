@@ -192,15 +192,16 @@ class aYMRO:
       result = m(*a, **kw)
       if asyncio.iscoroutine(result): await result
 
-  # the loop + callback mechanism mixin_Timers / mixin_Mqtt / mixin_Http build on
+  # the loop's callback mechanism mixin_Timers / mixin_Mqtt / mixin_Http build on;
+  # internal — capability mixins call it, app code does not.
   _tg: asyncio.TaskGroup
 
-  def spawn(self, coro) -> asyncio.Task:
-    """Schedule a background coroutine in the app's TaskGroup; returns its Task.
-    Spawned tasks are awaited by ``_serve``'s ``async with`` exit, so a long-lived
-    one (the mqtt loop, a ``run_every``) is what keeps the app alive. Per the
-    asyncio docs, ``create_task`` is allowed from within a running task while the
-    group is active — so a callback may spawn further work (e.g. ``run_later``)."""
+  def _spawn(self, coro) -> asyncio.Task:
+    """Schedule a background coroutine in the app's TaskGroup (opened by
+    ``start``); returns its Task. A long-lived one (the mqtt loop, a
+    ``run_every``) is what keeps the app alive. Per the asyncio docs,
+    ``create_task`` is allowed from within a running task while the group is
+    active, so a callback may spawn further work (e.g. ``run_later``)."""
     return self._tg.create_task(coro)
 
 
@@ -239,10 +240,20 @@ class aYStart(aYLoad):
   @abstractmethod
   async def __start(self): pass
 
+  async def initialize(self):
+    """Entry point: run the async lifecycle. ``start`` opens the main loop, so
+    this runs until the app is stopped — ``asyncio.run(app.initialize())``."""
+    await self.init(); await self.load(); await self.start()
+
   async def start(self):
+    """Start the main loop. Opens the TaskGroup, runs the __start steps (where
+    mixins spawn their loops/timers), then keeps the app alive on those tasks —
+    propagating the first non-cancel failure as an ExceptionGroup."""
     if self.started: return
-    await self._acallall('start')
-    self.started = True
+    async with asyncio.TaskGroup() as tg:
+      self._tg = tg
+      await self._acallall('start')
+      self.started = True
 
   async def stop(self):
     if self.stopped: return
@@ -260,15 +271,6 @@ class aYStart(aYLoad):
   @stopped.setter
   def stopped(self, value: bool): self._stopped = value
 
-  async def _serve(self) -> None:
-    """Drive the async lifecycle inside a TaskGroup. The ``async with`` body runs
-    init/load/start (where mixins ``spawn`` their loops); its exit then awaits
-    every spawned task — running forever while any loop lives, and propagating the
-    first non-cancel failure as an ExceptionGroup (cancelling the rest)."""
-    async with asyncio.TaskGroup() as tg:
-      self._tg = tg
-      await self.init(); await self.load(); await self.start()
-
 
 aYStepper = aYStart
 class mixin_aStepper(aYStepper, _mixin): pass
@@ -279,7 +281,7 @@ class mixin_aStepper(aYStepper, _mixin): pass
 class protocol_Async:
   """Type-only surface the capability mixins (Timers/Mqtt/Http) rely on the
   composed AsyncApp to provide via aYMRO."""
-  spawn: Callable[..., asyncio.Task]
+  _spawn: Callable[..., asyncio.Task]
 
 
 class mixin_Timers(protocol_Async, _mixin):
@@ -294,7 +296,7 @@ class mixin_Timers(protocol_Async, _mixin):
     """Run ``cb`` every ``interval`` seconds. ``start='now'`` fires the first run
     immediately; a number delays the first run that many seconds."""
     delay = 0.0 if start == 'now' else float(start)
-    return self.spawn(self._run_every(cb, delay, float(interval), data))
+    return self._spawn(self._run_every(cb, delay, float(interval), data))
 
   def run_later(self, cb: Callable, delay: float = 180, key: str | None = None, **data) -> asyncio.Task:
     """Run ``cb`` once after ``delay`` seconds. With ``key``, rearming cancels
@@ -302,7 +304,7 @@ class mixin_Timers(protocol_Async, _mixin):
     if key:
       old = self._h_timeouts.pop(key, None)
       if old is not None and not old.done(): old.cancel()
-    task = self.spawn(self._run_later(cb, float(delay), data))
+    task = self._spawn(self._run_later(cb, float(delay), data))
     if key: self._h_timeouts[key] = task
     return task
 
@@ -329,13 +331,11 @@ class mixin_Timers(protocol_Async, _mixin):
 
 # region AsyncApp
 class AsyncApp(App, mixin_aStepper):
-  """App + the async lifecycle/loop (mixin_aStepper). ``initialize()`` drives the
-  whole thing under ``asyncio.run``. Compose capability mixins on top —
-  ``mixin_Timers``, ``mixin_Mqtt``, ``mixin_Http`` — each spawning its work via
-  ``self.spawn(...)`` during its async ``__start`` step."""
-
-  def initialize(self) -> None:
-    asyncio.run(self._serve())
+  """App + the async lifecycle/loop (mixin_aStepper). Run it with
+  ``asyncio.run(app.initialize())`` — init → load → start, where ``start`` opens
+  the main loop. Compose capability mixins on top — ``mixin_Timers`` /
+  ``mixin_Mqtt`` / ``mixin_Http`` — each spawning its work in its async
+  ``__start`` step."""
 # endregion
 
 

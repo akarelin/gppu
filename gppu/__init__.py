@@ -5,13 +5,29 @@ A comprehensive utility library providing configuration loading, logging,
 data manipulation, and type safety utilities.
 """
 
-from .ymro import (
+from .app import (
+    # App family
+    _App,
+    App,
+    AsyncApp,
+
+    # sync lifecycle (AppDaemon / Y2)
     _YMRO,
     YInit,
     YLoad,
     YStart,
     YStepper,
     mixin_Stepper,
+
+    # async lifecycle + capability mixins
+    aYMRO,
+    aYInit,
+    aYLoad,
+    aYStart,
+    aYStepper,
+    mixin_aStepper,
+    mixin_Timers,
+    protocol_Async,
 )
 
 from .gppu import (
@@ -121,7 +137,6 @@ from .gppu import (
     _Logger,
     _Config,
     _Base,
-    App,
 )
 
 from .iot import (
@@ -133,8 +148,7 @@ from .iot import (
     y2eid,
 
     # mqtt library (aiomqtt optional — gppu[mqtt])
-    mqtt_connstring,
-    MqttMixin,
+    mixin_Mqtt,
     Transformer,
 )
 
@@ -198,14 +212,16 @@ __all__ = [
     'glob', 'glob_int', 'glob_list', 'glob_dict',
 
     # Foundation classes
-    '_Logger', '_Config', '_Base', 'App', '_init_logger_base',
+    '_Logger', '_Config', '_Base', '_App', 'App', 'AsyncApp', '_init_logger_base',
 
     # y2xxx classes
     'y2list', 'y2path', 'y2topic', 'y2slug', 'y2eid',
 
     # mqtt library
-    'mqtt_connstring', 'MqttMixin', 'Transformer',
+    'mixin_Mqtt', 'Transformer',
 
-    # YMRO lifecycle
+    # lifecycle: sync YMRO (AppDaemon/Y2) + async aYMRO + capability mixins
     '_YMRO', 'YInit', 'YLoad', 'YStart', 'YStepper', 'mixin_Stepper',
+    'aYMRO', 'aYInit', 'aYLoad', 'aYStart', 'aYStepper', 'mixin_aStepper',
+    'mixin_Timers', 'protocol_Async',
 ]
