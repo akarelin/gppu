@@ -289,13 +289,13 @@ class mixin_Timers(protocol_Async, _mixin):
   def __init(self):
     self._h_timeouts: dict = {}          # key -> Task (for keyed run_later debounce)
 
-  def run_every(self, cb: Callable, start='now', interval: float = 60, **data) -> asyncio.Task:
+  async def run_every(self, cb: Callable, start='now', interval: float = 60, **data) -> asyncio.Task:
     """Run ``cb`` every ``interval`` seconds. ``start='now'`` fires the first run
     immediately; a number delays the first run that many seconds."""
     delay = 0.0 if start == 'now' else float(start)
     return self._spawn(self._run_every(cb, delay, float(interval), data))
 
-  def run_later(self, cb: Callable, delay: float = 180, key: str | None = None, **data) -> asyncio.Task:
+  async def run_later(self, cb: Callable, delay: float = 180, key: str | None = None, **data) -> asyncio.Task:
     """Run ``cb`` once after ``delay`` seconds. With ``key``, rearming cancels
     the pending timer under that key and replaces it (debounce)."""
     if key:
