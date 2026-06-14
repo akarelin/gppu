@@ -168,9 +168,9 @@ class App(_App, _DC): pass
 class aYMRO:
   """Async parallel of _YMRO. ``init``/``load``/``start`` are coroutines that
   await each ancestor's ``__init``/``__load``/``__start`` step in MRO order; a
-  step may be sync or ``async def``. The async mixin also owns the loop: ``spawn``
-  registers a background coroutine that ``_serve`` keeps alive. The sync _YMRO /
-  mixin_Stepper are left untouched for AppDaemon/Y2."""
+  step may be sync or ``async def``. The async mixin also owns the loop: ``_spawn``
+  registers a background coroutine that ``start``'s TaskGroup keeps alive. The sync
+  _YMRO / mixin_Stepper are left untouched for AppDaemon/Y2."""
   POSSIBLE_STEPS = ['init', 'load', 'start', 'stop']
 
   def _aymros(self) -> dict:
@@ -206,8 +206,7 @@ class aYMRO:
 
 
 class aYInit(aYMRO):
-  @abstractmethod
-  async def __init(self): pass
+  async def __init(self): pass        # no-op default; a step is optional, override as needed
 
   async def init(self):
     if self.initialized: return
@@ -221,7 +220,6 @@ class aYInit(aYMRO):
 
 
 class aYLoad(aYInit):
-  @abstractmethod
   async def __load(self): pass
 
   async def load(self):
@@ -237,7 +235,6 @@ class aYLoad(aYInit):
 
 
 class aYStart(aYLoad):
-  @abstractmethod
   async def __start(self): pass
 
   async def initialize(self):

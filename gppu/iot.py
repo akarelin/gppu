@@ -1,6 +1,6 @@
 """IoT primitives: y2list/y2path/y2topic/y2slug/y2eid types, the shared
-mqtt service plumbing (mqtt_connstring, MqttMixin, Transformer) used by the
-any2mqtt suite, and device control mixins (HTTP, Serial, Serial-over-HTTP).
+mqtt capability mixin (mixin_Mqtt, on gppu.app.AsyncApp) used by the any2mqtt
+suite, and device control mixins (HTTP, Serial, Serial-over-HTTP).
 Third-party IO deps are optional — install gppu[iot] (aiomqtt + aiohttp +
 telnetlib3) or just gppu[mqtt] (aiomqtt) for the pieces you use."""
 from __future__ import annotations
@@ -9,7 +9,6 @@ import asyncio
 import json
 import re
 import threading
-import time
 from collections import UserList
 from typing import Any, Callable, ClassVar, List, Optional
 from urllib.parse import urlparse
@@ -31,8 +30,8 @@ try:
 except ImportError:
   telnetlib3 = None  # type: ignore[assignment]
 
-from .gppu import _DC, _DC_BASE_TYPE_MAP, Error, _mixin, mixin_Logger, safe_float
-from .app import AsyncApp, protocol_Async
+from .gppu import _DC, _DC_BASE_TYPE_MAP, Error, _mixin, mixin_Logger
+from .app import protocol_Async
 
 
 # region y2xxx
@@ -329,84 +328,6 @@ class mixin_Mqtt(protocol_Async, mixin_Logger):
     if pattern.endswith('/#'):
       return topic.startswith(pattern[:-2])
     return topic == pattern
-
-
-class Transformer(AsyncApp, mixin_Mqtt):
-  NODATA_TIMEOUT = 60
-  DEBOUNCE = 10
-
-  def __init(self):
-    self.connection = self.data['connection']
-    self.rules = self.data.get('rules', [])
-    self._vals = {}
-    self._last_pub = {}
-    self._last_message_time = 0.0
-    self._status = 'offline'
-
-  def __start(self):
-    for pat in self.connection.get('listen', []):
-      topic = y2topic(pat)
-      self._callbacks.setdefault(topic, []).append(self._on_message)
-      self._subs.add(topic)
-
-  def _mqtt_tasks(self, client):
-    self._last_message_time = time.monotonic()
-    self._status = 'online'
-    return [self._watchdog()]
-
-  async def _watchdog(self):
-    while self._client is not None:
-      await asyncio.sleep(10)
-      if self._status == 'online' and time.monotonic() - self._last_message_time > self.NODATA_TIMEOUT:
-        self._status = 'no-data'
-        self.Warn('no data for', self.NODATA_TIMEOUT, 's')
-        if self._status_topic:
-          await self.mqtt_publish(self._status_topic, 'no-data', qos=1, retain=True)
-
-  async def _on_message(self, topic, payload):
-    self._last_message_time = time.monotonic()
-    if self._status == 'no-data':
-      self._status = 'online'
-      self.Info('data resumed')
-      if self._status_topic:
-        await self.mqtt_publish(self._status_topic, 'online', qos=1, retain=True)
-    raw = payload.get('value') if isinstance(payload, dict) else payload
-    if isinstance(raw, (int, float)):
-      value = float(raw)
-    else:
-      value = safe_float(raw)
-      if value is None: return
-    self._vals[topic] = value
-    now = time.monotonic()
-    for rule in self.rules:
-      for dest, val in self._cascade(rule, self._vals).items():
-        self._vals[dest] = round(val, 1)
-        if now - self._last_pub.get(dest, 0) >= self.DEBOUNCE:
-          self._last_pub[dest] = now
-          await self.mqtt_publish(dest, self._vals[dest], retain=False, qos=0)
-
-
-  @staticmethod
-  def _cascade(rule, vals):
-    src_prefix = rule['source_prefix']
-    flip = 'sign_flip' in rule.get('processors', [])
-    out = {}
-    for name, inputs in rule['map'].items():
-      groups = inputs if isinstance(inputs[0], list) else [inputs]
-      totals, ok = [], True
-      for group in groups:
-        vs = []
-        for r in group:
-          v = vals.get(y2topic(r) if '/' in r else y2topic(src_prefix, r))
-          if v is None:
-            ok = False
-            break
-          vs.append(-v if flip else v)
-        if not ok: break
-        totals.append(sum(vs))
-      if not ok: continue
-      out[y2topic(rule['dest_prefix'], name)] = totals[0] - sum(totals[1:])
-    return out
 # endregion
 
 
