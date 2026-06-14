@@ -232,7 +232,7 @@ class mixin_Mqtt(protocol_Async, mixin_Logger):
     self._spawn(self._mqtt_loop())
 
   # ---- public API ----
-  async def mqtt_subscribe(self, cb: Callable, topic: y2topic):
+  async def mqtt_subscribe(self, cb: Callable, topic: y2topic | str):
     topic = y2topic(topic)
     async with self._lock:
       cbs = self._callbacks.setdefault(topic, [])
@@ -241,7 +241,7 @@ class mixin_Mqtt(protocol_Async, mixin_Logger):
         self._subs.add(topic)
         if self._client is not None: await self._client.subscribe(str(topic), qos=0)
 
-  async def mqtt_unsubscribe(self, cb: Callable, topic: y2topic):
+  async def mqtt_unsubscribe(self, cb: Callable, topic: y2topic | str):
     topic = y2topic(topic)
     async with self._lock:
       cbs = self._callbacks.get(topic)
@@ -253,7 +253,7 @@ class mixin_Mqtt(protocol_Async, mixin_Logger):
       self._subs.discard(topic)
       if self._client is not None: await self._client.unsubscribe(str(topic))
 
-  async def mqtt_publish(self, topic: y2topic, payload: Any, retain: bool = False,
+  async def mqtt_publish(self, topic: y2topic | str, payload: Any, retain: bool = False,
                          qos: int = 0, expiry: int | None = None, **data):
     if self._client is None: return                    # dropped while reconnecting
     payload = json.dumps(payload) if isinstance(payload, dict) else str(payload)
