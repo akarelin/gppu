@@ -1341,21 +1341,8 @@ class _Config(mixin_Config):
 
 
 class _Base(_Logger, _Config): pass
-
-
-class _App(_Base):
-  """Base class for all apps. Inherits logging (_Logger) and config (_Config) with self.my().
-
-  Auto-initializes Env from name + caller's directory if Env is not already initialized.
-  """
-  name: str = ''
-
-  def __init__(self, name: str = '', **kw) -> None:
-    caller_file = Path(inspect.stack()[1].filename).resolve()
-    self.name = name or caller_file.stem
-    if not Env.initialized:
-      Env.from_env(name=self.name, app_path=caller_file.parent)
-    super().__init__(name=self.name, **kw)
+# _App / App moved to gppu.app (App needs _DC, below; defined there to keep the
+# App family together with the lifecycle/AsyncApp).
 # endregion
 
 
@@ -1411,7 +1398,5 @@ class _DC(UserDict):
     for step in self._INIT_STEPS: step(self, **kw)
 
 # endregion
-
-class App(_App, _DC): pass
 
 

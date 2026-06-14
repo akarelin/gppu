@@ -1,9 +1,9 @@
-"""Tests for the Y2 flight-recorder Tracer and _tracer decorators (gppu.ymro)."""
+"""Tests for the Y2 flight-recorder Tracer and _tracer decorators (gppu.app)."""
 import json
 
 import pytest
 
-from gppu.ymro import Tracer, _tracer, TA_BEFORE, TA_AFTER, TA_INSTEAD
+from gppu.app import Tracer, _tracer, TA_BEFORE, TA_AFTER, TA_INSTEAD
 
 
 @pytest.fixture
