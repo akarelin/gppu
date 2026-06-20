@@ -1,0 +1,517 @@
+{
+  "/home/alex/gppu/.claude/settings.local.json": {
+    "mtime": 1781412977.7518017,
+    "ast_hash": "ecfbee2aafd37789d9d7737826558da1",
+    "semantic_hash": "ecfbee2aafd37789d9d7737826558da1"
+  },
+  "/home/alex/gppu/.vscode/settings.json": {
+    "mtime": 1781412977.7558017,
+    "ast_hash": "14f11ef4e1d0898db38133cef6249cb5",
+    "semantic_hash": "14f11ef4e1d0898db38133cef6249cb5"
+  },
+  "/home/alex/gppu/examples/tui_demo.py": {
+    "mtime": 1781412977.7558017,
+    "ast_hash": "79025c545fe33d81abc9b5fad6222a30",
+    "semantic_hash": "79025c545fe33d81abc9b5fad6222a30"
+  },
+  "/home/alex/gppu/gppu/__init__.py": {
+    "mtime": 1781425232.9941998,
+    "ast_hash": "6995845d13e6e9727f6034055849e772",
+    "semantic_hash": "6995845d13e6e9727f6034055849e772"
+  },
+  "/home/alex/gppu/gppu/app.py": {
+    "mtime": 1781427563.6848192,
+    "ast_hash": "6e73b76ef6313a4da44ce588c131c707",
+    "semantic_hash": "6e73b76ef6313a4da44ce588c131c707"
+  },
+  "/home/alex/gppu/gppu/chrome.py": {
+    "mtime": 1781412977.7558017,
+    "ast_hash": "b17e2d6ceb7a92827880c897d3e26935",
+    "semantic_hash": "b17e2d6ceb7a92827880c897d3e26935"
+  },
+  "/home/alex/gppu/gppu/data.py": {
+    "mtime": 1781412977.7558017,
+    "ast_hash": "d23bb62a244f8221315afd301eb7a3d1",
+    "semantic_hash": "d23bb62a244f8221315afd301eb7a3d1"
+  },
+  "/home/alex/gppu/gppu/gppu.py": {
+    "mtime": 1781429786.5012822,
+    "ast_hash": "576dda52ee6ab1c396423f45b1a0db7a",
+    "semantic_hash": "576dda52ee6ab1c396423f45b1a0db7a"
+  },
+  "/home/alex/gppu/gppu/iot.py": {
+    "mtime": 1781427099.871877,
+    "ast_hash": "fdfe789e0fc83ef8930e1ecac5e17053",
+    "semantic_hash": "fdfe789e0fc83ef8930e1ecac5e17053"
+  },
+  "/home/alex/gppu/gppu/tui/__init__.py": {
+    "mtime": 1781412977.7558017,
+    "ast_hash": "0cf60bc073881358616d732cc3a9de48",
+    "semantic_hash": "0cf60bc073881358616d732cc3a9de48"
+  },
+  "/home/alex/gppu/gppu/tui/cache.py": {
+    "mtime": 1781412977.7558017,
+    "ast_hash": "9052380e12a435cd76c35355cffe231a",
+    "semantic_hash": "9052380e12a435cd76c35355cffe231a"
+  },
+  "/home/alex/gppu/gppu/tui/config_editor.py": {
+    "mtime": 1781412977.7558017,
+    "ast_hash": "5d44ae1b2b1c3e07df1d4d268ce1bd35",
+    "semantic_hash": "5d44ae1b2b1c3e07df1d4d268ce1bd35"
+  },
+  "/home/alex/gppu/gppu/tui/icons.py": {
+    "mtime": 1781412977.7558017,
+    "ast_hash": "ea23eef113e96ad9782d7f93b1720467",
+    "semantic_hash": "ea23eef113e96ad9782d7f93b1720467"
+  },
+  "/home/alex/gppu/gppu/tui/launcher.py": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "9af8a08c6c89b1a3c1d85f8047061575",
+    "semantic_hash": "9af8a08c6c89b1a3c1d85f8047061575"
+  },
+  "/home/alex/gppu/gppu/tui/loaders.py": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "35745f46cc757661ab83b4190786bf4f",
+    "semantic_hash": "35745f46cc757661ab83b4190786bf4f"
+  },
+  "/home/alex/gppu/gppu/tui/modals.py": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "f3d293f04b0378972dd3bd0b1ba8cbd1",
+    "semantic_hash": "f3d293f04b0378972dd3bd0b1ba8cbd1"
+  },
+  "/home/alex/gppu/gppu/tui/progress.py": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "46c62a5bdb0bdff4402bacfb248c5ac6",
+    "semantic_hash": "46c62a5bdb0bdff4402bacfb248c5ac6"
+  },
+  "/home/alex/gppu/gppu/tui/selectors.py": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "2741f5b7275621f32f8695f5fd456f6c",
+    "semantic_hash": "2741f5b7275621f32f8695f5fd456f6c"
+  },
+  "/home/alex/gppu/gppu/tui/tree.py": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "7b8622ff2de1de52b7ee31f82b9bffff",
+    "semantic_hash": "7b8622ff2de1de52b7ee31f82b9bffff"
+  },
+  "/home/alex/gppu/gppu/tui/viz/__init__.py": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "e7317085eed2e143d13971a4e67b46ea",
+    "semantic_hash": "e7317085eed2e143d13971a4e67b46ea"
+  },
+  "/home/alex/gppu/gppu/tui/viz/heatmap.py": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "eb468b1bf253a089f2c956ffa39da7a1",
+    "semantic_hash": "eb468b1bf253a089f2c956ffa39da7a1"
+  },
+  "/home/alex/gppu/gppu/tui/workers.py": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "6deb2fa8732ec3b7ac38a160fc4749e9",
+    "semantic_hash": "6deb2fa8732ec3b7ac38a160fc4749e9"
+  },
+  "/home/alex/gppu/pyproject.toml": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "b0c805ff0026681a00c4250b5f4ab2e3",
+    "semantic_hash": "b0c805ff0026681a00c4250b5f4ab2e3"
+  },
+  "/home/alex/gppu/rust/crates/gpru/src/dict.rs": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "cf2cf1f16eaf609e06ca61008f44d951",
+    "semantic_hash": "cf2cf1f16eaf609e06ca61008f44d951"
+  },
+  "/home/alex/gppu/rust/crates/gpru/src/lib.rs": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "b5bb9cb5c682780264b74a9e5fe93241",
+    "semantic_hash": "b5bb9cb5c682780264b74a9e5fe93241"
+  },
+  "/home/alex/gppu/rust/crates/gpru/src/safe.rs": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "ec5a150f7a44521705e868897b62aa03",
+    "semantic_hash": "ec5a150f7a44521705e868897b62aa03"
+  },
+  "/home/alex/gppu/rust/crates/gpru/src/time.rs": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "e667d9ce1f8cda64f21b534df93fc959",
+    "semantic_hash": "e667d9ce1f8cda64f21b534df93fc959"
+  },
+  "/home/alex/gppu/rust/crates/gpru/src/y2.rs": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "1d7104b1508090e29d1633dc64610e10",
+    "semantic_hash": "1d7104b1508090e29d1633dc64610e10"
+  },
+  "/home/alex/gppu/rust/crates/gpru/src/yaml.rs": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "d2a7bfd3ba8b6961d11c81f893f034d8",
+    "semantic_hash": "d2a7bfd3ba8b6961d11c81f893f034d8"
+  },
+  "/home/alex/gppu/rust/crates/gpru/tests/port_parity.rs": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "3307d30932b55cb28b9bd9d65d1e18c8",
+    "semantic_hash": "3307d30932b55cb28b9bd9d65d1e18c8"
+  },
+  "/home/alex/gppu/rust/crates/gpru/tests/y2_parity.rs": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "deb394c85f04ccc6637fd28066ae0ac9",
+    "semantic_hash": "deb394c85f04ccc6637fd28066ae0ac9"
+  },
+  "/home/alex/gppu/rust/crates/statusline/src/lib.rs": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "d95747cb92d6eedc9e6dd8cf42b45ff5",
+    "semantic_hash": "d95747cb92d6eedc9e6dd8cf42b45ff5"
+  },
+  "/home/alex/gppu/rust/crates/w11/src/lib.rs": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "faf2a582cdbfd4440caa9ee2e994fd4d",
+    "semantic_hash": "faf2a582cdbfd4440caa9ee2e994fd4d"
+  },
+  "/home/alex/gppu/statusline/__init__.py": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "557a4ee8e2249013c79c2dc731713978",
+    "semantic_hash": "557a4ee8e2249013c79c2dc731713978"
+  },
+  "/home/alex/gppu/statusline/__main__.py": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "0a5f3156848386ef5a76d0a2e5f09582",
+    "semantic_hash": "0a5f3156848386ef5a76d0a2e5f09582"
+  },
+  "/home/alex/gppu/statusline/cache.py": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "61ea4c814cddd536e16026fffe0c6d33",
+    "semantic_hash": "61ea4c814cddd536e16026fffe0c6d33"
+  },
+  "/home/alex/gppu/statusline/stats.py": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "2dfff3d217ea971b187273ecae370a80",
+    "semantic_hash": "2dfff3d217ea971b187273ecae370a80"
+  },
+  "/home/alex/gppu/statusline/status_line.py": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "4eb632fcbdb6dfb648d6c6ad27a0d9fa",
+    "semantic_hash": "4eb632fcbdb6dfb648d6c6ad27a0d9fa"
+  },
+  "/home/alex/gppu/tests/__init__.py": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/alex/gppu/tests/conftest.py": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "03b6cec4695c75a24a1461e80eeadf2d",
+    "semantic_hash": "03b6cec4695c75a24a1461e80eeadf2d"
+  },
+  "/home/alex/gppu/tests/test_async.py": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "84d14249271d4fdb6a6c8d65a6e4083f",
+    "semantic_hash": "84d14249271d4fdb6a6c8d65a6e4083f"
+  },
+  "/home/alex/gppu/tests/test_dc.py": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "265e270af158b2efab3036c6e0f3a496",
+    "semantic_hash": "265e270af158b2efab3036c6e0f3a496"
+  },
+  "/home/alex/gppu/tests/test_deepget.py": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "cf50375c73b255959e4d9e616ba153f1",
+    "semantic_hash": "cf50375c73b255959e4d9e616ba153f1"
+  },
+  "/home/alex/gppu/tests/test_diskcache.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "edb7b17706379606f4dfdc39d5e50fa1",
+    "semantic_hash": "edb7b17706379606f4dfdc39d5e50fa1"
+  },
+  "/home/alex/gppu/tests/test_expr.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "3d56aab4432e3324ecb4b8c1c9894209",
+    "semantic_hash": "3d56aab4432e3324ecb4b8c1c9894209"
+  },
+  "/home/alex/gppu/tests/test_format.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "4f79908c0a707cbf63394330077d943f",
+    "semantic_hash": "4f79908c0a707cbf63394330077d943f"
+  },
+  "/home/alex/gppu/tests/test_full_path.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "d4a1934c39734f2e1c1f446098b77183",
+    "semantic_hash": "d4a1934c39734f2e1c1f446098b77183"
+  },
+  "/home/alex/gppu/tests/test_iot.py": {
+    "mtime": 1781425238.058285,
+    "ast_hash": "72c8cd901b6482d166cefb842945f49a",
+    "semantic_hash": "72c8cd901b6482d166cefb842945f49a"
+  },
+  "/home/alex/gppu/tests/test_logger.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "0f813106d234817ef5d26c65a0571984",
+    "semantic_hash": "0f813106d234817ef5d26c65a0571984"
+  },
+  "/home/alex/gppu/tests/test_os.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "edcb953994d550fe6497a2807621a0ce",
+    "semantic_hash": "edcb953994d550fe6497a2807621a0ce"
+  },
+  "/home/alex/gppu/tests/test_pcp.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "52b0b6d8b765dabe895df578216e29f6",
+    "semantic_hash": "52b0b6d8b765dabe895df578216e29f6"
+  },
+  "/home/alex/gppu/tests/test_persistent_dc.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "2b1e41f40e68d1c5e79fbe0cb5911348",
+    "semantic_hash": "2b1e41f40e68d1c5e79fbe0cb5911348"
+  },
+  "/home/alex/gppu/tests/test_safe_types.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "2dcde077e49bbcb5f05d198eeeb08535",
+    "semantic_hash": "2dcde077e49bbcb5f05d198eeeb08535"
+  },
+  "/home/alex/gppu/tests/test_string.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "c4a39f98fd628a3893776b71a1191a26",
+    "semantic_hash": "c4a39f98fd628a3893776b71a1191a26"
+  },
+  "/home/alex/gppu/tests/test_template.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "45f03db3cf19aa99459f6c32d2a598d0",
+    "semantic_hash": "45f03db3cf19aa99459f6c32d2a598d0"
+  },
+  "/home/alex/gppu/tests/test_time.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "9a1af31ff252203d33a22537b5a7bbeb",
+    "semantic_hash": "9a1af31ff252203d33a22537b5a7bbeb"
+  },
+  "/home/alex/gppu/tests/test_tracer.py": {
+    "mtime": 1781417044.3288093,
+    "ast_hash": "b239643a3a618d047be4aa4d0c24cdc7",
+    "semantic_hash": "b239643a3a618d047be4aa4d0c24cdc7"
+  },
+  "/home/alex/gppu/tests/test_tui.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "4320c7afcd1f82136a6625739cbc1028",
+    "semantic_hash": "4320c7afcd1f82136a6625739cbc1028"
+  },
+  "/home/alex/gppu/tests/test_tui_cache.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "ff2e3ac1601dea50b41f87efaeaecffe",
+    "semantic_hash": "ff2e3ac1601dea50b41f87efaeaecffe"
+  },
+  "/home/alex/gppu/tests/test_tui_heatmap.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "de8560bd3a30ef697ac7a6991f8f20b1",
+    "semantic_hash": "de8560bd3a30ef697ac7a6991f8f20b1"
+  },
+  "/home/alex/gppu/tests/test_tui_icons.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "4a1e343a1cf053fbb14d642253f79986",
+    "semantic_hash": "4a1e343a1cf053fbb14d642253f79986"
+  },
+  "/home/alex/gppu/tests/test_tui_progress.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "6070f499a5958e24bdbf9f13cde595ec",
+    "semantic_hash": "6070f499a5958e24bdbf9f13cde595ec"
+  },
+  "/home/alex/gppu/tests/test_tui_tree.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "c4d8d331a262b805231c61aad6a8f5c0",
+    "semantic_hash": "c4d8d331a262b805231c61aad6a8f5c0"
+  },
+  "/home/alex/gppu/tests/test_vault.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "c2bc4fb9ffbe9eea7a771c3398d0bb4a",
+    "semantic_hash": "c2bc4fb9ffbe9eea7a771c3398d0bb4a"
+  },
+  "/home/alex/gppu/tests/test_y2types.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "cf574195cd2bbc66aace5f0d6fe8b5fa",
+    "semantic_hash": "cf574195cd2bbc66aace5f0d6fe8b5fa"
+  },
+  "/home/alex/gppu/tests/test_yaml.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "475b44b1f93df50610e63fd864a6b115",
+    "semantic_hash": "475b44b1f93df50610e63fd864a6b115"
+  },
+  "/home/alex/gppu/w11/__init__.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "204ea1224a2154bbe9cb1ac56329a904",
+    "semantic_hash": "204ea1224a2154bbe9cb1ac56329a904"
+  },
+  "/home/alex/gppu/w11/__main__.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "098a05f8ff93e192b5e70fa28f08e6f6",
+    "semantic_hash": "098a05f8ff93e192b5e70fa28f08e6f6"
+  },
+  "/home/alex/gppu/w11/app.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "6ba5a5878e6600ca736db6ae4d7605a5",
+    "semantic_hash": "6ba5a5878e6600ca736db6ae4d7605a5"
+  },
+  "/home/alex/gppu/w11/pyproject.toml": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "767ebb098ebbb13ae68e725ff35bff78",
+    "semantic_hash": "767ebb098ebbb13ae68e725ff35bff78"
+  },
+  "/home/alex/gppu/w11/w11-events.py": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "5362b51703ff4a0a9effb0bb60c704d8",
+    "semantic_hash": "5362b51703ff4a0a9effb0bb60c704d8"
+  },
+  "/home/alex/gppu/w11/w11-onedrive.py": {
+    "mtime": 1781412977.7678018,
+    "ast_hash": "6a2d68931182ae8c0baaea1ef291e749",
+    "semantic_hash": "6a2d68931182ae8c0baaea1ef291e749"
+  },
+  "/home/alex/gppu/.github/workflows/gppu.yml": {
+    "mtime": 1781412977.7518017,
+    "ast_hash": "95da141b517e9c9cd33687a66702d561",
+    "semantic_hash": "95da141b517e9c9cd33687a66702d561"
+  },
+  "/home/alex/gppu/.github/workflows/statusline.yml": {
+    "mtime": 1781412977.7518017,
+    "ast_hash": "d10d81e0462208a7d30fff2712b7dab1",
+    "semantic_hash": "d10d81e0462208a7d30fff2712b7dab1"
+  },
+  "/home/alex/gppu/.github/workflows/w11.yml": {
+    "mtime": 1781412977.7518017,
+    "ast_hash": "1c5db4c64c999bff69699cdbc548d4a6",
+    "semantic_hash": "1c5db4c64c999bff69699cdbc548d4a6"
+  },
+  "/home/alex/gppu/2DO.md": {
+    "mtime": 1781412977.7558017,
+    "ast_hash": "cda551098469c5a5de6aabc64c9c1fbf",
+    "semantic_hash": "cda551098469c5a5de6aabc64c9c1fbf"
+  },
+  "/home/alex/gppu/AGENTS.md": {
+    "mtime": 1781412977.7558017,
+    "ast_hash": "8bd7d12e4e81baacfb5f9f7b044d458b",
+    "semantic_hash": "8bd7d12e4e81baacfb5f9f7b044d458b"
+  },
+  "/home/alex/gppu/CHROME.md": {
+    "mtime": 1781412977.7558017,
+    "ast_hash": "eff5203ad68038416c295bab2d55b921",
+    "semantic_hash": "eff5203ad68038416c295bab2d55b921"
+  },
+  "/home/alex/gppu/DATA.md": {
+    "mtime": 1781412977.7558017,
+    "ast_hash": "e6ed49b641c80ecd7caf07a6bf9a8504",
+    "semantic_hash": "e6ed49b641c80ecd7caf07a6bf9a8504"
+  },
+  "/home/alex/gppu/IOT.md": {
+    "mtime": 1781412977.7558017,
+    "ast_hash": "d0e601cf793cf78b631221c59a2dd03d",
+    "semantic_hash": "d0e601cf793cf78b631221c59a2dd03d"
+  },
+  "/home/alex/gppu/README.md": {
+    "mtime": 1781412977.7558017,
+    "ast_hash": "68001a0d101601ead5095b1c56d679fe",
+    "semantic_hash": "68001a0d101601ead5095b1c56d679fe"
+  },
+  "/home/alex/gppu/TUI.md": {
+    "mtime": 1781412977.7558017,
+    "ast_hash": "562c2ee3a85280286418505e6eac90dc",
+    "semantic_hash": "562c2ee3a85280286418505e6eac90dc"
+  },
+  "/home/alex/gppu/docs/RELEASE.md": {
+    "mtime": 1781412977.7558017,
+    "ast_hash": "3ae9b10dac359b423cc78d2ac28588e6",
+    "semantic_hash": "3ae9b10dac359b423cc78d2ac28588e6"
+  },
+  "/home/alex/gppu/rust/GPRU_LLM_TESTING.md": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "256b49b738d41e6317d13f7c5fb0c5c1",
+    "semantic_hash": "256b49b738d41e6317d13f7c5fb0c5c1"
+  },
+  "/home/alex/gppu/rust/README.md": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "29a28eff15a6ce649230bf6f470f3eb0",
+    "semantic_hash": "29a28eff15a6ce649230bf6f470f3eb0"
+  },
+  "/home/alex/gppu/rust/RUST_PORT.md": {
+    "mtime": 1781412977.7598019,
+    "ast_hash": "092a843075a7b20a003c05e9fa9887bd",
+    "semantic_hash": "092a843075a7b20a003c05e9fa9887bd"
+  },
+  "/home/alex/gppu/w11/Alex-PC.yaml": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "6a640e0b8bd4fb452f80343e6955fda7",
+    "semantic_hash": "6a640e0b8bd4fb452f80343e6955fda7"
+  },
+  "/home/alex/gppu/w11/OD4B-Sync-Diagnostics.md": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "33a9c0d28182f83dfec952b8a571b6c1",
+    "semantic_hash": "33a9c0d28182f83dfec952b8a571b6c1"
+  },
+  "/home/alex/gppu/w11/README.md": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "a4f67a0ff15ab41ec963da58ec90bfbf",
+    "semantic_hash": "a4f67a0ff15ab41ec963da58ec90bfbf"
+  },
+  "/home/alex/gppu/w11/default_config/error_rules.yaml": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "13a0ec398f508a75420be868cabdf3c7",
+    "semantic_hash": "13a0ec398f508a75420be868cabdf3c7"
+  },
+  "/home/alex/gppu/w11/default_config/event_categories.yaml": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "03377e410b7edfaafd9d40828263cbc1",
+    "semantic_hash": "03377e410b7edfaafd9d40828263cbc1"
+  },
+  "/home/alex/gppu/w11/default_config/w11-events.yaml": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "8f549cf701cd77aa425b632484900825",
+    "semantic_hash": "8f549cf701cd77aa425b632484900825"
+  },
+  "/home/alex/gppu/w11/default_config/w11-onedrive.yaml": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "6fb73a49e49cd3908166daea74f8c748",
+    "semantic_hash": "6fb73a49e49cd3908166daea74f8c748"
+  },
+  "/home/alex/gppu/w11/default_config/w11.yaml": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "7a715fe83c746816e5d35189fe5ee61b",
+    "semantic_hash": "7a715fe83c746816e5d35189fe5ee61b"
+  },
+  "/home/alex/gppu/w11/error_rules.yaml": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "13a0ec398f508a75420be868cabdf3c7",
+    "semantic_hash": "13a0ec398f508a75420be868cabdf3c7"
+  },
+  "/home/alex/gppu/w11/event_categories.yaml": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "03377e410b7edfaafd9d40828263cbc1",
+    "semantic_hash": "03377e410b7edfaafd9d40828263cbc1"
+  },
+  "/home/alex/gppu/w11/requirements.txt": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "0dc8294971fd5e30b1ab711471fc9dac",
+    "semantic_hash": "0dc8294971fd5e30b1ab711471fc9dac"
+  },
+  "/home/alex/gppu/w11/w11-events.md": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "2b8fce659d591667ad67aeaaded53bd1",
+    "semantic_hash": "2b8fce659d591667ad67aeaaded53bd1"
+  },
+  "/home/alex/gppu/w11/w11-events.yaml": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "8f549cf701cd77aa425b632484900825",
+    "semantic_hash": "8f549cf701cd77aa425b632484900825"
+  },
+  "/home/alex/gppu/w11/w11-onedrive.md": {
+    "mtime": 1781412977.7638018,
+    "ast_hash": "36225afac13e283ef9ea615758019d78",
+    "semantic_hash": "36225afac13e283ef9ea615758019d78"
+  },
+  "/home/alex/gppu/w11/w11-onedrive.yaml": {
+    "mtime": 1781412977.7678018,
+    "ast_hash": "1a793dde90f5bf560cb8a99ce4c5fec2",
+    "semantic_hash": "1a793dde90f5bf560cb8a99ce4c5fec2"
+  },
+  "/home/alex/gppu/w11/w11.yaml": {
+    "mtime": 1781412977.7678018,
+    "ast_hash": "7a715fe83c746816e5d35189fe5ee61b",
+    "semantic_hash": "7a715fe83c746816e5d35189fe5ee61b"
+  },
+  "/home/alex/gppu/docs/tcolor-reference.svg": {
+    "mtime": 1781412977.7558017,
+    "ast_hash": "541a20c84a2e71b6a9f86934128934b9",
+    "semantic_hash": "541a20c84a2e71b6a9f86934128934b9"
+  }
+}
