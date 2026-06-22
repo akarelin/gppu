@@ -809,12 +809,7 @@ _remove_prefixes = lambda s, prefixes: next((s.removeprefix(prefix) for prefix i
 _SHORTEN_BY_PREFIX = ['process_', '_cb_']
 _IGNORE_FUNCTIONS = ['dpcp', 'trace', 'pcp', 'Trace', 'Info', 'Debug', 'Warn', 'Error', '_LogColorizer']
 _SEVERITY_COLORS = {'Error': 'WRED', 'Warn': 'WYELLOW', 'Info': 'WBLUE', 'Debug': 'GRAY4', None: 'WPURPLE'}
-def dpcp(*a: Any, 
-         conditional: Optional[bool] = None, 
-         rules: Dict[str, bool] = {}, 
-         no_prefix: bool = False, 
-         severity: Optional[str] = None,
-         **kw: Any) -> str | None:
+def dpcp(*a: Any, conditional: Optional[bool] = None, rules: Dict[str, bool] = {}, no_prefix: bool = False, severity: Optional[str] = None, **kw: Any) -> str | None:
   """ Version of pcp that adds info on where it was called from """
   def is_traced(name : Optional[str] = None) -> bool:
     if not conditional: return True
@@ -824,7 +819,7 @@ def dpcp(*a: Any,
   def is_ignored(f, fi) -> bool:
     if 'python' in fi.filename: return True # !!! Ignoring all python3 libraries
     elif fi.function in _IGNORE_FUNCTIONS: return True
-    elif f.f_locals.get('self').__class__.__name__ in _IGNORE_FUNCTIONS: return True
+    elif 'self' in f.f_locals and f.f_locals['self'].__class__.__name__ in _IGNORE_FUNCTIONS: return True
     return False
 
   print = lambda *a, **kw: None
