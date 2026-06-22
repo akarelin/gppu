@@ -31,7 +31,11 @@ test-tui = ["pytest", "pytest-asyncio", "textual"]
 statusline = "statusline.status_line:main"
 
 [tool.setuptools_scm]
-tag_regex = "^gppu/v(?P<version>.*)$"
+# Prefix optional: matches the git tag (`gppu/v3.4.6`) AND the already-stripped
+# version (`3.4.6`) that setuptools-scm >=10 re-parses from PKG-INFO on the
+# sdist->wheel build. A prefix-required regex made that fallback fail ("no
+# version found" -> AssertionError) and broke `python -m build`.
+tag_regex = "^(?:gppu/v)?(?P<version>.+)$"
 git_describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--match", "gppu/v*"]
 
 [tool.setuptools.packages.find]
