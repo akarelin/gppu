@@ -266,7 +266,7 @@ class aYStart(aYLoad):
   def stopped(self) -> bool: return getattr(self, '_stopped', False)
   @stopped.setter
   def stopped(self, value: bool): self._stopped = value
-
+  
 
 aYStepper = aYStart
 class mixin_aStepper(aYStepper, _mixin): pass
