@@ -31,38 +31,51 @@ class TestTopLevelExports:
             assert hasattr(gppu, name), name
 
 
-class TestIORuntime:
-    def test_io_run_returns_result(self):
-        from gppu.iot import _IORuntime
+class TestAsyncLoopThread:
+    def test_call_returns_result(self):
+        from gppu.iot import _AsyncLoopThread
 
-        class Host(_IORuntime):
+        class Host(_AsyncLoopThread):
             name = 'test-host'
 
         async def coro():
             return 41 + 1
 
         host = Host()
-        assert host.io_run('key', coro()) == 42
-        host._io_loop.call_soon_threadsafe(host._io_loop.stop)
+        assert host.call(coro) == 42  # daemon loop thread is reaped at process exit
 
-    def test_io_host_walks_parent_chain(self):
-        from gppu.iot import _IORuntime, _io_host
+    def test_from_child_walks_parent_chain(self):
+        from gppu.iot import _AsyncLoopThread
 
-        class Host(_IORuntime):
+        class Host(_AsyncLoopThread):
             pass
 
         class Child:
             def __init__(self, parent): self.parent = parent
 
         host = Host()
-        assert _io_host(Child(Child(host))) is host
+        assert _AsyncLoopThread.from_child(Child(Child(host))) is host
 
-    def test_io_host_raises_without_ancestor(self):
+    def test_from_child_raises_without_ancestor(self):
         import pytest
-        from gppu.iot import _io_host
+        from gppu.iot import _AsyncLoopThread
 
         class Orphan:
             parent = None
 
         with pytest.raises(RuntimeError):
-            _io_host(Orphan())
+            _AsyncLoopThread.from_child(Orphan())
+
+    def test_control_call_runs_on_host_loop(self):
+        from gppu.iot import _AsyncLoopThread, _ControlBase
+
+        class Host(_AsyncLoopThread):
+            pass
+
+        class Dev(_ControlBase):
+            def __init__(self, parent): self.parent = parent
+            async def _op(self, x): return x * 2
+            def run(self, x): return self._control_call(self._op, x)
+
+        host = Host()
+        assert Dev(host).run(21) == 42  # daemon loop thread is reaped at process exit
