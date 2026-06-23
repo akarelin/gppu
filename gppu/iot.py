@@ -228,7 +228,7 @@ class mixin_Mqtt(protocol_Async, mixin_Logger):
   MQTT_PROTOCOL: Any = None
 
 
-  def __init__(self) -> None:
+  def __init(self) -> None:
     self._callbacks: dict[y2topic, list[tuple[MqttCallback, object]]] = {}
     self._subscriptions: dict[y2topic, int] = {}
     self._client = None
