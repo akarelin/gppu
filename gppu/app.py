@@ -25,8 +25,7 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Callable, Literal, Optional, TypeAlias, final
 
-from .gppu import (Env, Logger, _Base, _DC, _mixin, dict_sanitize, dict_to_yml,
-                   now_ts)
+from .gppu import (Env, Logger, _Base, _DC, _mixin, dict_sanitize, dict_to_yml, now_ts)
 
 _trace_mro = False
 
@@ -275,7 +274,7 @@ class mixin_aStepper(aYStepper, _mixin): pass
 
 
 # region mixin_Timers
-class protocol_Async:
+class protocol_Async(mixin_aStepper):
   """Type-only surface the capability mixins (Timers/Mqtt/Http) rely on the
   composed AsyncApp to provide via aYMRO."""
   _spawn: Callable[..., asyncio.Task]
