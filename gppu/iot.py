@@ -33,7 +33,7 @@ try:
 except ImportError:
   telnetlib3 = None  # type: ignore[assignment]
 
-from .gppu import _DC, _DC_BASE_TYPE_MAP, Error, _mixin, mixin_Logger
+from .gppu import _DC, _DC_BASE_TYPE_MAP, Error, _mixin
 from .app import protocol_Async
 
 
@@ -217,8 +217,11 @@ type MqttCallback = Callable[[y2topic, object], Any]
 
 
 # region mqtt
-class mixin_Mqtt(protocol_Async, mixin_Logger):
-  """Shared MQTT client for an async transform service."""
+class mixin_Mqtt(protocol_Async, _mixin):
+  """Shared MQTT client for an async transform service. Like the sibling
+  mixin_Timers, it is a bare _mixin (not a mixin_Logger subclass) so it composes
+  cleanly onto AsyncApp without an MRO clash between mixin_Logger and
+  mixin_aStepper; self.Info/self.Warn resolve via the composed app's mixin_Logger."""
 
   _CLIENT_KEYS = ('hostname', 'port', 'username', 'password', 'identifier')
 
