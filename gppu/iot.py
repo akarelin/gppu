@@ -14,9 +14,7 @@ import ssl
 
 from collections import UserList
 from collections.abc import Callable, Coroutine, Iterable, Mapping
-from typing import Any, Callable, ClassVar, List, Optional
-
-from urllib.parse import urlparse
+from typing import Any, Callable, ClassVar, List, Optional, Self
 
 try:
   import aiomqtt
