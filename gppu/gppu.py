@@ -33,8 +33,9 @@ from string import Template
 
 from contextlib import contextmanager
 
-from importlib.metadata import version as _pkg_version
-_ver_full = _pkg_version('gppu')
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+try: _ver_full = _pkg_version('gppu')
+except PackageNotFoundError: _ver_full = '0.0.0'
 _ver_parts = _ver_full.split('.')
 VER_GPPU_BASE = '.'.join(_ver_parts[:3])
 VER_GPPU_BUILD = _ver_parts[3] if len(_ver_parts) > 3 else '0'
@@ -1374,8 +1375,8 @@ class _DC(UserDict):
   def __init_subclass__(cls, **kw) -> None:
     def _simple_type(typ: type | str) -> str:
       typ = str(typ)
-      if typ.startswith('list['): return 'list'
-      return typ
+      origin, bracket, _ = typ.partition('[')
+      return origin if bracket and origin in cls._DC_TYPE_MAP else typ
 
     super().__init_subclass__(**kw)
 
