@@ -1,20 +1,22 @@
-"""IoT primitives: y2list/y2path/y2topic/y2slug/y2eid types, the shared
-mqtt capability mixin (mixin_Mqtt, on gppu.app.AsyncApp) used by the any2mqtt
-suite, and device control mixins (HTTP, Serial, Serial-over-HTTP).
-Third-party IO deps are optional — install gppu[iot] (aiomqtt + aiohttp +
-telnetlib3) or just gppu[mqtt] (aiomqtt) for the pieces you use."""
+"""IoT value types, MQTT transport, and serialized async controls.
+
+``MqttApp`` serves standalone asyncio services. ``mixin_Mqtt`` is the same
+transport without lifecycle ownership, used by Y2. Controls bridge synchronous
+callers to one dedicated event-loop thread and serialize each device instance.
+"""
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import re
-import threading
-import concurrent.futures
 import ssl
+import threading
 
 from collections import UserList
-from collections.abc import Callable, Coroutine, Iterable, Mapping
-from typing import Any, Callable, ClassVar, List, Optional, Self
+from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping
+from concurrent.futures import Future
+from typing import Any, ClassVar, List, Optional
 
 try:
   import aiomqtt
@@ -28,13 +30,8 @@ try:
   import aiohttp
 except ImportError:
   aiohttp = None  # type: ignore[assignment]
-try:
-  import telnetlib3
-except ImportError:
-  telnetlib3 = None  # type: ignore[assignment]
-
-from .gppu import _DC, _DC_BASE_TYPE_MAP, Error, _mixin
-from .app import protocol_Async
+from .app import AsyncApp
+from .gppu import _DC, _DC_BASE_TYPE_MAP
 
 
 # region y2xxx
@@ -212,35 +209,52 @@ _DC._DC_TYPE_MAP |= {'y2eid': y2eid, 'y2topic': y2topic}
 
 # region mqtt
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
-type HttpBody = str | bytes
-type MqttCallback = Callable[[y2topic, object], Any]
+type MqttPayload = JsonValue | bytes
+type MqttCallback = Callable[[y2topic, object], object | Awaitable[object]]
 
 
-# region mqtt
-class mixin_Mqtt(protocol_Async, _mixin):
-  """Shared MQTT client for an async transform service. Like the sibling
-  mixin_Timers, it is a bare _mixin (not a mixin_Logger subclass) so it composes
-  cleanly onto AsyncApp without an MRO clash between mixin_Logger and
-  mixin_aStepper; self.Info/self.Warn resolve via the composed app's mixin_Logger."""
+if aiomqtt is None:
+  class _MqttError(Exception): pass
+else:
+  _MqttError = aiomqtt.MqttError
+
+
+class mixin_Mqtt:
+  """Reconnecting MQTT transport for a host with ``_spawn`` and logging."""
 
   _CLIENT_KEYS = ('hostname', 'port', 'username', 'password', 'identifier')
+  MQTT_RECONNECT_DELAY = 5
 
   connection: dict[str, Any]
   MQTT_PROTOCOL: Any = None
+  _client: Any = None
+  _mqtt_task: Any = None
+  _callbacks: dict[y2topic, list[tuple[MqttCallback, object]]]
+  _subscriptions: dict[y2topic, int]
+  _mqtt_lock: asyncio.Lock
+  _callback_lock: asyncio.Lock
 
+  def _start_mqtt(self):
+    task = self._mqtt_task
+    if task is not None and not task.done(): return task
 
-  def __init(self) -> None:
-    self._callbacks: dict[y2topic, list[tuple[MqttCallback, object]]] = {}
-    self._subscriptions: dict[y2topic, int] = {}
-    self._client = None
+    coroutine = self._mqtt_loop()
+    try: task = self._spawn(coroutine)
+    except BaseException:
+      coroutine.close()
+      raise
+    self._mqtt_task = task
+    return task
+
+  def _ensure_mqtt_state(self) -> None:
+    if getattr(self, '_mqtt_lock', None) is not None: return
+    self._callbacks = {}
+    self._subscriptions = {}
     self._mqtt_lock = asyncio.Lock()
     self._callback_lock = asyncio.Lock()
 
-
-  def __start(self) -> None: self._spawn(self._mqtt_loop())
-
-
   async def mqtt_listen(self, callback: MqttCallback, topic: y2topic | str, payload: object = None, **data: Any) -> None:
+    self._ensure_mqtt_state()
     topic = y2topic(topic)
     qos = int(data.get('qos', 0))
 
@@ -251,17 +265,18 @@ class mixin_Mqtt(protocol_Async, _mixin):
 
       old_qos = self._subscriptions.get(topic, -1)
       qos = max(old_qos, qos)
-      client = self._client if qos != old_qos else None
       self._subscriptions[topic] = qos
+      client = self._client if qos != old_qos else None
 
     if client is not None: await client.subscribe(str(topic), qos=qos)
 
-
-  async def mqtt_publish(self, topic: y2topic | str, payload: JsonValue = '', **data: Any) -> None:
+  async def mqtt_publish(self, topic: y2topic | str, payload: MqttPayload = '', **data: Any) -> None:
     client = self._client
     if client is None: return
 
-    payload = json.dumps(payload) if isinstance(payload, (dict, list)) else str(payload)
+    if isinstance(payload, (dict, list)): wire_payload = json.dumps(payload)
+    elif isinstance(payload, bytes): wire_payload = payload
+    else: wire_payload = str(payload)
     retain = bool(data.pop('retain', False))
     qos = int(data.pop('qos', 0))
     expiry = data.pop('expiry', None)
@@ -272,128 +287,167 @@ class mixin_Mqtt(protocol_Async, _mixin):
       if expiry is not None: properties.MessageExpiryInterval = int(expiry)
       if data: properties.UserProperty = [(key, str(value)) for key, value in data.items()]
 
-    await client.publish(str(topic), payload, qos=qos, retain=retain, properties=properties)
-
+    await client.publish(str(topic), wire_payload, qos=qos, retain=retain, properties=properties)
 
   @property
-  def _status_topic(self) -> y2topic: return y2topic(self.connection.get('status_topic', ''))
-
+  def _status_topic(self) -> y2topic:
+    return y2topic(self.connection.get('status_topic', ''))
 
   def _mqtt_client(self):
+    if aiomqtt is None: raise RuntimeError('aiomqtt is required for mixin_Mqtt')
     options = {key: self.connection[key] for key in self._CLIENT_KEYS if key in self.connection}
     if self.MQTT_PROTOCOL is not None: options['protocol'] = self.MQTT_PROTOCOL
     if self._status_topic: options['will'] = aiomqtt.Will(topic=str(self._status_topic), payload=b'offline', qos=1, retain=True)
-
     return aiomqtt.Client(**options)
 
-
-  def _mqtt_tasks(self, client: Any) -> Iterable[Coroutine[Any, Any, object]]: return ()
-
+  def _mqtt_tasks(self) -> Iterable[Coroutine[Any, Any, object]]: return ()
 
   async def _mqtt_loop(self) -> None:
+    self._ensure_mqtt_state()
     while True:
       try:
         async with self._mqtt_client() as client:
           self._client = client
-          self.Info('connected:', self.connection.get('hostname'), self.connection.get('port'))
-          await self._mqtt_replay(client)
+          try:
+            self.Info('connected:', self.connection.get('hostname'), self.connection.get('port'))
+            await self._mqtt_replay(client)
+            if self._status_topic: await client.publish(str(self._status_topic), 'online', qos=1, retain=True)
 
-          if self._status_topic: await client.publish(str(self._status_topic), 'online', qos=1, retain=True)
+            async with asyncio.TaskGroup() as tasks:
+              dispatch = tasks.create_task(self._mqtt_dispatch(client))
+              extras = [tasks.create_task(coroutine) for coroutine in self._mqtt_tasks()]
+              await dispatch
+              for task in extras: task.cancel()
+          finally:
+            self._client = None
+            if self._status_topic:
+              try: await client.publish(str(self._status_topic), 'offline', qos=1, retain=True)
+              except _MqttError: pass
+      except* _MqttError as errors:
+        self.Warn(f'mqtt error, reconnect in {self.MQTT_RECONNECT_DELAY}s:', *errors.exceptions)
+      finally:
+        self._client = None
 
-          async with asyncio.TaskGroup() as tasks:
-            tasks.create_task(self._mqtt_dispatch(client))
-            for task in self._mqtt_tasks(client): tasks.create_task(task)
-      except* aiomqtt.MqttError as errors: self.Warn('mqtt error, reconnect in 5s:', *errors.exceptions)
-      finally: self._client = None
-
-      await asyncio.sleep(5)
-
+      await asyncio.sleep(self.MQTT_RECONNECT_DELAY)
 
   async def _mqtt_replay(self, client: Any) -> None:
     async with self._mqtt_lock: subscriptions = tuple(self._subscriptions.items())
-
     for topic, qos in subscriptions: await client.subscribe(str(topic), qos=qos)
-
 
   async def _mqtt_dispatch(self, client: Any) -> None:
     async for message in client.messages:
       topic = str(message.topic)
-      raw = message.payload.decode() if isinstance(message.payload, bytes) else str(message.payload)
+      raw = message.payload.decode(errors='replace') if isinstance(message.payload, bytes) else str(message.payload)
       payload: object = raw
-
-      if raw and raw[0] in '[{':
-        try: payload = json.loads(raw)
+      structured = raw.lstrip()
+      if structured[:1] in '[{':
+        try: payload = json.loads(structured)
         except json.JSONDecodeError: pass
 
-      async with self._mqtt_lock: callbacks = [callback for pattern, entries in self._callbacks.items() if self._topic_matches(topic, str(pattern)) for callback, expected in entries if expected is None or expected == payload]
+      async with self._mqtt_lock:
+        callbacks = [callback for pattern, entries in self._callbacks.items()
+                     if self._topic_matches(topic, str(pattern))
+                     for callback, expected in entries
+                     if expected is None or expected == payload]
 
       for callback in callbacks: self._spawn(self._mqtt_callback(callback, y2topic(topic), payload))
-
 
   async def _mqtt_callback(self, callback: MqttCallback, topic: y2topic, payload: object) -> None:
     async with self._callback_lock:
       try:
         result = callback(topic, payload)
-        if asyncio.iscoroutine(result): await result
+        if inspect.isawaitable(result): await result
       except Exception as error:
         self.Warn('callback error:', topic, error)
 
-
   @staticmethod
-  def _topic_matches(topic: str, pattern: str) -> bool: return topic.startswith(pattern[:-2]) if pattern.endswith('/#') else topic == pattern
+  def _topic_matches(topic: str, pattern: str) -> bool:
+    if topic.startswith('$') and not pattern.startswith('$'): return False
+    topic_parts = topic.split('/')
+    pattern_parts = pattern.split('/')
+    for index, expected in enumerate(pattern_parts):
+      if expected == '#': return index == len(pattern_parts) - 1
+      if index == len(topic_parts) or expected not in ('+', topic_parts[index]): return False
+    return len(topic_parts) == len(pattern_parts)
+
+
+class MqttApp(mixin_Mqtt, AsyncApp):
+  """AsyncApp with one reconnecting MQTT client."""
+
+  async def subscribe(self) -> None: pass
+
+  async def start(self) -> None:
+    await super().start()
+    await self.subscribe()
+    self._start_mqtt()
 # endregion
 
 
-
 # $$
-# $$        Control mixins (HTTP, JSON-over-HTTP, Serial)
+# $$        Event-loop bridge and serialized controls
 # $$
-class _AsyncLoopThread(_mixin):
-  """Runs coroutine functions on one long-lived daemon event-loop thread."""
-
-  _async_loop: asyncio.AbstractEventLoop | None = None
-  _async_loop_start_lock = threading.Lock()
+type AsyncSubmission[T] = Future[T] | asyncio.Task[T]
 
 
-  @classmethod
-  def from_child(cls, child: object) -> Self:
-    origin = current = child
-    while current is not None:
-      if isinstance(current, cls): return current
-      current = getattr(current, 'parent', None)
-    raise RuntimeError(f'{origin!r} has no {cls.__name__} ancestor')
+class EventLoopBridge:
+  """Schedules coroutines on an externally owned loop; ``call`` blocks off-loop."""
 
+  def schedule[T](self, coroutine: Coroutine[Any, Any, T], /) -> AsyncSubmission[T]:
+    return self._schedule(self._get_loop(), coroutine)
+
+  def submit[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> AsyncSubmission[T]:
+    return self.schedule(function(*args, **kwargs))
 
   def call[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> T:
     loop = self._get_loop()
-
-    try: running_loop = asyncio.get_running_loop()
-    except RuntimeError: running_loop = None
-    if running_loop is loop: raise RuntimeError('cannot block the target event-loop thread')
-
-    future = asyncio.run_coroutine_threadsafe(function(*args, **kwargs), loop)
+    if self._on_loop(loop): raise RuntimeError('cannot block the target event-loop thread')
+    future = self._schedule(loop, function(*args, **kwargs))
     try: return future.result()
     except BaseException:
-      future.cancel()
+      if not future.done(): future.cancel()
       raise
 
-
-  def _get_loop(self) -> asyncio.AbstractEventLoop:
-    loop = self._async_loop
-    if loop is not None: return loop
-
-    with self._async_loop_start_lock:
-      loop = self._async_loop
-      if loop is None:
-        ready = concurrent.futures.Future[asyncio.AbstractEventLoop]()
-        threading.Thread(target=self._run_loop, args=(ready,), daemon=True, name=f'asyncio-{getattr(self, "name", type(self).__name__)}').start()
-        self._async_loop = loop = ready.result()
-
-    return loop
-
+  def on_loop(self) -> bool: return self._on_loop(self._get_loop())
 
   @staticmethod
-  def _run_loop(ready: concurrent.futures.Future[asyncio.AbstractEventLoop]) -> None:
+  def _schedule[T](loop: asyncio.AbstractEventLoop, coroutine: Coroutine[Any, Any, T], /) -> AsyncSubmission[T]:
+    try:
+      if EventLoopBridge._on_loop(loop): return loop.create_task(coroutine)
+      return asyncio.run_coroutine_threadsafe(coroutine, loop)
+    except BaseException:
+      coroutine.close()
+      raise
+
+  @staticmethod
+  def _on_loop(loop: asyncio.AbstractEventLoop) -> bool:
+    try: return asyncio.get_running_loop() is loop
+    except RuntimeError: return False
+
+  def _get_loop(self) -> asyncio.AbstractEventLoop:
+    raise NotImplementedError
+
+
+class SerializedControl(EventLoopBridge):
+  """Runs controls on one daemon loop, serialized by a per-instance lock."""
+
+  _control_loop: ClassVar[asyncio.AbstractEventLoop | None] = None
+  _control_loop_start_lock: ClassVar[threading.Lock] = threading.Lock()
+  _control_lock: asyncio.Lock | None = None
+
+  def _get_loop(self) -> asyncio.AbstractEventLoop:
+    loop = SerializedControl._control_loop
+    if loop is not None: return loop
+
+    with SerializedControl._control_loop_start_lock:
+      loop = SerializedControl._control_loop
+      if loop is None:
+        ready = Future[asyncio.AbstractEventLoop]()
+        threading.Thread(target=SerializedControl._run_loop, args=(ready,), daemon=True, name='gppu-controls').start()
+        SerializedControl._control_loop = loop = ready.result()
+    return loop
+
+  @staticmethod
+  def _run_loop(ready: Future[asyncio.AbstractEventLoop]) -> None:
     async def main() -> None:
       ready.set_result(asyncio.get_running_loop())
       await asyncio.Event().wait()
@@ -403,87 +457,82 @@ class _AsyncLoopThread(_mixin):
       if ready.done(): raise
       ready.set_exception(error)
 
-
-class _ControlBase(_mixin):
-  _control_address: str
-  _control_lock: asyncio.Lock | None = None
-
-
   def _control_call[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> T:
-    return _AsyncLoopThread.from_child(self).call(self._control_call_async, function, *args, **kwargs)
+    return self.call(self._control_run, function, *args, **kwargs)
 
+  def _control_submit[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> AsyncSubmission[T]:
+    return self.submit(self._control_run, function, *args, **kwargs)
 
-  async def _control_call_async[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> T:
+  async def _control_run[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> T:
     lock = self._control_lock
     if lock is None: lock = self._control_lock = asyncio.Lock()
-
     async with lock: return await function(*args, **kwargs)
 
 
-class _HTTPControl(_ControlBase):
+# $$
+# $$        HTTP and JSON-over-HTTP controls
+# $$
+type HttpBody = str | bytes
+
+
+class HTTPControl(SerializedControl):
+  """Serialized textual HTTP; returns ``None`` on request or response failure."""
+
   _http_timeout: float = 10
   _http_headers: Mapping[str, str] | None = None
-  _http_ssl: ssl.SSLContext | None = None
+  _http_ssl: ssl.SSLContext | bool | None = None
 
+  def _http_get(self, url: str, *, headers: Mapping[str, str] | None = None) -> str | None:
+    return self._http_request('GET', url, headers=headers)
 
-  def _http_get(self, url: str, *, headers: Mapping[str, str] | None = None) -> str | None: return self._http_request('GET', url, headers=headers)
-  def _http_put(self, url: str, body: HttpBody | None = None, *, headers: Mapping[str, str] | None = None) -> str | None: return self._http_request('PUT', url, body, headers=headers)
-  def _http_post(self, url: str, body: HttpBody | None = None, *, headers: Mapping[str, str] | None = None) -> str | None: return self._http_request('POST', url, body, headers=headers)
-  def _http_request(self, method: str, url: str, body: HttpBody | None = None, *, headers: Mapping[str, str] | None = None) -> str | None: return self._control_call(self._http_request_async, method, url, body, headers)
+  def _http_put(self, url: str, body: HttpBody | None = None, *, headers: Mapping[str, str] | None = None) -> str | None:
+    return self._http_request('PUT', url, body, headers=headers)
 
+  def _http_post(self, url: str, body: HttpBody | None = None, *, headers: Mapping[str, str] | None = None) -> str | None:
+    return self._http_request('POST', url, body, headers=headers)
 
-  async def _http_request_async(self, method: str, url: str, body: HttpBody | None, headers: Mapping[str, str] | None) -> str | None:
+  def _http_request(self, method: str, url: str, body: HttpBody | None = None, *, headers: Mapping[str, str] | None = None) -> str | None:
+    return self._control_call(self._http_request_async, method, url, body, headers)
+
+  async def _http_request_async(self, method: str, url: str, body: HttpBody | None = None, headers: Mapping[str, str] | None = None) -> str | None:
+    if aiohttp is None: raise RuntimeError('aiohttp is required for HTTPControl')
     request_headers = {**(self._http_headers or {}), **(headers or {})} or None
-
     try:
       timeout = aiohttp.ClientTimeout(total=self._http_timeout)
       async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.request(method, url, data=body, headers=request_headers, ssl=self._http_ssl) as response: return await response.text()
-    except (aiohttp.ClientError, TimeoutError, OSError, UnicodeError): return None
+        async with session.request(method, url, data=body, headers=request_headers, ssl=self._http_ssl) as response:
+          response.raise_for_status()
+          return await response.text()
+    except (aiohttp.ClientError, TimeoutError, OSError, UnicodeError):
+      return None
 
 
-class _JSONHTTPControl(_HTTPControl):
-  def _json_get(self, url: str) -> JsonValue: return self._json_request('GET', url)
-  def _json_put(self, url: str, payload: JsonValue) -> JsonValue: return self._json_request('PUT', url, json.dumps(payload))
-  def _json_post(self, url: str, payload: JsonValue) -> JsonValue: return self._json_request('POST', url, json.dumps(payload))
-  def _json_request(self, method: str, url: str, body: str | None = None) -> JsonValue:
-    headers = {'Accept': 'application/json'}
-    if body is not None: headers['Content-Type'] = 'application/json'
+_NO_JSON_BODY = object()
 
-    response = self._http_request(method, url, body, headers=headers)
+
+class JSONHTTPControl(HTTPControl):
+  """Explicit JSON request/response layer over ``HTTPControl``."""
+
+  def _json_get(self, url: str, *, headers: Mapping[str, str] | None = None) -> JsonValue:
+    return self._json_request('GET', url, headers=headers)
+
+  def _json_put(self, url: str, payload: JsonValue, *, headers: Mapping[str, str] | None = None) -> JsonValue:
+    return self._json_request('PUT', url, payload, headers=headers)
+
+  def _json_post(self, url: str, payload: JsonValue, *, headers: Mapping[str, str] | None = None) -> JsonValue:
+    return self._json_request('POST', url, payload, headers=headers)
+
+  def _json_request(self, method: str, url: str, payload: JsonValue | object = _NO_JSON_BODY, *, headers: Mapping[str, str] | None = None) -> JsonValue:
+    return self._control_call(self._json_request_async, method, url, payload, headers)
+
+  async def _json_request_async(self, method: str, url: str, payload: JsonValue | object = _NO_JSON_BODY, headers: Mapping[str, str] | None = None) -> JsonValue:
+    request_headers = {'Accept': 'application/json', **(headers or {})}
+    body = None
+    if payload is not _NO_JSON_BODY:
+      request_headers.setdefault('Content-Type', 'application/json')
+      body = json.dumps(payload)
+    response = await self._http_request_async(method, url, body, request_headers)
     if response is None: return None
-
     try: return json.loads(response)
     except json.JSONDecodeError: return None
-
-
-class _SerialControl(_ControlBase):
-  command_suffix = '\n\r'
-
-
-  def _send_serial(self, command: str, **data: Any) -> None: self._control_call(self._send_serial_async, command, **data)
-
-
-  async def _send_serial_async(self, command: str, **data: Any) -> None:
-    writer = None
-
-    try:
-      reader, writer = await telnetlib3.open_connection(host=self._control_address, port=23)
-      if reader is None or writer is None: raise ConnectionError('Failed to establish telnet connection')
-
-      writer.write(command + self.command_suffix)
-      await writer.drain()
-    except Exception as error:
-      Error('Error in telnet command', 'INFO', command, 'DIM', ':', 'BRIGHT', error)
-      raise
-    finally:
-      if writer is not None: writer.close()
-
-
-class _SerialHTTPControl(_SerialControl, _HTTPControl):
-  command_suffix = '\n'
-
-  def _send_serial(self, command: str, **data: Any) -> None:
-    url = f'http://{self._control_address}/api/host/modules/1/ports/1/data'
-    self._http_post(url, json.dumps({'data': command + self.command_suffix}), headers={'Content-Type': 'application/json'})
 

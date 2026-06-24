@@ -1,0 +1,10 @@
+{
+  "venvPath": "/home/alex/RAN/appdaemon/_adev",
+  "venv": ".venv",
+  "pythonVersion": "3.13",
+  "typeCheckingMode": "basic",
+  "reportAttributeAccessIssue": false,
+  "reportArgumentType": false,
+  "reportOptionalMemberAccess": false,
+  "reportOptionalCall": false
+}

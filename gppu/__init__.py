@@ -18,16 +18,6 @@ from .app import (
     YStart,
     YStepper,
     mixin_Stepper,
-
-    # async lifecycle + capability mixins
-    aYMRO,
-    aYInit,
-    aYLoad,
-    aYStart,
-    aYStepper,
-    mixin_aStepper,
-    mixin_Timers,
-    protocol_Async,
 )
 
 from .gppu import (
@@ -149,6 +139,13 @@ from .iot import (
 
     # mqtt library (aiomqtt optional — gppu[mqtt])
     mixin_Mqtt,
+    MqttApp,
+
+    # event-loop and device-control bridges
+    EventLoopBridge,
+    SerializedControl,
+    HTTPControl,
+    JSONHTTPControl,
 )
 
 
@@ -217,10 +214,11 @@ __all__ = [
     'y2list', 'y2path', 'y2topic', 'y2slug', 'y2eid',
 
     # mqtt library
-    'mixin_Mqtt',
+    'mixin_Mqtt', 'MqttApp',
 
-    # lifecycle: sync YMRO (AppDaemon/Y2) + async aYMRO + capability mixins
+    # event-loop and device-control bridges
+    'EventLoopBridge', 'SerializedControl', 'HTTPControl', 'JSONHTTPControl',
+
+    # lifecycle: sync YMRO (AppDaemon/Y2)
     '_YMRO', 'YInit', 'YLoad', 'YStart', 'YStepper', 'mixin_Stepper',
-    'aYMRO', 'aYInit', 'aYLoad', 'aYStart', 'aYStepper', 'mixin_aStepper',
-    'mixin_Timers', 'protocol_Async',
 ]
