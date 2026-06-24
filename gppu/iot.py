@@ -323,8 +323,15 @@ class mixin_Mqtt:
             if self._status_topic:
               try: await client.publish(str(self._status_topic), 'offline', qos=1, retain=True)
               except _MqttError: pass
-      except* _MqttError as errors:
-        self.Warn(f'mqtt error, reconnect in {self.MQTT_RECONNECT_DELAY}s:', *errors.exceptions)
+      except _MqttError as error:
+        self.Warn(f'mqtt error, reconnect in {self.MQTT_RECONNECT_DELAY}s:', error)
+      except BaseExceptionGroup as group:
+        # TaskGroup wraps task failures in a group; peel off MqttError, re-raise the rest.
+        # (Avoid `except*` syntax: debugpy's source scanner crashes on TryStar nodes.)
+        mqtt_errors, other = group.split(_MqttError)
+        if mqtt_errors is not None:
+          self.Warn(f'mqtt error, reconnect in {self.MQTT_RECONNECT_DELAY}s:', *mqtt_errors.exceptions)
+        if other is not None: raise other
       finally:
         self._client = None
 
