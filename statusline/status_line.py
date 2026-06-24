@@ -10,6 +10,7 @@ Filters: c(color,prefix,suffix) seg(sep,sep_color) tok ms ago pct counter_sum to
 
 import json
 import os
+import socket
 import sys
 import time
 
@@ -214,6 +215,7 @@ def build_stats(data):
         "project_dir": project_dir,
         "project_name": os.path.basename(project_dir) if project_dir else "",
         "project_folder": _home_rel(os.path.dirname(project_dir)) if project_dir else "",
+        "hostname": socket.gethostname(),
     }
 
 
@@ -236,7 +238,9 @@ def _fmt_context_bar(s):
     used = cache + inp + out
     free = max(0, window - used)
     total = used + free or 1
-    def cells(t): return max(0, round(width * t / total))
+    # Floor non-zero segments at 1 cell so small input/output slices stay
+    # visible against a large (e.g. 1M) window instead of rounding to 0.
+    def cells(t): return max(1, round(width * t / total)) if t else 0
     c_cache = cells(cache)
     c_in = cells(inp)
     c_out = cells(out)
