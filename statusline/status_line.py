@@ -183,6 +183,17 @@ def _render_template(template_str, ctx):
 
 # ── Raw stats builder ───────────────────────────────────────────────────────
 
+def _home_rel(p):
+    """Normalize a path to forward slashes and abbreviate the home prefix with ~."""
+    if not p:
+        return ""
+    p = p.replace("\\", "/")
+    home = os.path.expanduser("~").replace("\\", "/")
+    if p.lower().startswith(home.lower()):
+        p = "~" + p[len(home):]
+    return p
+
+
 def build_stats(data):
     """Merge raw stdin data with enrichments. No extraction, no calculations."""
     ws = data.get("workspace", {})
@@ -202,6 +213,7 @@ def build_stats(data):
         "git": gi,
         "project_dir": project_dir,
         "project_name": os.path.basename(project_dir) if project_dir else "",
+        "project_folder": _home_rel(os.path.dirname(project_dir)) if project_dir else "",
     }
 
 
@@ -216,27 +228,25 @@ def _fmt_context_bar(s):
     width = glob_int("context_bar_width", 60)
     window = ctx.get("context_window_size") or 200_000
     usage = ctx.get("current_usage") or {}
-    cache_r = usage.get("cache_read_input_tokens", 0)
-    cache_w = usage.get("cache_creation_input_tokens", 0)
+    # As of CC v2.1.132 context_window.total_input/output_tokens reflect current
+    # context (not cumulative), so derive segments straight from current_usage.
+    cache = usage.get("cache_read_input_tokens", 0) + usage.get("cache_creation_input_tokens", 0)
     inp = usage.get("input_tokens", 0)
     out = usage.get("output_tokens", 0)
-    used = cache_r + cache_w + inp + out
-    tokens_in = ctx.get("total_input_tokens", 0)
-    tokens_out = ctx.get("total_output_tokens", 0)
-    tools_tok = max(0, used - tokens_in - tokens_out)
+    used = cache + inp + out
     free = max(0, window - used)
-    total = tools_tok + tokens_in + tokens_out + free or 1
+    total = used + free or 1
     def cells(t): return max(0, round(width * t / total))
-    c_tools = cells(tools_tok)
-    c_in = cells(tokens_in)
-    c_out = cells(tokens_out)
-    c_free = width - c_tools - c_in - c_out
+    c_cache = cells(cache)
+    c_in = cells(inp)
+    c_out = cells(out)
+    c_free = width - c_cache - c_in - c_out
     if c_free < 0:
-        c_tools = max(0, c_tools + c_free)
+        c_cache = max(0, c_cache + c_free)
         c_free = 0
     pct_color = TColor.DG if pct < 50 else TColor.DY if pct < 80 else TColor.DR
     segs = []
-    if c_tools: segs.append(_colorize("█" * c_tools, TColor.DC))
+    if c_cache: segs.append(_colorize("█" * c_cache, TColor.DC))
     if c_in:    segs.append(_colorize("█" * c_in, TColor.DM))
     if c_out:   segs.append(_colorize("█" * c_out, TColor.BY))
     dim_sep = _colorize("│", TColor.DIM)
