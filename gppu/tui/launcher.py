@@ -30,7 +30,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from gppu import Env, App, mixin_Config, dict_from_yml
+from gppu import Env, App, mixin_Config, dict_from_yml, enable_file_logging
 from gppu.gppu import OSType
 from textual.app import App as TextualApp, ComposeResult
 from textual.binding import Binding
@@ -200,17 +200,22 @@ def _resolve_cmd(app_dir: Path, app_def: dict) -> list[str]:
     return [sys.executable, str(script)]
 
 
-def _child_env() -> dict[str, str]:
+def _child_env(app_def: dict | None = None) -> dict[str, str]:
     """Environment for sub-app processes, forcing UTF-8 stdio.
 
     Windows consoles default to a legacy code page (e.g. cp1252), so a
     sub-app printing characters outside that page (``→``, box-drawing, …)
     dies with ``UnicodeEncodeError``. Enabling Python UTF-8 mode in the
     child makes its stdout/stderr UTF-8 regardless of the console code page.
+
+    Also stamps ``GPPU_APP_NAME`` (from the script stem) so the sub-app's
+    gppu logger writes to its own ``<app>.log`` file from the very first line.
     """
     env = dict(os.environ)
     env['PYTHONUTF8'] = '1'
     env['PYTHONIOENCODING'] = 'utf-8'
+    if app_def is not None:
+        env['GPPU_APP_NAME'] = Path(_script_for_os(app_def)).stem
     return env
 
 
@@ -219,7 +224,9 @@ def launch_app(
 ) -> None:
     """Launch a sub-app by running its script in a new process."""
     cmd = _resolve_cmd(app_dir, app_def) + (extra_args or [])
-    subprocess.run(cmd, cwd=resolve_cwd(app_dir, app_def), env=_child_env())
+    subprocess.run(
+        cmd, cwd=resolve_cwd(app_dir, app_def), env=_child_env(app_def),
+    )
 
 
 def load_app_registry(app_dir: Path) -> dict[str, dict]:
@@ -489,6 +496,9 @@ class TUIApp(mixin_Config, TextualApp):
 
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
+    # Y2-style file+console logging — covers TUI apps launched directly that
+    # never call Env.from_env (e.g. rewrite_commits). Idempotent if already on.
+    enable_file_logging()
     self._debug_lines: list[str] = []
     self._log_handler = _DebugLogHandler(self._debug_lines)
     self._log_handler.setLevel(logging.DEBUG)
@@ -906,7 +916,7 @@ class TUILauncher(TUIApp):
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, bufsize=1, encoding='utf-8', errors='replace',
                 cwd=resolve_cwd(self._app_dir, app_def),
-                env=_child_env(),
+                env=_child_env(app_def),
             )
             for line in proc.stdout:
                 line = line.rstrip('\n\r')
