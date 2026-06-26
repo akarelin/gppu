@@ -200,12 +200,26 @@ def _resolve_cmd(app_dir: Path, app_def: dict) -> list[str]:
     return [sys.executable, str(script)]
 
 
+def _child_env() -> dict[str, str]:
+    """Environment for sub-app processes, forcing UTF-8 stdio.
+
+    Windows consoles default to a legacy code page (e.g. cp1252), so a
+    sub-app printing characters outside that page (``→``, box-drawing, …)
+    dies with ``UnicodeEncodeError``. Enabling Python UTF-8 mode in the
+    child makes its stdout/stderr UTF-8 regardless of the console code page.
+    """
+    env = dict(os.environ)
+    env['PYTHONUTF8'] = '1'
+    env['PYTHONIOENCODING'] = 'utf-8'
+    return env
+
+
 def launch_app(
     app_dir: Path, app_def: dict, extra_args: list[str] | None = None,
 ) -> None:
     """Launch a sub-app by running its script in a new process."""
     cmd = _resolve_cmd(app_dir, app_def) + (extra_args or [])
-    subprocess.run(cmd, cwd=resolve_cwd(app_dir, app_def))
+    subprocess.run(cmd, cwd=resolve_cwd(app_dir, app_def), env=_child_env())
 
 
 def load_app_registry(app_dir: Path) -> dict[str, dict]:
@@ -890,8 +904,9 @@ class TUILauncher(TUIApp):
         try:
             proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1,
+                text=True, bufsize=1, encoding='utf-8', errors='replace',
                 cwd=resolve_cwd(self._app_dir, app_def),
+                env=_child_env(),
             )
             for line in proc.stdout:
                 line = line.rstrip('\n\r')
