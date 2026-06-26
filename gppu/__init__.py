@@ -44,6 +44,8 @@ from .gppu import (
     # Logger setup
     init_logger,
     _init_logger_base,
+    enable_file_logging,
+    file_log,
 
     # Async helpers
     sync,
@@ -159,6 +161,8 @@ __all__ = [
 
     # Logger setup
     'init_logger',
+    'enable_file_logging',
+    'file_log',
 
     # Async helpers
     'sync',

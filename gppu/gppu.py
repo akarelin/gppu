@@ -980,6 +980,108 @@ _sh.addFilter(_EmptyMessageFilter())
 _logger.addHandler(_sh)
 
 
+class _PlainFormatter(logging.Formatter):
+  """File formatter — same colorized *content* as the console, but with the
+  call-site prefix (``no_prefix``) and ANSI escapes stripped, so the log file
+  stays grep/diff-friendly. (Y2 ``adev_stdout.log`` parity.)
+
+  Mirrors ``_fmt``/``_LogColorizer`` so gppu's multi-arg log convention
+  (``Info('INFO', 'Module', 'COLOR', 'msg')``) formats identically to console.
+  """
+  _ANSI = re.compile(r'\x1b\[[0-9;]*m')
+
+  def format(self, record: logging.LogRecord) -> str:
+    args = [record.msg]
+    if record.args is not None:
+      args.extend(record.args)
+    sev = record.levelname
+    if sev.upper() == 'DEBUG':
+      text = dpcp(*args, rules=TRACE_RULES or {}, conditional=True, no_prefix=True)
+    else:
+      text = dpcp(*args, conditional=False, severity=sev, no_prefix=True)
+    return self._ANSI.sub('', text or '')
+
+
+# File handlers attached to the gppu logger, keyed by resolved log path. Kept in
+# a registry so _init_logger_base() can re-apply them after swapping the logger.
+_file_handlers: dict[str, logging.Handler] = {}
+
+
+def _default_log_dir() -> Path:
+  d = os.environ.get('GPPU_LOG_DIR')
+  return Path(d) if d else Path.home() / '.cache' / 'gppu' / 'logs'
+
+
+def _resolve_log_name(name: str | None = None) -> str:
+  """App name for the log filename: explicit → $GPPU_APP_NAME → Env.name → gppu."""
+  if name:
+    return name
+  env = os.environ.get('GPPU_APP_NAME')
+  if env:
+    return env
+  E = globals().get('Env')  # Env is defined later in this module; late lookup.
+  n = getattr(E, 'name', None) if E is not None and getattr(E, 'initialized', False) else None
+  return n or 'gppu'
+
+
+def enable_file_logging(name: str | None = None, log_dir: str | Path | None = None,
+                        level: int = logging.DEBUG) -> Path | None:
+  """Mirror the gppu logger to a plain-text file, in addition to the console.
+
+  Y2-style file+console logging: the console keeps its colorized output while
+  the file gets the identical messages with ANSI codes stripped. Idempotent per
+  resolved path, so repeated calls (import hook, Env.from_env, TUIApp) are safe.
+
+  Name resolution: *name* → ``$GPPU_APP_NAME`` → ``Env.name`` → ``gppu``.
+  Directory: *log_dir* → ``$GPPU_LOG_DIR`` → ``~/.cache/gppu/logs``.
+  Returns the log file path, or ``None`` if it could not be created.
+  """
+  resolved = _resolve_log_name(name)
+  base = Path(log_dir) if log_dir else _default_log_dir()
+  try:
+    base.mkdir(parents=True, exist_ok=True)
+    path = (base / f'{resolved}.log').resolve()
+  except OSError:
+    return None
+  key = str(path)
+  if key in _file_handlers:
+    return path
+  try:
+    from logging.handlers import RotatingFileHandler
+    fh = RotatingFileHandler(
+      path, maxBytes=4_000_000, backupCount=5, encoding='utf-8',
+    )
+  except OSError:
+    return None
+  fh.setLevel(level)
+  fh.setFormatter(_PlainFormatter())
+  fh.addFilter(_EmptyMessageFilter())
+  _logger.addHandler(fh)
+  _file_handlers[key] = fh
+  return path
+
+
+def file_log(msg: str, *args, level: int = logging.INFO) -> None:
+  """Emit a line only to gppu's file handler(s), bypassing the console handler.
+
+  For Textual TUI apps whose visible "console" is the on-screen panel: this
+  mirrors panel lines into the log file without writing to stderr (which would
+  corrupt the live TUI). No-op when file logging isn't enabled.
+  """
+  if not _file_handlers:
+    return
+  record = _logger.makeRecord(_logger.name, level, '(app)', 0, msg, args, None)
+  for h in _file_handlers.values():
+    if record.levelno >= h.level:
+      h.handle(record)
+
+
+# Sub-apps spawned by the TUI launcher inherit $GPPU_APP_NAME; turn on file
+# logging immediately so output is captured before any app code runs.
+if os.environ.get('GPPU_APP_NAME'):
+  enable_file_logging()
+
+
 def _init_logger_base(name: str = 'gppu', trace_rules: dict | None = None) -> None:
   """Initialize global logger with a specific name and optional trace rules."""
   global _logger
@@ -990,6 +1092,8 @@ def _init_logger_base(name: str = 'gppu', trace_rules: dict | None = None) -> No
   new_logger.setLevel(logging.DEBUG)
   new_logger.handlers = []
   new_logger.addHandler(_sh)
+  for fh in _file_handlers.values():  # preserve file logging across logger swap
+    new_logger.addHandler(fh)
   _logger = new_logger
 
 init_logger = _init_logger_base
@@ -1080,6 +1184,7 @@ class Env:
     Env.app_path = Env._resolve_app_path(app_path)
     Env.config_file = Env._config_file()
 
+    enable_file_logging(Env.name)  # Y2-style file+console logging for this app
     Env._logger = _logger.getChild(Env.name)
     for attr_name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)):
       setattr(Env, attr_name, staticmethod(partial(fn, logger=Env._logger)))
