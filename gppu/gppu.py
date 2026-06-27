@@ -1397,7 +1397,7 @@ class mixin_Config(_mixin):
 
 class Logger:
   """Namespace wrapper exposing logging helpers."""
-  trace_folder: str = ''
+  trace_folder: str = '.'
   trace_rules: dict = TRACE_RULES
 
   @staticmethod
