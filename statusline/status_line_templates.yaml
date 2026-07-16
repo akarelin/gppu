@@ -1,0 +1,63 @@
+model: |
+  {% set name = (model.display_name | default('')).split('(')[0] | trim -%}
+  {% set lo = name | lower -%}
+  {% if 'opus' in lo -%}
+    O {{ name.split()[-1] -}}
+  {% elif 'sonnet' in lo -%}
+    s {{ name.split()[-1] -}}
+  {% elif 'haiku' in lo -%}
+    h {{ name.split()[-1] -}}
+  {% else -%}
+    {{ name -}}
+  {% endif -%}
+  {% if output_style is mapping and output_style.name and output_style.name != 'default' -%}
+    /{{ output_style.name -}}
+  {% endif -%}
+  {% if context_window is mapping and context_window.context_window_size -%}
+    ·{% if context_window.context_window_size >= 1000000 -%}
+      {{ context_window.context_window_size // 1000000 }}M
+    {%- else -%}
+      {{ context_window.context_window_size // 1000 }}k
+    {%- endif -%}
+  {% endif %}
+
+context_pct: "{{ (context_window.used_percentage | pct) if context_window is mapping and context_window.used_percentage is not none else '' }}"
+
+tool_calls: "{{ tools | counter_sum }}"
+top_tools: "{{ tools | top_tools(6) }}"
+user_turns: "{{ counts.user | nonzero }}"
+assistant_msgs: "{{ counts.assistant | nonzero }}"
+project: "{{ project_name }}"
+started_ago: "{{ tmeta.first_ts | ago }}"
+api_time: "{{ (cost.total_api_duration_ms | ms) if cost is mapping else '' }}"
+wall_time: "{{ (cost.total_duration_ms | ms) if cost is mapping else '' }}"
+tokens_in: "{{ (context_window.total_input_tokens | tok) if context_window is mapping else '' }}"
+tokens_out: "{{ (context_window.total_output_tokens | tok) if context_window is mapping else '' }}"
+version: "{{ tmeta.version or version | default('') }}"
+session_name: "{{ session_name | default('') }}"
+errors: "{{ counts.errors | nonzero }}"
+compactions: "{{ counts.compactions | nonzero }}"
+subagents: "{{ subagents | nonzero }}"
+
+git_remote: |
+  {% if git.remotes | length > 1 -%}
+    {% for n, u in git.remotes -%}
+      {{ n }}:{{ u }}{{ ' ' if not loop.last -}}
+    {% endfor -%}
+  {% elif git.remotes | length == 1 -%}
+    {{ git.remotes[0][1] -}}
+  {% else -%}
+    {{ git.repo_name -}}
+  {% endif %}
+
+token_speed: |
+  {% if cost is mapping and cost.total_api_duration_ms
+     and context_window is mapping and context_window.total_output_tokens -%}
+    {{ (context_window.total_output_tokens / (cost.total_api_duration_ms / 1000)) | round | int -}}
+  {% endif %}
+
+api_efficiency: |
+  {% if cost is mapping and cost.total_duration_ms
+     and cost.total_api_duration_ms -%}
+    {{ (100 * cost.total_api_duration_ms / cost.total_duration_ms) | round | int -}}
+  {% endif %}
