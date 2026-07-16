@@ -221,12 +221,15 @@ def _child_env(app_def: dict | None = None) -> dict[str, str]:
 
 def launch_app(
     app_dir: Path, app_def: dict, extra_args: list[str] | None = None,
-) -> None:
-    """Launch a sub-app by running its script in a new process."""
+) -> int:
+    """Launch a sub-app by running its script in a new process.
+
+    Returns the sub-app's exit code so callers can propagate failure.
+    """
     cmd = _resolve_cmd(app_dir, app_def) + (extra_args or [])
-    subprocess.run(
+    return subprocess.run(
         cmd, cwd=resolve_cwd(app_dir, app_def), env=_child_env(app_def),
-    )
+    ).returncode
 
 
 def load_app_registry(app_dir: Path) -> dict[str, dict]:
@@ -1242,8 +1245,9 @@ def launcher_main(
                 file=sys.stderr,
             )
             sys.exit(2)
-        launch_app(app_dir, app_def, args.extra or None)
-        return
+        # direct launch is scriptable — propagate the sub-app's exit code
+        # (the interactive TUI loop and CLI fallback below keep ignoring it)
+        sys.exit(launch_app(app_dir, app_def, args.extra or None))
 
     # CLI fallback when no TUI available
     if not _tui_available():

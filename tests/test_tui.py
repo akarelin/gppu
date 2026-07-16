@@ -16,11 +16,13 @@ pytest.importorskip('pytest_asyncio', reason='pytest-asyncio not installed — s
 
 from gppu.tui import (  # noqa: E402
     AppItem,
+    DetailedSelector,
     TUILauncher,
     ModeItem,
     ProcessRow,
     SpinnerIndicator,
     StatusHeader,
+    launch_app,
 )
 from textual.widgets import ListView, RichLog, Static  # noqa: E402
 
@@ -495,3 +497,56 @@ class TestLogPanel:
             await asyncio.sleep(0.5)
             await pilot.pause()
             assert len(app._processes[proc_id].log_lines) > lines_before
+
+
+# ── launch_app exit code ─────────────────────────────────────────────────────
+
+class TestLaunchAppExitCode:
+    def test_failure_code_propagates(self, tmp_path):
+        _tmpscript(tmp_path, 'fail.py', """\
+            import sys
+            sys.exit(7)
+        """)
+        assert launch_app(tmp_path, {'script': 'fail.py'}) == 7
+
+    def test_success_returns_zero(self, tmp_path):
+        _tmpscript(tmp_path, 'ok.py', """\
+            print('ok')
+        """)
+        assert launch_app(tmp_path, {'script': 'ok.py'}) == 0
+
+
+# ── DetailedSelector pre-selection ───────────────────────────────────────────
+
+SELECTOR_ROWS = [{'name': 'a'}, {'name': 'b'}, {'name': 'c'}]
+
+
+class TestDetailedSelectorPreselect:
+    @pytest.mark.asyncio
+    async def test_default_all_unselected(self):
+        app = DetailedSelector(list(SELECTOR_ROWS), ['name'])
+        async with app.run_test() as pilot:
+            await pilot.press('enter')
+        assert app.return_value == []
+
+    @pytest.mark.asyncio
+    async def test_initial_selected_returned_on_enter(self):
+        app = DetailedSelector(list(SELECTOR_ROWS), ['name'], initial_selected=[0, 2])
+        async with app.run_test() as pilot:
+            await pilot.press('enter')
+        assert app.return_value == [SELECTOR_ROWS[0], SELECTOR_ROWS[2]]
+
+    @pytest.mark.asyncio
+    async def test_space_toggles_preselected_off(self):
+        app = DetailedSelector(list(SELECTOR_ROWS), ['name'], initial_selected=[0, 2])
+        async with app.run_test() as pilot:
+            await pilot.press('space')  # cursor starts on row 0
+            await pilot.press('enter')
+        assert app.return_value == [SELECTOR_ROWS[2]]
+
+    @pytest.mark.asyncio
+    async def test_escape_returns_none(self):
+        app = DetailedSelector(list(SELECTOR_ROWS), ['name'], initial_selected=[1])
+        async with app.run_test() as pilot:
+            await pilot.press('escape')
+        assert app.return_value is None
