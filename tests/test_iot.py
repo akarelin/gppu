@@ -31,51 +31,6 @@ class TestTopLevelExports:
             assert hasattr(gppu, name), name
 
 
-class TestAsyncLoopThread:
-    def test_call_returns_result(self):
-        from gppu.iot import _AsyncLoopThread
-
-        class Host(_AsyncLoopThread):
-            name = 'test-host'
-
-        async def coro():
-            return 41 + 1
-
-        host = Host()
-        assert host.call(coro) == 42  # daemon loop thread is reaped at process exit
-
-    def test_from_child_walks_parent_chain(self):
-        from gppu.iot import _AsyncLoopThread
-
-        class Host(_AsyncLoopThread):
-            pass
-
-        class Child:
-            def __init__(self, parent): self.parent = parent
-
-        host = Host()
-        assert _AsyncLoopThread.from_child(Child(Child(host))) is host
-
-    def test_from_child_raises_without_ancestor(self):
-        import pytest
-        from gppu.iot import _AsyncLoopThread
-
-        class Orphan:
-            parent = None
-
-        with pytest.raises(RuntimeError):
-            _AsyncLoopThread.from_child(Orphan())
-
-    def test_control_call_runs_on_host_loop(self):
-        from gppu.iot import _AsyncLoopThread, _ControlBase
-
-        class Host(_AsyncLoopThread):
-            pass
-
-        class Dev(_ControlBase):
-            def __init__(self, parent): self.parent = parent
-            async def _op(self, x): return x * 2
-            def run(self, x): return self._control_call(self._op, x)
-
-        host = Host()
-        assert Dev(host).run(21) == 42  # daemon loop thread is reaped at process exit
+# TestAsyncLoopThread removed: _AsyncLoopThread/_ControlBase left gppu.iot in the
+# async/IoT refactor (4e92486); the replacement lifecycle is covered by
+# tests/test_async.py and tests/test_async_iot.py.
