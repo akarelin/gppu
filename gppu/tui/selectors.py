@@ -90,6 +90,7 @@ class DetailedSelector(App):
 
     Returns a list of selected row dicts on Enter, or ``None`` on Escape.
     Press Space to toggle a row, ``e`` to expand details.
+    ``initial_selected`` pre-checks rows by index.
     """
 
     CSS = """
@@ -110,6 +111,7 @@ class DetailedSelector(App):
         summary_keys: list[str],
         expanded_keys: list[str] | None = None,
         never_keys: list[str] | None = None,
+        initial_selected: list[int] | None = None,
         **kw,
     ) -> None:
         super().__init__(**kw)
@@ -117,17 +119,19 @@ class DetailedSelector(App):
         self.summary_keys = summary_keys
         self.expanded_keys = expanded_keys or list(summary_keys)
         self.never_keys = set(never_keys or [])
+        self.initial_selected = set(initial_selected or [])
         self.selected: dict[int, bool] = {}
 
     def compose(self) -> ComposeResult:
         table = DataTable(id='data-table')
-        table.add_column('Select', width=8)
+        table.add_column('Select', width=8, key='select')
         for key in self.summary_keys:
             table.add_column(key)
         for i, row in enumerate(self.rows):
             summary = [str(row.get(key, '')) for key in self.summary_keys]
-            table.add_row('[ ]', *summary, key=i)
-            self.selected[i] = False
+            checked = i in self.initial_selected
+            table.add_row('[X]' if checked else '[ ]', *summary, key=i)
+            self.selected[i] = checked
         yield table
 
     async def on_key(self, event: events.Key) -> None:
@@ -136,10 +140,12 @@ class DetailedSelector(App):
             self.exit(None)
         elif event.key == 'space':
             if table.cursor_row is not None:
-                row_index = table.get_row_key(table.cursor_row)
+                # coordinate_to_cell_key: DataTable.get_row_key was removed in textual 1.x
+                cell = table.coordinate_to_cell_key(table.cursor_coordinate)
+                row_index = cell.row_key.value
                 self.selected[row_index] = not self.selected[row_index]
                 new_box = '[X]' if self.selected[row_index] else '[ ]'
-                table.update_cell(table.cursor_row, 0, new_box)
+                table.update_cell(cell.row_key, 'select', new_box)
         elif event.key == 'enter':
             selected_rows = [
                 self.rows[i] for i, sel in self.selected.items() if sel
@@ -147,7 +153,7 @@ class DetailedSelector(App):
             self.exit(selected_rows)
         elif event.key == 'e':
             if table.cursor_row is not None:
-                row_index = table.get_row_key(table.cursor_row)
+                row_index = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
                 row = self.rows[row_index]
                 details = [
                     f'{key}: {row[key]}'
@@ -175,8 +181,12 @@ def ui_select_rows(
     summary_keys: list[str],
     expanded_keys: list[str] | None = None,
     never_keys: list[str] | None = None,
+    initial_selected: list[int] | None = None,
 ) -> list[dict] | None:
-    """Show a table picker with checkbox selection.  Returns selected rows."""
+    """Show a table picker with checkbox selection.  Returns selected rows.
+
+    ``initial_selected`` pre-checks rows by index.
+    """
     return DetailedSelector(
-        rows, summary_keys, expanded_keys, never_keys,
+        rows, summary_keys, expanded_keys, never_keys, initial_selected,
     ).run()
