@@ -1,0 +1,16 @@
+# ── Status line configuration ───────────────────────────────────────────
+#
+# line1/line2: Jinja templates with pre-rendered widget values.
+# Filters: c(color,prefix,suffix) sep(char,color) tok ms ago pct
+# Colors: TColor names (DC DY BG DR DM DB DIM GRAY2 …)
+
+context_bar_width: 60
+
+git_ttl: 10
+jsonl_ttl: 2
+
+templates: !include status_line_templates.yaml
+
+line1: "{{ model|c('DIM') }} {{ context_bar }} {{ user_turns|c('DC','💬 ') }} {{ assistant_msgs|c('DIM','🤖 ') }}"
+line2: "{{ project|c('DB') }}{{ git_remote|c('DC')|sep }}{{ git_branch|sep }}{{ lines_changed|sep }}{{ started_ago|c('DIM','🕐 ')|sep }}{{ wall_time|c('DC','⏱️ ')|sep }}{{ api_time|c('DIM','⚙️ ')|sep }}"
+line2_indent: "  "
