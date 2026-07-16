@@ -166,6 +166,7 @@ See [w11/app.py](w11/app.py) for a real example.
 # Other Products
 
 [Statusline](statusline/status_line.py) — Claude Code status line tool
+`curl -fsSL https://raw.githubusercontent.com/akarelin/gppu/master/statusline/install-statusline.sh | sh`
 
 [W11](w11/README.md) — Windows 11 utilities
 
