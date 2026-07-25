@@ -70,7 +70,7 @@ jobs:
             artifact: statusline-macos-arm64
             ext: ''
           - os: windows
-            runner: [self-hosted, Windows]
+            runner: windows-latest
             artifact: statusline-windows-amd64.exe
             ext: '.exe'
     name: build (${{ matrix.os }})
