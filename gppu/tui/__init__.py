@@ -89,6 +89,8 @@ from .tree import (
     TreeBrowser,
 )
 
+from .tree_table import TreeTable, TreeTableColumn
+
 
 __all__ = [
     # Base TUI classes
@@ -152,4 +154,6 @@ __all__ = [
     'FilesystemAdapter',
     'GDriveAdapter',
     'TreeBrowser',
+    'TreeTable',
+    'TreeTableColumn',
 ]
