@@ -133,13 +133,21 @@ _TOOL_ICONS = {
 }
 
 
+def _tool_icon(name):
+    """Icon for a tool name. MCP tools carry their full server path in the name
+    (mcp__<server>__<tool>), which is unbounded, so they all read as one plug."""
+    if name.startswith("mcp__"):
+        return "🔌"
+    return _TOOL_ICONS.get(name, name)
+
+
 def _ftop_tools(tools, n=6):
     """Top tools by call count, summed per icon so Bash and PowerShell read as one shell."""
     if not tools or not isinstance(tools, Counter):
         return ""
     merged = Counter()
     for name, count in tools.items():
-        merged[_TOOL_ICONS.get(name, name)] += count
+        merged[_tool_icon(name)] += count
     return " ".join(
         f"{_colorize(icon, '38;5;15;48;5;0') if icon == _SHELL_ICON else icon}"
         f" {_colorize(str(c), TColor.GRAY3)}"
