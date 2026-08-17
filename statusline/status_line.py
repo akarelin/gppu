@@ -131,11 +131,13 @@ _TOOL_ICONS = {
 
 
 def _ftop_tools(tools, n=6):
-    if not tools:
+    """Top tools by call count, summed per icon so Bash and PowerShell read as one shell."""
+    if not tools or not isinstance(tools, Counter):
         return ""
-    if isinstance(tools, Counter):
-        return " ".join(f"{_TOOL_ICONS.get(name, name)} {c}" for name, c in tools.most_common(n))
-    return ""
+    merged = Counter()
+    for name, count in tools.items():
+        merged[_TOOL_ICONS.get(name, name)] += count
+    return " ".join(f"{icon} {c}" for icon, c in merged.most_common(n))
 
 
 def _fnonzero(val):
