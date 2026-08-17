@@ -90,7 +90,7 @@ ov_capture: |
   {%- endif %}
 
 tool_calls: "{{ tools | counter_sum }}"
-top_tools: "{{ tools | top_tools(3) }}"
+top_tools: "{{ tools | top_tools(5) }}"
 user_turns: "{{ counts.user | nonzero }}"
 assistant_msgs: "{{ counts.assistant | nonzero }}"
 project: "{{ project_name }}"
