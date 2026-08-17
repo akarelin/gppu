@@ -14,7 +14,7 @@ model: |
   {% endif -%}
   {{ short | c('DW') -}}
   {% if output_style is mapping and output_style.name and output_style.name != 'default' -%}
-    {{ ('/' ~ output_style.name) | c('GRAY1') -}}
+    {{ ('/' ~ (output_style.name[0] | upper)) | c('GRAY1') -}}
   {% endif -%}
   {% if context_window is mapping and context_window.context_window_size -%}
     {% if context_window.context_window_size >= 1000000 -%}
@@ -53,17 +53,18 @@ limit_7d: |
 # only "some state"; the latency is the state.
 ov_state: |
   {% if ov.health == 'ok' -%}
-    {{ ('OV ' ~ ov.latency_ms ~ 'ms') | c('BG' if ov.latency_ms < 300 else 'BY') }}
+    {{ ('⚡' ~ ov.latency_ms ~ 'ms') | c('BG' if ov.latency_ms < 300 else 'BY') }}
   {%- elif ov.health == 'slow' -%}
-    {{ 'OV >1s' | c('BY') }}
+    {{ '⚡>1s' | c('BY') }}
   {%- elif ov.health -%}
-    {{ 'OV ✗' | c('BR') }}
+    {{ '⚡✗' | c('BR') }}
   {%- endif %}
 
 ov_recall: |
   {% if ov.recall -%}
     {% if ov.recall.reason == 'ok' -%}
-      {{ ('↩ ' ~ ov.recall.count) | c('DC') }}
+      {% set score = (' ' ~ ('%.2f' | format(ov.recall.top_score))[1:]) if ov.recall.top_score else '' -%}
+      {{ ('↩ ' ~ ov.recall.count ~ score) | c('DC') }}
     {%- elif ov.recall.reason == 'offline' -%}
       {{ '↩ ✗' | c('DR') }}
     {%- else -%}
