@@ -139,6 +139,24 @@ def _fc(val, color, prefix='', suffix=''):
     return _colorize(text, tc) if tc else text
 
 
+# Red → yellow → green ramp in the xterm-256 cube. Numbers that live on a scale
+# get a position on it rather than a hand-picked colour per threshold, so the
+# gradient is code, not config.
+_GRADIENT = (196, 202, 208, 214, 220, 226, 190, 154, 118, 82, 46)
+
+
+def _fgrad(val, pos, lo=0, hi=1, bg=False):
+    """Colorize val by where pos sits in [lo, hi] — lo end red, hi end green."""
+    if not val:
+        return ''
+    try:
+        f = (float(pos) - float(lo)) / (float(hi) - float(lo))
+    except (TypeError, ValueError, ZeroDivisionError):
+        return str(val)
+    n = _GRADIENT[min(len(_GRADIENT) - 1, max(0, round(f * (len(_GRADIENT) - 1))))]
+    return _colorize(str(val), f"48;5;{n};38;5;16" if bg else f"38;5;{n};1")
+
+
 def _fsep(val, sep='|', color='GRAY2'):
     """Prepend colored separator if val is non-empty."""
     if not val:
@@ -170,6 +188,7 @@ _JINJA_ENV.filters["counter_sum"] = _fcounter_sum
 _JINJA_ENV.filters["top_tools"] = _ftop_tools
 _JINJA_ENV.filters["nonzero"] = _fnonzero
 _JINJA_ENV.filters["c"] = _fc
+_JINJA_ENV.filters["grad"] = _fgrad
 _JINJA_ENV.filters["sep"] = _fsep
 
 _template_cache = {}
