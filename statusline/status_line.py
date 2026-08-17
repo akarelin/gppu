@@ -118,11 +118,23 @@ def _fcounter_sum(val):
     return str(sum(val.values()))
 
 
+# Tools read as their action, not their name: a shell prompt for the shell, an
+# open book for reading, a pencil for editing. Anything unmapped keeps its name.
+_TOOL_ICONS = {
+    "Bash": "❯", "PowerShell": "❯",
+    "Read": "📖", "Edit": "✏️", "Write": "📝", "NotebookEdit": "📓",
+    "Glob": "📁", "Grep": "🔍",
+    "Task": "👥", "Agent": "👥",
+    "WebFetch": "🌐", "WebSearch": "🌐",
+    "TodoWrite": "☑️", "Skill": "🎓",
+}
+
+
 def _ftop_tools(tools, n=6):
     if not tools:
         return ""
     if isinstance(tools, Counter):
-        return " ".join(f"{name}({c})" for name, c in tools.most_common(n))
+        return " ".join(f"{_TOOL_ICONS.get(name, name)} {c}" for name, c in tools.most_common(n))
     return ""
 
 
