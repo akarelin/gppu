@@ -1,30 +1,35 @@
+# Model carries its own colors: the model itself reads brighter than the
+# style/window suffix trailing it, so the slash separates two weights.
 model: |
   {% set name = (model.display_name | default('')).split('(')[0] | trim -%}
   {% set lo = name | lower -%}
   {% if 'opus' in lo -%}
-    O {{ name.split()[-1] -}}
+    {% set short = 'O ' ~ name.split()[-1] -%}
   {% elif 'sonnet' in lo -%}
-    s {{ name.split()[-1] -}}
+    {% set short = 's ' ~ name.split()[-1] -%}
   {% elif 'haiku' in lo -%}
-    h {{ name.split()[-1] -}}
+    {% set short = 'h ' ~ name.split()[-1] -%}
   {% else -%}
-    {{ name -}}
+    {% set short = name -%}
   {% endif -%}
+  {{ short | c('DW') -}}
   {% if output_style is mapping and output_style.name and output_style.name != 'default' -%}
-    /{{ output_style.name -}}
+    {{ ('/' ~ output_style.name) | c('GRAY1') -}}
   {% endif -%}
   {% if context_window is mapping and context_window.context_window_size -%}
-    ·{% if context_window.context_window_size >= 1000000 -%}
-      {{ context_window.context_window_size // 1000000 }}M
+    {% if context_window.context_window_size >= 1000000 -%}
+      {{ ('·' ~ (context_window.context_window_size // 1000000) ~ 'M') | c('GRAY1') -}}
     {%- else -%}
-      {{ context_window.context_window_size // 1000 }}k
+      {{ ('·' ~ (context_window.context_window_size // 1000) ~ 'k') | c('GRAY1') -}}
     {%- endif -%}
   {% endif %}
 
+# Context reads as a filled badge (black on color) rather than a bare number:
+# the block of color is what catches the eye, the digits confirm it.
 context_pct: |
   {% if context_window is mapping and context_window.used_percentage is not none -%}
     {% set p = context_window.used_percentage | int -%}
-    {{ (p ~ '%') | c('DG' if p < 50 else 'DY' if p < 80 else 'DR') }}
+    {{ (' ' ~ p ~ '% ') | c('GREEN' if p < 50 else 'YELLOW' if p < 80 else 'RED') }}
   {%- endif %}
 
 limit_5h: |
@@ -33,15 +38,26 @@ limit_5h: |
     {{ ('5h ' ~ left ~ '%') | c('DG' if left >= 50 else 'DY' if left >= 20 else 'DR') }}
   {%- endif %}
 
+# Weekly headroom left, not consumed. Bright ramp so it stays readable at a
+# glance; under 20% left it goes red.
 limit_7d: |
   {% if rate_limits.seven_day.used_percentage is number -%}
     {% set left = (100 - rate_limits.seven_day.used_percentage) | round | int -%}
-    {{ ('7d ' ~ left ~ '%') | c('DG' if left >= 50 else 'DY' if left >= 20 else 'DR') }}
+    {{ ('📅 ' ~ left ~ '%') | c('BG' if left >= 50 else 'BY' if left >= 20 else 'BR') }}
   {%- endif %}
 
+# Server reachability, carrying the round-trip that measured it. A bare colored
+# word says only "some state"; the latency is the state.
+# Three states, each carrying the round-trip that measured it: fast (bright
+# green), slow (bright yellow), stopped (bright red). A bare colored word says
+# only "some state"; the latency is the state.
 ov_state: |
-  {% if ov.health -%}
-    {{ 'OV' | c('DG' if ov.health == 'ok' else 'DY' if ov.health == 'slow' else 'DR') }}
+  {% if ov.health == 'ok' -%}
+    {{ ('OV ' ~ ov.latency_ms ~ 'ms') | c('BG' if ov.latency_ms < 300 else 'BY') }}
+  {%- elif ov.health == 'slow' -%}
+    {{ 'OV >1s' | c('BY') }}
+  {%- elif ov.health -%}
+    {{ 'OV ✗' | c('BR') }}
   {%- endif %}
 
 ov_recall: |
