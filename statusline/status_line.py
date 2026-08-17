@@ -95,15 +95,15 @@ def _fago(val):
         seconds = val
     s = int(seconds)
     if s < 60:
-        return f"{s}s ago"
+        return f"{s}s"
     m = s // 60
     if m < 60:
-        return f"{m}m ago"
+        return f"{m}m"
     h, m = divmod(m, 60)
     if h < 24:
-        return f"{h}h{m:02d}m ago" if m else f"{h}h ago"
+        return f"{h}h{m:02d}m" if m else f"{h}h"
     d, h = divmod(h, 24)
-    return f"{d}d{h}h ago" if h else f"{d}d ago"
+    return f"{d}d{h}h" if h else f"{d}d"
 
 
 def _fpct(val):
