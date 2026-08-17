@@ -9,6 +9,9 @@ from collections import Counter
 from gppu.data import Cache
 
 DEFAULT_CACHE_DIR = os.path.join(tempfile.gettempdir(), "claude_statusline_cache")
+# Bump when the meaning of a cached count changes: entries accumulate from a byte
+# offset, so a parser fix cannot correct totals already stored under the old key.
+SCHEMA = "v2"
 DEFAULT_GIT_TTL = 10  # seconds
 DEFAULT_JSONL_TTL = 2  # seconds
 
@@ -55,6 +58,22 @@ def _new_counts():
             "compactions": 0, "errors": 0}
 
 
+def _is_user_prompt(msg):
+    """True when a type=user entry carries typed text rather than a tool result.
+
+    Every tool result is recorded as a user-role message, so counting entries by
+    type alone reports tool traffic, not turns.
+    """
+    if not isinstance(msg, dict):
+        return False
+    content = msg.get("content")
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list):
+        return any(isinstance(b, dict) and b.get("type") != "tool_result" for b in content)
+    return False
+
+
 def _new_meta():
     return {"version": "", "cwd": "", "branch": "", "first_ts": "", "last_ts": ""}
 
@@ -68,7 +87,10 @@ def _parse_from_offset(path, offset):
         size = os.path.getsize(path)
         if size <= offset:
             return {}, counts, meta, offset
-        with open(path) as f:
+        # Transcripts are UTF-8; the platform default (cp1252 on Windows) raises
+        # mid-file, which aborts the parse without advancing the offset — so every
+        # render re-adds the same partial counts and the totals climb on their own.
+        with open(path, encoding="utf-8", errors="replace") as f:
             f.seek(offset)
             for line in f:
                 try:
@@ -82,7 +104,8 @@ def _parse_from_offset(path, offset):
                         meta["first_ts"] = ts
                     meta["last_ts"] = ts
                 if t == "user":
-                    counts["user"] += 1
+                    if not e.get("isMeta") and _is_user_prompt(e.get("message")):
+                        counts["user"] += 1
                     # First meta entry has version/cwd
                     if e.get("isMeta") and not meta["version"]:
                         meta["version"] = e.get("version", "")
@@ -154,7 +177,7 @@ def transcript_stats_cached(path):
 
     # Check session-level TTL: skip all file checks if recently validated
     now = time.time()
-    session_key = f"session:{path}"
+    session_key = f"session:{SCHEMA}:{path}"
     session_cached = dc.get(session_key)
     if session_cached and (now - session_cached.get("ts", 0)) < _jsonl_ttl:
         return (Counter(session_cached["tools"]), session_cached["counts"],
@@ -179,7 +202,7 @@ def transcript_stats_cached(path):
         if not os.path.isfile(fpath):
             continue
         size = os.path.getsize(fpath)
-        file_key = f"jsonl:{fpath}"
+        file_key = f"jsonl:{SCHEMA}:{fpath}"
         cached = dc.get(file_key)
 
         if cached and cached["offset"] >= size:

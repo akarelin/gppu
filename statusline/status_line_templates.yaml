@@ -53,23 +53,30 @@ limit_7d: |
 # only "some state"; the latency is the state.
 ov_state: |
   {% if ov.health == 'ok' -%}
-    {{ ('⚡' ~ ov.latency_ms ~ 'ms') | c('BG' if ov.latency_ms < 300 else 'BY') }}
+    {{ '⚡' | c('BG' if ov.latency_ms < 300 else 'BY') }}{{ (' ' ~ ov.latency_ms ~ 'ms') | c('GRAY3') }}
   {%- elif ov.health == 'slow' -%}
-    {{ '⚡>1s' | c('BY') }}
+    {{ '⚡' | c('BY') }}{{ ' >1s' | c('GRAY3') }}
   {%- elif ov.health -%}
-    {{ '⚡✗' | c('BR') }}
+    {{ '⚡' | c('BR') }}{{ ' ✗' | c('GRAY3') }}
   {%- endif %}
 
 ov_recall: |
   {% if ov.recall -%}
     {% if ov.recall.reason == 'ok' -%}
-      {% set score = (' ' ~ ('%.2f' | format(ov.recall.top_score))[1:]) if ov.recall.top_score else '' -%}
-      {{ ('↩ ' ~ ov.recall.count ~ score) | c('DC') }}
+      {{ ('↩ ' ~ ov.recall.count) | c('DC') }}
     {%- elif ov.recall.reason == 'offline' -%}
       {{ '↩ ✗' | c('DR') }}
     {%- else -%}
       {{ '↩ 0' | c('GRAY2') }}
     {%- endif %}
+  {%- endif %}
+
+# Top similarity among the memories the last recall injected. Its own segment so
+# the number reads at a glance; the ramp says how good the match was.
+ov_score: |
+  {% if ov.recall and ov.recall.top_score -%}
+    {% set s = ov.recall.top_score -%}
+    {{ '🧠' | c('BC') }}{{ (' ' ~ ('%.2f' | format(s))[1:]) | c('BG' if s >= 0.7 else 'BY' if s >= 0.5 else 'BO') }}
   {%- endif %}
 
 ov_capture: |
