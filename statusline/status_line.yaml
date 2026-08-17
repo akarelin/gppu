@@ -15,6 +15,6 @@ templates: !include status_line_templates.yaml
 # Each element carries its own color so it is identifiable without reading it.
 # Colors that ramp (context badge, 📅 weekly, +/- lines, OV health) mean state;
 # every other color is just that element's identity.
-line1: "{{ model }} {{ context_pct }} {{ user_turns|c('DC','🧑 ') }} {{ assistant_msgs|c('BP','🤖 ') }}{{ top_tools|c('PINK','🔧 ')|sep }}{{ started_ago|c('DGOLD','🕐 ')|sep }}{{ wall_time|c('BO','⏱️ ')|sep }}{{ api_time|c('DPINK','⚙️ ')|sep }}{{ limit_7d|sep }}"
+line1: "{{ model }} {{ context_pct }} {{ user_turns|c('DC','🧑 ') }} {{ assistant_msgs|c('BP','🤖 ') }}{{ tool_calls|c('PINK','🔧 ')|sep }}{{ started_ago|c('DGOLD','🕐 ')|sep }}{{ wall_time|c('BO','⏱️ ')|sep }}{{ api_time|c('DPINK','⚙️ ')|sep }}{{ limit_7d|sep }}"
 line2: "{{ project|c('BGOLD') }} {{ project_folder|c('GRAY4','📂 ') }}{{ hostname|c('DM','💻 ')|sep }}{{ git_remote|c('DB')|sep }}{{ git_branch|sep }}{{ lines_changed|sep }}{{ ov_score|sep }}{{ ov_recall|sep }}{{ ov_state|sep }}{{ ov_capture|sep }}"
 line2_indent: "  "
