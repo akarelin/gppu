@@ -25,11 +25,12 @@ model: |
   {% endif %}
 
 # Context reads as a filled badge (black on color) rather than a bare number:
-# the block of color is what catches the eye, the digits confirm it.
+# the block of color is what catches the eye, the digits confirm it. Headroom
+# left is what the gradient tracks, so the badge greens down as it fills.
 context_pct: |
   {% if context_window is mapping and context_window.used_percentage is not none -%}
     {% set p = context_window.used_percentage | int -%}
-    {{ (' ' ~ p ~ '% ') | c('GREEN' if p < 50 else 'YELLOW' if p < 80 else 'RED') }}
+    {{ (' ' ~ p ~ '% ') | grad(100 - p, 0, 100, true) }}
   {%- endif %}
 
 limit_5h: |
@@ -38,24 +39,20 @@ limit_5h: |
     {{ ('5h ' ~ left ~ '%') | c('DG' if left >= 50 else 'DY' if left >= 20 else 'DR') }}
   {%- endif %}
 
-# Weekly headroom left, not consumed. Bright ramp so it stays readable at a
-# glance; under 20% left it goes red.
+# Weekly headroom left, not consumed — the gradient runs red at empty.
 limit_7d: |
   {% if rate_limits.seven_day.used_percentage is number -%}
     {% set left = (100 - rate_limits.seven_day.used_percentage) | round | int -%}
-    {{ ('📅 ' ~ left ~ '%') | c('BG' if left >= 50 else 'BY' if left >= 20 else 'BR') }}
+    {{ ('📅 ' ~ left ~ '%') | grad(left, 0, 100) }}
   {%- endif %}
 
-# Server reachability, carrying the round-trip that measured it. A bare colored
-# word says only "some state"; the latency is the state.
-# Three states, each carrying the round-trip that measured it: fast (bright
-# green), slow (bright yellow), stopped (bright red). A bare colored word says
-# only "some state"; the latency is the state.
+# Server reachability. The bolt carries the state as a gradient over the probe
+# round-trip; the millisecond figure itself stays neutral.
 ov_state: |
   {% if ov.health == 'ok' -%}
-    {{ '⚡' | c('BG' if ov.latency_ms < 300 else 'BY') }}{{ (' ' ~ ov.latency_ms ~ 'ms') | c('GRAY3') }}
+    {{ '⚡' | grad(1000 - ov.latency_ms, 0, 1000) }}{{ (' ' ~ ov.latency_ms ~ 'ms') | c('GRAY3') }}
   {%- elif ov.health == 'slow' -%}
-    {{ '⚡' | c('BY') }}{{ ' >1s' | c('GRAY3') }}
+    {{ '⚡' | grad(0, 0, 1000) }}{{ ' >1s' | c('GRAY3') }}
   {%- elif ov.health -%}
     {{ '⚡' | c('BR') }}{{ ' ✗' | c('GRAY3') }}
   {%- endif %}
@@ -76,7 +73,7 @@ ov_recall: |
 ov_score: |
   {% if ov.recall and ov.recall.top_score -%}
     {% set s = ov.recall.top_score -%}
-    {{ '🧠' | c('BC') }}{{ (' ' ~ ('%.2f' | format(s))[1:]) | c('BG' if s >= 0.7 else 'BY' if s >= 0.5 else 'BO') }}
+    {{ '🧠' | c('BC') }}{{ (' ' ~ ('%.2f' | format(s))[1:]) | grad(s) }}
   {%- endif %}
 
 ov_capture: |
@@ -86,13 +83,14 @@ ov_capture: |
     {%- elif ov.capture.committed -%}
       {{ '✎ ✓' | c('DG') }}
     {%- elif ov.capture.pending_tokens and ov.capture.commit_threshold -%}
-      {{ ('✎ ' ~ (100 * ov.capture.pending_tokens // ov.capture.commit_threshold) ~ '%') | c('GRAY2') }}
+      {% set fill = 100 * ov.capture.pending_tokens // ov.capture.commit_threshold -%}
+      {{ ('✎ ' ~ fill ~ '%') | grad(100 - fill, 0, 100) }}
     {%- endif %}
     {%- if ov.capture.commit_count %}{{ (' ·' ~ ov.capture.commit_count) | c('GRAY2') }}{% endif -%}
   {%- endif %}
 
 tool_calls: "{{ tools | counter_sum }}"
-top_tools: "{{ tools | top_tools(6) }}"
+top_tools: "{{ tools | top_tools(3) }}"
 user_turns: "{{ counts.user | nonzero }}"
 assistant_msgs: "{{ counts.assistant | nonzero }}"
 project: "{{ project_name }}"
