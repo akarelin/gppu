@@ -120,8 +120,11 @@ def _fcounter_sum(val):
 
 # Tools read as their action, not their name: a shell prompt for the shell, an
 # open book for reading, a pencil for editing. Anything unmapped keeps its name.
+# The caret is the one text glyph here, so it is painted white on black rather
+# than inheriting whatever color wraps the group.
+_SHELL_ICON = "❯"
 _TOOL_ICONS = {
-    "Bash": "❯", "PowerShell": "❯",
+    "Bash": _SHELL_ICON, "PowerShell": _SHELL_ICON,
     "Read": "📖", "Edit": "✏️", "Write": "📝", "NotebookEdit": "📓",
     "Glob": "📁", "Grep": "🔍",
     "Task": "👥", "Agent": "👥",
@@ -137,7 +140,11 @@ def _ftop_tools(tools, n=6):
     merged = Counter()
     for name, count in tools.items():
         merged[_TOOL_ICONS.get(name, name)] += count
-    return " ".join(f"{icon} {c}" for icon, c in merged.most_common(n))
+    return " ".join(
+        f"{_colorize(icon, '38;5;15;48;5;0') if icon == _SHELL_ICON else icon}"
+        f" {_colorize(str(c), TColor.GRAY3)}"
+        for icon, c in merged.most_common(n)
+    )
 
 
 def _fnonzero(val):
