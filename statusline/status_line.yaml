@@ -12,6 +12,9 @@ ov_ttl: 5
 
 templates: !include status_line_templates.yaml
 
-line1: "{{ model|c('DIM') }} {{ context_pct }} {{ user_turns|c('DC','💬 ') }} {{ assistant_msgs|c('DIM','🤖 ') }}{{ started_ago|c('DIM','🕐 ')|sep }}{{ wall_time|c('DC','⏱️ ')|sep }}{{ api_time|c('DIM','⚙️ ')|sep }}{{ limit_5h|sep }}{{ limit_7d|sep }}"
-line2: "{{ project|c('DB') }} {{ project_folder|c('DIM','📂 ') }}{{ hostname|c('DM','💻 ')|sep }}{{ git_remote|c('DC')|sep }}{{ git_branch|sep }}{{ lines_changed|sep }}{{ ov_state|sep }}{{ ov_recall|sep }}{{ ov_capture|sep }}"
+# Each element carries its own color so it is identifiable without reading it.
+# Colors that ramp (context badge, 📅 weekly, +/- lines, OV health) mean state;
+# every other color is just that element's identity.
+line1: "{{ model }} {{ context_pct }} {{ user_turns|c('DC','💬 ') }} {{ assistant_msgs|c('BP','🤖 ') }}{{ started_ago|c('DGOLD','🕐 ')|sep }}{{ wall_time|c('BO','⏱️ ')|sep }}{{ api_time|c('DPINK','⚙️ ')|sep }}{{ limit_7d|sep }}"
+line2: "{{ project|c('BGOLD') }} {{ project_folder|c('GRAY4','📂 ') }}{{ hostname|c('DM','💻 ')|sep }}{{ git_remote|c('DB')|sep }}{{ git_branch|sep }}{{ lines_changed|sep }}{{ ov_state|sep }}{{ ov_recall|sep }}{{ ov_capture|sep }}"
 line2_indent: "  "
