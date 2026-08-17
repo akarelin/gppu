@@ -8,9 +8,10 @@ context_bar_width: 60
 
 git_ttl: 10
 jsonl_ttl: 2
+ov_ttl: 5
 
 templates: !include status_line_templates.yaml
 
-line1: "{{ model|c('DIM') }} {{ context_bar }} {{ user_turns|c('DC','💬 ') }} {{ assistant_msgs|c('DIM','🤖 ') }}"
-line2: "{{ project|c('DB') }} {{ project_folder|c('DIM','📂 ') }}{{ hostname|c('DM','💻 ')|sep }}{{ git_remote|c('DC')|sep }}{{ git_branch|sep }}{{ lines_changed|sep }}{{ started_ago|c('DIM','🕐 ')|sep }}{{ wall_time|c('DC','⏱️ ')|sep }}{{ api_time|c('DIM','⚙️ ')|sep }}"
+line1: "{{ model|c('DIM') }} {{ context_pct }} {{ user_turns|c('DC','💬 ') }} {{ assistant_msgs|c('DIM','🤖 ') }}{{ started_ago|c('DIM','🕐 ')|sep }}{{ wall_time|c('DC','⏱️ ')|sep }}{{ api_time|c('DIM','⚙️ ')|sep }}{{ limit_5h|sep }}{{ limit_7d|sep }}"
+line2: "{{ project|c('DB') }} {{ project_folder|c('DIM','📂 ') }}{{ hostname|c('DM','💻 ')|sep }}{{ git_remote|c('DC')|sep }}{{ git_branch|sep }}{{ lines_changed|sep }}{{ ov_state|sep }}{{ ov_recall|sep }}{{ ov_capture|sep }}"
 line2_indent: "  "

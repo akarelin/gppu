@@ -37,6 +37,18 @@ def init_cache(cfg):
     _dc = Cache(cache_dir, ttl=86400, backend='sqlite', skip_env='')
 
 
+def cached(key, ttl, fn):
+    """Return fn()'s result, re-running it only once the cached entry is older than ttl."""
+    dc = _get_dc()
+    hit = dc.get(key)
+    now = time.time()
+    if hit and (now - hit.get("ts", 0)) < ttl:
+        return hit["data"]
+    data = fn()
+    dc.set(key, {"ts": now, "data": data}, ttl=ttl * 3)
+    return data
+
+
 def _new_counts():
     return {"user": 0, "assistant": 0, "input": 0, "output": 0,
             "cache_read": 0, "cache_create": 0, "system": 0,
@@ -217,15 +229,4 @@ def git_info_cached(cwd, git_fn):
     """
     if not cwd:
         return git_fn(cwd)
-
-    dc = _get_dc()
-    git_key = f"git:{cwd}"
-    cached = dc.get(git_key)
-
-    now = time.time()
-    if cached and (now - cached.get("ts", 0)) < _git_ttl:
-        return cached["data"]
-
-    data = git_fn(cwd)
-    dc.set(git_key, {"ts": now, "data": data}, ttl=_git_ttl * 3)
-    return data
+    return cached(f"git:{cwd}", _git_ttl, lambda: git_fn(cwd))

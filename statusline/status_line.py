@@ -25,6 +25,7 @@ from gppu.gppu import _colorize
 from jinja2 import Environment, Undefined
 
 from statusline.cache import transcript_stats_cached, git_info_cached, init_cache
+from statusline.ov import ov_stats
 from statusline.stats import git_info
 
 # ── Config discovery ──────────────────────────────────────────────────────
@@ -212,6 +213,7 @@ def build_stats(data):
         "tmeta": tmeta,
         "subagents": subagent_count,
         "git": gi,
+        "ov": ov_stats(data.get("session_id", ""), glob_int("ov_ttl", 5)),
         "project_dir": project_dir,
         "project_name": os.path.basename(project_dir) if project_dir else "",
         "project_folder": _home_rel(os.path.dirname(project_dir)) if project_dir else "",

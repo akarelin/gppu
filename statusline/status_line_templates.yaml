@@ -21,7 +21,51 @@ model: |
     {%- endif -%}
   {% endif %}
 
-context_pct: "{{ (context_window.used_percentage | pct) if context_window is mapping and context_window.used_percentage is not none else '' }}"
+context_pct: |
+  {% if context_window is mapping and context_window.used_percentage is not none -%}
+    {% set p = context_window.used_percentage | int -%}
+    {{ (p ~ '%') | c('DG' if p < 50 else 'DY' if p < 80 else 'DR') }}
+  {%- endif %}
+
+limit_5h: |
+  {% if rate_limits.five_hour.used_percentage is number -%}
+    {% set left = (100 - rate_limits.five_hour.used_percentage) | round | int -%}
+    {{ ('5h ' ~ left ~ '%') | c('DG' if left >= 50 else 'DY' if left >= 20 else 'DR') }}
+  {%- endif %}
+
+limit_7d: |
+  {% if rate_limits.seven_day.used_percentage is number -%}
+    {% set left = (100 - rate_limits.seven_day.used_percentage) | round | int -%}
+    {{ ('7d ' ~ left ~ '%') | c('DG' if left >= 50 else 'DY' if left >= 20 else 'DR') }}
+  {%- endif %}
+
+ov_state: |
+  {% if ov.health -%}
+    {{ 'OV' | c('DG' if ov.health == 'ok' else 'DY' if ov.health == 'slow' else 'DR') }}
+  {%- endif %}
+
+ov_recall: |
+  {% if ov.recall -%}
+    {% if ov.recall.reason == 'ok' -%}
+      {{ ('↩ ' ~ ov.recall.count) | c('DC') }}
+    {%- elif ov.recall.reason == 'offline' -%}
+      {{ '↩ ✗' | c('DR') }}
+    {%- else -%}
+      {{ '↩ 0' | c('GRAY2') }}
+    {%- endif %}
+  {%- endif %}
+
+ov_capture: |
+  {% if ov.capture -%}
+    {% if ov.capture.turns_failed -%}
+      {{ ('✎ ✗' ~ ov.capture.turns_failed) | c('DR') }}
+    {%- elif ov.capture.committed -%}
+      {{ '✎ ✓' | c('DG') }}
+    {%- elif ov.capture.pending_tokens and ov.capture.commit_threshold -%}
+      {{ ('✎ ' ~ (100 * ov.capture.pending_tokens // ov.capture.commit_threshold) ~ '%') | c('GRAY2') }}
+    {%- endif %}
+    {%- if ov.capture.commit_count %}{{ (' ·' ~ ov.capture.commit_count) | c('GRAY2') }}{% endif -%}
+  {%- endif %}
 
 tool_calls: "{{ tools | counter_sum }}"
 top_tools: "{{ tools | top_tools(6) }}"
