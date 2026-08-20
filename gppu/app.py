@@ -154,7 +154,7 @@ class App(_App, _DC): pass
 # region async application
 class AsyncApp(App):
   """Application base for long-lived asyncio services.
-
+  
   ``setup()`` runs after App/_DC construction. ``run()`` opens the application's
   TaskGroup and calls ``start()``. ``stop()`` cancels tasks created by ``_spawn()``.
   """

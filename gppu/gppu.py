@@ -298,27 +298,11 @@ def dict_from_json(filename: str | Path):
 ## _________Code below has deviated from the golden rule                                                  
 ## !! templates are simple inline functtions that return lists, dicts or scalars to be merged into dicts.
 def dict_template_populate(o, data: dict = {}, excludes:list = []) -> dict:
-  """ 
-    Returns new dictionary, copy of o with all templatable elements filled-in from data 
-    
-    This function is recursive
-
-    Keys with value == 'DEL' are removed from result
-    Keys with '$' in value are treated as templates and filled-in from data
-  """
   _ = template_populate(o, data, excludes)
   return _ if isinstance(_, dict) else {}
 
 
 def template_populate(o, data: dict = {}, excludes:list = []) -> Any:
-  """ 
-    Returns new object, copy of o with all templatable elements filled-in from data 
-    
-    This function is recursive
-
-    Keys with value == 'DEL' are removed from result
-    Keys with '$' in value are treated as templates and filled-in from data
-  """
   def __tp(o: dict | str, data: dict) -> Any:
     result: Any = None
     if not data: data = {}
@@ -778,10 +762,7 @@ class TColor(metaclass=_TColorHack):
 
 def pcp(*a: str | List[Any] | Tuple[Any, ...], **kw: Any) -> str:
   """
-  Pretty colored print. Supports two kinds of input:
-    level, msg: compatible with default logger
-    [args]: used by self.Dargs to colorize output
-  Returns: colored string
+  Pretty colored print. Returns: colored string
   
   Parameters:
     verbose: adds pfy(kwargs) to output
@@ -901,15 +882,8 @@ def _colorize_list(l: List[Union[str, TColor]]) -> str:
 
 def _colorize(text: str, colorcode:str, fmt=None):
   """
-  # Print a string in a given color, right-justified or left-justified
-  # to a given length.  The color is optional.
-  #
-  # Inputs:
-  #   text: The text to print
-  #   color: The color to print it in, defaulting to no color
-  #   format: The format string, which is a number followed by a
-  #           left or right justification character.  If no number
-  #           is given, the number is assumed to be 0.
+    Print a string in a given color.
+    fmt: accepts formatting syntax with < and > anchors
   """
   # ESC = '\u001b'
   ESC = '\033'  # ANSI escape code for terminal colors
@@ -1431,7 +1405,6 @@ class mixin_Logger(protocol_Logger, _mixin):
 
   def __init__(self, *a, **kw):
     super(mixin_Logger, self).__init__(*a, **kw)
-    # instance shortcuts re-use the class-level bound functions
     for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'): setattr(self, name, getattr(self.__class__, name))
 # endregion
 

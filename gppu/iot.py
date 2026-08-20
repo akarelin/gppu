@@ -201,8 +201,6 @@ class y2eid:
 # endregion
 
 
-# y2 types are _DC-annotatable; registered here so gppu.py never imports iot.
-# _DC._DC_TYPE_MAP copied the base map at class definition, so patch both.
 _DC_BASE_TYPE_MAP |= {'y2eid': y2eid, 'y2topic': y2topic}
 _DC._DC_TYPE_MAP |= {'y2eid': y2eid, 'y2topic': y2topic}
 
