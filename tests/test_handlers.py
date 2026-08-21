@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-from gppu.handlers import SessionFile, SessionFolder, SessionHandler
+from gppu.handlers import Handler, session_handler
+from gppu.session import Session
 
 
 def _jsonl(path: Path, records: list[dict]) -> Path:
@@ -15,6 +17,26 @@ def _jsonl(path: Path, records: list[dict]) -> Path:
     encoding='utf-8',
   )
   return path
+
+
+@dataclass(frozen=True)
+class TextObject:
+  source: Path
+  text: str
+
+
+def test_handler_loads_object_then_derives_stats(tmp_path: Path) -> None:
+  path = tmp_path / 'input.txt'
+  path.write_text('complete input', encoding='utf-8')
+  handler = Handler(
+    lambda source: TextObject(source, source.read_text(encoding='utf-8')),
+    lambda obj: len(obj.text),
+  )
+
+  stats, obj = handler(path)
+
+  assert stats == 14
+  assert obj == TextObject(path, 'complete input')
 
 
 def test_session_file_loads_complete_codex_object_and_derives_stats(tmp_path: Path) -> None:
@@ -51,13 +73,15 @@ def test_session_file_loads_complete_codex_object_and_derives_stats(tmp_path: Pa
     ],
   )
 
-  stats, obj = SessionHandler()(path)
+  stats, obj = session_handler(path)
 
-  assert isinstance(obj, SessionFile)
-  assert obj.provider == 'codex'
-  assert obj.session_ids == ('session-one',)
-  assert len(obj.records) == 4
-  assert [(turn.role, turn.text) for turn in obj.turns] == [
+  assert isinstance(obj, Session)
+  assert obj.source == path
+  assert len(obj.files) == 1
+  assert obj.files[0].provider == 'cx'
+  assert obj.files[0].session_ids == ('session-one',)
+  assert len(obj.files[0].records) == 4
+  assert [(turn.role, turn.text) for turn in obj.files[0].turns] == [
     ('user', 'Question'),
     ('assistant', 'Answer'),
   ]
@@ -103,10 +127,11 @@ def test_session_folder_loads_every_jsonl_variant_and_derives_stats(tmp_path: Pa
   )
   (tmp_path / 'ignored.txt').write_text('not a session', encoding='utf-8')
 
-  stats, obj = SessionHandler()(tmp_path)
+  stats, obj = session_handler(tmp_path)
 
-  assert isinstance(obj, SessionFolder)
-  assert [file.provider for file in obj.files] == ['claude', 'codex']
+  assert isinstance(obj, Session)
+  assert obj.source == tmp_path
+  assert [file.provider for file in obj.files] == ['cc', 'cx']
   assert stats.files == 2
   assert stats.sessions == 2
   assert stats.turns == 3
@@ -114,9 +139,35 @@ def test_session_folder_loads_every_jsonl_variant_and_derives_stats(tmp_path: Pa
   assert stats.span_end.isoformat() == '2026-08-20T03:01:00+00:00'
 
 
+def test_session_handler_loads_openclaw_file(tmp_path: Path) -> None:
+  path = _jsonl(
+    tmp_path / 'openclaw.jsonl',
+    [
+      {
+        'type': 'session',
+        'id': 'openclaw-one',
+        'timestamp': '2026-08-20T04:00:00Z',
+      },
+      {
+        'type': 'message',
+        'timestamp': '2026-08-20T04:01:00Z',
+        'message': {'role': 'user', 'content': 'Question'},
+      },
+    ],
+  )
+
+  stats, obj = session_handler(path)
+
+  assert obj.files[0].provider == 'openclaw'
+  assert obj.files[0].session_ids == ('openclaw-one',)
+  assert obj.files[0].turns[0].text == 'Question'
+  assert stats.sessions == 1
+  assert stats.turns == 1
+
+
 def test_session_handler_reports_malformed_input(tmp_path: Path) -> None:
   path = tmp_path / 'bad.jsonl'
   path.write_text('not-json\n', encoding='utf-8')
 
   with pytest.raises(ValueError, match='bad.jsonl:1'):
-    SessionHandler()(path)
+    session_handler(path)
