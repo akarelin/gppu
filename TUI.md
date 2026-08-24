@@ -162,6 +162,102 @@ sources: [System, Application]
 | `d` | Toggle dark/light mode |
 | `Ctrl+P` | Command palette |
 
+## Sidecar manifests — exposing an existing script
+
+An app manifest normally lives in the app's own YAML config. A utility that already exists — a script with no gppu in it, or one whose source must not be touched — is registered instead by a **sidecar**: a `{util}.{ext}.md` file placed next to it.
+
+```
+Hosts/
+  sessions-clean.py           # untouched
+  sessions-clean.py.md        # the manifest
+  mapper.cmd
+  mapper.cmd.md
+```
+
+The sidecar's YAML frontmatter is a manifest. `script:` is implied by the sidecar's own filename, so nothing identifies the utility from inside the utility. Prose below the frontmatter is for a human reader and is ignored by the loader.
+
+```yaml
+---
+name: sessions-clean                                          # menu label
+description: Move finished sessions into SD.agents            # dimmed, one line
+nav: Sessions                                                 # where it sits in the menu
+icon: 🧹
+platform: [W11]                                               # implied for .cmd and .ps1
+modes:
+  default:
+    name: Dry run
+  run:
+    name: Move the files
+    args: [--run]
+  keep:
+    name: Move, custom protection window
+    args: [--run]
+    ask_for:
+      - name: keep                                            # prompts, then passes --keep VALUE
+        default: 24
+  preview:
+    name: Dry run, custom preview width
+    ask_for:
+      - name: PREVIEW                                         # prompts, then rewrites PREVIEW in a copy
+        inject: true
+        default: 140
+---
+
+# sessions-clean
+
+What it does, in the author's words.
+```
+
+### Sidecar keys
+
+| Key | Description |
+|-----|-------------|
+| `name` | Display name. Defaults to the utility's stem |
+| `description` | Short description shown dimmed |
+| `icon` | Unicode icon shown next to the name |
+| `nav` | Menu path. Items are ordered by it and it renders dimmed before the name |
+| `platform` | OSType names the item runs on. `.cmd` and `.ps1` imply `[W11]` |
+| `key` | Registry key for direct launch. Defaults to the utility's stem |
+| `cwd` | Working directory. Defaults to the utility's own directory |
+| `inject` | Constants written into every launch of this item |
+| `modes` | Same modes as an app manifest, plus `inject` |
+
+### Parameters
+
+A parameter reaches the utility one of two ways.
+
+**Passed** — `args` for a fixed mode, `ask_for` for a prompted one. A prompted field becomes `--name VALUE`.
+
+**Injected** — for a utility with no command line at all. `inject` names a constant already assigned at the top of the source; the launcher writes a copy of the source beside the original with that assignment replaced, runs the copy, and removes it. The original is never written to. A name with no assignment in the source is an error, not a new definition.
+
+| Utility | Assignment matched | Value rendered as |
+|---------|--------------------|-------------------|
+| `.py` | `NAME = ...` | Python literal |
+| `.ps1` | `$Name = ...` | PowerShell literal |
+| `.sh` | `NAME=...` | shell literal |
+| `.cmd` | `set NAME=...` | bare text |
+
+Injection needs its own process, so a mode cannot be both `inline: true` and injected.
+
+### Container
+
+```python
+from gppu import Env
+from gppu.tui import TUILauncher, load_sidecar_registry, sidecar_main
+
+class ContainerApp(TUILauncher):
+    TITLE = 'tui'
+    MENU_TITLE = 'tui'
+
+def main() -> int:
+    Env.from_env(name='tui', app_path=APP_DIR)
+    return sidecar_main(load_sidecar_registry(*UTILITY_DIRS), ContainerApp, APP_DIR, 'TUI')
+```
+
+`load_sidecar_registry(*dirs)` collects every sidecar in those directories. `sidecar_main` gives the container `--list`, direct launch by key, and the TUI loop; it runs each utility under the interpreter its suffix names — `.py`, `.ps1`, `.cmd`, `.sh`.
+
+`RAN/Hosts/tui.py` is the working example.
+
 ## Web mode
 
 Serve any launcher as a web app using `textual-serve`. Requires the `serve` extra (`pip install gppu[serve]`).
