@@ -263,8 +263,11 @@ class AppItem(ListItem):
 
     def compose(self) -> ComposeResult:
         icon = self.app_def.get('icon', '')
+        nav = self.app_def.get('nav', '')
         name = self.app_def.get('name', self.app_key)
         desc = self.app_def.get('description', '')
+        if nav:
+            name = f'[dim]{nav}/[/dim]{name}'
         if self.enabled:
             yield Static(f' {icon}  [bold]{name}[/bold]   [dim]{desc}[/dim]')
         else:
@@ -765,6 +768,7 @@ class TUILauncher(TUIApp):
                 self.bell()
                 return
             self._selected_app = item.app_def
+            self._mode_inject = {}
             modes = item.app_def.get('modes')
             if not modes:
                 self.exit(result={'app': item.app_def, 'args': []})
@@ -792,6 +796,7 @@ class TUILauncher(TUIApp):
     def _resolve_mode(self, mode_key: str, mode_def: dict | None) -> None:
         mode_def = mode_def or {}
         base_args = build_args(mode_def)
+        self._mode_inject = dict(mode_def.get('inject') or {})
         ask_for = mode_def.get('ask_for')
         # Check mode-level then app-level for module/class
         tui_module = mode_def.get('module') or self._selected_app.get('module')
@@ -809,7 +814,11 @@ class TUILauncher(TUIApp):
 
     def _run_suspended(self, cli_args: list[str]) -> None:
         """Exit TUI, run subprocess with full terminal access, then re-enter."""
-        self.exit(result={'app': self._selected_app, 'args': cli_args})
+        self.exit(result={
+            'app': self._selected_app,
+            'args': cli_args,
+            'inject': getattr(self, '_mode_inject', {}),
+        })
 
     def _launch_tui_app(self, app_def: dict, cli_args: list[str]) -> None:
         """Import a TUIApp class and push it as a screen."""
@@ -1090,6 +1099,7 @@ class TUILauncher(TUIApp):
         if self._phase != 'ask':
             return
         args: list[str] = list(self._base_args)
+        inject: dict = dict(getattr(self, '_mode_inject', {}))
         for field_spec in self._ask_fields:
             fname = field_spec['name']
             widget = self.query_one(f'#ask-{fname}')
@@ -1098,7 +1108,11 @@ class TUILauncher(TUIApp):
                 val = str(opt.prompt) if opt else ''
             else:
                 val = widget.value.strip()
-            if val:
+            if not val:
+                continue
+            if field_spec.get('inject'):
+                inject[fname] = val
+            else:
                 args.extend([f'--{fname}', val])
 
         app_def = self._selected_app
@@ -1110,7 +1124,7 @@ class TUILauncher(TUIApp):
             self._run_inline_with_app(app_def, args)
         else:
             # Exit TUI, run subprocess
-            self.exit(result={'app': app_def, 'args': args})
+            self.exit(result={'app': app_def, 'args': args, 'inject': inject})
 
     def _cleanup_ask_form(self) -> None:
         """Remove ask form widgets and return to app list."""

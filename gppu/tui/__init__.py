@@ -38,6 +38,15 @@ from .launcher import (
     launcher_main,
 )
 
+from .sidecar import (
+    inject_source,
+    load_sidecar_registry,
+    read_sidecar,
+    run_sidecar,
+    sidecar_command,
+    sidecar_main,
+)
+
 from .config_editor import ConfigEditorApp
 
 from .selectors import (
@@ -109,6 +118,13 @@ __all__ = [
     'launch_app',
     'load_app_registry',
     'launcher_main',
+    # Sidecar manifests
+    'inject_source',
+    'load_sidecar_registry',
+    'read_sidecar',
+    'run_sidecar',
+    'sidecar_command',
+    'sidecar_main',
     # Config editor
     'ConfigEditorApp',
     # Selector widgets
