@@ -5,8 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from gppu.handlers import handlers
-from gppu.session import SessionMeta
+from gppu.handlers import SessionMeta, handlers
 
 CODEX = [
   {
@@ -119,3 +118,34 @@ def test_malformed_log_reports_its_line(tmp_path: Path) -> None:
   assert handlers.load(path).agent == 'codex'
   with pytest.raises(ValueError, match='rollout.jsonl:6'):
     SessionMeta.of(path)
+
+
+def test_lists_the_sessions_of_a_store_by_the_naming_convention(tmp_path: Path) -> None:
+  _jsonl(tmp_path / '2026' / '08' / '20' / 'rollout.jsonl', CODEX)
+
+  session, = handlers.load(tmp_path).sessions()
+
+  assert (session.uid, session.turns, session.topic) == ('codex-one', 2, 'Question')
+  assert session.label.endswith(' 2~2m - Question')
+  assert session.name == f'{session.label}.codex-one.jsonl'
+
+
+def test_a_topic_is_the_first_human_line_and_fits_the_name_limit(tmp_path: Path) -> None:
+  said = '<environment_context>machine</environment_context>'
+  spoken = {**CLAUDE[0], 'message': {'role': 'user', 'content': [{'type': 'text', 'text': said}]}}
+  long = {**CLAUDE[0], 'message': {'role': 'user', 'content': 'Fix RDF: resizing ' + 'x' * 300}}
+  _jsonl(tmp_path / 'claude.jsonl', [spoken, long, CLAUDE[1]])
+
+  session, = handlers.load(tmp_path).sessions()
+
+  assert session.topic.startswith('Fix RDF resizing xxx')
+  assert len(session.name) == 254
+
+
+def test_a_single_moment_has_no_span(tmp_path: Path) -> None:
+  _jsonl(tmp_path / 'claude.jsonl', [CLAUDE[0]])
+
+  session, = handlers.load(tmp_path).sessions()
+
+  assert session.length == ''
+  assert session.label == f"{session.span[0].astimezone():%y%m%d-%H%M} 1 - Question"

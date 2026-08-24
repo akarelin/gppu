@@ -150,10 +150,7 @@ from .iot import (
     JSONHTTPControl,
 )
 
-from .handlers import Handlers, handlers
-
-# Session readers register themselves on the shared registry when imported.
-from .session import SessionMeta, Sessions, read_sessions
+from .handlers import Handlers, Session, SessionMeta, Sessions, handlers, read_sessions
 
 
 __version__ = VER_GPPU
@@ -177,7 +174,7 @@ __all__ = [
 
     # Handlers
     'Handlers', 'handlers',
-    'SessionMeta', 'Sessions', 'read_sessions',
+    'Session', 'SessionMeta', 'Sessions', 'read_sessions',
 
     # Configuration
     'dict_from_yml', 'dict_to_yml', 'dict_from_json', 'dict_to_json', 'dict_sanitize',

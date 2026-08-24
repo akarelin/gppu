@@ -10,8 +10,9 @@ the session handler work:
     python examples/handler_tui.py ~/.claude/projects
 
 Every highlighted path is identified as you walk.  `p` probes the store for
-span, models and turns, `l` lists its logs one by one.  Both run in a
-worker thread — they read every record of every log under the path.
+span, models and turns, `s` lists the sessions it holds by the naming
+convention.  Both run in a worker thread — they read every record of every
+log under the path.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, RichLog, Static
 
-from gppu import SessionMeta, handlers
+from gppu import Session, SessionMeta, handlers
 from gppu.tui import FilesystemAdapter, LoaderMixin, TreeBrowser, TUIApp
 
 LOGS_LISTED = 40
@@ -57,7 +58,7 @@ class HandlerTUI(LoaderMixin, TUIApp):
 
   BINDINGS = [
     Binding('p', 'probe', 'Probe'),
-    Binding('l', 'logs', 'Logs'),
+    Binding('s', 'sessions', 'Sessions'),
     Binding('q', 'quit', 'Quit'),
   ]
 
@@ -93,10 +94,10 @@ class HandlerTUI(LoaderMixin, TUIApp):
   def action_probe(self) -> None:
     self.ask('probe', lambda sessions: [fmt_meta(sessions.meta())])
 
-  def action_logs(self) -> None:
-    self.ask('logs', lambda sessions: [
-      f'{escape(log.name):<44} {fmt_meta(SessionMeta.of(log))}'
-      for log in sessions.files[:LOGS_LISTED]
+  def action_sessions(self) -> None:
+    self.ask('sessions', lambda store: [
+      f'{escape(Session.of(log).name)}'
+      for log in store.files[:LOGS_LISTED]
     ])
 
   def ask(self, name, work) -> None:
@@ -120,7 +121,7 @@ class HandlerTUI(LoaderMixin, TUIApp):
     for line in lines:
       detail.write(line)
     listed = min(len(sessions.files), LOGS_LISTED)
-    shown = f'{listed} of {len(sessions.files)} logs' if name == 'logs' else f'{len(sessions.files)} logs'
+    shown = f'{listed} of {len(sessions.files)} logs' if name == 'sessions' else f'{len(sessions.files)} logs'
     self.query_one('#status', Static).update(f'{escape(str(sessions.path))} - {shown}')
 
   def cli(self) -> None:
@@ -129,7 +130,8 @@ class HandlerTUI(LoaderMixin, TUIApp):
       print(f'{self.root}: unrecognized')
       return
     print(f'{self.root}: {sessions.agent}, {len(sessions.files)} logs')
-    print(fmt_meta(sessions.meta()))
+    for log in sessions.files[:LOGS_LISTED]:
+      print(Session.of(log).name)
 
 
 if __name__ == '__main__':
