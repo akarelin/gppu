@@ -11,7 +11,7 @@ the registered handlers work:
 
 Every highlighted file is identified as you walk.  `p` probes the
 highlighted file or folder for metadata, `l` loads its objects.  Both run
-in a worker thread — probing a folder parses every session under it.
+in a worker thread — a folder is scanned file by file.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, RichLog, Static
 
-from gppu.handlers import identify, load, probe
+from gppu import SessionMeta, handlers
 from gppu.tui import FilesystemAdapter, LoaderMixin, TreeBrowser, TUIApp
 
 
@@ -80,15 +80,15 @@ class HandlerTUI(LoaderMixin, TUIApp):
     self.show_path()
 
   def show_path(self) -> None:
-    handler = identify(self.path) if self.path.is_file() else None
-    what = handler.name if handler else ('folder' if self.path.is_dir() else 'unrecognized')
+    what = (handlers.identify(self.path) if self.path.is_file() else None) or (
+      'folder' if self.path.is_dir() else 'unrecognized')
     self.query_one('#status', Static).update(f'{self.path} - [b]{what}[/b]')
 
   def action_probe(self) -> None:
-    self.run('probe', probe)
+    self.run('probe', lambda path: SessionMeta.of(*handlers.scan(path)))
 
   def action_load(self) -> None:
-    self.run('load', load)
+    self.run('load', handlers.scan)
 
   def run(self, name, work) -> None:
     path = self.path
@@ -109,25 +109,23 @@ class HandlerTUI(LoaderMixin, TUIApp):
       detail.write(f'turns  {result.turns}')
       self.query_one('#status', Static).update(f'{path} - {result.turns} turns')
       return
-    sessions = result if isinstance(result, tuple) else (result,)
-    for session in sessions:
+    for session in result:
       models = ', '.join(session.models) or '-'
       detail.write(f'{session.provider} {escape(session.path.name)} - {len(session.turns)} turns, {models}')
-    if len(sessions) == 1:
+    if len(result) == 1:
       detail.write('')
-      for turn in sessions[0].turns[:20]:
+      for turn in result[0].turns[:20]:
         at = f'{turn.at.astimezone():%H%M}' if turn.at else '····'
         detail.write(f'[dim]{at}[/dim] [b]{turn.role}[/b] {escape(turn.text[:200])}')
-    self.query_one('#status', Static).update(f'{path} - {len(sessions)} loaded')
+    self.query_one('#status', Static).update(f'{path} - {len(result)} loaded')
 
   def cli(self) -> None:
-    handler = identify(self.root)
-    print(f'{self.root}: {handler.name if handler else "unrecognized"}')
-    if handler is not None:
-      meta = probe(self.root)
-      print(f'span   {fmt_span(meta.span)}')
-      print(f'models {", ".join(meta.models)}')
-      print(f'turns  {meta.turns}')
+    sessions = handlers.scan(self.root)
+    print(f'{self.root}: {len(sessions)} sessions')
+    meta = SessionMeta.of(*sessions)
+    print(f'span   {fmt_span(meta.span)}')
+    print(f'models {", ".join(meta.models) or "-"}')
+    print(f'turns  {meta.turns}')
 
 
 if __name__ == '__main__':

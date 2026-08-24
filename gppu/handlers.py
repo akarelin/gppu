@@ -1,80 +1,57 @@
-"""Identify what a path holds, probe it for metadata, load its data.
+"""Handlers — file readers registered by name, the way Jinja registers filters.
 
-A handler is a name plus three callables over a single file: ``identify``
-(is this mine?), ``load`` (parse it into an object), ``meta`` (derive
-metadata from that object).  ``probe`` is ``meta`` after ``load``.
+A handler is one function: give it a path, it returns an object for the
+files it recognizes and ``None`` for everything else.  It registers itself
+on the shared registry::
 
-Module-level ``identify``/``probe``/``load`` take a file or a folder and
-route each file to the first handler that claims it.  Folder metadata is
-the sum (``+``) of its files' metadata.
+    from gppu.handlers import handlers
+
+    @handlers.add('codex')
+    def read_codex(path): ...
+
+Callers ask the registry, never the handlers::
+
+    handlers.identify(path)    # 'codex'
+    handlers.load(path)        # the object that handler built
+    handlers.scan(folder)      # objects for every claimed file under a folder
+
+Nothing here knows about any particular kind of file; handlers live with
+the objects they build (sessions in :mod:`gppu.session`).
 """
 
 from __future__ import annotations
 
-import operator
 from collections.abc import Callable
-from dataclasses import dataclass
-from functools import reduce
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .session import SessionMeta, is_claude, is_codex, load_claude, load_codex
+Reader = Callable[[Path], Any]
 
 
-@dataclass(frozen=True)
-class Handler:
-  name: str
-  identify: Callable[[Path], bool]
-  load: Callable[[Path], Any]
-  meta: Callable[[Any], Any]
+@dataclass
+class Handlers:
+  readers: dict[str, Reader] = field(default_factory=dict)
 
-  def probe(self, path: Path) -> Any:
-    return self.meta(self.load(path))
+  def add(self, name: str) -> Callable[[Reader], Reader]:
+    """Register a reader under `name`."""
+    def register(read: Reader) -> Reader:
+      self.readers[name] = read
+      return read
+    return register
 
+  def identify(self, path: Path) -> str | None:
+    """Name of the handler that claims this file."""
+    return next((name for name, read in self.readers.items() if read(path) is not None), None)
 
-HANDLERS: list[Handler] = []
+  def load(self, path: Path) -> Any:
+    """What the claiming handler makes of this file, or None."""
+    return next((obj for read in self.readers.values() if (obj := read(path)) is not None), None)
 
-
-def register(handler: Handler) -> Handler:
-  HANDLERS.append(handler)
-  return handler
-
-
-def paths(path: Path) -> tuple[Path, ...]:
-  """The file itself, or every file under the folder."""
-  if path.is_file():
-    return (path,)
-  if path.is_dir():
-    # ponytail: walks the whole tree up front; stream it if folders get big.
-    return tuple(sorted(item for item in path.rglob('*') if item.is_file()))
-  raise FileNotFoundError(path)
+  def scan(self, path: Path) -> tuple[Any, ...]:
+    """Objects for the file itself, or for every claimed file under a folder."""
+    files = [path] if path.is_file() else sorted(p for p in path.rglob('*') if p.is_file())
+    return tuple(obj for file in files if (obj := self.load(file)) is not None)
 
 
-def claim(path: Path) -> Handler | None:
-  """The handler for one file, or None when nothing recognizes it."""
-  return next((handler for handler in HANDLERS if handler.identify(path)), None)
-
-
-def identify(path: Path) -> Handler | None:
-  """The handler for a file, or the first one claiming a file in a folder."""
-  return next((handler for item in paths(path) if (handler := claim(item))), None)
-
-
-def probe(path: Path) -> Any:
-  """Metadata for a file, or the merged metadata of a folder's files."""
-  metas = [handler.probe(item) for item in paths(path) if (handler := claim(item))]
-  if not metas:
-    raise ValueError(f'{path}: no handler')
-  return reduce(operator.add, metas)
-
-
-def load(path: Path) -> Any:
-  """The object for a file, or a tuple of objects for a folder."""
-  objects = tuple(handler.load(item) for item in paths(path) if (handler := claim(item)))
-  if not objects:
-    raise ValueError(f'{path}: no handler')
-  return objects[0] if path.is_file() else objects
-
-
-codex_handler = register(Handler('codex', is_codex, load_codex, SessionMeta.of))
-claude_handler = register(Handler('claude', is_claude, load_claude, SessionMeta.of))
+handlers = Handlers()
