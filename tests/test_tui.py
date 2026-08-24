@@ -241,6 +241,17 @@ class TestNavigation:
             assert app.return_value['app']['name'] == 'Direct'
 
     @pytest.mark.asyncio
+    async def test_enter_selects_highlighted_app(self, tmp_path):
+        apps = _make_apps(tmp_path)
+        app = _TestApp(apps, tmp_path)
+        async with app.run_test() as pilot:
+            lv = app.query_one('#app-list', ListView)
+            lv.index = 2
+            await pilot.press('enter')
+            assert app.return_value is not None
+            assert app.return_value['app']['name'] == 'Direct'
+
+    @pytest.mark.asyncio
     async def test_ask_form_shows_input(self, tmp_path):
         apps = _make_apps(tmp_path)
         app = _TestApp(apps, tmp_path)
