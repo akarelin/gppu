@@ -85,12 +85,13 @@ class HandlerTUI(LoaderMixin, TUIApp):
     self.query_one('#status', Static).update(f'{self.path} - [b]{what}[/b]')
 
   def action_probe(self) -> None:
-    self.run('probe', lambda path: SessionMeta.of(*handlers.scan(path)))
+    self.ask('probe', lambda path: SessionMeta.of(*handlers.scan(path)))
 
   def action_load(self) -> None:
-    self.run('load', handlers.scan)
+    self.ask('load', handlers.scan)
 
-  def run(self, name, work) -> None:
+  def ask(self, name, work) -> None:
+    """Run a registry call off the UI thread, then render it."""
     path = self.path
     self.load_async(
       fetch=lambda: work(path),
