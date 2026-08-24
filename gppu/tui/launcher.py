@@ -1084,6 +1084,9 @@ class TUILauncher(TUIApp):
             self.action_launch()
 
     def action_launch(self) -> None:
+        if self._phase in ('apps', 'modes'):
+            self.query_one('#app-list', ListView).action_select_cursor()
+            return
         if self._phase != 'ask':
             return
         args: list[str] = list(self._base_args)
