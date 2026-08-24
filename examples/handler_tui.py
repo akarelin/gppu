@@ -3,15 +3,15 @@
 
 Run:  python examples/handler_tui.py [ROOT]
 
-ROOT defaults to the current directory; point it at a session store to see
-the registered handlers work:
+ROOT defaults to the current directory; point it at an agent's home to see
+the session handler work:
 
     python examples/handler_tui.py ~/.codex/sessions
     python examples/handler_tui.py ~/.claude/projects
 
-Every highlighted file is identified as you walk.  `p` probes the
-highlighted file or folder for metadata, `l` loads its objects.  Both run
-in a worker thread — a folder is scanned file by file.
+Every highlighted path is identified as you walk.  `p` probes the store for
+span, models and turns, `l` lists its logs one by one.  Both run in a
+worker thread — they read every record of every log under the path.
 """
 
 from __future__ import annotations
@@ -28,12 +28,18 @@ from textual.widgets import Footer, RichLog, Static
 from gppu import SessionMeta, handlers
 from gppu.tui import FilesystemAdapter, LoaderMixin, TreeBrowser, TUIApp
 
+LOGS_LISTED = 40
+
 
 def fmt_span(span) -> str:
   if span is None:
     return '-'
   start, end = (moment.astimezone() for moment in span)
   return f'{start:%Y-%m-%d %H%M} - {end:%Y-%m-%d %H%M}'
+
+
+def fmt_meta(meta: SessionMeta) -> str:
+  return f'{fmt_span(meta.span):<32} {meta.turns:>6} turns  {", ".join(meta.models) or "-"}'
 
 
 class HandlerTUI(LoaderMixin, TUIApp):
@@ -51,7 +57,7 @@ class HandlerTUI(LoaderMixin, TUIApp):
 
   BINDINGS = [
     Binding('p', 'probe', 'Probe'),
-    Binding('l', 'load', 'Load'),
+    Binding('l', 'logs', 'Logs'),
     Binding('q', 'quit', 'Quit'),
   ]
 
@@ -80,53 +86,50 @@ class HandlerTUI(LoaderMixin, TUIApp):
     self.show_path()
 
   def show_path(self) -> None:
-    what = (handlers.identify(self.path) if self.path.is_file() else None) or (
-      'folder' if self.path.is_dir() else 'unrecognized')
-    self.query_one('#status', Static).update(f'{self.path} - [b]{what}[/b]')
+    sessions = handlers.load(self.path)
+    what = f'[b]{sessions.agent}[/b], {len(sessions.files)} logs' if sessions else 'unrecognized'
+    self.query_one('#status', Static).update(f'{escape(str(self.path))} - {what}')
 
   def action_probe(self) -> None:
-    self.ask('probe', lambda path: SessionMeta.of(*handlers.scan(path)))
+    self.ask('probe', lambda sessions: [fmt_meta(sessions.meta())])
 
-  def action_load(self) -> None:
-    self.ask('load', handlers.scan)
+  def action_logs(self) -> None:
+    self.ask('logs', lambda sessions: [
+      f'{escape(log.name):<44} {fmt_meta(SessionMeta.of(log))}'
+      for log in sessions.files[:LOGS_LISTED]
+    ])
 
   def ask(self, name, work) -> None:
     """Run a registry call off the UI thread, then render it."""
     path = self.path
+    sessions = handlers.load(path)
+    if sessions is None:
+      self.query_one('#status', Static).update(f'{escape(str(path))} - unrecognized')
+      return
     self.load_async(
-      fetch=lambda: work(path),
-      on_done=lambda result: self.show(name, path, result),
+      fetch=lambda: work(sessions),
+      on_done=lambda lines: self.show(name, sessions, lines),
       status_id='#status',
       status_busy=f'{name} {path} …',
     )
 
-  def show(self, name: str, path: Path, result) -> None:
+  def show(self, name: str, sessions, lines: list[str]) -> None:
     detail = self.query_one('#detail', RichLog)
     detail.clear()
-    detail.write(f'[b]{name}[/b] {escape(str(path))}')
-    if name == 'probe':
-      detail.write(f'span   {fmt_span(result.span)}')
-      detail.write(f'models {", ".join(result.models) or "-"}')
-      detail.write(f'turns  {result.turns}')
-      self.query_one('#status', Static).update(f'{path} - {result.turns} turns')
-      return
-    for session in result:
-      models = ', '.join(session.models) or '-'
-      detail.write(f'{session.provider} {escape(session.path.name)} - {len(session.turns)} turns, {models}')
-    if len(result) == 1:
-      detail.write('')
-      for turn in result[0].turns[:20]:
-        at = f'{turn.at.astimezone():%H%M}' if turn.at else '····'
-        detail.write(f'[dim]{at}[/dim] [b]{turn.role}[/b] {escape(turn.text[:200])}')
-    self.query_one('#status', Static).update(f'{path} - {len(result)} loaded')
+    detail.write(f'[b]{sessions.agent}[/b] {escape(str(sessions.path))}')
+    for line in lines:
+      detail.write(line)
+    listed = min(len(sessions.files), LOGS_LISTED)
+    shown = f'{listed} of {len(sessions.files)} logs' if name == 'logs' else f'{len(sessions.files)} logs'
+    self.query_one('#status', Static).update(f'{escape(str(sessions.path))} - {shown}')
 
   def cli(self) -> None:
-    sessions = handlers.scan(self.root)
-    print(f'{self.root}: {len(sessions)} sessions')
-    meta = SessionMeta.of(*sessions)
-    print(f'span   {fmt_span(meta.span)}')
-    print(f'models {", ".join(meta.models) or "-"}')
-    print(f'turns  {meta.turns}')
+    sessions = handlers.load(self.root)
+    if sessions is None:
+      print(f'{self.root}: unrecognized')
+      return
+    print(f'{self.root}: {sessions.agent}, {len(sessions.files)} logs')
+    print(fmt_meta(sessions.meta()))
 
 
 if __name__ == '__main__':

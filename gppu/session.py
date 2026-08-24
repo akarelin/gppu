@@ -1,8 +1,13 @@
-"""Session handlers — Codex rollouts and Claude Code transcripts (JSONL).
+"""Session stores — which agent wrote a folder of logs, and what is in them.
 
-Both providers write one JSON object per line, recognizable from the first
-record.  Each reader returns a :class:`Session` for its own files and None
-for everything else; :class:`SessionMeta` summarizes one or many of them.
+Identification is by evidence in the folder: the marker an agent's own
+writer leaves in the first records of a session file (codex, claude,
+openclaw), or the state file an agent keeps in its home (hermes, agy,
+whose transcripts are not JSONL).
+
+Everything else is generic — no per-agent parsing.  Span is the earliest
+and latest timestamp anywhere in the records, models are any model id,
+turns are the records carrying a user or assistant role.
 """
 
 from __future__ import annotations
@@ -10,30 +15,27 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .handlers import handlers
 
-_ROLES = ('user', 'assistant')
-_TEXT_BLOCKS = ('text', 'input_text', 'output_text')
+TIME_KEYS = ('timestamp', 'ts', 'started_at', 'session_start', 'time', 'created_at')
+MODEL_KEYS = ('model', 'modelId')
+ROLES = ('user', 'assistant')
+SNIFF = 8
 
+MARKERS = {
+  'codex': lambda record: record.get('type') == 'session_meta',
+  'claude': lambda record: isinstance(record.get('sessionId'), str),
+  'openclaw': lambda record: isinstance(record.get('modelId'), str),
+}
 
-@dataclass(frozen=True)
-class Turn:
-  role: str
-  text: str
-  at: datetime | None
-
-
-@dataclass(frozen=True)
-class Session:
-  path: Path
-  provider: str
-  ids: tuple[str, ...]
-  models: tuple[str, ...]
-  turns: tuple[Turn, ...]
+HOMES = {
+  'hermes': 'state.db',
+  'agy': 'antigravity_state.pbtxt',
+}
 
 
 @dataclass(frozen=True)
@@ -43,19 +45,58 @@ class SessionMeta:
   turns: int
 
   @classmethod
-  def of(cls, *sessions: Session) -> SessionMeta:
-    stamps = sorted(turn.at for session in sessions for turn in session.turns if turn.at)
+  def of(cls, *paths: Path) -> SessionMeta:
+    """Read every record of every file once: span, models, turns."""
+    stamps, models, turns = [], [], 0
+    for path in paths:
+      for record in _records(path):
+        scopes = [
+          scope for scope in (record, record.get('payload'), record.get('message'))
+          if isinstance(scope, dict)
+        ]
+        stamps += [
+          stamp for scope in scopes for key in TIME_KEYS
+          if (stamp := _stamp(scope.get(key)))
+        ]
+        models += [scope.get(key) for scope in scopes for key in MODEL_KEYS]
+        turns += any(scope.get('role') in ROLES for scope in scopes)
     return cls(
-      span=(stamps[0], stamps[-1]) if stamps else None,
-      models=_uniq(model for session in sessions for model in session.models),
-      turns=sum(len(session.turns) for session in sessions),
+      span=(min(stamps), max(stamps)) if stamps else None,
+      models=_uniq(models),
+      turns=turns,
     )
 
 
-def _uniq(values) -> tuple[str, ...]:
-  return tuple(dict.fromkeys(
-    value.strip() for value in values if isinstance(value, str) and value.strip()
-  ))
+@dataclass(frozen=True)
+class Sessions:
+  path: Path
+  agent: str
+  files: tuple[Path, ...]
+
+  def meta(self) -> SessionMeta:
+    """Span, models and turns across every log in the store."""
+    return SessionMeta.of(*self.files)
+
+
+@handlers.add('sessions')
+def read_sessions(path: Path) -> Sessions | None:
+  """A session store: the agent that wrote it and the JSONL logs it holds."""
+  if path.is_file():
+    agent = _agent(path)
+    return Sessions(path, agent, (path,)) if agent else None
+  files = tuple(sorted(path.rglob('*.jsonl')))
+  agent = next((found for file in files if (found := _agent(file))), None) or next(
+    (name for name, marker in HOMES.items() if (path / marker).exists()), None)
+  return Sessions(path, agent, files) if agent else None
+
+
+def _agent(path: Path) -> str | None:
+  """The agent whose marker shows up in the first records of a log."""
+  head = _head(path)
+  return next(
+    (name for name, marker in MARKERS.items() if any(marker(record) for record in head)),
+    None,
+  )
 
 
 def _records(path: Path) -> Iterator[dict[str, Any]]:
@@ -72,78 +113,32 @@ def _records(path: Path) -> Iterator[dict[str, Any]]:
         yield record
 
 
-def _peek(path: Path) -> dict[str, Any]:
-  """First record of a JSONL file; empty for anything else."""
+def _head(path: Path) -> list[dict[str, Any]]:
+  """First records of a JSONL file; whatever parsed, empty for anything else."""
+  found = []
   try:
-    return next(_records(path), {})
+    for record in _records(path):
+      found.append(record)
+      if len(found) >= SNIFF:
+        break
   except (OSError, UnicodeDecodeError, ValueError):
-    return {}
+    pass
+  return found
 
 
 def _stamp(value: Any) -> datetime | None:
-  if not isinstance(value, str):
-    return None
-  try:
-    return datetime.fromisoformat(value.replace('Z', '+00:00'))
-  except ValueError:
-    return None
+  if isinstance(value, str):
+    try:
+      return datetime.fromisoformat(value.replace('Z', '+00:00'))
+    except ValueError:
+      return None
+  if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 1_000_000_000:
+    seconds = value / 1000 if value > 10_000_000_000 else value
+    return datetime.fromtimestamp(seconds, timezone.utc)
+  return None
 
 
-def _text(content: Any) -> str:
-  if isinstance(content, str):
-    return content
-  if not isinstance(content, list):
-    return ''
-  return '\n\n'.join(
-    block['text'] for block in content
-    if isinstance(block, dict)
-    and block.get('type') in _TEXT_BLOCKS
-    and isinstance(block.get('text'), str)
-  )
-
-
-def _turn(role: Any, content: Any, timestamp: Any) -> Turn | None:
-  if role not in _ROLES:
-    return None
-  text = _text(content)
-  return Turn(role, text, _stamp(timestamp)) if text.strip() else None
-
-
-@handlers.add('codex')
-def read_codex(path: Path) -> Session | None:
-  """A Codex rollout: session_meta header, turn_context model, message items."""
-  head = _peek(path)
-  if head.get('type') != 'session_meta' or not isinstance(head.get('payload'), dict):
-    return None
-  ids, models, turns = [], [], []
-  for record in _records(path):
-    kind, payload = record.get('type'), record.get('payload')
-    if not isinstance(payload, dict):
-      continue
-    if kind == 'session_meta':
-      ids.append(payload.get('id'))
-    elif kind == 'turn_context':
-      models.append(payload.get('model'))
-    elif kind == 'response_item' and payload.get('type') == 'message':
-      turn = _turn(payload.get('role'), payload.get('content'), record.get('timestamp'))
-      if turn:
-        turns.append(turn)
-  return Session(path, 'cx', _uniq(ids), _uniq(models), tuple(turns))
-
-
-@handlers.add('claude')
-def read_claude(path: Path) -> Session | None:
-  """A Claude Code transcript: sessionId on every record, model on the message."""
-  if not isinstance(_peek(path).get('sessionId'), str):
-    return None
-  ids, models, turns = [], [], []
-  for record in _records(path):
-    ids.append(record.get('sessionId'))
-    message = record.get('message')
-    if record.get('type') not in _ROLES or not isinstance(message, dict) or record.get('isMeta'):
-      continue
-    models.append(message.get('model'))
-    turn = _turn(message.get('role'), message.get('content'), record.get('timestamp'))
-    if turn:
-      turns.append(turn)
-  return Session(path, 'cc', _uniq(ids), _uniq(models), tuple(turns))
+def _uniq(values) -> tuple[str, ...]:
+  return tuple(dict.fromkeys(
+    value.strip() for value in values if isinstance(value, str) and value.strip()
+  ))
