@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from gppu.handlers import claim, identify, load, probe
-from gppu.session import Session
+from gppu.handlers import handlers
+from gppu.session import Session, SessionMeta
 
 CODEX = [
   {
@@ -68,8 +68,9 @@ def _jsonl(path: Path, records: list[dict]) -> Path:
 def test_identifies_and_probes_a_codex_file(tmp_path: Path) -> None:
   path = _jsonl(tmp_path / 'rollout.jsonl', CODEX)
 
-  assert identify(path).name == 'codex'
-  meta = probe(path)
+  assert handlers.identify(path) == 'codex'
+  session = handlers.load(path)
+  meta = SessionMeta.of(session)
   assert meta.turns == 2
   assert meta.models == ('gpt-5.6',)
   assert [span.isoformat() for span in meta.span] == [
@@ -77,7 +78,6 @@ def test_identifies_and_probes_a_codex_file(tmp_path: Path) -> None:
     '2026-08-20T01:02:00+00:00',
   ]
 
-  session = load(path)
   assert isinstance(session, Session)
   assert session.provider == 'cx'
   assert session.ids == ('codex-one',)
@@ -90,11 +90,10 @@ def test_identifies_and_probes_a_codex_file(tmp_path: Path) -> None:
 def test_identifies_and_probes_a_claude_file(tmp_path: Path) -> None:
   path = _jsonl(tmp_path / 'claude.jsonl', CLAUDE)
 
-  assert identify(path).name == 'claude'
-  meta = probe(path)
+  assert handlers.identify(path) == 'claude'
+  session = handlers.load(path)
+  meta = SessionMeta.of(session)
   assert (meta.turns, meta.models) == (2, ('claude-opus-5',))
-
-  session = load(path)
   assert session.provider == 'cc'
   assert session.ids == ('claude-one',)
 
@@ -104,7 +103,7 @@ def test_folder_merges_metadata_of_every_session_it_holds(tmp_path: Path) -> Non
   _jsonl(tmp_path / 'nested' / 'claude.jsonl', CLAUDE)
   (tmp_path / 'ignored.txt').write_text('not a session', encoding='utf-8')
 
-  meta = probe(tmp_path)
+  meta = SessionMeta.of(*handlers.scan(tmp_path))
 
   assert meta.turns == 4
   assert meta.models == ('claude-opus-5', 'gpt-5.6')
@@ -112,17 +111,16 @@ def test_folder_merges_metadata_of_every_session_it_holds(tmp_path: Path) -> Non
     '2026-08-20T01:01:00+00:00',
     '2026-08-20T02:01:00+00:00',
   ]
-  assert [session.provider for session in load(tmp_path)] == ['cc', 'cx']
+  assert [session.provider for session in handlers.scan(tmp_path)] == ['cc', 'cx']
 
 
 def test_unrecognized_file_has_no_handler(tmp_path: Path) -> None:
   path = tmp_path / 'notes.txt'
   path.write_text('not a session', encoding='utf-8')
 
-  assert claim(path) is None
-  assert identify(path) is None
-  with pytest.raises(ValueError, match='no handler'):
-    probe(path)
+  assert handlers.identify(path) is None
+  assert handlers.load(path) is None
+  assert handlers.scan(path) == ()
 
 
 def test_malformed_session_file_reports_its_line(tmp_path: Path) -> None:
@@ -130,4 +128,4 @@ def test_malformed_session_file_reports_its_line(tmp_path: Path) -> None:
   path.write_text(path.read_text(encoding='utf-8') + 'not-json\n', encoding='utf-8')
 
   with pytest.raises(ValueError, match='bad.jsonl:6'):
-    load(path)
+    handlers.load(path)

@@ -1,9 +1,8 @@
-"""LLM session logs: Codex rollouts and Claude Code transcripts (JSONL).
+"""Session handlers — Codex rollouts and Claude Code transcripts (JSONL).
 
-Both providers write one JSON object per line.  ``load_codex`` and
-``load_claude`` turn a file into a :class:`Session`; ``SessionMeta.of``
-derives span, models and turn count from it.  ``gppu.handlers`` wires
-these into handlers.
+Both providers write one JSON object per line, recognizable from the first
+record.  Each reader returns a :class:`Session` for its own files and None
+for everything else; :class:`SessionMeta` summarizes one or many of them.
 """
 
 from __future__ import annotations
@@ -15,9 +14,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-ROLES = ('user', 'assistant')
-TEXT_BLOCKS = ('text', 'input_text', 'output_text')
-HEAD_RECORDS = 8
+from .handlers import handlers
+
+_ROLES = ('user', 'assistant')
+_TEXT_BLOCKS = ('text', 'input_text', 'output_text')
 
 
 @dataclass(frozen=True)
@@ -43,30 +43,23 @@ class SessionMeta:
   turns: int
 
   @classmethod
-  def of(cls, session: Session) -> SessionMeta:
-    stamps = sorted(turn.at for turn in session.turns if turn.at is not None)
+  def of(cls, *sessions: Session) -> SessionMeta:
+    stamps = sorted(turn.at for session in sessions for turn in session.turns if turn.at)
     return cls(
       span=(stamps[0], stamps[-1]) if stamps else None,
-      models=session.models,
-      turns=len(session.turns),
-    )
-
-  def __add__(self, other: SessionMeta) -> SessionMeta:
-    spans = [span for span in (self.span, other.span) if span is not None]
-    return SessionMeta(
-      span=(min(span[0] for span in spans), max(span[1] for span in spans)) if spans else None,
-      models=unique(self.models + other.models),
-      turns=self.turns + other.turns,
+      models=_uniq(model for session in sessions for model in session.models),
+      turns=sum(len(session.turns) for session in sessions),
     )
 
 
-def unique(values: tuple[Any, ...] | list[Any]) -> tuple[str, ...]:
+def _uniq(values) -> tuple[str, ...]:
   return tuple(dict.fromkeys(
     value.strip() for value in values if isinstance(value, str) and value.strip()
   ))
 
 
-def records(path: Path) -> Iterator[dict[str, Any]]:
+def _records(path: Path) -> Iterator[dict[str, Any]]:
+  """Every JSON object in a JSONL file, by line."""
   with path.open('r', encoding='utf-8') as stream:
     for number, line in enumerate(stream, 1):
       if not line.strip():
@@ -79,31 +72,15 @@ def records(path: Path) -> Iterator[dict[str, Any]]:
         yield record
 
 
-def head(path: Path) -> list[dict[str, Any]]:
-  """First records of a JSONL file; whatever parsed, empty for anything else."""
-  found = []
+def _peek(path: Path) -> dict[str, Any]:
+  """First record of a JSONL file; empty for anything else."""
   try:
-    for record in records(path):
-      found.append(record)
-      if len(found) >= HEAD_RECORDS:
-        break
+    return next(_records(path), {})
   except (OSError, UnicodeDecodeError, ValueError):
-    pass
-  return found
+    return {}
 
 
-def is_codex(path: Path) -> bool:
-  return any(
-    record.get('type') == 'session_meta' and isinstance(record.get('payload'), dict)
-    for record in head(path)
-  )
-
-
-def is_claude(path: Path) -> bool:
-  return any(isinstance(record.get('sessionId'), str) for record in head(path))
-
-
-def stamp(value: Any) -> datetime | None:
+def _stamp(value: Any) -> datetime | None:
   if not isinstance(value, str):
     return None
   try:
@@ -112,7 +89,7 @@ def stamp(value: Any) -> datetime | None:
     return None
 
 
-def text_of(content: Any) -> str:
+def _text(content: Any) -> str:
   if isinstance(content, str):
     return content
   if not isinstance(content, list):
@@ -120,21 +97,26 @@ def text_of(content: Any) -> str:
   return '\n\n'.join(
     block['text'] for block in content
     if isinstance(block, dict)
-    and block.get('type') in TEXT_BLOCKS
+    and block.get('type') in _TEXT_BLOCKS
     and isinstance(block.get('text'), str)
   )
 
 
-def turn_of(role: Any, content: Any, timestamp: Any) -> Turn | None:
-  if role not in ROLES:
+def _turn(role: Any, content: Any, timestamp: Any) -> Turn | None:
+  if role not in _ROLES:
     return None
-  text = text_of(content)
-  return Turn(role, text, stamp(timestamp)) if text.strip() else None
+  text = _text(content)
+  return Turn(role, text, _stamp(timestamp)) if text.strip() else None
 
 
-def load_codex(path: Path) -> Session:
+@handlers.add('codex')
+def read_codex(path: Path) -> Session | None:
+  """A Codex rollout: session_meta header, turn_context model, message items."""
+  head = _peek(path)
+  if head.get('type') != 'session_meta' or not isinstance(head.get('payload'), dict):
+    return None
   ids, models, turns = [], [], []
-  for record in records(path):
+  for record in _records(path):
     kind, payload = record.get('type'), record.get('payload')
     if not isinstance(payload, dict):
       continue
@@ -143,21 +125,25 @@ def load_codex(path: Path) -> Session:
     elif kind == 'turn_context':
       models.append(payload.get('model'))
     elif kind == 'response_item' and payload.get('type') == 'message':
-      turn = turn_of(payload.get('role'), payload.get('content'), record.get('timestamp'))
-      if turn is not None:
+      turn = _turn(payload.get('role'), payload.get('content'), record.get('timestamp'))
+      if turn:
         turns.append(turn)
-  return Session(path, 'cx', unique(ids), unique(models), tuple(turns))
+  return Session(path, 'cx', _uniq(ids), _uniq(models), tuple(turns))
 
 
-def load_claude(path: Path) -> Session:
+@handlers.add('claude')
+def read_claude(path: Path) -> Session | None:
+  """A Claude Code transcript: sessionId on every record, model on the message."""
+  if not isinstance(_peek(path).get('sessionId'), str):
+    return None
   ids, models, turns = [], [], []
-  for record in records(path):
+  for record in _records(path):
     ids.append(record.get('sessionId'))
     message = record.get('message')
-    if record.get('type') not in ROLES or not isinstance(message, dict) or record.get('isMeta'):
+    if record.get('type') not in _ROLES or not isinstance(message, dict) or record.get('isMeta'):
       continue
     models.append(message.get('model'))
-    turn = turn_of(message.get('role'), message.get('content'), record.get('timestamp'))
-    if turn is not None:
+    turn = _turn(message.get('role'), message.get('content'), record.get('timestamp'))
+    if turn:
       turns.append(turn)
-  return Session(path, 'cc', unique(ids), unique(models), tuple(turns))
+  return Session(path, 'cc', _uniq(ids), _uniq(models), tuple(turns))
