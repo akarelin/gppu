@@ -13,7 +13,6 @@ Callers ask the registry, never the handlers::
 
     handlers.identify(path)    # 'codex'
     handlers.load(path)        # the object that handler built
-    handlers.scan(folder)      # objects for every claimed file under a folder
 
 Nothing here knows about any particular kind of file; handlers live with
 the objects they build (sessions in :mod:`gppu.session`).
@@ -47,11 +46,6 @@ class Handlers:
   def load(self, path: Path) -> Any:
     """What the claiming handler makes of this file, or None."""
     return next((obj for read in self.readers.values() if (obj := read(path)) is not None), None)
-
-  def scan(self, path: Path) -> tuple[Any, ...]:
-    """Objects for the file itself, or for every claimed file under a folder."""
-    files = [path] if path.is_file() else sorted(p for p in path.rglob('*') if p.is_file())
-    return tuple(obj for file in files if (obj := self.load(file)) is not None)
 
 
 handlers = Handlers()
