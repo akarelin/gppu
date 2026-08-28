@@ -4,8 +4,9 @@
 
 mkdir -p ~/.local/bin ~/.config/statusline
 
-tag=$(curl -fsSL "https://api.github.com/repos/akarelin/gppu/releases?per_page=100" | grep -oP '"tag_name":\s*"\Ksl-[^"]+' | head -1)
-curl -fsSL -o ~/.local/bin/statusline "https://github.com/akarelin/gppu/releases/download/$tag/statusline-linux-amd64"
+url=$(curl -fsSL "https://api.github.com/repos/akarelin/gppu/releases?per_page=100" | grep -oP '"browser_download_url":\s*"\K[^"]*statusline-linux-amd64' | head -1)
+tag=$(echo "$url" | sed 's|.*/download/||; s|/statusline-linux-amd64$||')
+curl -fsSL -o ~/.local/bin/statusline "$url"
 chmod +x ~/.local/bin/statusline
 
 for f in status_line.yaml status_line_templates.yaml; do
