@@ -8,16 +8,16 @@ from collections import Counter
 
 from gppu.data import Cache
 
+from statusline.templates import GIT_TTL, JSONL_TTL
+
 DEFAULT_CACHE_DIR = os.path.join(tempfile.gettempdir(), "claude_statusline_cache")
 # Bump when the meaning of a cached count changes: entries accumulate from a byte
 # offset, so a parser fix cannot correct totals already stored under the old key.
 SCHEMA = "v2"
-DEFAULT_GIT_TTL = 10  # seconds
-DEFAULT_JSONL_TTL = 2  # seconds
+_git_ttl = GIT_TTL
+_jsonl_ttl = JSONL_TTL
 
 _dc: Cache | None = None
-_git_ttl = DEFAULT_GIT_TTL
-_jsonl_ttl = DEFAULT_JSONL_TTL
 
 
 def _get_dc() -> Cache:
@@ -26,18 +26,6 @@ def _get_dc() -> Cache:
     if _dc is None:
         _dc = Cache(DEFAULT_CACHE_DIR, ttl=86400, backend='sqlite', skip_env='')
     return _dc
-
-
-def init_cache(cfg):
-    """Initialize cache settings from config dict."""
-    global _dc, _git_ttl, _jsonl_ttl
-    cache_dir = cfg.get("cache_path", DEFAULT_CACHE_DIR)
-    # Migrate from old .json path to directory-based cache
-    if cache_dir.endswith('.json'):
-        cache_dir = cache_dir.removesuffix('.json')
-    _git_ttl = cfg.get("git_ttl", DEFAULT_GIT_TTL)
-    _jsonl_ttl = cfg.get("jsonl_ttl", DEFAULT_JSONL_TTL)
-    _dc = Cache(cache_dir, ttl=86400, backend='sqlite', skip_env='')
 
 
 def cached(key, ttl, fn):

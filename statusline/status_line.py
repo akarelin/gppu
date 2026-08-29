@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Claude Code 2-line status line.
 
-Uses gppu for config and colors, Jinja for widget templates, cache.py for incremental parsing.
+Uses gppu for colors, Jinja for widget templates (built into templates.py — no
+YAML to keep in sync across installs), cache.py for incremental parsing.
 
 build_stats() → {**stdin_data, enrichments} — raw merged dicts
 line1/line2: Jinja templates with pre-rendered widget values.
@@ -18,44 +19,17 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 from collections import Counter
-from pathlib import Path
 
-from gppu import Env, TColor
+from gppu import TColor
 from gppu.gppu import _colorize
 from jinja2 import Environment, Undefined
 
-from statusline.cache import transcript_stats_cached, git_info_cached, init_cache
+from statusline.cache import transcript_stats_cached, git_info_cached
 from statusline.ov import ov_stats
 from statusline.stats import git_info
-
-# ── Config discovery ──────────────────────────────────────────────────────
-
-def _config_dir() -> Path:
-    """Resolve config directory for statusline YAML files.
-
-    Priority: STATUSLINE_CONFIG_DIR env var > ~/.config/statusline > APPDATA/statusline.
-    """
-    override = os.environ.get("STATUSLINE_CONFIG_DIR")
-    if override:
-        return Path(override)
-    # Prefer ~/.config/statusline on all platforms (chezmoi default)
-    xdg = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "statusline"
-    if xdg.is_dir():
-        return xdg
-    # Windows fallback: %APPDATA%/statusline
-    if sys.platform == "win32":
-        appdata = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "statusline"
-        if appdata.is_dir():
-            return appdata
-    return xdg
-
-# ── Initialize gppu ────────────────────────────────────────────────────────
-
-Env.from_env(name="status_line", app_path=_config_dir())
-glob = Env.glob
-glob_dict = Env.glob_dict
-glob_int = Env.glob_int
-glob_list = Env.glob_list
+from statusline.templates import (
+    CONTEXT_BAR_WIDTH, OV_TTL, TEMPLATES, LINE1, LINE2, LINE2_INDENT,
+)
 
 # ── Jinja filters ──────────────────────────────────────────────────────────
 
@@ -127,7 +101,7 @@ _TOOL_ICONS = {
     "Bash": _SHELL_ICON, "PowerShell": _SHELL_ICON,
     "Read": "📖", "Edit": "✏️", "Write": "📝", "NotebookEdit": "📓",
     "Glob": "📁", "Grep": "🔍",
-    "Task": "👥", "Agent": "👥",
+    "Task": "👥", "Agent": "👥", "SendMessage": "💬", "AskUserQuestion": "❓",
     "WebFetch": "🌐", "WebSearch": "🌐",
     "TodoWrite": "☑️", "Skill": "🎓",
 }
@@ -261,7 +235,7 @@ def build_stats(data):
         "tmeta": tmeta,
         "subagents": subagent_count,
         "git": gi,
-        "ov": ov_stats(data.get("session_id", ""), glob_int("ov_ttl", 5)),
+        "ov": ov_stats(data.get("session_id", ""), OV_TTL),
         "project_dir": project_dir,
         "project_name": os.path.basename(project_dir) if project_dir else "",
         "project_folder": _home_rel(os.path.dirname(project_dir)) if project_dir else "",
@@ -277,7 +251,7 @@ def _fmt_context_bar(s):
     if pct_raw is None:
         return ""
     pct = int(float(pct_raw))
-    width = glob_int("context_bar_width", 60)
+    width = CONTEXT_BAR_WIDTH
     window = ctx.get("context_window_size") or 200_000
     usage = ctx.get("current_usage") or {}
     # As of CC v2.1.132 context_window.total_input/output_tokens reflect current
@@ -357,10 +331,9 @@ _FORMATTERS = {
 
 def _pre_render(stats):
     """Pre-render all widget templates and formatters into string values."""
-    templates = glob_dict("templates")
-    ctx = {**stats, "cfg": Env.data}
+    ctx = {**stats}
     rendered = {}
-    for name, tmpl_str in templates.items():
+    for name, tmpl_str in TEMPLATES.items():
         rendered[name] = _render_template(tmpl_str, ctx)
     for name, func in _FORMATTERS.items():
         rendered[name] = func(stats)
@@ -369,23 +342,16 @@ def _pre_render(stats):
 
 def main():
     data = json.loads(sys.stdin.read())
-    init_cache(Env.data)
     stats = build_stats(data)
     rendered = _pre_render(stats)
-    ctx = {**stats, **rendered, "cfg": Env.data}
+    ctx = {**stats, **rendered}
 
-    line1_tmpl = glob("line1")
-    line2_tmpl = glob("line2")
-    indent = glob("line2_indent") or "  "
-
-    if line1_tmpl:
-        line1 = _render_template(line1_tmpl, ctx)
-        if line1:
-            print(line1)
-    if line2_tmpl:
-        line2 = _render_template(line2_tmpl, ctx)
-        if line2:
-            print(f"{indent}{line2}")
+    line1 = _render_template(LINE1, ctx)
+    if line1:
+        print(line1)
+    line2 = _render_template(LINE2, ctx)
+    if line2:
+        print(f"{LINE2_INDENT}{line2}")
 
 
 if __name__ == "__main__":
