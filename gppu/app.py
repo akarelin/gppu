@@ -17,7 +17,8 @@ import asyncio
 import inspect
 from abc import abstractmethod
 from pathlib import Path
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
+from concurrent.futures import Future
 from typing import Any, final
 
 from .gppu import Env, Logger, _Base, _DC, _mixin
@@ -151,34 +152,88 @@ class App(_App, _DC): pass
 # endregion
 
 
+# region event-loop bridge
+type AsyncSubmission[T] = Future[T] | asyncio.Task[T]
+
+
+class EventLoopBridge:
+  """Schedules coroutines on an externally owned loop; ``call`` blocks off-loop."""
+
+  def schedule[T](self, coroutine: Coroutine[Any, Any, T], /) -> AsyncSubmission[T]:
+    return self._schedule(self._get_loop(), coroutine)
+
+  def submit[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> AsyncSubmission[T]:
+    return self.schedule(function(*args, **kwargs))
+
+  def call[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> T:
+    loop = self._get_loop()
+    if self._on_loop(loop): raise RuntimeError('cannot block the target event-loop thread')
+    future = self._schedule(loop, function(*args, **kwargs))
+    try: return future.result()
+    except BaseException:
+      if not future.done(): future.cancel()
+      raise
+
+  def on_loop(self) -> bool: return self._on_loop(self._get_loop())
+
+  @staticmethod
+  def _schedule[T](loop: asyncio.AbstractEventLoop, coroutine: Coroutine[Any, Any, T], /) -> AsyncSubmission[T]:
+    try:
+      if EventLoopBridge._on_loop(loop): return loop.create_task(coroutine)
+      return asyncio.run_coroutine_threadsafe(coroutine, loop)
+    except BaseException:
+      coroutine.close()
+      raise
+
+  @staticmethod
+  def _on_loop(loop: asyncio.AbstractEventLoop) -> bool:
+    try: return asyncio.get_running_loop() is loop
+    except RuntimeError: return False
+
+  def _get_loop(self) -> asyncio.AbstractEventLoop:
+    raise NotImplementedError
+# endregion
+
+
 # region async application
-class AsyncApp(App):
+class AsyncApp(App, EventLoopBridge):
   """Application base for long-lived asyncio services.
-  
+
   ``setup()`` runs after App/_DC construction. ``run()`` opens the application's
   TaskGroup and calls ``start()``. ``stop()`` cancels tasks created by ``_spawn()``.
+  The app is an ``EventLoopBridge`` onto its own running loop, so off-loop threads
+  ``schedule``/``submit``/``call`` work onto it.
   """
 
   _task_group: asyncio.TaskGroup | None
   _background_tasks: set[asyncio.Task[Any]]
+  _loop: asyncio.AbstractEventLoop | None
 
   def __init__(self, name: str = '', **kw) -> None:
     super().__init__(name=name, **kw)
     self._task_group = None
     self._background_tasks = set()
+    self._loop = None
     self.setup()
 
   def setup(self) -> None: pass
   async def start(self) -> None: pass
 
+  def _get_loop(self) -> asyncio.AbstractEventLoop:
+    loop = self._loop
+    if loop is None: raise RuntimeError(f'{self!r} is not running')
+    return loop
+
   async def run(self) -> None:
     if self._task_group is not None: raise RuntimeError(f'{self!r} is already running')
     try:
+      self._loop = asyncio.get_running_loop()
       async with asyncio.TaskGroup() as tasks:
         self._task_group = tasks
         await self.start()
     finally:
       self._task_group = None
+      self._loop = None
       self._background_tasks.clear()
 
   async def stop(self) -> None:

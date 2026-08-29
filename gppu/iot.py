@@ -30,7 +30,7 @@ try:
   import aiohttp
 except ImportError:
   aiohttp = None  # type: ignore[assignment]
-from .app import AsyncApp
+from .app import AsyncApp, AsyncSubmission, EventLoopBridge
 from .gppu import _DC, _DC_BASE_TYPE_MAP
 
 
@@ -389,49 +389,8 @@ class MqttApp(mixin_Mqtt, AsyncApp):
 
 
 # $$
-# $$        Event-loop bridge and serialized controls
+# $$        Serialized controls (EventLoopBridge lives in gppu.app)
 # $$
-type AsyncSubmission[T] = Future[T] | asyncio.Task[T]
-
-
-class EventLoopBridge:
-  """Schedules coroutines on an externally owned loop; ``call`` blocks off-loop."""
-
-  def schedule[T](self, coroutine: Coroutine[Any, Any, T], /) -> AsyncSubmission[T]:
-    return self._schedule(self._get_loop(), coroutine)
-
-  def submit[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> AsyncSubmission[T]:
-    return self.schedule(function(*args, **kwargs))
-
-  def call[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> T:
-    loop = self._get_loop()
-    if self._on_loop(loop): raise RuntimeError('cannot block the target event-loop thread')
-    future = self._schedule(loop, function(*args, **kwargs))
-    try: return future.result()
-    except BaseException:
-      if not future.done(): future.cancel()
-      raise
-
-  def on_loop(self) -> bool: return self._on_loop(self._get_loop())
-
-  @staticmethod
-  def _schedule[T](loop: asyncio.AbstractEventLoop, coroutine: Coroutine[Any, Any, T], /) -> AsyncSubmission[T]:
-    try:
-      if EventLoopBridge._on_loop(loop): return loop.create_task(coroutine)
-      return asyncio.run_coroutine_threadsafe(coroutine, loop)
-    except BaseException:
-      coroutine.close()
-      raise
-
-  @staticmethod
-  def _on_loop(loop: asyncio.AbstractEventLoop) -> bool:
-    try: return asyncio.get_running_loop() is loop
-    except RuntimeError: return False
-
-  def _get_loop(self) -> asyncio.AbstractEventLoop:
-    raise NotImplementedError
-
-
 class SerializedControl(EventLoopBridge):
   """Runs controls on one daemon loop, serialized by a per-instance lock."""
 
