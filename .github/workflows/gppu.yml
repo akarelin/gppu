@@ -54,8 +54,11 @@ jobs:
           W = ["self-hosted", "Windows"]
           # Exclude all TUI tests from non-tui matrix entries — every
           # test_tui*.py imports gppu.tui which needs textual at collect time.
+          # The glob is the ONLY mechanism, so a test that touches gppu.tui must
+          # be named test_tui*.py: test_sidecar.py was not, landed in MAIN, and
+          # broke collection for every release run from 2026-08-24.
           MAIN = "tests/ --ignore-glob=tests/test_tui*.py"
-          TUI = "tests/test_tui.py tests/test_tui_cache.py tests/test_tui_heatmap.py tests/test_tui_icons.py tests/test_tui_progress.py tests/test_tui_tree.py"
+          TUI = "tests/test_tui*.py"
 
           tests = [
               {"os": "linux", "runner": L, "extras": "", "test_path": MAIN, "label": "linux"},
