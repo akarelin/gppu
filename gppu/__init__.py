@@ -87,6 +87,7 @@ from .gppu import (
     safe_timedelta,
 
     # Time utilities
+    DelayedOff,
     now_str,
     now_ts,
     pretty_timedelta,
@@ -189,7 +190,7 @@ __all__ = [
     'safe_int', 'safe_float', 'safe_list', 'safe_timedelta',
 
     # Time utilities
-    'now_str', 'now_ts', 'pretty_timedelta', 'prepend_datestamp', 'append_timestamp',
+    'DelayedOff', 'now_str', 'now_ts', 'pretty_timedelta', 'prepend_datestamp', 'append_timestamp',
 
     # String utilities
     'pfy', 'slugify',

@@ -577,6 +577,59 @@ def append_timestamp(path, separator=" ") -> Path:
   _ = Path(path)
   return _.parent / f"{_.stem}{separator}{timestamp_str}{_.suffix}"
 
+class DelayedOff:
+  """esphome's `delayed_off` filter as a clock: an edge turns the output on and
+  holds it, and it goes off only after `timeout` seconds with no further edge —
+  every edge restarts the countdown.
+
+  **A remote timestamp is comparable only to another timestamp from the same
+  source.** An event's own stamp is written by the sender's clock, which runs
+  fast or slow against ours and reaches us after a transport delay; subtracting
+  it from our `now_ts()` measures the two clocks' disagreement as much as it
+  measures elapsed time. So the hold is timed on OUR clock alone, and `stamp`
+  is compared only against the previous stamp from that same sender, answering
+  one question: is this a new edge or a replay of one already seen.
+
+  No timers: the caller arms whatever scheduler it has for `timeout` seconds and
+  calls `held` when it fires. Arm with `timeout`, never with `remaining` — the
+  microseconds `remaining` loses to its own `now_ts()` call would land the wake-up
+  just inside the window, where `held` is still true and the hold never drops.
+  """
+
+  def __init__(self, timeout: float):
+    self.timeout = float(timeout)
+    self.held_since = 0.0   # our clock: when the hold last (re)started; 0 = never
+    self.stamp = 0.0        # the sender's clock: newest edge seen, for identity only
+
+  def __repr__(self) -> str:
+    return f"DelayedOff({self.timeout}s, {'held' if self.held else 'off'})"
+
+  def retrigger(self, stamp: float | None = None) -> bool:
+    """Take an edge and (re)start the hold. `stamp` is the sender's own event
+    time where the payload carries one: an edge at or before the newest stamp
+    seen is a replay and changes nothing. True when the hold (re)started."""
+    if stamp is not None:
+      if stamp != stamp or stamp <= self.stamp: return False   # NaN, or already seen
+      self.stamp = stamp
+    self.held_since = now_ts()
+    return True
+
+  @property
+  def held(self) -> bool:
+    """On until `timeout` has passed since the last edge — our clock throughout."""
+    return self.held_since > 0 and (now_ts() - self.held_since) < self.timeout
+
+  @property
+  def remaining(self) -> float:
+    """Seconds left on the hold; 0 when it is not held. For display and re-arming
+    a hold taken over from elsewhere — not for arming the timer of a fresh edge."""
+    return max(0.0, self.held_since + self.timeout - now_ts()) if self.held_since else 0.0
+
+  def clear(self) -> None:
+    """Drop the hold now, without waiting out the timeout."""
+    self.held_since = 0.0
+
+
 def pretty_timedelta(ts) -> str:
   delta = now_ts() - ts
   seconds = int(delta)
