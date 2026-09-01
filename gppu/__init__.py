@@ -151,9 +151,6 @@ from .iot import (
     JSONHTTPControl,
 )
 
-from .handlers import Handlers, Session, SessionMeta, Sessions, handlers, read_sessions
-
-
 __version__ = VER_GPPU
 __all__ = [
     # Version
@@ -172,10 +169,6 @@ __all__ = [
 
     # Global configuration
     'TRACE_RULES',
-
-    # Handlers
-    'Handlers', 'handlers',
-    'Session', 'SessionMeta', 'Sessions', 'read_sessions',
 
     # Configuration
     'dict_from_yml', 'dict_to_yml', 'dict_from_json', 'dict_to_json', 'dict_sanitize',

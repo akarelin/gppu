@@ -26,7 +26,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, RichLog, Static
 
-from gppu import Session, SessionMeta, handlers
+from gppu.handlers import SessionFile, SessionFolder, SessionStats, session_handler
 from gppu.tui import FilesystemAdapter, LoaderMixin, TreeBrowser, TUIApp
 
 LOGS_LISTED = 40
@@ -39,8 +39,12 @@ def fmt_span(span) -> str:
   return f'{start:%Y-%m-%d %H%M} - {end:%Y-%m-%d %H%M}'
 
 
-def fmt_meta(meta: SessionMeta) -> str:
+def fmt_meta(meta: SessionStats) -> str:
   return f'{fmt_span(meta.span):<32} {meta.turns:>6} turns  {", ".join(meta.models) or "-"}'
+
+
+def session_files(obj: SessionFile | SessionFolder) -> tuple[SessionFile, ...]:
+  return (obj,) if isinstance(obj, SessionFile) else obj.files
 
 
 class HandlerTUI(LoaderMixin, TUIApp):
@@ -87,29 +91,31 @@ class HandlerTUI(LoaderMixin, TUIApp):
     self.show_path()
 
   def show_path(self) -> None:
-    sessions = handlers.load(self.path)
-    what = f'[b]{sessions.agent}[/b], {len(sessions.files)} logs' if sessions else 'unrecognized'
+    if session_handler.identify(self.path):
+      _, obj = session_handler(self.path)
+      what = f'[b]{obj.harness}[/b], {len(session_files(obj))} logs'
+    else:
+      what = 'unrecognized'
     self.query_one('#status', Static).update(f'{escape(str(self.path))} - {what}')
 
   def action_probe(self) -> None:
-    self.ask('probe', lambda sessions: [fmt_meta(sessions.meta())])
+    self.ask('probe', lambda result: [fmt_meta(result[0])])
 
   def action_sessions(self) -> None:
-    self.ask('sessions', lambda store: [
-      f'{escape(Session.of(log).name)}'
-      for log in store.files[:LOGS_LISTED]
+    self.ask('sessions', lambda result: [
+      escape(session.name)
+      for session in session_files(result[1])[:LOGS_LISTED]
     ])
 
   def ask(self, name, work) -> None:
     """Run a registry call off the UI thread, then render it."""
     path = self.path
-    sessions = handlers.load(path)
-    if sessions is None:
+    if not session_handler.identify(path):
       self.query_one('#status', Static).update(f'{escape(str(path))} - unrecognized')
       return
     self.load_async(
-      fetch=lambda: work(sessions),
-      on_done=lambda lines: self.show(name, sessions, lines),
+      fetch=lambda: session_handler(path),
+      on_done=lambda result: self.show(name, result[1], work(result)),
       status_id='#status',
       status_busy=f'{name} {path} …',
     )
@@ -117,21 +123,23 @@ class HandlerTUI(LoaderMixin, TUIApp):
   def show(self, name: str, sessions, lines: list[str]) -> None:
     detail = self.query_one('#detail', RichLog)
     detail.clear()
-    detail.write(f'[b]{sessions.agent}[/b] {escape(str(sessions.path))}')
+    detail.write(f'[b]{sessions.harness}[/b] {escape(str(sessions.path))}')
     for line in lines:
       detail.write(line)
-    listed = min(len(sessions.files), LOGS_LISTED)
-    shown = f'{listed} of {len(sessions.files)} logs' if name == 'sessions' else f'{len(sessions.files)} logs'
+    files = session_files(sessions)
+    listed = min(len(files), LOGS_LISTED)
+    shown = f'{listed} of {len(files)} logs' if name == 'sessions' else f'{len(files)} logs'
     self.query_one('#status', Static).update(f'{escape(str(sessions.path))} - {shown}')
 
   def cli(self) -> None:
-    sessions = handlers.load(self.root)
-    if sessions is None:
+    if not session_handler.identify(self.root):
       print(f'{self.root}: unrecognized')
       return
-    print(f'{self.root}: {sessions.agent}, {len(sessions.files)} logs')
-    for log in sessions.files[:LOGS_LISTED]:
-      print(Session.of(log).name)
+    _, sessions = session_handler(self.root)
+    files = session_files(sessions)
+    print(f'{self.root}: {sessions.harness}, {len(files)} logs')
+    for session in files[:LOGS_LISTED]:
+      print(session.name)
 
 
 if __name__ == '__main__':
