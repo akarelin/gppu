@@ -38,6 +38,14 @@
 | [`gppu.tui`](TUI.md) | `TUIApp`, `TUILauncher`, `ConfigEditorApp`, `ui_select`, `ui_select_rows`<br> Textual-based TUI framework with web mode (`--serve`), CLI fallback, app embedding. Requires `tui` extra |
 | [`gppu.chrome`](CHROME.md) | `prepare_driver`, `switch_to_mobile`, `switch_to_desktop`<br>Selenium Chrome driver setup with profile management, crash recovery, mobile/desktop emulation |
 
+## Handler listing
+
+[`examples/handler_ls.py`](examples/handler_ls.py) recursively lists the current directory from `FileHandler` records, including file and folder metadata, aggregate statistics, spans, locations, matching handlers, session information, and files and folders inside ZIP and RAR archives.
+
+```powershell
+python examples/handler_ls.py
+```
+
 ## Environment
 
 ```python
