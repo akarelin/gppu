@@ -21,6 +21,8 @@ Create one simple reusable system for files, folders, archives, and sessions, th
 
 > I do not see any difference between file in file system, file in the cloud and file in archive
 
+> Demonstrate handlers. Build me a clone of recursive `ls` that shows files and folders in all richness via Handler
+
 ## Existing requirements
 
 - The module is `gppu.handlers`; `FileHandler` is its access point.
@@ -54,3 +56,7 @@ These programs keep operation-specific policy. File discovery, typed session loa
 - Existing fixture behavior remains exact for JSONL mirrors, Markdown output, session cleanup classification, destinations, and preservation layout.
 - The module's cached records supply hierarchy navigation and display data.
 - Superseded parser and traversal code is removed rather than retained beside the new implementation.
+
+## Demonstration
+
+`examples/handler_ls.py` recursively lists the current directory from `FileHandler` records. It displays every record field, recursive statistics, spans, locations, matching handlers, and concise information returned by the session handler. Archive files are navigated through `FileHandler.children()` so their files and folders appear in the same listing.
