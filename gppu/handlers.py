@@ -963,7 +963,12 @@ def _topic(messages: Sequence[SessionTurn]) -> str:
     if message.role != 'user' or message.meta or message.sidechain:
       continue
     lines = message.text.strip().splitlines()
-    if not lines or lines[0].startswith('<') and lines[0].endswith('>') or lines[0].strip() in PREAMBLE:
+    if not lines:
+      continue
+    first = lines[0].strip()
+    if first.startswith('<') and first.endswith('>') or any(
+      first.startswith(preamble) for preamble in PREAMBLE
+    ):
       continue
     return ' '.join(''.join(' ' if char in UNSAFE else char for char in lines[0]).split())
   return ''

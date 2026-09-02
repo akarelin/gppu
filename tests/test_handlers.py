@@ -376,7 +376,7 @@ def test_session_topic_skips_the_injected_agents_preamble(tmp_path: Path) -> Non
     **CODEX[2],
     'payload': {
       **CODEX[2]['payload'],
-      'content': [{'type': 'input_text', 'text': '# AGENTS.md instructions\n\n<INSTRUCTIONS>\nrules\n</INSTRUCTIONS>'}],
+      'content': [{'type': 'input_text', 'text': '# AGENTS.md instructions for D:\\_\n\n<INSTRUCTIONS>\nrules\n</INSTRUCTIONS>'}],
     },
   }
   path = _jsonl(tmp_path / 'codex.jsonl', [CODEX[0], CODEX[1], preamble, CODEX[2], CODEX[3]])
