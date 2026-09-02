@@ -32,6 +32,8 @@ SNIFF = 8
 UNITS = (('d', 86400), ('h', 3600), ('m', 60), ('s', 1))
 UNSAFE = '\\/:*?"<>|\r\n\t'
 NAME_LIMIT = 254
+DOS_EPOCH = datetime(1980, 1, 1)
+PREAMBLE = ('# AGENTS.md instructions',)
 
 HOMES = {
   'hermes': 'state.db',
@@ -662,13 +664,18 @@ def _record_path(value: str) -> PurePosixPath:
 
 
 def _archive_time(value: Any) -> datetime | None:
+  """An archive member's time; the DOS epoch 1980-01-01 means the archiver stored none."""
+
   if isinstance(value, datetime):
-    return value if value.tzinfo is not None else value.astimezone()
-  try:
-    parsed = datetime(*value)
-  except (TypeError, ValueError):
+    parsed = value
+  else:
+    try:
+      parsed = datetime(*value)
+    except (TypeError, ValueError):
+      return None
+  if parsed.replace(tzinfo=None) <= DOS_EPOCH:
     return None
-  return parsed.astimezone()
+  return parsed if parsed.tzinfo is not None else parsed.astimezone()
 
 
 def _complete_archive_records(
@@ -810,10 +817,15 @@ def _stamp(value: Any) -> datetime | None:
 
 
 def _timestamps(records: Sequence[Mapping[str, Any]]) -> Iterator[datetime]:
+  """Record times only: the record, its payload, or its message. Values quoted deeper inside content are not the session's time."""
+
   for record in records:
-    for key, value in _walk_values(record):
-      if key in TIME_KEYS and (stamp := _stamp(value)) is not None:
-        yield stamp
+    for scope in (record, record.get('payload'), record.get('message')):
+      if not isinstance(scope, Mapping):
+        continue
+      for key in TIME_KEYS:
+        if (stamp := _stamp(scope.get(key))) is not None:
+          yield stamp
 
 
 def _models(records: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
@@ -951,7 +963,7 @@ def _topic(messages: Sequence[SessionTurn]) -> str:
     if message.role != 'user' or message.meta or message.sidechain:
       continue
     lines = message.text.strip().splitlines()
-    if not lines or lines[0].startswith('<') and lines[0].endswith('>'):
+    if not lines or lines[0].startswith('<') and lines[0].endswith('>') or lines[0].strip() in PREAMBLE:
       continue
     return ' '.join(''.join(' ' if char in UNSAFE else char for char in lines[0]).split())
   return ''
