@@ -673,7 +673,7 @@ def _archive_time(value: Any) -> datetime | None:
       parsed = datetime(*value)
     except (TypeError, ValueError):
       return None
-  if parsed.replace(tzinfo=None) <= DOS_EPOCH:
+  if parsed.timetuple()[:6] <= DOS_EPOCH.timetuple()[:6]:
     return None
   return parsed if parsed.tzinfo is not None else parsed.astimezone()
 
