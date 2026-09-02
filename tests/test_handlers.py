@@ -353,3 +353,51 @@ def test_normalize_copies_a_folder_hierarchy(tmp_path: Path) -> None:
 
   assert copied == destination
   assert (destination / 'nested' / 'one.txt').read_text(encoding='utf-8') == 'one'
+
+
+def test_session_span_uses_record_times_not_values_quoted_inside_content(tmp_path: Path) -> None:
+  quoting = {
+    **CODEX[3],
+    'timestamp': '2026-08-20T01:03:00Z',
+    'payload': {
+      **CODEX[3]['payload'],
+      'content': [{'type': 'output_text', 'text': 'old row', 'created_at': '2025-01-01T00:00:00Z'}],
+    },
+  }
+  path = _jsonl(tmp_path / 'codex.jsonl', [*CODEX, quoting])
+
+  _, session = session_handler(path)
+
+  assert _iso(session.span) == ['2026-08-20T01:00:00+00:00', '2026-08-20T01:03:00+00:00']
+
+
+def test_session_topic_skips_the_injected_agents_preamble(tmp_path: Path) -> None:
+  preamble = {
+    **CODEX[2],
+    'payload': {
+      **CODEX[2]['payload'],
+      'content': [{'type': 'input_text', 'text': '# AGENTS.md instructions\n\n<INSTRUCTIONS>\nrules\n</INSTRUCTIONS>'}],
+    },
+  }
+  path = _jsonl(tmp_path / 'codex.jsonl', [CODEX[0], CODEX[1], preamble, CODEX[2], CODEX[3]])
+
+  _, session = session_handler(path)
+
+  assert session.topic == 'Question'
+
+
+def test_archive_member_without_a_stored_time_has_none_and_does_not_widen_the_span(tmp_path: Path) -> None:
+  archive = tmp_path / 'bundle.zip'
+  with zipfile.ZipFile(archive, 'w') as bundle:
+    bundle.writestr(zipfile.ZipInfo('undated.txt'), 'x')
+    dated = zipfile.ZipInfo('dated.txt', date_time=(2026, 8, 20, 1, 0, 0))
+    bundle.writestr(dated, 'y')
+
+  records = {record.path: record for record in file_handler.children(file_handler.probe(archive)[0])}
+
+  assert records[PurePosixPath('undated.txt')].modified_at is None
+  assert records[PurePosixPath('undated.txt')].span is None
+  assert _iso(file_handler.probe(archive)[0].probes[0].stats.span) == [
+    datetime(2026, 8, 20, 1, 0, 0).astimezone().isoformat(),
+    datetime(2026, 8, 20, 1, 0, 0).astimezone().isoformat(),
+  ]
