@@ -794,18 +794,19 @@ def _combine_spans(spans: Sequence[Span]) -> Span | None:
 
 
 def _records(path: Path) -> tuple[Mapping[str, Any], ...]:
+  # a writer crash or interrupted flush can leave one line truncated mid-record;
+  # skip that line rather than losing every record in the file over it.
   records: list[Mapping[str, Any]] = []
   with path.open('r', encoding='utf-8') as stream:
-    for number, line in enumerate(stream, 1):
+    for line in stream:
       if not line.strip():
         continue
       try:
         value = json.loads(line)
-      except json.JSONDecodeError as error:
-        raise ValueError(f'{path}:{number}: {error.msg}') from error
-      if not isinstance(value, dict):
-        raise ValueError(f'{path}:{number}: session record must be an object')
-      records.append(value)
+      except json.JSONDecodeError:
+        continue
+      if isinstance(value, dict):
+        records.append(value)
   if not records:
     raise ValueError(f'{path}: session file is empty')
   return tuple(records)

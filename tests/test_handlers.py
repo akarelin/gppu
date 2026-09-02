@@ -184,12 +184,14 @@ def test_openclaw_and_teleported_claude_are_identified_from_content(tmp_path: Pa
   assert (claude_session.harness, claude_session.uid) == ('claude', 'claude-remote')
 
 
-def test_malformed_recognized_session_reports_the_line(tmp_path: Path) -> None:
+def test_malformed_line_is_skipped_rather_than_failing_the_session(tmp_path: Path) -> None:
   path = _jsonl(tmp_path / 'rollout.jsonl', CODEX)
   path.write_text(path.read_text(encoding='utf-8') + 'not-json\n', encoding='utf-8')
 
-  with pytest.raises(ValueError, match=r'rollout\.jsonl:5'):
-    session_handler(path)
+  _, session = session_handler(path)
+
+  assert isinstance(session, SessionFile)
+  assert len(session.records) == len(CODEX)
 
 
 def test_codex_log_without_session_meta_remains_identifiable_but_has_no_uid(tmp_path: Path) -> None:
