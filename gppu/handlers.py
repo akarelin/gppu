@@ -13,7 +13,7 @@ import shutil
 import zipfile
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone, tzinfo
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol, TypeVar, runtime_checkable
 
@@ -32,8 +32,14 @@ SNIFF = 8
 UNITS = (('d', 86400), ('h', 3600), ('m', 60), ('s', 1))
 UNSAFE = '\\/:*?"<>|\r\n\t'
 NAME_LIMIT = 254
-DOS_EPOCH = datetime(1980, 1, 1)
 PREAMBLE = ('# AGENTS.md instructions',)
+PLACEHOLDER_TIMES = (
+  (1601, 1, 1, 0, 0, 0),  # Windows FILETIME zero
+  (1970, 1, 1, 0, 0, 0),  # Unix epoch zero
+  (1980, 1, 1, 0, 0, 0),  # DOS zero: the archiver stored no time
+  (1981, 1, 1, 1, 1, 2),  # the constant Android build tools stamp on every APK member
+)
+FUTURE_TOLERANCE = timedelta(days=1)
 
 HOMES = {
   'hermes': 'state.db',
@@ -176,7 +182,7 @@ class FileHandler:
       path=path,
       is_folder=is_folder,
       size=0 if is_folder else stat.st_size,
-      modified_at=datetime.fromtimestamp(stat.st_mtime, timezone.utc),
+      modified_at=valid_time(datetime.fromtimestamp(stat.st_mtime, timezone.utc)),
       handlers=names,
     )
 
@@ -644,6 +650,21 @@ class SessionHandler:
     return item
 
 
+def valid_time(value: datetime | None) -> datetime | None:
+  """A recorded time, or None. Placeholders that tools write instead of a time, anything at or before DOS zero, and future times are not times."""
+
+  if value is None:
+    return None
+  fields = value.timetuple()[:6]
+  utc_fields = value.astimezone(timezone.utc).timetuple()[:6] if value.tzinfo is not None else fields
+  if fields in PLACEHOLDER_TIMES or utc_fields in PLACEHOLDER_TIMES or fields <= PLACEHOLDER_TIMES[2]:
+    return None
+  now = datetime.now(timezone.utc) if value.tzinfo is not None else datetime.now()
+  if value > now + FUTURE_TOLERANCE:
+    return None
+  return value
+
+
 def _absolute(path: Path) -> Path:
   return Path(os.path.abspath(os.path.expanduser(str(path))))
 
@@ -664,7 +685,7 @@ def _record_path(value: str) -> PurePosixPath:
 
 
 def _archive_time(value: Any) -> datetime | None:
-  """An archive member's time; the DOS epoch 1980-01-01 means the archiver stored none."""
+  """An archive member's recorded time, or None when the archiver stored a placeholder instead."""
 
   if isinstance(value, datetime):
     parsed = value
@@ -673,9 +694,7 @@ def _archive_time(value: Any) -> datetime | None:
       parsed = datetime(*value)
     except (TypeError, ValueError):
       return None
-  if parsed.timetuple()[:6] <= DOS_EPOCH.timetuple()[:6]:
-    return None
-  return parsed if parsed.tzinfo is not None else parsed.astimezone()
+  return valid_time(parsed if parsed.tzinfo is not None else parsed.astimezone())
 
 
 def _complete_archive_records(
@@ -824,7 +843,7 @@ def _timestamps(records: Sequence[Mapping[str, Any]]) -> Iterator[datetime]:
       if not isinstance(scope, Mapping):
         continue
       for key in TIME_KEYS:
-        if (stamp := _stamp(scope.get(key))) is not None:
+        if (stamp := valid_time(_stamp(scope.get(key)))) is not None:
           yield stamp
 
 
@@ -909,7 +928,7 @@ def _turn(
   text = _content_text(content)
   if not text.strip():
     return None
-  return SessionTurn(role.casefold(), text, _stamp(timestamp), meta, sidechain)
+  return SessionTurn(role.casefold(), text, valid_time(_stamp(timestamp)), meta, sidechain)
 
 
 def _messages(harness: str, records: Sequence[Mapping[str, Any]]) -> tuple[SessionTurn, ...]:
