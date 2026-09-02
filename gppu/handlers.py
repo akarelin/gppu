@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import zipfile
 from collections.abc import Iterator, Mapping, Sequence
@@ -33,6 +34,40 @@ UNITS = (('d', 86400), ('h', 3600), ('m', 60), ('s', 1))
 UNSAFE = '\\/:*?"<>|\r\n\t'
 NAME_LIMIT = 254
 PREAMBLE = ('# AGENTS.md instructions',)
+# User-role text the harness or a tool generated (sessions-clean, list-sessions): matching text was not typed by a person.
+NON_HUMAN = (
+  re.compile(r'^\s*\*{0,2}you are a memory relevance compressor utility\b', re.I),
+  re.compile(r'^\s*Apply the current project instructions to this scenario:', re.I),
+  re.compile(r'^\s*</?(?:system-reminder|command-message|command-name|local-command-caveat|local-command-stdout|local-command-stderr|environment_context|recommended_plugins|turn_aborted|scheduled-task|ide_opened_file|ide_selection|bash-input|bash-stdout|bash-stderr|task-notification|subagent_notification|codex_delegation|codex_internal_context|user_shell_command|image)\b', re.I),
+  # A slash command carrying no prompt of its own, mistypes included.
+  re.compile(r'^\s*/\S*\s*$'),
+  # The same command recorded without its slash.
+  re.compile(r'^\s*(?:upgrade|login|exit|plugins|marketplace)\s*$', re.I),
+  # An instruction file the harness prepends to the first turn.
+  re.compile(r'^\s*#\s*AGENTS\.md instructions\b', re.I),
+  # A probe that verifies a session's setup by demanding a fixed token back.
+  re.compile(
+    r'\b(?:reply|respond|output|answer)(?:\s+with)?(?:\s+the)?(?:\s+single)?'
+    r'(?:\s+word)?\s+(?:exactly\s+)?[A-Z][A-Z0-9_]{2,}[.!]?\s*$',
+    re.I | re.M,
+  ),
+  # The summary the harness writes in place of a turn when context runs out.
+  re.compile(r'^\s*This session is being continued from a previous conversation\b', re.I),
+  # The harness reporting that a dispatched plan never started.
+  re.compile(r'^\s*ultraplan(?:\s+terminated|:\s*session creation failed)\b', re.I),
+  # The shell integration asking for a diagnosis of a failed command.
+  re.compile(r'^\s*A command failed\. Diagnose the error\b', re.I),
+  # A request relayed into a dispatched session, quoted rather than typed.
+  re.compile(r"^\s*[Uu]ser['’]s request:"),
+  # The harness marking a turn cut short, in place of anything typed.
+  re.compile(r'^\s*\[Request interrupted by user\b'),
+  # The link a hand-off from ChatGPT opens the session with.
+  re.compile(r'^\s*Continuing from \[[^\]]*\]\(chatgpt-conversation://', re.I),
+)
+# The Chrome extension and the ChatGPT hand-off wrap a typed request in a block of page and conversation context;
+# only what follows was typed. A realtime delegation carries the typed request inside <input>.
+ENVELOPE = re.compile(r'\A.*?^##\s*My request for Codex:[^\S\n]*$', re.S | re.M)
+REALTIME_INPUT = re.compile(r'<realtime_delegation>\s*<input>(.*?)</input>', re.I | re.S)
 PLACEHOLDER_TIMES = (
   (1601, 1, 1, 0, 0, 0),  # Windows FILETIME zero
   (1970, 1, 1, 0, 0, 0),  # Unix epoch zero
@@ -489,6 +524,11 @@ class SessionFile:
       for turn in self.turns
       if turn.role == 'user' and not turn.meta and not turn.sidechain
     )
+
+  @property
+  def human_messages(self) -> tuple[str, ...]:
+    """What a person typed: user messages without their envelopes, leaving out generated ones."""
+    return tuple(text for message in self.user_messages if (text := typed(message)))
 
   @property
   def length(self) -> str:
@@ -977,19 +1017,26 @@ def _messages(harness: str, records: Sequence[Mapping[str, Any]]) -> tuple[Sessi
   )
 
 
+def typed(text: str) -> str:
+  """The text a person typed in a user message: the envelope stripped, '' when the message was generated."""
+  if match := REALTIME_INPUT.search(text):
+    text = match.group(1)
+  text = ENVELOPE.sub('', text, count=1).strip()
+  if not text or any(pattern.search(text) for pattern in NON_HUMAN):
+    return ''
+  first = text.splitlines()[0].strip()
+  if first.startswith('<') and first.endswith('>') or any(first.startswith(preamble) for preamble in PREAMBLE):
+    return ''
+  return text
+
+
 def _topic(messages: Sequence[SessionTurn]) -> str:
+  """The first line a person typed."""
   for message in messages:
     if message.role != 'user' or message.meta or message.sidechain:
       continue
-    lines = message.text.strip().splitlines()
-    if not lines:
-      continue
-    first = lines[0].strip()
-    if first.startswith('<') and first.endswith('>') or any(
-      first.startswith(preamble) for preamble in PREAMBLE
-    ):
-      continue
-    return ' '.join(''.join(' ' if char in UNSAFE else char for char in lines[0]).split())
+    if text := typed(message.text):
+      return ' '.join(''.join(' ' if char in UNSAFE else char for char in text.splitlines()[0]).split())
   return ''
 
 
