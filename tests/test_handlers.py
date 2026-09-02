@@ -4,7 +4,7 @@ import json
 import os
 import subprocess
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from zoneinfo import ZoneInfo
 
@@ -12,6 +12,7 @@ import pytest
 
 from gppu.handlers import (
   FileHandler,
+  valid_time,
   FileStats,
   Record,
   SessionFile,
@@ -413,3 +414,25 @@ def test_archive_root_and_absolute_member_names_are_listed_relative(tmp_path: Pa
 
   assert PurePosixPath('bin/tool.txt') in records
   assert PurePosixPath('.') not in records
+
+
+def test_placeholder_and_future_times_are_not_times(tmp_path: Path) -> None:
+  android = datetime(1981, 1, 1, 1, 1, 2).astimezone()
+  assert valid_time(android) is None
+  assert valid_time(datetime(1980, 1, 1).astimezone()) is None
+  assert valid_time(datetime(1970, 1, 1, tzinfo=timezone.utc)) is None
+  assert valid_time(datetime.now(timezone.utc) + timedelta(days=2)) is None
+  real = datetime(1994, 10, 7, 3, 0, 54, tzinfo=timezone.utc)
+  assert valid_time(real) == real
+
+  archive = tmp_path / 'app.apk'
+  with zipfile.ZipFile(archive, 'w') as bundle:
+    bundle.writestr(zipfile.ZipInfo('AndroidManifest.xml', date_time=(1981, 1, 1, 1, 1, 2)), 'x')
+  records = {record.path: record for record in file_handler.probe(archive)[0].probes[0].obj}
+  assert records[PurePosixPath('AndroidManifest.xml')].modified_at is None
+  assert file_handler.probe(archive)[0].probes[0].stats.span is None
+
+  stale = tmp_path / 'zero.txt'
+  stale.write_text('x', encoding='utf-8')
+  os.utime(stale, (0, 0))
+  assert file_handler.record(stale).modified_at is None
