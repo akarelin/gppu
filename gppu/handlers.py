@@ -657,7 +657,7 @@ def _display_order(path: Path) -> tuple[bool, str]:
 
 
 def _record_path(value: str) -> PurePosixPath:
-  path = PurePosixPath(value.replace('\\', '/'))
+  path = PurePosixPath(value.lstrip('/').replace('\\', '/'))
   if path.is_absolute() or '..' in path.parts or (path.parts and path.parts[0].endswith(':')):
     raise ValueError(f'unsafe path inside archive: {value}')
   return PurePosixPath(*(part for part in path.parts if part not in ('', '.')))
