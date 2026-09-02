@@ -401,3 +401,15 @@ def test_archive_member_without_a_stored_time_has_none_and_does_not_widen_the_sp
     datetime(2026, 8, 20, 1, 0, 0).astimezone().isoformat(),
     datetime(2026, 8, 20, 1, 0, 0).astimezone().isoformat(),
   ]
+
+
+def test_archive_root_and_absolute_member_names_are_listed_relative(tmp_path: Path) -> None:
+  archive = tmp_path / 'rooted.zip'
+  with zipfile.ZipFile(archive, 'w') as bundle:
+    bundle.writestr(zipfile.ZipInfo('/'), '')
+    bundle.writestr(zipfile.ZipInfo('/bin/tool.txt', date_time=(2026, 8, 20, 1, 0, 0)), 'x')
+
+  records = {record.path: record for record in file_handler.probe(archive)[0].probes[0].obj}
+
+  assert PurePosixPath('bin/tool.txt') in records
+  assert PurePosixPath('.') not in records
