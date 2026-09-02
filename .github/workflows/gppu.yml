@@ -244,9 +244,9 @@ jobs:
           if ! gh release view gppu/latest >/dev/null 2>&1; then
             gh release create gppu/latest \
               --title "gppu latest" \
-              --notes "Rolling pointer to the latest stable gppu release. Currently: v${VERSION}."
+              --notes "v${VERSION}."
           else
             gh release edit gppu/latest \
-              --notes "Rolling pointer to the latest stable gppu release. Currently: v${VERSION}."
+              --notes "v${VERSION}."
           fi
           gh release upload --clobber gppu/latest dist-latest/*
