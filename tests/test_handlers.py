@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from gppu.handlers import (
+  typed,
   FileHandler,
   valid_time,
   FileStats,
@@ -436,3 +437,26 @@ def test_placeholder_and_future_times_are_not_times(tmp_path: Path) -> None:
   stale.write_text('x', encoding='utf-8')
   os.utime(stale, (0, 0))
   assert file_handler.record(stale).modified_at is None
+
+
+def test_human_messages_leave_out_generated_text_and_envelopes(tmp_path: Path) -> None:
+  probe = {**CLAUDE[0], 'uuid': 'probe', 'message': {'role': 'user', 'content': 'Reply with exactly PONG'}}
+  reminder = {**CLAUDE[0], 'uuid': 'reminder', 'message': {'role': 'user', 'content': '<system-reminder>context</system-reminder>'}}
+  envelope = {**CLAUDE[0], 'uuid': 'envelope', 'message': {'role': 'user', 'content': 'Page: stuff\n\n## My request for Codex:\nSummarize the page'}}
+  path = _jsonl(tmp_path / 'claude.jsonl', [probe, reminder, envelope, CLAUDE[1]])
+
+  _, session = session_handler(path)
+
+  assert isinstance(session, SessionFile)
+  assert len(session.user_messages) == 3
+  assert session.human_messages == ('Summarize the page',)
+  assert session.topic == 'Summarize the page'
+  assert typed('/clear') == ''
+  assert typed('<realtime_delegation><input>Fix the light</input></realtime_delegation>') == 'Fix the light'
+
+
+def test_session_of_generated_text_only_has_no_topic(tmp_path: Path) -> None:
+  probe = {**CLAUDE[0], 'message': {'role': 'user', 'content': 'A command failed. Diagnose the error and fix it.'}}
+  _, session = session_handler(_jsonl(tmp_path / 'claude.jsonl', [probe, CLAUDE[1]]))
+  assert session.human_messages == ()
+  assert session.topic == ''
