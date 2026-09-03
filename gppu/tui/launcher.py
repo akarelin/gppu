@@ -28,6 +28,7 @@ import os
 import shlex
 import subprocess
 import sys
+import webbrowser
 from pathlib import Path
 
 from gppu import Env, App, mixin_Config, dict_from_yml, enable_file_logging
@@ -222,14 +223,36 @@ def _child_env(app_def: dict | None = None) -> dict[str, str]:
 def launch_app(
     app_dir: Path, app_def: dict, extra_args: list[str] | None = None,
 ) -> int:
-    """Launch a sub-app by running its script in a new process.
+    """Launch a sub-app by running its script in a new process, or open its web UI in the browser.
 
+    A manifest with ``url:`` instead of ``script:`` is a web interface: it is opened and nothing is run.
     Returns the sub-app's exit code so callers can propagate failure.
     """
+    if url := app_def.get('url'):
+        webbrowser.open(url)
+        return 0
     cmd = _resolve_cmd(app_dir, app_def) + (extra_args or [])
     return subprocess.run(
         cmd, cwd=resolve_cwd(app_dir, app_def), env=_child_env(app_def),
     ).returncode
+
+
+def group_apps(apps: dict[str, dict]) -> dict[str, dict]:
+    """The top-level menu rows: every app that declares a ``nav`` collapses into one row for that nav, in the
+    position of the first of them, carrying the apps under it and how many there are. Apps without a nav stay
+    as they are."""
+    rows: dict[str, dict] = {}
+    for key, app_def in apps.items():
+        nav = app_def.get('nav')
+        if not nav:
+            rows[key] = app_def
+            continue
+        group = rows.setdefault(nav, {'name': nav, 'icon': app_def.get('icon', ''), 'apps': {}})
+        group['apps'][key] = app_def
+    for group in rows.values():
+        if 'apps' in group:
+            group['description'] = f'{len(group["apps"])} tools'
+    return rows
 
 
 def load_app_registry(app_dir: Path) -> dict[str, dict]:
@@ -266,7 +289,9 @@ class AppItem(ListItem):
         nav = self.app_def.get('nav', '')
         name = self.app_def.get('name', self.app_key)
         desc = self.app_def.get('description', '')
-        if nav:
+        if 'apps' in self.app_def:
+            name = f'{name} [dim]→[/dim]'
+        elif nav:
             name = f'[dim]{nav}/[/dim]{name}'
         if self.enabled:
             yield Static(f' {icon}  [bold]{name}[/bold]   [dim]{desc}[/dim]')
@@ -741,6 +766,7 @@ class TUILauncher(TUIApp):
         self._apps = apps
         self._app_dir = app_dir
         self._selected_app: dict | None = None
+        self._group: str | None = None  # the nav whose apps the menu is showing
         self._phase = 'apps'  # apps → modes → ask
         self._processes: dict[int, ProcessRow] = {}
         self._proc_counter = 0
@@ -754,18 +780,37 @@ class TUILauncher(TUIApp):
         with Vertical(id='menu'):
             yield Static(self.MENU_TITLE, id='menu-title')
             yield ListView(
-                *[AppItem(k, v) for k, v in self._apps.items()],
+                *[AppItem(k, v) for k, v in self._rows().items()],
                 id='app-list',
             )
         yield Footer()
 
     # ── App / mode selection ─────────────────────────────────────────────
 
+    def _rows(self) -> dict[str, dict]:
+        """What the menu shows: the top-level rows, or the apps of the group that is open."""
+        top = group_apps(self._apps)
+        return top[self._group]['apps'] if self._group else top
+
+    def _show_apps(self) -> None:
+        """Fill the menu with _rows() and go back to choosing an app."""
+        self._phase = 'apps'
+        self._selected_app = None
+        self.query_one('#menu-title', Static).update(self._group or self.MENU_TITLE)
+        lv = self.query_one('#app-list', ListView)
+        lv.clear()
+        for key, app_def in self._rows().items():
+            lv.append(AppItem(key, app_def))
+
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if self._phase == 'apps':
             item: AppItem = event.item  # type: ignore[assignment]
             if not item.enabled:
                 self.bell()
+                return
+            if 'apps' in item.app_def:   # a group: open it
+                self._group = item.app_key
+                self._show_apps()
                 return
             self._selected_app = item.app_def
             self._mode_inject = {}
@@ -904,14 +949,7 @@ class TUILauncher(TUIApp):
         bar.mount(row)
 
         # Return to apps list so user can keep navigating
-        self._phase = 'apps'
-        self._selected_app = None
-        title = self.query_one('#menu-title', Static)
-        title.update(self.MENU_TITLE)
-        lv = self.query_one('#app-list', ListView)
-        lv.clear()
-        for k, v in self._apps.items():
-            lv.append(AppItem(k, v))
+        self._show_apps()
         self._run_inline_cmd(cli_args, proc_id, app_def)
 
     @work(thread=True)
@@ -1164,6 +1202,10 @@ class TUILauncher(TUIApp):
                     self._processes[self._active_log].remove_class('active-log')
                 self._active_log = None
                 return
+            if self._group is not None:   # leave the group before leaving the launcher
+                self._group = None
+                self._show_apps()
+                return
             self.exit(result=None)
             return
         # Clean up phase-specific widgets
@@ -1178,14 +1220,7 @@ class TUILauncher(TUIApp):
             lv = self.query_one('#app-list', ListView)
             lv.display = True
         # Reset to app list
-        self._phase = 'apps'
-        self._selected_app = None
-        title = self.query_one('#menu-title', Static)
-        title.update(self.MENU_TITLE)
-        lv = self.query_one('#app-list', ListView)
-        lv.clear()
-        for k, v in self._apps.items():
-            lv.append(AppItem(k, v))
+        self._show_apps()
 
 
 # ── CLI entrypoint ───────────────────────────────────────────────────────────
