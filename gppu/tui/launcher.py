@@ -251,24 +251,63 @@ def group_apps(apps: dict[str, dict]) -> dict[str, dict]:
         group['apps'][key] = app_def
     for group in rows.values():
         if 'apps' in group:
-            group['description'] = f'{len(group["apps"])} tools'
+            count = len(group['apps'])
+            group['description'] = f'{count} tool' + ('' if count == 1 else 's')
     return rows
 
 
+def _absolute(base: Path, value):
+    """A manifest path made absolute against the manifest's own directory; an absolute path is left as it is."""
+    if isinstance(value, dict):
+        return {key: _absolute(base, item) for key, item in value.items()}
+    if isinstance(value, str) and not value.startswith(('/', '\\')) and not Path(value).is_absolute():
+        return str((base / value).resolve())
+    return value
+
+
+def read_manifest(app_dir: Path, config_file: str, nav: str | None = None) -> dict:
+    """One YAML config as a launcher item: its script and cwd resolved against the manifest's own directory, so a
+    launcher can list manifests that live anywhere, and the nav the launcher files it under. Empty when the config
+    holds no manifest."""
+    path = (app_dir / config_file).resolve()
+    cfg = dict_from_yml(path)
+    manifest = cfg.get('manifest', {})
+    if not manifest:
+        return {}
+    manifest['_config'] = {k: v for k, v in cfg.items() if k != 'manifest'}
+    for key in ('script', 'cwd'):
+        if key in manifest:
+            manifest[key] = _absolute(path.parent, manifest[key])
+    if isinstance(manifest.get('script'), str):
+        manifest.setdefault('cwd', str(Path(manifest['script']).parent))   # as a sidecar carries it: the item runs where it lives
+    if nav:
+        manifest['nav'] = nav
+    return manifest
+
+
 def load_app_registry(app_dir: Path) -> dict[str, dict]:
-    """Load app manifests from YAML configs referenced in ``Env.glob_dict('apps')``.
+    """Load app manifests from the YAML configs named in ``Env.glob_dict('apps')``.
+
+    A value is either one manifest path, or a mapping of manifest paths whose key is the nav the launcher files them
+    under: which submenu an item appears in is the launcher's business, so a manifest never has to know.
 
     Call ``Env()`` + ``Env.load()`` before this.
     """
-    registry = Env.glob_dict('apps')
     apps: dict[str, dict] = {}
-    for key, config_file in registry.items():
-        cfg = dict_from_yml(app_dir / config_file)
-        manifest = cfg.get('manifest', {})
-        if manifest:
-            manifest['_config'] = {k: v for k, v in cfg.items() if k != 'manifest'}
-            apps[key] = manifest
+    for key, entry in Env.glob_dict('apps').items():
+        group = entry if isinstance(entry, dict) else {key: entry}
+        for item_key, config_file in group.items():
+            if manifest := read_manifest(app_dir, config_file, key if isinstance(entry, dict) else None):
+                apps[item_key] = manifest
     return apps
+
+
+def load_registry(app_dir: Path) -> dict[str, dict]:
+    """Everything one launcher offers: the manifests named in ``apps:``, then the sidecars in every directory named
+    in ``utilities:``. Both are read relative to app_dir. This is what a launcher calls."""
+    from .sidecar import load_sidecar_registry
+    directories = [(app_dir / directory).resolve() for directory in Env.glob_list('utilities')]
+    return load_app_registry(app_dir) | (load_sidecar_registry(*directories) if directories else {})
 
 
 # ── Widgets ──────────────────────────────────────────────────────────────────

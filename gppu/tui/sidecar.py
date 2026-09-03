@@ -36,6 +36,7 @@ import re
 import shutil
 import subprocess
 import sys
+import webbrowser
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -49,7 +50,7 @@ FRONTMATTER = re.compile(r'\A---\r?\n(?P<yaml>.*?)\r?\n---\s*?(?:\r?\n|\Z)', re.
 
 MANIFEST_KEYS = frozenset({
     'cwd', 'description', 'icon', 'inject', 'key', 'modes', 'name', 'nav',
-    'platform',
+    'platform', 'url',
 })
 MODE_KEYS = frozenset({
     'args', 'ask_for', 'inject', 'inline', 'name', 'platform',
@@ -218,7 +219,11 @@ def run_sidecar(
     extra_args: Sequence[str] = (),
     inject: Mapping[str, object] | None = None,
 ) -> int:
-    """Run a registered utility, injecting constants first when any are given."""
+    """Run a registered utility, injecting constants first when any are given. An item with a url is a web interface:
+    it is opened in the browser and nothing is run."""
+    if url := app.get('url'):
+        webbrowser.open(url)
+        return 0
     script = Path(app['script'])
     values = {**(app.get('inject') or {}), **(inject or {})}
     injected = inject_source(script, values) if values else None
@@ -229,7 +234,7 @@ def run_sidecar(
     try:
         return subprocess.run(
             [*sidecar_command(injected or script), *extra_args],
-            cwd=app['cwd'],
+            cwd=app.get('cwd') or script.parent,
             env=environment,
         ).returncode
     finally:

@@ -35,6 +35,8 @@ from .launcher import (
     resolve_cwd,
     launch_app,
     load_app_registry,
+    load_registry,
+    read_manifest,
     launcher_main,
 )
 
@@ -117,6 +119,8 @@ __all__ = [
     'resolve_cwd',
     'launch_app',
     'load_app_registry',
+    'load_registry',
+    'read_manifest',
     'launcher_main',
     # Sidecar manifests
     'inject_source',
