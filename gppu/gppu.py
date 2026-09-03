@@ -62,24 +62,21 @@ def detect_os() -> OSType:
 
 def full_path(path: str | Path, base_dir: str | Path | None = None, *, strict: bool = False) -> Path:
   """
-  Resolve a user-supplied path to a local Path suitable for open()/read/write.
+    Resolve a user-supplied path to a local Path suitable for open()/read/write.
 
-  Expands environment variables and ~.
-  Leaves native absolute paths absolute.
-  Resolves relative paths against base_dir, or cwd when base_dir is None.
-  On Windows, maps WSL-style drive paths like /mnt/d/x to D:\\x.
-  If strict=True, requires the resolved path to exist.
+    Expands environment variables and ~. Leaves native absolute paths absolute.
+    Resolves relative paths against base_dir, or cwd when base_dir is None.
+    On Windows, maps WSL-style drive paths like /mnt/d/x to D:\\x.
+
+    If strict=True, requires the resolved path to exist.
   """
   raw = os.path.expandvars(str(path))
 
-  if detect_os() == OSType.W11 and len(raw) >= 7 and raw.startswith('/mnt/') and raw[5].isalpha() and raw[6] == '/':
-    result = Path(f'{raw[5].upper()}:\\') / raw[7:]
-  else:
-    result = Path(raw)
+  if detect_os() == OSType.W11 and len(raw) >= 7 and raw.startswith('/mnt/') and raw[5].isalpha() and raw[6] == '/': result = Path(f'{raw[5].upper()}:\\') / raw[7:]
+  else: result = Path(raw)
   result = result.expanduser()
 
-  if not result.is_absolute():
-    result = (Path.cwd() if base_dir is None else full_path(base_dir)) / result
+  if not result.is_absolute(): result = (Path.cwd() if base_dir is None else full_path(base_dir)) / result
   
   return result.resolve(strict=strict)
 # endregion
