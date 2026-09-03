@@ -64,8 +64,10 @@ options = Env.glob_dict('database/options')
 
 Config file resolution: looks for `<name>.yaml` then `config.yaml` in the app path. Relative `app_path` values are resolved by walking up from the calling script's directory until a matching subpath is found.
 
-YAML `!include` support:
+YAML `!include` support, as the value of a key or on its own line, where the included file's keys merge into the document:
 ```yaml
+!include hosts.yaml
+
 app:
   name: MyApp
   database: !include database.yaml

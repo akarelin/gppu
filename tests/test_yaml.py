@@ -37,6 +37,24 @@ class TestDictFromYml:
         result = dict_from_yml(str(main))
         assert result["data"]["val"] == 123
 
+    def test_bare_include_merges_into_document(self, tmp_path):
+        (tmp_path / "hosts.yaml").write_text("hosts:\n  alex-pc: {}\n")
+        (tmp_path / "odds.yaml").write_text("vars:\n  endpoint: https://otel\n")
+        main = tmp_path / "main.yaml"
+        main.write_text("!include hosts.yaml\n\nharness: !include odds.yaml\n\n!include odds.yaml\n")
+        result = dict_from_yml(str(main))
+        assert result["hosts"] == {"alex-pc": {}}
+        assert result["harness"] == {"vars": {"endpoint": "https://otel"}}
+        assert result["vars"] == {"endpoint": "https://otel"}
+
+    def test_bare_include_nests(self, tmp_path):
+        (tmp_path / "leaf.yaml").write_text("leaf: 1\n")
+        (tmp_path / "branch.yaml").write_text("!include leaf.yaml\nbranch: 2\n")
+        main = tmp_path / "main.yaml"
+        main.write_text("!include branch.yaml\nroot: 3\n")
+        result = dict_from_yml(str(main))
+        assert result == {"leaf": 1, "branch": 2, "root": 3}
+
     def test_accepts_path_object(self, tmp_path):
         f = tmp_path / "test.yaml"
         f.write_text("x: 1\n")
