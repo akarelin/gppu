@@ -21,6 +21,7 @@ from gppu.handlers import (
   SessionFolder,
   archive_handler,
   file_handler,
+  git_handler,
   session_handler,
 )
 
@@ -159,6 +160,27 @@ def _jsonl(path: Path, records: list[dict]) -> Path:
     encoding='utf-8',
   )
   return path
+
+
+def _git_commit(path: Path, message: str, timestamp: str) -> None:
+  env = {
+    **os.environ,
+    'GIT_AUTHOR_DATE': timestamp,
+    'GIT_COMMITTER_DATE': timestamp,
+  }
+  subprocess.run(['git', 'add', '.'], cwd=path, check=True, capture_output=True)
+  subprocess.run(
+    [
+      'git',
+      '-c', 'user.name=gppu tests',
+      '-c', 'user.email=gppu@localhost',
+      'commit', '-qm', message,
+    ],
+    cwd=path,
+    env=env,
+    check=True,
+    capture_output=True,
+  )
 
 
 def _iso(span) -> list[str]:
@@ -382,6 +404,64 @@ def test_file_and_folder_records_have_handler_derived_spans(tmp_path: Path) -> N
     '2026-09-01T12:00:00+00:00',
   ]
   assert found[tmp_path].stats == FileStats(2, 1, 6, found[tmp_path].span)
+
+
+def test_git_history_spans_tracked_repository_folders_and_files(tmp_path: Path) -> None:
+  repository = tmp_path / 'repository'
+  nested = repository / 'nested'
+  first = nested / 'first.txt'
+  second = nested / 'second.txt'
+  untracked = nested / 'untracked.txt'
+  nested.mkdir(parents=True)
+  subprocess.run(['git', 'init', '-q'], cwd=repository, check=True, capture_output=True)
+
+  removed = nested / 'removed.txt'
+  removed.write_text('removed later', encoding='utf-8')
+  _git_commit(repository, 'removed file', '2026-06-01T11:00:00+00:00')
+  removed.unlink()
+  first.write_text('first', encoding='utf-8')
+  _git_commit(repository, 'first', '2026-07-01T12:00:00+00:00')
+  first.write_text('changed', encoding='utf-8')
+  second.write_text('second', encoding='utf-8')
+  _git_commit(repository, 'second', '2026-08-02T13:00:00+00:00')
+  untracked.write_text('untracked', encoding='utf-8')
+
+  handler = FileHandler(git_handler)
+  found = {record.path: record for record in handler.probe(repository)}
+
+  assert found[repository].handlers == ('git',)
+  assert found[nested].handlers == ('git',)
+  assert found[first].handlers == ('git',)
+  assert found[second].handlers == ('git',)
+  assert found[untracked].handlers == ()
+  assert _iso(found[repository].span) == [
+    '2026-06-01T11:00:00+00:00',
+    '2026-08-02T13:00:00+00:00',
+  ]
+  assert found[nested].span == found[repository].span
+  assert _iso(found[first].span) == [
+    '2026-07-01T12:00:00+00:00',
+    '2026-08-02T13:00:00+00:00',
+  ]
+  assert _iso(found[second].span) == [
+    '2026-08-02T13:00:00+00:00',
+    '2026-08-02T13:00:00+00:00',
+  ]
+  assert git_handler(first)[1] == repository / '.git'
+
+  async def exercise() -> None:
+    assert await git_handler.identify(first) is True
+    stats, metadata = await git_handler(first)
+    assert (stats.span, metadata) == (found[first].span, repository / '.git')
+
+  asyncio.run(exercise())
+
+  first.write_text('changed again', encoding='utf-8')
+  _git_commit(repository, 'third', '2026-09-03T14:00:00+00:00')
+  assert _iso(handler.probe(first, recursive=False)[0].span) == [
+    '2026-07-01T12:00:00+00:00',
+    '2026-09-03T14:00:00+00:00',
+  ]
 
 
 def test_archive_files_and_folders_are_the_same_records(tmp_path: Path) -> None:

@@ -32,9 +32,9 @@ hierarchy. A domain handler receives one ``Path`` and returns
   - [x] Refactor code so harness specific code is not in big if else blocks. 
   - [x] Refactor code to have fewer functions that do not belong to classes
   - [x] Make handlers support async (gppu async)
-  - [ ] extract spans from git history (local, no upstreams)
-    - [ ] Folders that are git-tracked - extract spans from 
-    - [ ] files that are git-tracked - codex memories folder 
+  - [x] extract spans from git history (local, no upstreams)
+    - [x] Folders that are git-tracked - extract spans from 
+    - [x] files that are git-tracked - codex memories folder 
   
   In consideration
   - [ ] file/folder history from SynologyDrive history
@@ -47,6 +47,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tarfile
 import zipfile
 from collections.abc import Iterator, Mapping, Sequence
@@ -302,6 +303,17 @@ class FileHandler:
       self._probed.pop(path, None)
     else:
       names = cached[1]
+      if any(handler.name == 'git' for handler in self.configured):
+        names = tuple(
+          handler.name
+          for handler in self.configured
+          if (
+            self._handler_identify(handler, path)
+            if handler.name == 'git'
+            else handler.name in names
+          )
+        )
+        self._identified[path] = (signature, names)
     is_folder = path.is_dir() and not path.is_symlink()
     return Record(
       path=path,
@@ -662,16 +674,26 @@ class FileHandler:
 
 
 class GitHandler:
-  """Identify a Git repository and derive its span from its metadata."""
+  """Identify Git-tracked paths and derive their spans from local history."""
 
   name = 'git'
+
+  def __init__(self) -> None:
+    self._cache: dict[
+      Path,
+      tuple[tuple[Any, ...], frozenset[Path], dict[Path, Span]],
+    ] = {}
 
   @sync
   async def identify(self, path: Path) -> bool:
     return await asyncio.to_thread(self.identify_sync, path)
 
   def identify_sync(self, path: Path) -> bool:
-    return self._metadata(path) is not None
+    repository = self._repository(path)
+    if repository is None:
+      return False
+    tracked, _ = self._history(*repository)
+    return _absolute(path) in tracked
 
   @sync
   async def __call__(self, path: Path) -> tuple[FileStats, Path]:
@@ -679,11 +701,140 @@ class GitHandler:
 
   def call_sync(self, path: Path) -> tuple[FileStats, Path]:
     path = _absolute(path)
-    metadata = self._metadata(path)
-    if metadata is None:
-      raise ValueError(f'{path}: Git metadata is not identifiable')
-    root = FileHandler().probe_sync(metadata)[0]
-    return FileStats(0, 0, 0, root.span), metadata
+    repository = self._repository(path)
+    if repository is None:
+      raise ValueError(f'{path}: Git repository is not identifiable')
+    tracked, spans = self._history(*repository)
+    if path not in tracked:
+      raise ValueError(f'{path}: path is not Git-tracked')
+    return FileStats(0, 0, 0, spans.get(path)), repository[1]
+
+  def invalidate(self, path: Path | None = None) -> None:
+    if path is None:
+      self._cache.clear()
+      return
+    repository = self._repository(path)
+    if repository is not None:
+      self._cache.pop(repository[0], None)
+
+  @classmethod
+  def _repository(cls, path: Path) -> tuple[Path, Path] | None:
+    path = _absolute(path)
+    start = path if path.is_dir() else path.parent
+    for candidate in (start, *start.parents):
+      if metadata := cls._metadata(candidate):
+        return candidate, metadata
+    return None
+
+  def _history(
+    self,
+    root: Path,
+    metadata: Path,
+  ) -> tuple[frozenset[Path], dict[Path, Span]]:
+    state = self._state(metadata)
+    cached = self._cache.get(root)
+    if cached is not None and cached[0] == state:
+      return cached[1], cached[2]
+
+    names = self._git(root, 'ls-files', '-z').split(b'\0')
+    tracked: set[Path] = {root}
+    for name in names:
+      if not name:
+        continue
+      relative = self._relative(name)
+      path = root.joinpath(*relative.parts)
+      tracked.add(path)
+      for parent in path.parents:
+        tracked.add(parent)
+        if parent == root:
+          break
+
+    spans: dict[Path, Span] = {}
+    moment: datetime | None = None
+    history = self._git(
+      root,
+      'log',
+      '--format=%x1e%cI',
+      '--name-only',
+      '-z',
+      '--no-renames',
+    )
+    for token in history.split(b'\0'):
+      if token.startswith(b'\x1e'):
+        try:
+          parsed = datetime.fromisoformat(token[1:].decode('ascii'))
+        except ValueError as error:
+          raise ValueError(f'{root}: invalid Git commit time') from error
+        moment = valid_time(parsed)
+        if moment is not None:
+          self._add_span(spans, root, moment)
+        continue
+      if moment is None:
+        continue
+      token = token.removeprefix(b'\n')
+      if not token:
+        continue
+      path = root.joinpath(*self._relative(token).parts)
+      if path in tracked:
+        self._add_span(spans, path, moment)
+      for parent in path.parents:
+        if parent == root:
+          break
+        if parent in tracked:
+          self._add_span(spans, parent, moment)
+
+    frozen = frozenset(tracked)
+    self._cache[root] = state, frozen, spans
+    return frozen, spans
+
+  @staticmethod
+  def _git(root: Path, *arguments: str) -> bytes:
+    result = subprocess.run(
+      ('git', '-C', str(root), *arguments),
+      capture_output=True,
+      check=False,
+    )
+    if result.returncode:
+      detail = result.stderr.decode('utf-8', errors='replace').strip()
+      raise ValueError(f'{root}: Git failed: {detail}')
+    return result.stdout
+
+  @staticmethod
+  def _relative(value: bytes) -> PurePosixPath:
+    path = PurePosixPath(value.decode('utf-8'))
+    if path.is_absolute() or '..' in path.parts:
+      raise ValueError(f'unsafe path in Git history: {path}')
+    return path
+
+  @staticmethod
+  def _add_span(spans: dict[Path, Span], path: Path, moment: datetime) -> None:
+    if span := spans.get(path):
+      spans[path] = min(span[0], moment), max(span[1], moment)
+    else:
+      spans[path] = moment, moment
+
+  @classmethod
+  def _state(cls, metadata: Path) -> tuple[Any, ...]:
+    common = metadata
+    commondir = metadata / 'commondir'
+    if commondir.is_file():
+      common = _absolute(metadata / commondir.read_text(encoding='utf-8').strip())
+    head_value = (metadata / 'HEAD').read_text(encoding='utf-8').strip()
+    ref_value: str | None = None
+    if head_value.startswith('ref:'):
+      ref = common / head_value.removeprefix('ref:').strip()
+      if ref.is_file():
+        ref_value = ref.read_text(encoding='utf-8').strip()
+    signatures = tuple(
+      (str(path), _signature(path.stat()))
+      for path in (
+        metadata / 'index',
+        metadata / 'logs' / 'HEAD',
+        common / 'packed-refs',
+      )
+      if path.is_file()
+    )
+    return head_value, ref_value, signatures
 
   @staticmethod
   def _metadata(path: Path) -> Path | None:
