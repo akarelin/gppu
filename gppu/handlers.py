@@ -26,11 +26,11 @@ hierarchy. A domain handler receives one ``Path`` and returns
     - 241020-2257 Alex fall (140s)
 
   Big tasks:
-  - [ ] Add support for export files from LLMs. 
-    - [ ] OpenAi. Example: D:\SD.archive\Sessions\a60608bb38ceb475551dff9ce52432d8c1b885fea57ee517ab7f1f534ff10778-2026-08-27-03-46-09-3fab63159d564b92abd68e599a3facd9.zip
-    - [ ] Anthropic. Example: \\s1\Everything\Sessions\*.zip
-  - [ ] Refactor code so harness specific code is not in big if else blocks. 
-  - [ ] Refactor code to have fewer functions that do not belong to classes
+  - [x] Add support for export files from LLMs. 
+    - [x] OpenAi. Example: D:\SD.archive\Sessions\a60608bb38ceb475551dff9ce52432d8c1b885fea57ee517ab7f1f534ff10778-2026-08-27-03-46-09-3fab63159d564b92abd68e599a3facd9.zip
+    - [x] Anthropic. Example: \\s1\Everything\Sessions\*.zip
+  - [x] Refactor code so harness specific code is not in big if else blocks. 
+  - [x] Refactor code to have fewer functions that do not belong to classes
   - [ ] Make handlers support async (gppu async)
   - [ ] extract spans from git history (local, no upstreams)
     - [ ] Folders that are git-tracked - extract spans from 
@@ -68,7 +68,7 @@ Harness = Literal[
 ]
 
 TIME_KEYS = ('timestamp', 'ts', 'started_at', 'session_start', 'time', 'created_at')
-MODEL_KEYS = ('model', 'modelId')
+MODEL_KEYS = ('model', 'modelId', 'model_slug', 'default_model_slug')
 ID_KEYS = ('sessionId', 'session_id', 'id', 'remoteSessionId')
 ROLES = ('user', 'assistant')
 SNIFF = 8
@@ -146,6 +146,7 @@ SESSION_UID = re.compile(
   r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
   re.I,
 )
+EXPORT_MEMBER = re.compile(r'conversations(?:-\d+)?\.json', re.I)
 
 
 @runtime_checkable
@@ -551,7 +552,7 @@ class FileHandler:
       return tuple(
         moment
         for value in values
-        if (moment := valid_time(_stamp(int(value)))) is not None
+        if (moment := valid_time(datetime.fromtimestamp(int(value), timezone.utc))) is not None
       )
     return ()
 
@@ -750,7 +751,7 @@ class SessionTurn:
 class SessionFile:
   """One complete session log."""
 
-  path: Path
+  path: Path | PurePosixPath
   harness: Harness
   uid: str | None
   parent_uid: str | None
@@ -761,6 +762,7 @@ class SessionFile:
   models: tuple[str, ...]
   topic: str
   sidechain_only: bool = False
+  location: Path | None = None
 
   @property
   def span_start(self) -> datetime | None:
@@ -848,7 +850,7 @@ class SessionStats:
   def from_object(cls, obj: SessionObject) -> SessionStats:
     files = (obj,) if isinstance(obj, SessionFile) else obj.files
     spans = [file.span for file in files if file.span]
-    paths = {file.path for file in files}
+    paths = {file.location or Path(file.path) for file in files}
     span = _combine_spans(spans)
     return cls(
       files=len(paths),
@@ -857,7 +859,7 @@ class SessionStats:
       bytes=sum(path.stat().st_size for path in paths),
       span_start=span[0] if span else None,
       span_end=span[1] if span else None,
-      models=_uniq(model for file in files for model in file.models),
+      models=tuple(dict.fromkeys(model for file in files for model in file.models)),
     )
 
 
@@ -867,34 +869,82 @@ class SessionHandler:
   name = 'session'
 
   def __init__(self) -> None:
-    self._cache: dict[Path, tuple[Signature, SessionFile]] = {}
+    self._cache: dict[Path, tuple[Signature, SessionObject]] = {}
+    self._recognizers = (
+      ('cx', self._is_codex),
+      ('cc', self._is_claude_code),
+      ('openclaw', self._is_openclaw),
+      ('agy', self._is_agy),
+      ('hermes', self._is_hermes),
+    )
+    self._uid_readers = {
+      'cx': self._codex_uid,
+      'cc': self._claude_code_uid,
+      'openclaw': self._openclaw_uid,
+      'agy': self._agy_uid,
+      'hermes': self._hermes_uid,
+    }
+    self._turn_readers = {
+      'cx': self._codex_turns,
+      'cc': self._claude_code_turns,
+      'openclaw': self._openclaw_turns,
+      'agy': self._agy_turns,
+      'hermes': self._hermes_turns,
+    }
+    self._export_recognizers = (
+      ('chatgpt', self._is_chatgpt),
+      ('claude', self._is_claude),
+    )
+    self._export_ids = {
+      'chatgpt': ('id', 'conversation_id'),
+      'claude': ('uuid', 'id'),
+    }
+    self._export_times = {
+      'chatgpt': ('create_time', 'update_time'),
+      'claude': ('created_at', 'updated_at'),
+    }
+    self._export_turn_readers = {
+      'chatgpt': self._chatgpt_turns,
+      'claude': self._claude_turns,
+    }
 
   def identify(self, path: Path) -> bool:
+    path = _absolute(path)
     if path.is_dir() and not path.is_symlink():
-      if _home_harness(path) is not None or _agy_session_folder(path):
+      if self._home_harness(path) is not None or self._agy_session_folder(path):
         return True
       try:
         children = tuple(path.iterdir())
       except OSError:
         return False              # a folder that will not be listed holds no session that can be read
       return any(
-        child.is_file() and _harness(_head(child)) is not None
+        child.is_file() and (
+          self._export_members(child)
+          or self._harness(self._head(child)) is not None
+        )
         for child in children
       )
-    return path.is_file() and _harness(_head(path)) is not None
+    return path.is_file() and (
+      bool(self._export_members(path))
+      or self._harness(self._head(path)) is not None
+    )
 
   def __call__(self, path: Path) -> tuple[SessionStats, SessionObject]:
     path = _absolute(path)
     if path.is_file():
-      obj: SessionObject = self._file(path)
+      if members := self._export_members(path):
+        obj: SessionObject = self._export(path, members)
+      else:
+        obj = self._file(path)
     elif path.is_dir() and not path.is_symlink():
-      hint = _home_harness(path)
+      hint = self._home_harness(path)
       files = tuple(
-        self._file(candidate)
+        session
         for candidate in sorted(path.rglob('*'), key=lambda item: str(item).casefold())
-        if candidate.is_file() and _harness(_head(candidate)) is not None
+        if candidate.is_file()
+        for session in self._sessions(candidate)
       )
-      harnesses = _uniq([file.harness for file in files] + ([hint] if hint else []))
+      harnesses = self._uniq([file.harness for file in files] + ([hint] if hint else []))
       if not harnesses:
         raise ValueError(f'{path}: session format is not identifiable')
       if len(harnesses) != 1:
@@ -907,6 +957,8 @@ class SessionHandler:
   def normalize_name(self, obj: SessionObject) -> str:
     if not isinstance(obj, SessionFile):
       raise ValueError(f'{obj.path}: normalization requires one session')
+    if obj.location is not None:
+      raise ValueError(f'{obj.location}: normalization requires one session file')
     if obj.uid is None:
       raise ValueError(f'{obj.path}: session has no immutable id')
     return obj.name
@@ -923,16 +975,16 @@ class SessionHandler:
   def _file(self, path: Path) -> SessionFile:
     signature = _signature(path.stat())
     cached = self._cache.get(path)
-    if cached is not None and cached[0] == signature:
+    if cached is not None and cached[0] == signature and isinstance(cached[1], SessionFile):
       return cached[1]
-    records = _records(path)
-    harness = _harness(records[:SNIFF])
+    records = self._records(path)
+    harness = self._harness(records[:SNIFF])
     if harness is None:
       raise ValueError(f'{path}: session format is not identifiable')
-    turns = _messages(harness, records)
-    timestamps = tuple(_timestamps(records))
-    uid = _uid(harness, records, path)
-    parent_uid, subagent = _parent(records)
+    turns = self._turn_readers[harness](records)
+    timestamps = tuple(self._timestamps(records))
+    uid = self._uid_readers[harness](records, path)
+    parent_uid, subagent = self._parent(records)
     mainline = any(record.get('isSidechain') is False for record in records)
     sidechain = any(record.get('isSidechain') is True for record in records)
     item = SessionFile(
@@ -944,12 +996,523 @@ class SessionHandler:
       records=records,
       turns=turns,
       span=(min(timestamps), max(timestamps)) if timestamps else None,
-      models=_models(records),
-      topic=_topic(turns),
+      models=self._models(records),
+      topic=self._topic(turns),
       sidechain_only=sidechain and not mainline,
     )
     self._cache[path] = (signature, item)
     return item
+
+  def _sessions(self, path: Path) -> tuple[SessionFile, ...]:
+    if members := self._export_members(path):
+      return self._export(path, members).files
+    return (self._file(path),) if self._harness(self._head(path)) is not None else ()
+
+  def _export(
+    self,
+    path: Path,
+    members: Sequence[zipfile.ZipInfo],
+  ) -> SessionFolder:
+    signature = _signature(path.stat())
+    cached = self._cache.get(path)
+    if cached is not None and cached[0] == signature and isinstance(cached[1], SessionFolder):
+      return cached[1]
+    files: list[SessionFile] = []
+    try:
+      with zipfile.ZipFile(path) as archive:
+        for member in members:
+          with archive.open(member) as stream:
+            conversations = json.load(stream, strict=False)
+          if not isinstance(conversations, list):
+            raise ValueError(f'{path}::{member.filename}: conversations are not a list')
+          for conversation in conversations:
+            if not isinstance(conversation, Mapping):
+              raise ValueError(f'{path}::{member.filename}: conversation is not an object')
+            harness = self._export_harness(conversation)
+            if harness is None:
+              raise ValueError(f'{path}::{member.filename}: conversation format is not identifiable')
+            files.append(self._export_file(path, member.filename, harness, conversation))
+    except (OSError, UnicodeDecodeError, zipfile.BadZipFile, json.JSONDecodeError) as error:
+      raise ValueError(f'{path}: cannot read session export ZIP: {error}') from error
+    if not files:
+      raise ValueError(f'{path}: session export contains no conversations')
+    item = SessionFolder(path, self._one_harness(path, files), tuple(files))
+    self._cache[path] = (signature, item)
+    return item
+
+  def _export_file(
+    self,
+    location: Path,
+    member: str,
+    harness: Harness,
+    conversation: Mapping[str, Any],
+  ) -> SessionFile:
+    uid = next((
+      value.strip()
+      for key in self._export_ids[harness]
+      if isinstance(value := conversation.get(key), str) and value.strip()
+    ), None)
+    if uid is None:
+      raise ValueError(f'{location}::{member}: conversation has no immutable id')
+    turns = self._export_turn_readers[harness](conversation)
+    timestamps = [turn.timestamp for turn in turns if turn.timestamp is not None]
+    timestamps += [
+      stamp
+      for key in self._export_times[harness]
+      if (stamp := valid_time(self._stamp(conversation.get(key)))) is not None
+    ]
+    return SessionFile(
+      path=_record_path(member),
+      harness=harness,
+      uid=uid,
+      parent_uid=None,
+      subagent=False,
+      records=(conversation,),
+      turns=turns,
+      span=(min(timestamps), max(timestamps)) if timestamps else None,
+      models=self._models((conversation,)),
+      topic=self._topic(turns),
+      location=location,
+    )
+
+  @staticmethod
+  def _export_members(path: Path) -> tuple[zipfile.ZipInfo, ...]:
+    try:
+      with zipfile.ZipFile(path) as archive:
+        return tuple(sorted(
+          (
+            member
+            for member in archive.infolist()
+            if not member.is_dir()
+            and EXPORT_MEMBER.fullmatch(PurePosixPath(member.filename).name)
+          ),
+          key=lambda member: member.filename.casefold(),
+        ))
+    except (OSError, zipfile.BadZipFile):
+      return ()
+
+  def _export_harness(self, conversation: Mapping[str, Any]) -> Harness | None:
+    matches = tuple(
+      harness
+      for harness, recognize in self._export_recognizers
+      if recognize(conversation)
+    )
+    return matches[0] if len(matches) == 1 else None
+
+  @staticmethod
+  def _one_harness(path: Path, files: Sequence[SessionFile]) -> Harness:
+    harnesses = tuple(dict.fromkeys(file.harness for file in files))
+    if len(harnesses) != 1:
+      raise ValueError(f'{path}: contains multiple session harnesses')
+    return harnesses[0]
+
+  def _harness(
+    self,
+    records: Sequence[Mapping[str, Any]],
+    hint: Harness | None = None,
+  ) -> Harness | None:
+    return next((
+      harness
+      for harness, recognize in self._recognizers
+      if recognize(records)
+    ), hint)
+
+  @staticmethod
+  def _is_codex(records: Sequence[Mapping[str, Any]]) -> bool:
+    return any(
+      record.get('type') in ('session_meta', 'turn_context', 'event_msg', 'response_item')
+      and isinstance(record.get('payload'), Mapping)
+      for record in records
+    )
+
+  @staticmethod
+  def _is_claude_code(records: Sequence[Mapping[str, Any]]) -> bool:
+    return any(
+      isinstance(record.get('sessionId'), str)
+      or record.get('type') == 'teleported-from'
+      or isinstance(record.get('uuid'), str)
+      or isinstance(record.get('parentUuid'), str)
+      for record in records
+    )
+
+  @staticmethod
+  def _is_openclaw(records: Sequence[Mapping[str, Any]]) -> bool:
+    return any(isinstance(record.get('modelId'), str) for record in records)
+
+  @staticmethod
+  def _is_agy(records: Sequence[Mapping[str, Any]]) -> bool:
+    return any(
+      record.get('type') in ('USER_INPUT', 'PLANNER_RESPONSE')
+      and record.get('source') in ('USER_EXPLICIT', 'MODEL')
+      and isinstance(record.get('created_at'), str)
+      for record in records
+    )
+
+  @staticmethod
+  def _is_hermes(records: Sequence[Mapping[str, Any]]) -> bool:
+    return any(
+      record.get('role') == 'session_meta' and isinstance(record.get('session_id'), str)
+      for record in records
+    )
+
+  @staticmethod
+  def _is_chatgpt(conversation: Mapping[str, Any]) -> bool:
+    return (
+      isinstance(conversation.get('mapping'), Mapping)
+      and isinstance(conversation.get('current_node'), str)
+    )
+
+  @staticmethod
+  def _is_claude(conversation: Mapping[str, Any]) -> bool:
+    return (
+      isinstance(conversation.get('chat_messages'), list)
+      and isinstance(conversation.get('uuid'), str)
+    )
+
+  @staticmethod
+  def _codex_uid(records: Sequence[Mapping[str, Any]], path: Path) -> str | None:
+    for record in records:
+      if record.get('type') != 'session_meta' or not isinstance(payload := record.get('payload'), Mapping):
+        continue
+      value = payload.get('id') or payload.get('session_id')
+      return value.strip() if isinstance(value, str) and value.strip() else None
+    return None
+
+  @staticmethod
+  def _agy_uid(records: Sequence[Mapping[str, Any]], path: Path) -> str | None:
+    return next((
+      parent.name
+      for parent in path.parents
+      if parent.parent.name == 'brain' and SESSION_UID.fullmatch(parent.name)
+    ), None)
+
+  @classmethod
+  def _claude_code_uid(cls, records: Sequence[Mapping[str, Any]], path: Path) -> str | None:
+    return cls._record_uid(records, ID_KEYS)
+
+  @classmethod
+  def _openclaw_uid(cls, records: Sequence[Mapping[str, Any]], path: Path) -> str | None:
+    return cls._record_uid(records, ('id', 'session_id'))
+
+  @classmethod
+  def _hermes_uid(cls, records: Sequence[Mapping[str, Any]], path: Path) -> str | None:
+    return cls._record_uid(records, ID_KEYS)
+
+  @staticmethod
+  def _record_uid(records: Sequence[Mapping[str, Any]], keys: Sequence[str]) -> str | None:
+    for record in records:
+      scopes = [record]
+      scopes += [
+        value for key in ('payload', 'message', 'data')
+        if isinstance(value := record.get(key), Mapping)
+      ]
+      for key in keys:
+        for scope in scopes:
+          value = scope.get(key)
+          if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+  @classmethod
+  def _codex_turns(cls, records: Sequence[Mapping[str, Any]]) -> tuple[SessionTurn, ...]:
+    response = tuple(
+      item
+      for record in records
+      if record.get('type') == 'response_item'
+      and isinstance(payload := record.get('payload'), Mapping)
+      and payload.get('type') == 'message'
+      for item in [cls._turn(payload.get('role'), payload.get('content'), record.get('timestamp'))]
+      if item is not None
+    )
+    if response:
+      return response
+    roles = {'user_message': 'user', 'agent_message': 'assistant'}
+    return tuple(
+      item
+      for record in records
+      if record.get('type') == 'event_msg'
+      and isinstance(payload := record.get('payload'), Mapping)
+      for item in [cls._turn(roles.get(payload.get('type')), payload.get('message'), record.get('timestamp'))]
+      if item is not None
+    )
+
+  @classmethod
+  def _claude_code_turns(cls, records: Sequence[Mapping[str, Any]]) -> tuple[SessionTurn, ...]:
+    return tuple(
+      item
+      for record in records
+      if record.get('type') in ROLES
+      and isinstance(message := record.get('message'), Mapping)
+      for item in [cls._turn(
+        message.get('role', record.get('type')),
+        message.get('content'),
+        record.get('timestamp'),
+        record.get('isMeta') is True,
+        record.get('isSidechain') is True,
+      )]
+      if item is not None
+    )
+
+  @classmethod
+  def _openclaw_turns(cls, records: Sequence[Mapping[str, Any]]) -> tuple[SessionTurn, ...]:
+    return tuple(
+      item
+      for record in records
+      if isinstance(message := record.get('message'), Mapping)
+      for item in [cls._turn(
+        message.get('role'),
+        message.get('content'),
+        record.get('timestamp', record.get('ts')),
+      )]
+      if item is not None
+    )
+
+  @classmethod
+  def _agy_turns(cls, records: Sequence[Mapping[str, Any]]) -> tuple[SessionTurn, ...]:
+    roles = {'USER_INPUT': 'user', 'PLANNER_RESPONSE': 'assistant'}
+    return tuple(
+      item
+      for record in records
+      for item in [cls._turn(
+        roles.get(record.get('type')),
+        record.get('content'),
+        record.get('created_at'),
+      )]
+      if item is not None
+    )
+
+  @classmethod
+  def _hermes_turns(cls, records: Sequence[Mapping[str, Any]]) -> tuple[SessionTurn, ...]:
+    return tuple(
+      item
+      for record in records
+      for item in [cls._turn(record.get('role'), record.get('content'), record.get('timestamp'))]
+      if item is not None
+    )
+
+  @classmethod
+  def _chatgpt_turns(cls, conversation: Mapping[str, Any]) -> tuple[SessionTurn, ...]:
+    mapping = conversation['mapping']
+    current = conversation['current_node']
+    chain: list[Mapping[str, Any]] = []
+    visited: set[str] = set()
+    while current is not None:
+      if not isinstance(current, str) or current not in mapping or current in visited:
+        raise ValueError('ChatGPT conversation has an invalid current-node chain')
+      visited.add(current)
+      node = mapping[current]
+      if not isinstance(node, Mapping):
+        raise ValueError('ChatGPT conversation node is not an object')
+      chain.append(node)
+      current = node.get('parent')
+    return tuple(
+      item
+      for node in reversed(chain)
+      if isinstance(message := node.get('message'), Mapping)
+      and isinstance(author := message.get('author'), Mapping)
+      and isinstance(content := message.get('content'), Mapping)
+      and content.get('content_type') in ('text', 'multimodal_text')
+      for item in [cls._turn(
+        author.get('role'),
+        content.get('parts'),
+        message.get('create_time'),
+      )]
+      if item is not None
+    )
+
+  @classmethod
+  def _claude_turns(cls, conversation: Mapping[str, Any]) -> tuple[SessionTurn, ...]:
+    return tuple(
+      item
+      for message in conversation['chat_messages']
+      if isinstance(message, Mapping)
+      for item in [cls._turn(
+        message.get('sender'),
+        message.get('content'),
+        message.get('created_at'),
+      )]
+      if item is not None
+    )
+
+  @staticmethod
+  def _records(path: Path) -> tuple[Mapping[str, Any], ...]:
+    # a writer crash or interrupted flush can leave one line truncated mid-record;
+    # skip that line rather than losing every record in the file over it.
+    records: list[Mapping[str, Any]] = []
+    with path.open('r', encoding='utf-8') as stream:
+      for line in stream:
+        if not line.strip():
+          continue
+        try:
+          value = json.loads(line)
+        except json.JSONDecodeError:
+          continue
+        if isinstance(value, dict):
+          records.append(value)
+    if not records:
+      raise ValueError(f'{path}: session file is empty')
+    return tuple(records)
+
+  @staticmethod
+  def _head(path: Path) -> tuple[Mapping[str, Any], ...]:
+    found: list[Mapping[str, Any]] = []
+    try:
+      with path.open('r', encoding='utf-8') as stream:
+        for line in stream:
+          if not line.strip():
+            continue
+          value = json.loads(line)
+          if not isinstance(value, dict):
+            return ()
+          found.append(value)
+          if len(found) >= SNIFF:
+            break
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+      return ()
+    return tuple(found)
+
+  @classmethod
+  def _walk_values(cls, value: Any) -> Iterator[tuple[str, Any]]:
+    if isinstance(value, Mapping):
+      for key, nested in value.items():
+        yield str(key), nested
+        yield from cls._walk_values(nested)
+    elif isinstance(value, list):
+      for nested in value:
+        yield from cls._walk_values(nested)
+
+  @staticmethod
+  def _stamp(value: Any) -> datetime | None:
+    if isinstance(value, str):
+      try:
+        parsed = datetime.fromisoformat(value.strip().replace('Z', '+00:00'))
+      except ValueError:
+        return None
+      return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 1_000_000_000:
+      seconds = value / 1000 if value > 10_000_000_000 else value
+      try:
+        return datetime.fromtimestamp(seconds, timezone.utc)
+      except (OSError, OverflowError, ValueError):
+        return None
+    return None
+
+  @classmethod
+  def _timestamps(cls, records: Sequence[Mapping[str, Any]]) -> Iterator[datetime]:
+    """Record times only: the record, its payload, or its message. Values quoted deeper inside content are not the session's time."""
+
+    for record in records:
+      for scope in (record, record.get('payload'), record.get('message')):
+        if not isinstance(scope, Mapping):
+          continue
+        for key in TIME_KEYS:
+          if (stamp := valid_time(cls._stamp(scope.get(key)))) is not None:
+            yield stamp
+
+  @classmethod
+  def _models(cls, records: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
+    return cls._uniq(
+      value
+      for record in records
+      for key, value in cls._walk_values(record)
+      if key in MODEL_KEYS
+    )
+
+  @staticmethod
+  def _parent(records: Sequence[Mapping[str, Any]]) -> tuple[str | None, bool]:
+    for record in records:
+      if record.get('type') != 'session_meta':
+        continue
+      payload = record.get('payload')
+      if not isinstance(payload, Mapping):
+        return None, False
+      source = payload.get('source')
+      subagent = payload.get('thread_source') == 'subagent' or (
+        isinstance(source, Mapping) and 'subagent' in source
+      )
+      parent = payload.get('parent_thread_id')
+      if not parent and isinstance(source, Mapping):
+        nested = source.get('subagent')
+        spawn = nested.get('thread_spawn') if isinstance(nested, Mapping) else None
+        parent = spawn.get('parent_thread_id') if isinstance(spawn, Mapping) else None
+      if subagent and not parent:
+        parent = payload.get('forked_from_id')
+      return (str(parent) if parent else None), subagent
+    return None, False
+
+  @staticmethod
+  def _content_text(content: Any) -> str:
+    if isinstance(content, str):
+      return content
+    if not isinstance(content, list):
+      return ''
+    parts: list[str] = []
+    for part in content:
+      if isinstance(part, str):
+        text = part
+      elif (
+        isinstance(part, Mapping)
+        and part.get('type') in ('text', 'input_text', 'output_text')
+        and isinstance(part.get('text'), str)
+      ):
+        text = part['text']
+      else:
+        continue
+      if text.strip():
+        parts.append(text)
+    return '\n\n'.join(parts)
+
+  @classmethod
+  def _turn(
+    cls,
+    role: Any,
+    content: Any,
+    timestamp: Any,
+    meta: bool = False,
+    sidechain: bool = False,
+  ) -> SessionTurn | None:
+    if isinstance(role, str) and role.casefold() == 'human':
+      role = 'user'
+    if not isinstance(role, str) or role.casefold() not in ROLES:
+      return None
+    text = cls._content_text(content)
+    if not text.strip():
+      return None
+    return SessionTurn(role.casefold(), text, valid_time(cls._stamp(timestamp)), meta, sidechain)
+
+  @staticmethod
+  def _topic(messages: Sequence[SessionTurn]) -> str:
+    """The first line a person typed."""
+    for message in messages:
+      if message.role != 'user' or message.meta or message.sidechain:
+        continue
+      if text := typed(message.text):
+        return ' '.join(''.join(' ' if char in UNSAFE else char for char in text.splitlines()[0]).split())
+    return ''
+
+  @staticmethod
+  def _uniq(values) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(
+      value.strip() for value in values if isinstance(value, str) and value.strip()
+    ))
+
+  @staticmethod
+  def _home_harness(path: Path) -> Harness | None:
+    return next((
+      harness
+      for harness, markers in HOMES.items()
+      if any((path / marker).exists() for marker in markers)
+    ), None)
+
+  @staticmethod
+  def _agy_session_folder(path: Path) -> bool:
+    return (
+      SESSION_UID.fullmatch(path.name) is not None
+      and any(
+        (path / '.system_generated' / 'logs' / name).is_file()
+        for name in ('transcript_full.jsonl', 'transcript.jsonl')
+      )
+    )
 
 
 def valid_time(value: datetime | None) -> datetime | None:
@@ -1060,276 +1623,6 @@ def _combine_spans(spans: Sequence[Span]) -> Span | None:
   )
 
 
-def _records(path: Path) -> tuple[Mapping[str, Any], ...]:
-  # a writer crash or interrupted flush can leave one line truncated mid-record;
-  # skip that line rather than losing every record in the file over it.
-  records: list[Mapping[str, Any]] = []
-  with path.open('r', encoding='utf-8') as stream:
-    for line in stream:
-      if not line.strip():
-        continue
-      try:
-        value = json.loads(line)
-      except json.JSONDecodeError:
-        continue
-      if isinstance(value, dict):
-        records.append(value)
-  if not records:
-    raise ValueError(f'{path}: session file is empty')
-  return tuple(records)
-
-
-def _head(path: Path) -> tuple[Mapping[str, Any], ...]:
-  found: list[Mapping[str, Any]] = []
-  try:
-    with path.open('r', encoding='utf-8') as stream:
-      for line in stream:
-        if not line.strip():
-          continue
-        value = json.loads(line)
-        if not isinstance(value, dict):
-          return ()
-        found.append(value)
-        if len(found) >= SNIFF:
-          break
-  except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-    return ()
-  return tuple(found)
-
-
-def _harness(
-  records: Sequence[Mapping[str, Any]],
-  hint: Harness | None = None,
-) -> Harness | None:
-  if any(
-    record.get('type') in ('session_meta', 'turn_context', 'event_msg', 'response_item')
-    and isinstance(record.get('payload'), Mapping)
-    for record in records
-  ):
-    return 'cx'
-  if any(
-    isinstance(record.get('sessionId'), str)
-    or record.get('type') == 'teleported-from'
-    or isinstance(record.get('uuid'), str)
-    or isinstance(record.get('parentUuid'), str)
-    for record in records
-  ):
-    return 'cc'
-  if any(isinstance(record.get('modelId'), str) for record in records):
-    return 'openclaw'
-  if any(
-    record.get('type') in ('USER_INPUT', 'PLANNER_RESPONSE')
-    and record.get('source') in ('USER_EXPLICIT', 'MODEL')
-    and isinstance(record.get('created_at'), str)
-    for record in records
-  ):
-    return 'agy'
-  # Hermes writes a flat log: a session_meta header carrying the id, then one record per turn. Until now only the
-  # state.db beside a Hermes home said so, and a log on its own — copied out, exported, archived — said nothing.
-  if any(
-    record.get('role') == 'session_meta' and isinstance(record.get('session_id'), str)
-    for record in records
-  ):
-    return 'hermes'
-  return hint
-
-
-def _walk_values(value: Any) -> Iterator[tuple[str, Any]]:
-  if isinstance(value, Mapping):
-    for key, nested in value.items():
-      yield str(key), nested
-      yield from _walk_values(nested)
-  elif isinstance(value, list):
-    for nested in value:
-      yield from _walk_values(nested)
-
-
-def _stamp(value: Any) -> datetime | None:
-  if isinstance(value, str):
-    try:
-      parsed = datetime.fromisoformat(value.strip().replace('Z', '+00:00'))
-    except ValueError:
-      return None
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
-  if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 1_000_000_000:
-    seconds = value / 1000 if value > 10_000_000_000 else value
-    try:
-      return datetime.fromtimestamp(seconds, timezone.utc)
-    except (OSError, OverflowError, ValueError):
-      return None
-  return None
-
-
-def _timestamps(records: Sequence[Mapping[str, Any]]) -> Iterator[datetime]:
-  """Record times only: the record, its payload, or its message. Values quoted deeper inside content are not the session's time."""
-
-  for record in records:
-    for scope in (record, record.get('payload'), record.get('message')):
-      if not isinstance(scope, Mapping):
-        continue
-      for key in TIME_KEYS:
-        if (stamp := valid_time(_stamp(scope.get(key)))) is not None:
-          yield stamp
-
-
-def _models(records: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
-  return _uniq(
-    value
-    for record in records
-    for key, value in _walk_values(record)
-    if key in MODEL_KEYS
-  )
-
-
-def _uid(harness: Harness, records: Sequence[Mapping[str, Any]], path: Path) -> str | None:
-  if harness == 'cx':
-    for record in records:
-      if record.get('type') != 'session_meta' or not isinstance(payload := record.get('payload'), Mapping):
-        continue
-      value = payload.get('id') or payload.get('session_id')
-      return value.strip() if isinstance(value, str) and value.strip() else None
-    return None
-  if harness == 'agy':
-    return next(
-      (
-        parent.name
-        for parent in path.parents
-        if parent.parent.name == 'brain' and SESSION_UID.fullmatch(parent.name)
-      ),
-      None,
-    )
-  for record in records:
-    scopes = [record]
-    scopes += [
-      value for key in ('payload', 'message', 'data')
-      if isinstance(value := record.get(key), Mapping)
-    ]
-    keys = ('id', 'session_id') if harness == 'openclaw' else ID_KEYS
-    for key in keys:
-      for scope in scopes:
-        value = scope.get(key)
-        if isinstance(value, str) and value.strip():
-          return value.strip()
-  return None
-
-
-def _parent(records: Sequence[Mapping[str, Any]]) -> tuple[str | None, bool]:
-  for record in records:
-    if record.get('type') != 'session_meta':
-      continue
-    payload = record.get('payload')
-    if not isinstance(payload, Mapping):
-      return None, False
-    source = payload.get('source')
-    subagent = payload.get('thread_source') == 'subagent' or (
-      isinstance(source, Mapping) and 'subagent' in source
-    )
-    parent = payload.get('parent_thread_id')
-    if not parent and isinstance(source, Mapping):
-      nested = source.get('subagent')
-      spawn = nested.get('thread_spawn') if isinstance(nested, Mapping) else None
-      parent = spawn.get('parent_thread_id') if isinstance(spawn, Mapping) else None
-    if subagent and not parent:
-      parent = payload.get('forked_from_id')
-    return (str(parent) if parent else None), subagent
-  return None, False
-
-
-def _content_text(content: Any) -> str:
-  if isinstance(content, str):
-    return content
-  if not isinstance(content, list):
-    return ''
-  return '\n\n'.join(
-    text
-    for part in content
-    if isinstance(part, Mapping)
-    and part.get('type') in ('text', 'input_text', 'output_text')
-    and isinstance(text := part.get('text'), str)
-    and text.strip()
-  )
-
-
-def _turn(
-  role: Any,
-  content: Any,
-  timestamp: Any,
-  meta: bool = False,
-  sidechain: bool = False,
-) -> SessionTurn | None:
-  if not isinstance(role, str) or role.casefold() not in ROLES:
-    return None
-  text = _content_text(content)
-  if not text.strip():
-    return None
-  return SessionTurn(role.casefold(), text, valid_time(_stamp(timestamp)), meta, sidechain)
-
-
-def _messages(harness: Harness, records: Sequence[Mapping[str, Any]]) -> tuple[SessionTurn, ...]:
-  if harness == 'cx':
-    response = tuple(
-      item
-      for record in records
-      if record.get('type') == 'response_item'
-      and isinstance(payload := record.get('payload'), Mapping)
-      and payload.get('type') == 'message'
-      for item in [_turn(payload.get('role'), payload.get('content'), record.get('timestamp'))]
-      if item is not None
-    )
-    if response:
-      return response
-    roles = {'user_message': 'user', 'agent_message': 'assistant'}
-    return tuple(
-      item
-      for record in records
-      if record.get('type') == 'event_msg'
-      and isinstance(payload := record.get('payload'), Mapping)
-      for item in [_turn(roles.get(payload.get('type')), payload.get('message'), record.get('timestamp'))]
-      if item is not None
-    )
-  if harness == 'cc':
-    return tuple(
-      item
-      for record in records
-      if record.get('type') in ROLES
-      and isinstance(message := record.get('message'), Mapping)
-      for item in [_turn(
-        message.get('role', record.get('type')),
-        message.get('content'),
-        record.get('timestamp'),
-        record.get('isMeta') is True,
-        record.get('isSidechain') is True,
-      )]
-      if item is not None
-    )
-  if harness == 'agy':
-    roles = {'USER_INPUT': 'user', 'PLANNER_RESPONSE': 'assistant'}
-    return tuple(
-      item
-      for record in records
-      for item in [_turn(
-        roles.get(record.get('type')),
-        record.get('content'),
-        record.get('created_at'),
-      )]
-      if item is not None
-    )
-  if harness == 'hermes':
-    return tuple(
-      item
-      for record in records
-      for item in [_turn(record.get('role'), record.get('content'), record.get('timestamp'))]
-      if item is not None
-    )
-  return tuple(
-    item
-    for record in records
-    if isinstance(message := record.get('message'), Mapping)
-    for item in [_turn(message.get('role'), message.get('content'), record.get('timestamp', record.get('ts')))]
-    if item is not None
-  )
-
-
 def typed(text: str) -> str:
   """The text a person typed in a user message: the envelope stripped, '' when the message was generated."""
   if match := REALTIME_INPUT.search(text):
@@ -1341,40 +1634,6 @@ def typed(text: str) -> str:
   if first.startswith('<') and first.endswith('>') or any(first.startswith(preamble) for preamble in PREAMBLE):
     return ''
   return text
-
-
-def _topic(messages: Sequence[SessionTurn]) -> str:
-  """The first line a person typed."""
-  for message in messages:
-    if message.role != 'user' or message.meta or message.sidechain:
-      continue
-    if text := typed(message.text):
-      return ' '.join(''.join(' ' if char in UNSAFE else char for char in text.splitlines()[0]).split())
-  return ''
-
-
-def _uniq(values) -> tuple[str, ...]:
-  return tuple(dict.fromkeys(
-    value.strip() for value in values if isinstance(value, str) and value.strip()
-  ))
-
-
-def _home_harness(path: Path) -> Harness | None:
-  return next((
-    harness
-    for harness, markers in HOMES.items()
-    if any((path / marker).exists() for marker in markers)
-  ), None)
-
-
-def _agy_session_folder(path: Path) -> bool:
-  return (
-    SESSION_UID.fullmatch(path.name) is not None
-    and any(
-      (path / '.system_generated' / 'logs' / name).is_file()
-      for name in ('transcript_full.jsonl', 'transcript.jsonl')
-    )
-  )
 
 
 session_handler = SessionHandler()
