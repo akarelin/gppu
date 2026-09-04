@@ -24,4 +24,12 @@ Complete every unchecked item under `Big tasks` in `gppu/handlers.py` on the `ha
 - [ ] Add unimplemented image and video EXIF handler placeholders informed by CRAP photo-indexer concepts.
 - [ ] Read RAR metadata through the platform RARLAB command without `rarfile`.
 - [ ] Require Python 3.14 in package, analysis, test, and build declarations.
+- [ ] Make `FileHandler` a public composition base and remove library-created handler objects.
+- [ ] Accept copied caller metadata on handlers and expose it with probe metadata.
+- [ ] Keep large-tree scans running by returning per-record handler errors by default; retain explicit strict execution.
+- [ ] Derive CSV spans from documented timestamp columns and make additional timestamp formats a class extension.
+- [ ] Add native ignored-file and ignored-folder recognition from the active TextLake/FileIndexer rules, retaining ignored folder boundaries without descending into them.
+- [ ] Add the configured Git upstream URL to Git handler metadata without contacting the remote.
+- [ ] Generate `docs/handlers.md` from the Python docstrings instead of maintaining duplicate documentation.
+- [ ] Add `.msg` and `.eml` filename metadata handling while leaving message parsing unimplemented.
 - [ ] Verify behavior, commit, and push the branch.
