@@ -106,7 +106,7 @@ jobs:
         with:
           python-version: '3.14'
 
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.0.1
         if: matrix.os == 'linux'
         with:
           python-version: '3.14'
@@ -203,7 +203,7 @@ jobs:
         if: env.TAG_EXISTS == 'true'
         run: git checkout "${TAG}"
 
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: '3.14'
 
