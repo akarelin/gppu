@@ -103,20 +103,27 @@ def _fpct(val):
 
 
 _EFFORT_ICONS = {
-    "disabled": "⚫",
-    "low": "🔵",
-    "medium": "🟢",
-    "high": "🟡",
-    "xhigh": "🟠",
-    "max": "🔴",
-    "ultra": "🟣",
+    "disabled": "⊘",
+    "low": "·",
+    "medium": "○",
+    "high": "◔",
+    "xhigh": "●",
+    "max": "●",
+    "ultra": "●",
+}
+_EFFORT_COLORS = {
+    "xhigh": "38;5;37",
+    "ultra": "38;5;201",
 }
 
 
 def _feffort_icon(level):
     if not level:
         return ""
-    return _EFFORT_ICONS.get(str(level).lower(), "?")
+    level = str(level).lower()
+    icon = _EFFORT_ICONS.get(level, "?")
+    color = _EFFORT_COLORS.get(level)
+    return _colorize(icon, color) if color else icon
 
 
 def _fcounter_sum(val):

@@ -67,7 +67,7 @@ _LIMIT_7D = """
 {% if rate_limits.seven_day.used_percentage is number -%}
   {% set left = (100 - rate_limits.seven_day.used_percentage) | round | int -%}
   {% set reset = rate_limits.seven_day.resets_at | time_left -%}
-  {% set text = left ~ '%' -%}
+  {% set text = '📅 ' ~ left ~ '%' -%}
   {% if reset -%}{% set text = text ~ ' ' ~ reset -%}{% endif -%}
   {{ text | remaining(left) }}
 {%- endif %}
