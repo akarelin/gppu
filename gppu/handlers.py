@@ -859,6 +859,13 @@ def _harness(records: Sequence[Mapping[str, Any]], hint: str | None = None) -> s
     return 'claude'
   if any(isinstance(record.get('modelId'), str) for record in records):
     return 'openclaw'
+  # Hermes writes a flat log: a session_meta header carrying the id, then one record per turn. Until now only the
+  # state.db beside a Hermes home said so, and a log on its own — copied out, exported, archived — said nothing.
+  if any(
+    record.get('role') == 'session_meta' and isinstance(record.get('session_id'), str)
+    for record in records
+  ):
+    return 'hermes'
   return hint
 
 
@@ -1019,6 +1026,13 @@ def _messages(harness: str, records: Sequence[Mapping[str, Any]]) -> tuple[Sessi
         record.get('isMeta') is True,
         record.get('isSidechain') is True,
       )]
+      if item is not None
+    )
+  if harness == 'hermes':
+    return tuple(
+      item
+      for record in records
+      for item in [_turn(record.get('role'), record.get('content'), record.get('timestamp'))]
       if item is not None
     )
   return tuple(
