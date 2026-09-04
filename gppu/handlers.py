@@ -1894,7 +1894,7 @@ class GitHandler(Handler):
             return None
         try:
             target = marker.read_text(encoding="utf-8").strip()
-        except OSError, UnicodeDecodeError:
+        except (OSError, UnicodeDecodeError):
             return None
         prefix = "gitdir:"
         if not target.casefold().startswith(prefix):
@@ -2485,7 +2485,7 @@ class CSVHandler(Handler):
             seconds = number / 1000 if number > 10_000_000_000 else number
             try:
                 parsed = datetime.fromtimestamp(seconds, timezone.utc)
-            except OSError, OverflowError, ValueError:
+            except (OSError, OverflowError, ValueError):
                 return None
         else:
             try:
@@ -2923,7 +2923,7 @@ class _LLMExportHandler(Handler):
                     for member in archive.infolist()
                     if not member.is_dir()
                 )
-        except OSError, zipfile.BadZipFile:
+        except (OSError, zipfile.BadZipFile):
             return frozenset()
 
     def _identify_export(self, path: Path, provider: type[Any]) -> bool:
@@ -3769,7 +3769,7 @@ class SessionHandler(Handler):
                     found.append(value)
                     if len(found) >= SNIFF:
                         break
-        except OSError, UnicodeDecodeError, json.JSONDecodeError:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             return ()
         return tuple(found)
 
@@ -3807,7 +3807,7 @@ class SessionHandler(Handler):
             seconds = value / 1000 if value > 10_000_000_000 else value
             try:
                 return datetime.fromtimestamp(seconds, timezone.utc)
-            except OSError, OverflowError, ValueError:
+            except (OSError, OverflowError, ValueError):
                 return None
         return None
 
@@ -4015,12 +4015,12 @@ def _archive_time(value: Any) -> datetime | None:
     elif isinstance(value, (int, float)) and not isinstance(value, bool):
         try:
             parsed = datetime.fromtimestamp(value, timezone.utc)
-        except OSError, OverflowError, ValueError:
+        except (OSError, OverflowError, ValueError):
             return None
     else:
         try:
             parsed = datetime(*value)
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             return None
     return valid_time(parsed if parsed.tzinfo is not None else parsed.astimezone())
 

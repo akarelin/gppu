@@ -199,7 +199,7 @@ pip install -e ".[all,test]"
 
 **Optional extras**: `pg` (psycopg2), `sql` (SQLAlchemy), `cache` (diskcache), `mqtt` (aiomqtt), `iot` (aiomqtt + aiohttp + telnetlib3), `chrome` (Selenium), `tui` (Textual), `serve` (textual-serve), `statusline` (Jinja2), `vault-azure`, `vault` (= `vault-azure`), `all`, `test` (pytest), `test-tui` (pytest + pytest-asyncio + textual).
 
-Requires Python >= 3.14. Core dependency: PyYAML.
+Requires Python >= 3.11. Core dependency: PyYAML.
 
 ## TColor Reference
 
