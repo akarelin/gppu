@@ -4,7 +4,9 @@
 
 **Status:** Closed 2026-09-04.
 
-**Outcome:** The caller-composed handler implementation is ready to merge and build for Windows and Debian. macOS execution has not been tested.
+**Outcome:** The caller-composed handler implementation was merged into `master` in `12575d6` and is ready to build for Windows and Debian. macOS execution has not been tested.
+
+**Branches:** At closeout, every local and origin branch is merged into `master`.
 
 **Verified:** Windows CPython 3.14.7 passed the complete suite with 506 passed and 3 skipped. Debian CPython 3.14.5 passed the focused handler and generated-documentation suite with 59 passed. The wheel and source distribution built successfully.
 
