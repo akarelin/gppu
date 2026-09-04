@@ -102,16 +102,23 @@ jobs:
           fetch-depth: 0
 
       - uses: actions/setup-python@v6
+        if: matrix.os == 'windows'
+        with:
+          python-version: '3.14'
+
+      - uses: astral-sh/setup-uv@v10
+        if: matrix.os == 'linux'
         with:
           python-version: '3.14'
 
       - name: Setup and test (Linux)
         if: matrix.os == 'linux'
         run: |
-          python -m venv .venv
-          .venv/bin/pip install Jinja2 PyYAML pytest setuptools-scm
-          .venv/bin/pip install -e ".${{ matrix.extras }}"
-          .venv/bin/python -m pytest ${{ matrix.test_path }} -v
+          uv venv --python 3.14 .venv
+          source .venv/bin/activate
+          uv pip install Jinja2 PyYAML pytest setuptools-scm
+          uv pip install -e ".${{ matrix.extras }}"
+          python -m pytest ${{ matrix.test_path }} -v
 
       - name: Setup and test (Windows)
         if: matrix.os == 'windows'
@@ -196,15 +203,16 @@ jobs:
         if: env.TAG_EXISTS == 'true'
         run: git checkout "${TAG}"
 
-      - uses: actions/setup-python@v6
+      - uses: astral-sh/setup-uv@v10
         with:
           python-version: '3.14'
 
       - name: Build and release
         run: |
-          python -m venv .venv
-          .venv/bin/pip install build setuptools-scm
-          .venv/bin/python -m build
+          uv venv --python 3.14 .venv
+          source .venv/bin/activate
+          uv pip install build setuptools-scm
+          python -m build
 
       - name: Compute release name
         run: |
