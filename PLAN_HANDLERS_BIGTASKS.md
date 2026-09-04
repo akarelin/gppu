@@ -13,23 +13,24 @@ Complete every unchecked item under `Big tasks` in `gppu/handlers.py` on the `ha
 ## Formatting and in-code documentation
 
 - [x] Format `gppu/handlers.py` with Black and four-space indentation.
-- [ ] Document its module, classes, methods, and public helper functions in Python docstrings.
-- [ ] Keep operational semantics in Python; Markdown remains supplementary.
-- [ ] Use gppu `full_path` rather than a private path resolver.
-- [ ] Add `FolderHandler`.
-- [ ] Add explicit `ChatGPTHandler` and `AnthropicHandler` detection for extracted folders and ZIP archives.
-- [ ] Compose `FileHandler` from handler mixins without constructor injection.
-- [ ] Add explicit Markdown and CSV handlers; preserve complete Markdown frontmatter and derive its title, name, tags, and span.
-- [ ] Add a log handler whose timestamped rows determine its span.
-- [ ] Add unimplemented image and video EXIF handler placeholders informed by CRAP photo-indexer concepts.
-- [ ] Read RAR metadata through the platform RARLAB command without `rarfile`.
-- [ ] Require Python 3.14 in package, analysis, test, and build declarations.
-- [ ] Make `FileHandler` a public composition base and remove library-created handler objects.
-- [ ] Accept copied caller metadata on handlers and expose it with probe metadata.
-- [ ] Keep large-tree scans running by returning per-record handler errors by default; retain explicit strict execution.
-- [ ] Derive CSV spans from documented timestamp columns and make additional timestamp formats a class extension.
-- [ ] Add native ignored-file and ignored-folder recognition from the active TextLake/FileIndexer rules, retaining ignored folder boundaries without descending into them.
-- [ ] Add the configured Git upstream URL to Git handler metadata without contacting the remote.
-- [ ] Generate `docs/handlers.md` from the Python docstrings instead of maintaining duplicate documentation.
-- [ ] Add `.msg` and `.eml` filename metadata handling while leaving message parsing unimplemented.
-- [ ] Verify behavior, commit, and push the branch.
+- [x] Document its module, classes, methods, and public helper functions in Python docstrings.
+- [x] Keep operational semantics in Python; Markdown remains supplementary.
+- [x] Use gppu `full_path` rather than a private path resolver.
+- [x] Add `FolderHandler`.
+- [x] Add explicit `ChatGPTHandler` and `AnthropicHandler` detection for extracted folders and ZIP archives.
+- [x] Compose `FileHandler` from handler mixins without constructor injection.
+- [x] Add explicit Markdown and CSV handlers; preserve complete Markdown frontmatter and derive its title, name, tags, and span.
+- [x] Add a log handler whose timestamped rows determine its span.
+- [x] Add unimplemented image and video EXIF handler placeholders informed by CRAP photo-indexer concepts.
+- [x] Read RAR metadata through the platform RARLAB command without `rarfile`.
+- [x] Require Python 3.14 in package, analysis, test, and build declarations.
+- [x] Make `FileHandler` a public composition base and remove library-created handler objects.
+- [x] Accept copied caller metadata on handlers and expose it with probe metadata.
+- [x] Keep large-tree scans running by returning per-record handler errors by default; retain explicit strict execution.
+- [x] Derive CSV spans from documented timestamp columns and make additional timestamp formats a class extension.
+- [x] Add native ignored-file and ignored-folder recognition from the active TextLake/FileIndexer rules, retaining ignored folder boundaries without descending into them.
+- [x] Add the configured Git upstream URL to Git handler metadata without contacting the remote.
+- [x] Generate `docs/handlers.md` from the Python docstrings instead of maintaining duplicate documentation.
+- [x] Add `.msg` and `.eml` filename metadata handling while leaving message parsing unimplemented.
+- [x] Include the complete test suite in the existing optional `run_tests` build path.
+- [x] Verify behavior, commit, and push the branch.
