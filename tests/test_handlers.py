@@ -76,6 +76,20 @@ OPENCLAW = [
   {'type': 'message', 'ts': 1787184060, 'message': {'role': 'user', 'content': 'Question'}},
 ]
 
+HERMES = [
+  {
+    'role': 'session_meta',
+    'session_id': '20260512_035400_c197642b',
+    'agent': 'main',
+    'model': 'claude-opus-4-6',
+    'platform': 'teams',
+    'title': 'Testing the assistant',
+    'started_at': '2026-05-12T10:54:00+00:00',
+  },
+  {'role': 'user', 'content': 'Question', 'timestamp': '2026-05-12T10:54:14+00:00'},
+  {'role': 'assistant', 'content': 'Answer', 'timestamp': '2026-05-12T10:55:00+00:00'},
+]
+
 RAR = Path(r'C:\Program Files\WinRAR\Rar.exe')
 
 
@@ -492,3 +506,13 @@ def test_a_child_gone_between_the_listing_and_the_reading_is_not_a_child(tmp_pat
 
   monkeypatch.setattr(FileHandler, 'record', vanishing)
   assert [child.name for child in handler.children(tmp_path)] == ['here.txt']
+
+
+def test_a_hermes_log_on_its_own_is_identified_from_its_content(tmp_path: Path) -> None:
+  path = _jsonl(tmp_path / '2026-05-12_main_20260512_035400_c197642b.jsonl', HERMES)
+
+  assert session_handler.identify(path) is True
+  stats, session = session_handler(path)
+  assert (session.harness, session.uid) == ('hermes', '20260512_035400_c197642b')
+  assert (len(session.turns), session.user_messages) == (2, ('Question',))
+  assert _iso(stats.span) == ['2026-05-12T10:54:00+00:00', '2026-05-12T10:55:00+00:00']
