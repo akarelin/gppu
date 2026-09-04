@@ -6,7 +6,7 @@ YAML to keep in sync across installs), cache.py for incremental parsing.
 
 build_stats() → {**stdin_data, enrichments} — raw merged dicts
 line1/line2: Jinja templates with pre-rendered widget values.
-Filters: c grad sep tok ms ago time_left pct effort_icon counter_sum top_tools nonzero
+Filters: c grad remaining sep tok ms ago time_left pct effort_icon counter_sum top_tools nonzero
 """
 
 import json
@@ -186,6 +186,10 @@ def _fc(val, color, prefix='', suffix=''):
 # get a position on it rather than a hand-picked colour per threshold, so the
 # gradient is code, not config.
 _GRADIENT = (196, 202, 208, 214, 220, 226, 190, 154, 118, 82, 46)
+_REMAINING_DIM = 240
+_REMAINING_BRIGHT = 255
+_REMAINING_DANGER = 20
+_REMAINING_QUIET = 75
 
 
 def _fgrad(val, pos, lo=0, hi=1, bg=False):
@@ -198,6 +202,23 @@ def _fgrad(val, pos, lo=0, hi=1, bg=False):
         return str(val)
     n = _GRADIENT[min(len(_GRADIENT) - 1, max(0, round(f * (len(_GRADIENT) - 1))))]
     return _colorize(str(val), f"48;5;{n};38;5;16" if bg else f"38;5;{n};1")
+
+
+def _fremaining(val, left):
+    """Dim abundant headroom, brighten toward 20%, then switch to red."""
+    if not val:
+        return ''
+    try:
+        left = min(100, max(0, float(left)))
+    except (TypeError, ValueError):
+        return str(val)
+    if left <= _REMAINING_DANGER:
+        return _colorize(str(val), "48;5;196;38;5;15;1")
+    urgency = (_REMAINING_QUIET - min(_REMAINING_QUIET, left)) / (
+        _REMAINING_QUIET - _REMAINING_DANGER
+    )
+    shade = round(_REMAINING_DIM + urgency * (_REMAINING_BRIGHT - _REMAINING_DIM))
+    return _colorize(str(val), f"38;5;{shade}")
 
 
 def _fsep(val, sep='|', color='GRAY2'):
@@ -234,6 +255,7 @@ _JINJA_ENV.filters["top_tools"] = _ftop_tools
 _JINJA_ENV.filters["nonzero"] = _fnonzero
 _JINJA_ENV.filters["c"] = _fc
 _JINJA_ENV.filters["grad"] = _fgrad
+_JINJA_ENV.filters["remaining"] = _fremaining
 _JINJA_ENV.filters["sep"] = _fsep
 
 _template_cache = {}

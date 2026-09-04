@@ -61,14 +61,15 @@ _LIMIT_5H = """
 {%- endif %}
 """
 
-# Weekly headroom and time until reset — the gradient runs red at empty.
+# Weekly headroom and time until reset. Abundant headroom stays quiet; urgency
+# brightens toward 20%, then turns red.
 _LIMIT_7D = """
 {% if rate_limits.seven_day.used_percentage is number -%}
   {% set left = (100 - rate_limits.seven_day.used_percentage) | round | int -%}
   {% set reset = rate_limits.seven_day.resets_at | time_left -%}
-  {% set text = '📅 ' ~ left ~ '%' -%}
+  {% set text = left ~ '%' -%}
   {% if reset -%}{% set text = text ~ ' ' ~ reset -%}{% endif -%}
-  {{ text | grad(left, 0, 100) }}
+  {{ text | remaining(left) }}
 {%- endif %}
 """
 
