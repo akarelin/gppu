@@ -23,3 +23,21 @@ def test_shared_icons_merge_into_one_entry():
         "Read": 5,
     })
     assert _plain(_ftop_tools(tools)) == "❯ 108 🔌 5 📖 5"
+
+
+def test_supported_claude_tools_have_icons():
+    names = {
+        "Agent", "Artifact", "AskUserQuestion", "Bash",
+        "CronCreate", "CronDelete", "CronList", "Edit",
+        "EnterPlanMode", "EnterWorktree", "ExitPlanMode", "Glob", "Grep",
+        "ListAgents", "Monitor", "PowerShell", "PushNotification", "Read",
+        "ScheduleWakeup", "SendFeedback", "SendMessage", "SendUserFile", "Skill",
+        "StructuredOutput", "TaskCreate", "TaskList", "TaskOutput", "TaskStop",
+        "TaskUpdate", "TodoWrite", "ToolSearch", "WebFetch", "WebSearch",
+        "Workflow", "Write",
+    }
+    assert [name for name in sorted(names) if _tool_icon(name) == name] == []
+
+
+def test_unknown_tool_name_remains_visible():
+    assert _tool_icon("Grag") == "Grag"
