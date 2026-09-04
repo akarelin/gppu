@@ -1,6 +1,16 @@
 # gppu.handlers Big tasks
 
-Complete every unchecked item under `Big tasks` in `gppu/handlers.py` on the `handlers-bigtasks` branch.
+## Closeout
+
+**Status:** Closed 2026-09-04.
+
+**Outcome:** The caller-composed handler implementation is ready to merge and build for Windows and Debian. macOS execution has not been tested.
+
+**Verified:** Windows CPython 3.14.7 passed the complete suite with 506 passed and 3 skipped. Debian CPython 3.14.5 passed the focused handler and generated-documentation suite with 59 passed. The wheel and source distribution built successfully.
+
+**Remaining enhancement:** Archive and folder statistics do not include a breakdown by file class. File classes are supplied by FileIndexer rather than defined by `gppu.handlers`, so that enhancement requires its own caller-supplied classification design. It is not required for the current handler runtime.
+
+This file records the completed work in `gppu/handlers.py` that began on the `handlers-bigtasks` branch.
 
 - [x] Read OpenAI and Anthropic LLM export ZIP files as collections of sessions.
 - [x] Keep harness-specific recognition and extraction out of large conditional blocks.
@@ -34,3 +44,13 @@ Complete every unchecked item under `Big tasks` in `gppu/handlers.py` on the `ha
 - [x] Add `.msg` and `.eml` filename metadata handling while leaving message parsing unimplemented.
 - [x] Include the complete test suite in the existing optional `run_tests` build path.
 - [x] Verify behavior, commit, and push the branch.
+
+## Large-tree follow-up
+
+- [x] Reject unsupported Session and Archive file extensions, and empty Session files, before content inspection.
+- [x] Identify Session folders from structural markers only; do not inspect their children during folder identification.
+- [x] Add streaming `walk_sync` and `walk` traversal with `enter` and `on_folder_done` callbacks.
+- [x] Make `identify_sync` and `probe_sync` consume the public traversal without parallel path and child dictionaries.
+- [x] Derive `archive_path_sync` from one aggregate root record without materializing the hierarchy.
+- [ ] Retain richer archive and folder statistics, including a breakdown by file class.
+- [x] Add focused traversal and I/O-count tests, regenerate handler documentation, run the complete suite and build, commit, and push.
