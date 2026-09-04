@@ -39,36 +39,41 @@ def test_weekly_limit_shows_percent_left_and_time_left(monkeypatch):
         },
     }
 
-    assert _plain(_render_template(TEMPLATES["limit_7d"], ctx)) == "10% 2d"
+    assert _plain(_render_template(TEMPLATES["limit_7d"], ctx)) == "📅 10% 2d"
 
 
 def test_weekly_remaining_brightens_then_turns_red():
-    quiet = _fremaining("80% 3d", 80)
-    middle = _fremaining("50% 2d", 50)
-    near = _fremaining("21% 1d", 21)
-    danger = _fremaining("20% 1d", 20)
+    quiet = _fremaining("📅 80% 3d", 80)
+    middle = _fremaining("📅 50% 2d", 50)
+    near = _fremaining("📅 21% 1d", 21)
+    danger = _fremaining("📅 20% 1d", 20)
 
     assert "\x1b[38;5;240m" in quiet
     assert "\x1b[38;5;247m" in middle
     assert "\x1b[38;5;255m" in near
     assert "\x1b[48;5;196;38;5;15;1m" in danger
-    assert _plain(quiet) == "80% 3d"
-    assert _plain(danger) == "20% 1d"
+    assert _plain(quiet) == "📅 80% 3d"
+    assert _plain(danger) == "📅 20% 1d"
 
 
 def test_effort_icons_cover_every_supported_state():
-    assert {
+    icons = {
         level: _feffort_icon(level)
         for level in ("disabled", "low", "medium", "high", "xhigh", "max", "ultra")
-    } == {
-        "disabled": "⚫",
-        "low": "🔵",
-        "medium": "🟢",
-        "high": "🟡",
-        "xhigh": "🟠",
-        "max": "🔴",
-        "ultra": "🟣",
     }
+
+    assert {level: _plain(icon) for level, icon in icons.items()} == {
+        "disabled": "⊘",
+        "low": "·",
+        "medium": "○",
+        "high": "◔",
+        "xhigh": "●",
+        "max": "●",
+        "ultra": "●",
+    }
+    assert "\x1b[38;5;37m" in icons["xhigh"]
+    assert "\x1b[38;5;201m" in icons["ultra"]
+    assert "\x1b[" not in icons["max"]
 
 
 def test_effort_icon_follows_context_size():
@@ -83,7 +88,7 @@ def test_effort_icon_follows_context_size():
     }
     rendered = _pre_render(stats)
 
-    assert _plain(_render_template(LINE1, {**stats, **rendered})) == "O 4.7·1M🟠"
+    assert _plain(_render_template(LINE1, {**stats, **rendered})) == "O 4.7·1M●"
 
 
 def test_disabled_thinking_takes_precedence_over_effort():
@@ -99,4 +104,4 @@ def test_disabled_thinking_takes_precedence_over_effort():
     }
     rendered = _pre_render(stats)
 
-    assert _plain(_render_template(LINE1, {**stats, **rendered})) == "O 4.7·1M⚫"
+    assert _plain(_render_template(LINE1, {**stats, **rendered})) == "O 4.7·1M⊘"
