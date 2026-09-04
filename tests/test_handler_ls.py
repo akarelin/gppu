@@ -41,7 +41,7 @@ def test_listing_shows_complete_handler_hierarchy(tmp_path: Path) -> None:
   assert 'files=3 folders=1' in result
   assert 'handlers=session' in result
   assert 'handler=session stats=(files=1 sessions=1 turns=1' in result
-  assert 'object=SessionFile harness=codex uid=codex-demo' in result
+  assert 'object=SessionFile harness=cx uid=codex-demo' in result
   assert 'topic=Show the handlers' in result
   assert 'handlers=archive' in result
   assert 'handler=archive stats=(files=1 folders=1 bytes=6' in result

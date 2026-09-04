@@ -77,9 +77,13 @@ PLACEHOLDER_TIMES = (
 FUTURE_TOLERANCE = timedelta(days=1)
 
 HOMES = {
-  'hermes': 'state.db',
-  'agy': 'antigravity_state.pbtxt',
+  'hermes': ('state.db',),
+  'agy': ('antigravity_state.pbtxt', 'jetski_state.pbtxt'),
 }
+SESSION_UID = re.compile(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+  re.I,
+)
 
 
 @runtime_checkable
@@ -571,6 +575,11 @@ class SessionFolder:
   harness: str
   files: tuple[SessionFile, ...]
 
+  @property
+  def uid(self) -> str | None:
+    values = {file.uid for file in self.files if file.uid}
+    return values.pop() if len(values) == 1 else None
+
 
 SessionObject = SessionFile | SessionFolder
 
@@ -621,7 +630,7 @@ class SessionHandler:
 
   def identify(self, path: Path) -> bool:
     if path.is_dir() and not path.is_symlink():
-      if any((path / marker).exists() for marker in HOMES.values()):
+      if _home_harness(path) is not None or _agy_session_folder(path):
         return True
       try:
         children = tuple(path.iterdir())
@@ -638,7 +647,7 @@ class SessionHandler:
     if path.is_file():
       obj: SessionObject = self._file(path)
     elif path.is_dir() and not path.is_symlink():
-      hint = next((name for name, marker in HOMES.items() if (path / marker).exists()), None)
+      hint = _home_harness(path)
       files = tuple(
         self._file(candidate)
         for candidate in sorted(path.rglob('*'), key=lambda item: str(item).casefold())
@@ -681,7 +690,7 @@ class SessionHandler:
       raise ValueError(f'{path}: session format is not identifiable')
     turns = _messages(harness, records)
     timestamps = tuple(_timestamps(records))
-    uid = _uid(harness, records)
+    uid = _uid(harness, records, path)
     parent_uid, subagent = _parent(records)
     mainline = any(record.get('isSidechain') is False for record in records)
     sidechain = any(record.get('isSidechain') is True for record in records)
@@ -848,7 +857,7 @@ def _harness(records: Sequence[Mapping[str, Any]], hint: str | None = None) -> s
     and isinstance(record.get('payload'), Mapping)
     for record in records
   ):
-    return 'codex'
+    return 'cx'
   if any(
     isinstance(record.get('sessionId'), str)
     or record.get('type') == 'teleported-from'
@@ -856,9 +865,16 @@ def _harness(records: Sequence[Mapping[str, Any]], hint: str | None = None) -> s
     or isinstance(record.get('parentUuid'), str)
     for record in records
   ):
-    return 'claude'
+    return 'cc'
   if any(isinstance(record.get('modelId'), str) for record in records):
     return 'openclaw'
+  if any(
+    record.get('type') in ('USER_INPUT', 'PLANNER_RESPONSE')
+    and record.get('source') in ('USER_EXPLICIT', 'MODEL')
+    and isinstance(record.get('created_at'), str)
+    for record in records
+  ):
+    return 'agy'
   # Hermes writes a flat log: a session_meta header carrying the id, then one record per turn. Until now only the
   # state.db beside a Hermes home said so, and a log on its own — copied out, exported, archived — said nothing.
   if any(
@@ -916,14 +932,23 @@ def _models(records: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
   )
 
 
-def _uid(harness: str, records: Sequence[Mapping[str, Any]]) -> str | None:
-  if harness == 'codex':
+def _uid(harness: str, records: Sequence[Mapping[str, Any]], path: Path) -> str | None:
+  if harness == 'cx':
     for record in records:
       if record.get('type') != 'session_meta' or not isinstance(payload := record.get('payload'), Mapping):
         continue
       value = payload.get('id') or payload.get('session_id')
       return value.strip() if isinstance(value, str) and value.strip() else None
     return None
+  if harness == 'agy':
+    return next(
+      (
+        parent.name
+        for parent in path.parents
+        if parent.parent.name == 'brain' and SESSION_UID.fullmatch(parent.name)
+      ),
+      None,
+    )
   for record in records:
     scopes = [record]
     scopes += [
@@ -992,7 +1017,7 @@ def _turn(
 
 
 def _messages(harness: str, records: Sequence[Mapping[str, Any]]) -> tuple[SessionTurn, ...]:
-  if harness == 'codex':
+  if harness == 'cx':
     response = tuple(
       item
       for record in records
@@ -1013,7 +1038,7 @@ def _messages(harness: str, records: Sequence[Mapping[str, Any]]) -> tuple[Sessi
       for item in [_turn(roles.get(payload.get('type')), payload.get('message'), record.get('timestamp'))]
       if item is not None
     )
-  if harness == 'claude':
+  if harness == 'cc':
     return tuple(
       item
       for record in records
@@ -1025,6 +1050,18 @@ def _messages(harness: str, records: Sequence[Mapping[str, Any]]) -> tuple[Sessi
         record.get('timestamp'),
         record.get('isMeta') is True,
         record.get('isSidechain') is True,
+      )]
+      if item is not None
+    )
+  if harness == 'agy':
+    roles = {'USER_INPUT': 'user', 'PLANNER_RESPONSE': 'assistant'}
+    return tuple(
+      item
+      for record in records
+      for item in [_turn(
+        roles.get(record.get('type')),
+        record.get('content'),
+        record.get('created_at'),
       )]
       if item is not None
     )
@@ -1071,6 +1108,24 @@ def _uniq(values) -> tuple[str, ...]:
   return tuple(dict.fromkeys(
     value.strip() for value in values if isinstance(value, str) and value.strip()
   ))
+
+
+def _home_harness(path: Path) -> str | None:
+  return next((
+    harness
+    for harness, markers in HOMES.items()
+    if any((path / marker).exists() for marker in markers)
+  ), None)
+
+
+def _agy_session_folder(path: Path) -> bool:
+  return (
+    SESSION_UID.fullmatch(path.name) is not None
+    and any(
+      (path / '.system_generated' / 'logs' / name).is_file()
+      for name in ('transcript_full.jsonl', 'transcript.jsonl')
+    )
+  )
 
 
 session_handler = SessionHandler()
