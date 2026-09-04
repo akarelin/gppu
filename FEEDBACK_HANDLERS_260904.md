@@ -102,38 +102,49 @@ gppu already walks. `_FileHandler._walk` at line 672 is a recursive generator ov
 
 `recursive=True` is the default on both. A caller who points `probe` at a Location root gets the whole tree in memory before the first record comes back.
 
-Callbacks are the fix, not a generator. The public calls are already async over a worker thread, and a generator does not cross `asyncio.to_thread` — a callback invoked from inside the walk does, and it is the same shape the lake's `on_progress` already has.
+It iterates, in both call modes. A sync generator on one side, an async generator on the other, and one callback for the single thing a stream cannot say.
 
 ```python
-@sync
-async def walk(self, path, recursive=True, enter=None, on_record=None, on_folder_done=None):
-    return await asyncio.to_thread(self.walk_sync, path, recursive, enter, on_record, on_folder_done)
-
-def walk_sync(self, path, recursive=True, enter=None, on_record=None, on_folder_done=None):
+def walk_sync(self, path, recursive=True, enter=None, on_folder_done=None):
     """Every entry under path, depth first.
 
-    `enter(record)` decides whether a folder is descended into; a folder it refuses is still recorded.
-    `on_record(record)` is called for every entry as it is read.
-    `on_folder_done(record)` is called for a folder the walk went into and finished, and only for those.
+    `enter(record)` decides whether a folder is descended into; a folder it refuses is still yielded.
+    `on_folder_done(record)` fires for a folder the walk went into and finished, and only for those.
     """
     for child in self.children(path):
-        if on_record is not None:
-            on_record(child)
+        yield child
         if child.is_folder and recursive and (enter is None or enter(child)):
-            self.walk_sync(child, recursive, enter, on_record, on_folder_done)
+            yield from self.walk_sync(child.path, recursive, enter, on_folder_done)
+            if on_folder_done is not None:
+                on_folder_done(child)
+
+async def walk(self, path, recursive=True, enter=None, on_folder_done=None):
+    for child in await asyncio.to_thread(self.children, path):     # one thread hop per folder
+        yield child
+        if child.is_folder and recursive and (enter is None or enter(child)):
+            async for found in self.walk(child.path, recursive, enter, on_folder_done):
+                yield found
             if on_folder_done is not None:
                 on_folder_done(child)
 ```
 
-`identify` and `probe` then collect through `on_record` instead of accumulating in three structures, and `archive_path_sync` asks for the root only.
+`for record in handler.walk_sync(path)` and `async for record in handler.walk(path)`. Progress comes from the loop body in both, which is the point of iterating rather than handing back a list.
 
-Those three parameters are what a walking consumer actually needs, and they are not lake-specific:
+The thread hop is per folder, not per entry — `children()` is where the syscalls and the identification cost sit, so that is the unit worth moving off the loop. Measured on `D:\Dev\CRAP\Systems`, 525 entries: 0.6 s either way, and a 50 ms spinner running beside the async walk ticked 10 times, so the loop was never blocked.
 
-- `enter` — every consumer has folders it records but does not go into: exclusions, `.git`, `__pycache__`, `node_modules`, a junction, another index. Without it each one rewrites the descent.
-- `on_record` — the entry, as it is read, so nothing has to be held.
-- `on_folder_done` — *this folder finished*, which is the one thing a flat stream cannot say. The lake appends to `batch.entered` there, and the entered list is how it says a thing that was there and is not now is gone. `enter` refusing a folder and `on_folder_done` never firing for it is exactly the lake's rule that a folder stored and not entered is not judged.
+**`@sync` cannot wrap an async generator.** Calling one returns an async generator object, not a coroutine, and `sync` hands it to `asyncio.run`:
 
-With those, `Indexer._folder` becomes three callbacks and the lake stops carrying a walk at all. Levels, batching and the folder-class names stay in the lake; they are what it stores, not how it reads.
+```
+TypeError: An asyncio.Future, a coroutine or an awaitable is required
+```
+
+So the walk needs two names rather than one decorated call. That is already the convention here — `probe`/`probe_sync`, `identify`/`identify_sync` — so it costs nothing new.
+
+`on_folder_done` stays a callback because a flat stream cannot carry *this folder finished*: by the time the walk comes back up, the folder was yielded long ago. The lake appends to `batch.entered` there, and the entered list is how it says a thing that was there and is not now is gone. `enter` refusing a folder while `on_folder_done` never fires for it is exactly the lake's rule that a folder stored and not entered is not judged.
+
+`enter` is the other part worth having. Every consumer of a walk has folders it records but does not go into — exclusions, `.git`, `__pycache__`, `node_modules`, a junction, another index — and without a predicate each one rewrites the descent.
+
+`identify` and `probe` then consume the walk instead of accumulating in three structures, and `archive_path_sync` asks for the root only. `Indexer._folder` becomes a loop over `walk_sync` with two arguments, and the lake stops carrying a walk at all. Levels, batching and the folder-class names stay in the lake; they are what it stores, not how it reads.
 
 ## What the lake would like handlers to carry
 
