@@ -11,7 +11,7 @@ JSONL_TTL = 2
 OV_TTL = 5
 
 # Each element carries its own color so it is identifiable without reading it.
-# Colors that ramp (context badge, 📅 weekly, +/- lines, OV health) mean state;
+# Colors that ramp (context badge, weekly limit, +/- lines, OV health) mean state;
 # every other color is just that element's identity.
 LINE1 = "{{ model }}{{ effort_icon }} {{ context_pct }}{{ limit_7d|sep }}{{ user_turns|c('DC','🐯 ')|sep }} {{ assistant_msgs|c('BP','🤖 ') }}{{ top_tools|sep }}{{ started_ago|c('DGOLD','🕐 ')|sep }}{{ wall_time|c('BO','⏱️ ')|sep }}{{ api_time|c('DPINK','⚙️ ')|sep }}"
 LINE2 = "{{ project|c('BGOLD') }} {{ project_folder|c('GRAY4','📂 ') }}{{ hostname|c('DM','💻 ')|sep }}{{ git_remote|c('DB')|sep }}{{ git_branch|sep }}{{ lines_changed|sep }}{{ ov_score|sep }}{{ ov_recall|sep }}{{ ov_state|sep }}{{ ov_capture|sep }}"
