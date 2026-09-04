@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
@@ -18,6 +19,7 @@ from gppu.handlers import (
   Record,
   SessionFile,
   SessionFolder,
+  archive_handler,
   file_handler,
   session_handler,
 )
@@ -238,6 +240,26 @@ def test_named_conversation_export_with_unknown_shape_fails(tmp_path: Path) -> N
   assert session_handler.identify(path) is True
   with pytest.raises(ValueError, match='conversation format is not identifiable'):
     session_handler(path)
+
+
+def test_handlers_are_awaitable_without_changing_synchronous_calls(tmp_path: Path) -> None:
+  session_path = _jsonl(tmp_path / 'rollout.jsonl', CODEX)
+  archive_path = tmp_path / 'files.zip'
+  with zipfile.ZipFile(archive_path, 'w') as archive:
+    archive.writestr('one.txt', 'one')
+
+  async def exercise() -> None:
+    assert await session_handler.identify(session_path) is True
+    stats, session = await session_handler(session_path)
+    assert (stats.sessions, session.uid) == (1, 'codex-one')
+    assert (await file_handler.identify(session_path, recursive=False))[0].handlers == ('session',)
+    assert (await file_handler.probe(session_path, recursive=False))[0].span == stats.span
+    assert (await file_handler.load(session_path)).uid == 'codex-one'
+    assert await archive_handler.identify(archive_path) is True
+    archive_stats, records = await archive_handler(archive_path)
+    assert (archive_stats.files, records[0].name) == (1, 'one.txt')
+
+  asyncio.run(exercise())
 
 
 def test_session_topic_skips_machine_preamble_and_marks_internal_turns(tmp_path: Path) -> None:

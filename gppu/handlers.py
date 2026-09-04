@@ -31,7 +31,7 @@ hierarchy. A domain handler receives one ``Path`` and returns
     - [x] Anthropic. Example: \\s1\Everything\Sessions\*.zip
   - [x] Refactor code so harness specific code is not in big if else blocks. 
   - [x] Refactor code to have fewer functions that do not belong to classes
-  - [ ] Make handlers support async (gppu async)
+  - [x] Make handlers support async (gppu async)
   - [ ] extract spans from git history (local, no upstreams)
     - [ ] Folders that are git-tracked - extract spans from 
     - [ ] files that are git-tracked - codex memories folder 
@@ -42,6 +42,7 @@ hierarchy. A domain handler receives one ``Path`` and returns
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -55,6 +56,8 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
 
 import rarfile
+
+from .gppu import sync
 
 ObjectT = TypeVar('ObjectT')
 StatsT = TypeVar('StatsT')
@@ -159,6 +162,14 @@ class Handler(Protocol[ObjectT, StatsT]):
   def __call__(self, path: Path) -> tuple[StatsT, ObjectT]: ...
 
 
+@runtime_checkable
+class _SyncHandler(Protocol[ObjectT, StatsT]):
+  """Synchronous implementation used while a handler runs in a worker thread."""
+
+  def identify_sync(self, path: Path) -> bool: ...
+  def call_sync(self, path: Path) -> tuple[StatsT, ObjectT]: ...
+
+
 @dataclass(frozen=True)
 class Probe:
   """One handler's result for a file or folder."""
@@ -242,12 +253,20 @@ class FileHandler:
     self._probed: dict[Path, tuple[Signature, tuple[Probe, ...]]] = {}
     self._children: dict[Path, tuple[Signature, tuple[Path, ...]]] = {}
 
-  def identify(self, path: Path, recursive: bool = True) -> list[Record]:
+  @sync
+  async def identify(self, path: Path, recursive: bool = True) -> list[Record]:
+    return await asyncio.to_thread(self.identify_sync, path, recursive)
+
+  def identify_sync(self, path: Path, recursive: bool = True) -> list[Record]:
     """Return metadata and matching handler names without probing objects."""
 
     return [self.record(found) for found in self._walk(path, recursive)]
 
-  def probe(self, path: Path, recursive: bool = True) -> list[Record]:
+  @sync
+  async def probe(self, path: Path, recursive: bool = True) -> list[Record]:
+    return await asyncio.to_thread(self.probe_sync, path, recursive)
+
+  def probe_sync(self, path: Path, recursive: bool = True) -> list[Record]:
     """Probe matching handlers and derive recursive folder statistics."""
 
     paths = list(self._walk(path, recursive))
@@ -274,7 +293,11 @@ class FileHandler:
     signature = _signature(stat)
     cached = self._identified.get(path)
     if cached is None or cached[0] != signature:
-      names = tuple(handler.name for handler in self.configured if handler.identify(path))
+      names = tuple(
+        handler.name
+        for handler in self.configured
+        if self._handler_identify(handler, path)
+      )
       self._identified[path] = (signature, names)
       self._probed.pop(path, None)
     else:
@@ -334,13 +357,33 @@ class FileHandler:
     parent = PurePosixPath(parent.as_posix())
     return tuple(child for child in probe.obj if child.path.parent == parent)
 
-  def load(self, path: Path) -> Any:
+  @sync
+  async def load(self, path: Path) -> Any:
+    return await asyncio.to_thread(self.load_sync, path)
+
+  def load_sync(self, path: Path) -> Any:
     """Return the first matching typed object, or ``None`` when unrecognized."""
 
     result = self._probe_record(_absolute(path))
     return result.probes[0].obj if result.probes else None
 
-  def normalize(
+  @sync
+  async def normalize(
+    self,
+    source: Path,
+    destination: Path | None = None,
+    recursive: bool = True,
+    exclude_handlers: Sequence[str] = (),
+  ) -> Path:
+    return await asyncio.to_thread(
+      self.normalize_sync,
+      source,
+      destination,
+      recursive,
+      exclude_handlers,
+    )
+
+  def normalize_sync(
     self,
     source: Path,
     destination: Path | None = None,
@@ -391,11 +434,29 @@ class FileHandler:
       else:
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
-    self.invalidate(source)
-    self.invalidate(destination)
+    self.invalidate_sync(source)
+    self.invalidate_sync(destination)
     return destination
 
-  def archive_path(
+  @sync
+  async def archive_path(
+    self,
+    source: Path,
+    destination: Path,
+    name: str,
+    extension: str,
+    local_time: tzinfo,
+  ) -> Path:
+    return await asyncio.to_thread(
+      self.archive_path_sync,
+      source,
+      destination,
+      name,
+      extension,
+      local_time,
+    )
+
+  def archive_path_sync(
     self,
     source: Path,
     destination: Path,
@@ -405,7 +466,7 @@ class FileHandler:
   ) -> Path:
     """Name an archive from the complete source hierarchy span."""
 
-    root = self.probe(source)[0]
+    root = self.probe_sync(source)[0]
     if root.span is None:
       raise ValueError(f'{source}: hierarchy has no span')
     return _absolute(destination) / ArchiveHandler.archive_name(
@@ -415,7 +476,11 @@ class FileHandler:
       local_time,
     )
 
-  def invalidate(self, path: Path | None = None) -> None:
+  @sync
+  async def invalidate(self, path: Path | None = None) -> None:
+    await asyncio.to_thread(self.invalidate_sync, path)
+
+  def invalidate_sync(self, path: Path | None = None) -> None:
     """Discard one cached branch, or the complete hierarchy cache."""
 
     if path is None:
@@ -452,13 +517,25 @@ class FileHandler:
     if cached is None or cached[0] != signature or 'git' in record.handlers:
       selected = {handler.name: handler for handler in self.configured}
       probes = tuple(
-        Probe(name, *selected[name](path))
+        Probe(name, *self._handler_call(selected[name], path))
         for name in record.handlers
       )
       self._probed[path] = (signature, probes)
     else:
       probes = cached[1]
     return replace(record, probes=probes)
+
+  @staticmethod
+  def _handler_identify(handler: Handler[Any, Any], path: Path) -> bool:
+    if isinstance(handler, _SyncHandler):
+      return handler.identify_sync(path)
+    return handler.identify(path)
+
+  @staticmethod
+  def _handler_call(handler: Handler[Any, Any], path: Path) -> tuple[Any, Any]:
+    if isinstance(handler, _SyncHandler):
+      return handler.call_sync(path)
+    return handler(path)
 
   @staticmethod
   def _file_stats(record: Record) -> FileStats:
@@ -589,15 +666,23 @@ class GitHandler:
 
   name = 'git'
 
-  def identify(self, path: Path) -> bool:
+  @sync
+  async def identify(self, path: Path) -> bool:
+    return await asyncio.to_thread(self.identify_sync, path)
+
+  def identify_sync(self, path: Path) -> bool:
     return self._metadata(path) is not None
 
-  def __call__(self, path: Path) -> tuple[FileStats, Path]:
+  @sync
+  async def __call__(self, path: Path) -> tuple[FileStats, Path]:
+    return await asyncio.to_thread(self.call_sync, path)
+
+  def call_sync(self, path: Path) -> tuple[FileStats, Path]:
     path = _absolute(path)
     metadata = self._metadata(path)
     if metadata is None:
       raise ValueError(f'{path}: Git metadata is not identifiable')
-    root = FileHandler().probe(metadata)[0]
+    root = FileHandler().probe_sync(metadata)[0]
     return FileStats(0, 0, 0, root.span), metadata
 
   @staticmethod
@@ -629,14 +714,22 @@ class ArchiveHandler:
   name = 'archive'
   extensions = ('.rar', '.tar.gz', '.zip')
 
-  def identify(self, path: Path) -> bool:
+  @sync
+  async def identify(self, path: Path) -> bool:
+    return await asyncio.to_thread(self.identify_sync, path)
+
+  def identify_sync(self, path: Path) -> bool:
     return path.is_file() and (
       zipfile.is_zipfile(path)
       or rarfile.is_rarfile(path)
       or self._is_tar_gz(path)
     )
 
-  def __call__(self, path: Path) -> tuple[FileStats, tuple[Record, ...]]:
+  @sync
+  async def __call__(self, path: Path) -> tuple[FileStats, tuple[Record, ...]]:
+    return await asyncio.to_thread(self.call_sync, path)
+
+  def call_sync(self, path: Path) -> tuple[FileStats, tuple[Record, ...]]:
     path = _absolute(path)
     if zipfile.is_zipfile(path):
       records = self._zip_records(path)
@@ -908,7 +1001,11 @@ class SessionHandler:
       'claude': self._claude_turns,
     }
 
-  def identify(self, path: Path) -> bool:
+  @sync
+  async def identify(self, path: Path) -> bool:
+    return await asyncio.to_thread(self.identify_sync, path)
+
+  def identify_sync(self, path: Path) -> bool:
     path = _absolute(path)
     if path.is_dir() and not path.is_symlink():
       if self._home_harness(path) is not None or self._agy_session_folder(path):
@@ -929,7 +1026,11 @@ class SessionHandler:
       or self._harness(self._head(path)) is not None
     )
 
-  def __call__(self, path: Path) -> tuple[SessionStats, SessionObject]:
+  @sync
+  async def __call__(self, path: Path) -> tuple[SessionStats, SessionObject]:
+    return await asyncio.to_thread(self.call_sync, path)
+
+  def call_sync(self, path: Path) -> tuple[SessionStats, SessionObject]:
     path = _absolute(path)
     if path.is_file():
       if members := self._export_members(path):
