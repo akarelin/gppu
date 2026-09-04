@@ -112,7 +112,7 @@ def test_session_handler_returns_stats_and_complete_object(tmp_path: Path) -> No
   stats, session = session_handler(path)
 
   assert isinstance(session, SessionFile)
-  assert (session.harness, session.uid) == ('codex', 'codex-one')
+  assert (session.harness, session.uid) == ('cx', 'codex-one')
   assert (len(session.turns), session.user_messages) == (2, ('Question',))
   assert session.models == ('gpt-5.6',)
   assert (stats.files, stats.sessions, stats.turns) == (1, 1, 2)
@@ -161,7 +161,7 @@ def test_session_folder_supports_nested_codex_logs_and_state_markers(tmp_path: P
   stats, sessions = session_handler(codex)
 
   assert isinstance(sessions, SessionFolder)
-  assert (sessions.harness, stats.files) == ('codex', 1)
+  assert (sessions.harness, stats.files) == ('cx', 1)
 
   hermes = tmp_path / 'hermes'
   hermes.mkdir()
@@ -175,6 +175,14 @@ def test_session_folder_supports_nested_codex_logs_and_state_markers(tmp_path: P
   agy.mkdir()
   (agy / 'antigravity_state.pbtxt').write_text('installation {}', encoding='utf-8')
   stats, sessions = session_handler(agy)
+
+  assert isinstance(sessions, SessionFolder)
+  assert (sessions.harness, stats.files) == ('agy', 0)
+
+  agy_cli = tmp_path / 'agy-cli'
+  agy_cli.mkdir()
+  (agy_cli / 'jetski_state.pbtxt').write_text('installation {}', encoding='utf-8')
+  stats, sessions = session_handler(agy_cli)
 
   assert isinstance(sessions, SessionFolder)
   assert (sessions.harness, stats.files) == ('agy', 0)
@@ -195,7 +203,7 @@ def test_openclaw_and_teleported_claude_are_identified_from_content(tmp_path: Pa
   assert (openclaw_session.harness, openclaw_session.uid) == ('openclaw', 'openclaw-one')
   assert (openclaw_stats.turns, openclaw_stats.models) == (1, ('anthropic/claude-opus-5',))
   assert isinstance(claude_session, SessionFile)
-  assert (claude_session.harness, claude_session.uid) == ('claude', 'claude-remote')
+  assert (claude_session.harness, claude_session.uid) == ('cc', 'claude-remote')
 
 
 def test_malformed_line_is_skipped_rather_than_failing_the_session(tmp_path: Path) -> None:
@@ -214,7 +222,7 @@ def test_codex_log_without_session_meta_remains_identifiable_but_has_no_uid(tmp_
   _, session = session_handler(path)
 
   assert isinstance(session, SessionFile)
-  assert (session.harness, session.uid) == ('codex', None)
+  assert (session.harness, session.uid) == ('cx', None)
 
 
 def test_file_and_folder_records_have_handler_derived_spans(tmp_path: Path) -> None:
@@ -516,3 +524,38 @@ def test_a_hermes_log_on_its_own_is_identified_from_its_content(tmp_path: Path) 
   assert (session.harness, session.uid) == ('hermes', '20260512_035400_c197642b')
   assert (len(session.turns), session.user_messages) == (2, ('Question',))
   assert _iso(stats.span) == ['2026-05-12T10:54:00+00:00', '2026-05-12T10:55:00+00:00']
+
+
+def test_an_agy_transcript_and_its_session_folder_are_identified(tmp_path: Path) -> None:
+  uid = '31053146-5556-492e-8342-872da1a8bcf9'
+  path = _jsonl(
+    tmp_path / 'brain' / uid / '.system_generated' / 'logs' / 'transcript_full.jsonl',
+    [
+      {
+        'type': 'USER_INPUT',
+        'source': 'USER_EXPLICIT',
+        'status': 'DONE',
+        'content': 'Question',
+        'created_at': '2026-08-29T14:35:31Z',
+      },
+      {
+        'type': 'PLANNER_RESPONSE',
+        'source': 'MODEL',
+        'status': 'DONE',
+        'content': 'Answer',
+        'created_at': '2026-08-29T14:49:31Z',
+      },
+    ],
+  )
+
+  stats, session = session_handler(path)
+
+  assert session_handler.identify(path.parents[2]) is True
+  assert (session.harness, session.uid) == ('agy', uid)
+  assert (len(session.turns), session.user_messages) == (2, ('Question',))
+  assert _iso(stats.span) == ['2026-08-29T14:35:31+00:00', '2026-08-29T14:49:31+00:00']
+
+  folder_stats, folder = session_handler(path.parents[2])
+  assert isinstance(folder, SessionFolder)
+  assert (folder.harness, folder.uid) == ('agy', uid)
+  assert folder_stats.sessions == 1
