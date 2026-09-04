@@ -3,7 +3,13 @@
 import re
 
 import statusline.status_line as status_line
-from statusline.status_line import _feffort_icon, _ftime_left, _pre_render, _render_template
+from statusline.status_line import (
+    _feffort_icon,
+    _fremaining,
+    _ftime_left,
+    _pre_render,
+    _render_template,
+)
 from statusline.templates import LINE1, TEMPLATES
 
 
@@ -33,7 +39,21 @@ def test_weekly_limit_shows_percent_left_and_time_left(monkeypatch):
         },
     }
 
-    assert _plain(_render_template(TEMPLATES["limit_7d"], ctx)) == "📅 10% 2d"
+    assert _plain(_render_template(TEMPLATES["limit_7d"], ctx)) == "10% 2d"
+
+
+def test_weekly_remaining_brightens_then_turns_red():
+    quiet = _fremaining("80% 3d", 80)
+    middle = _fremaining("50% 2d", 50)
+    near = _fremaining("21% 1d", 21)
+    danger = _fremaining("20% 1d", 20)
+
+    assert "\x1b[38;5;240m" in quiet
+    assert "\x1b[38;5;247m" in middle
+    assert "\x1b[38;5;255m" in near
+    assert "\x1b[48;5;196;38;5;15;1m" in danger
+    assert _plain(quiet) == "80% 3d"
+    assert _plain(danger) == "20% 1d"
 
 
 def test_effort_icons_cover_every_supported_state():
