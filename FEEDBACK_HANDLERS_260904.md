@@ -87,6 +87,29 @@ The lake pays all of it at `refresh` and `files`, the two levels that never prob
 - **`probe(path)` defaults to `recursive=True`** and materializes a Record for every descendant in a dict. On a Location root that is the whole tree in memory.
 - **`Record.path` is `Path | PurePosixPath` and `location` is `str | Path | None`.** Every consumer writes `isinstance` checks to find out whether it is looking at a real file. A flag would carry it.
 
+## There is no note handler
+
+`FileHandler.handler_types` is `chatgpt, claude, session, archive, git, folder`. Nothing reads a markdown file. The only YAML frontmatter reader in gppu is `gppu/tui/sidecar.py`, and that is a launcher manifest — it reads `{name}.{ext}.md` beside a utility for `name`, `description`, `nav`, `icon`, `platform` and `modes`. It has no handler `name`, no `identify`, no `__call__`, and it returns no `FileStats`. Same on `master` and in installed 3.5.7.
+
+The lake carried its own until 2026-09-04 — `NoteHandler` in `D:\Dev\CRAP\Projects\textlake\handlers.py`, reached by file path through `importlib`. It is out of the lake now because nothing there read what it produced. The code is 115 lines and it is the right shape for a mixin: a `SafeLoader` with the timestamp resolver removed so every scalar keeps its spelling, the frontmatter as written, and `created..updated` as the span when both parse.
+
+If it belongs in gppu it is a class beside the others:
+
+```python
+class NoteHandler:
+    """Markdown notes: the YAML frontmatter as written, created..updated as the span."""
+
+    name = "note"
+
+    def identify_sync(self, path: Path) -> bool:
+        return path.suffix.casefold() == ".md" and path.is_file()
+
+    def call_sync(self, path: Path) -> tuple[FileStats, dict[str, Any]]:
+        ...
+```
+
+Extension first, so it costs one `str` comparison for every file that is not a note — unlike session and archive, which open everything.
+
 ## What the lake would like handlers to carry
 
 The lake re-stats files that `record()` has already stat'ed, because `Record` does not carry what it found:
