@@ -1,116 +1,60 @@
 # Feedback on the new handlers — 2026-09-04
 
-Read of `gppu/handlers.py` on `handlers-bigtasks` (working copy, alex-pc) against the one application that already uses handlers: the lake's indexer, `D:\Dev\CRAP\Systems\Lake\indexer.py`.
+Two reads of `gppu/handlers.py` on `handlers-bigtasks`, morning and evening, against the one application that uses handlers: the lake's indexer, `D:\Dev\CRAP\Systems\Lake\indexer.py`. The module went from 2,516 to 3,829 lines between them. Everything below is the second read.
 
-## What stops the lake from using this today
+## Settled since the first read
 
-**1. `FileHandler` no longer accepts handlers.** It is a mixin class with a fixed `handler_types` tuple and `FileHandler()` takes no arguments. Both callers pass instances:
+- **Composition is public and caller-driven.** `class Lake(FileHandler, IgnoredHandler, MarkdownHandler, SessionHandler, ArchiveHandler, FolderHandler): pass` gives `['ignored', 'markdown', 'session', 'archive', 'folder']` off the MRO. No private base, no tuple to keep in step, and `metadata` and `strict` are per-instance. The lake can leave git out and add its own.
+- **A failure is data, not the end of the scan.** `HandlerError` on `Probe.error` and `Record.errors`. A note whose frontmatter will not parse comes back as `errors=[('markdown', 'ValueError')]` and the recursive probe around it finishes. That is the lake's `metadata.unread` already in the library, and it makes the lake's own try/except redundant.
+- **`.git` is visible again.** `children()` yields it with `handlers=('ignored', 'folder')` — recorded, not descended. `IGNORED_FOLDER_PATTERNS` is a superset of the lake's `FOLDER_CLASS_RULES`, and `IGNORED_NAME_PATTERNS` is its `EXCLUSIONS` exactly. Windows hidden and system are handled inside `IgnoredHandler`, so the lake's second `stat` for `st_file_attributes` can go.
+- **`requires-python` is `>=3.14`,** which is what the PEP 758 syntax needs.
 
-```python
-# D:\Dev\CRAP\Systems\Lake\indexer.py:66
-HANDLERS = FileHandler(session_handler, archive_handler)
-# D:\Dev\CRAP\Projects\textlake\handlers.py:115
-file_handler = FileHandler(session_handler, archive_handler, note_handler)
-```
+`EmailHandler` is new; `ImageHandler` and `VideoHandler` stand as placeholders.
 
-An application cannot choose its set. The lake needs markdown, session, archive and folder, and needs git left out; the only route left is subclassing the private `_FileHandler`, which means every consumer reaches inside the module:
+## What is left
 
-```python
-class LakeHandler(_FileHandler, MarkdownHandler, SessionHandler, ArchiveHandler, FolderHandler):
-    handler_types = (MarkdownHandler, SessionHandler, ArchiveHandler, FolderHandler)
-```
+**It is not released.** Installed gppu is 3.5.7 and its `handlers.py` is still the old 24-line `Handler(load_object, derive_stats)`. `from gppu.handlers import FileHandler` is an ImportError on alex-pc, so nothing in the lake can be verified until the Action builds and publishes.
 
-`PLAN_HANDLERS_BIGTASKS.md` lists "Compose `FileHandler` from handler mixins without constructor injection" as intended, so this is a decision, not an oversight. It needs a supported way to compose a set — a public base, or `FileHandler.with_handlers(*types)` — otherwise every application depends on a private name.
+**Identify still opens every file.** Identify-only walk of `D:\Dev\CRAP\Systems`, 403 entries after ignored folders are skipped, alex-pc, Python 3.14.7, warm cache:
 
-**2. The module needs Python 3.14** — settled later the same day. The `except A, B:` clauses (PEP 758) make the import a SyntaxError on 3.13, and `requires-python` is now `>=3.14`, which says so. alex-pc's 3.13 carries gppu 2.50.6 and will keep it.
+| set | per entry |
+|---|---|
+| `os.walk` | 6 µs |
+| ignored + markdown + session + archive + folder | 1,214 µs |
+| every handler | 9,170 µs |
 
-**3. It is not released.** Installed gppu is 3.5.7 and its `handlers.py` is the old 24-line `Handler(load_object, derive_stats)`. Both lake modules fail to import right now:
+| handler | per entry |
+|---|---|
+| git | 7,311 µs |
+| session | 1,029 µs |
+| archive | 534 µs |
+| claude / chatgpt | 477 / 452 µs |
+| email | 372 µs |
+| log / markdown / csv | 364 / 352 / 351 µs |
+| ignored | 282 µs |
+| folder | 206 µs |
 
-```
-ImportError: cannot import name 'FileHandler' from 'gppu.handlers'
-```
-
-## Performance
-
-Identify-only walk of `D:\Dev\CRAP\Systems` — 525 entries, 470 files — measured on alex-pc, Python 3.14.7, warm page cache. No probing, no database.
-
-| walk | time | per entry |
-|---|---|---|
-| `os.walk` | 0.002 s | 4 µs |
-| markdown + session + archive + folder (what the lake wants) | 0.567 s | 1,079 µs |
-| new `FileHandler` default, all nine | 4.027 s | 7,670 µs |
-
-Per handler, same walk:
-
-| handler | time | per entry |
-|---|---|---|
-| git | 2.904 s | 5,531 µs |
-| session | 0.343 s | 654 µs |
-| archive | 0.242 s | 461 µs |
-| anthropic | 0.175 s | 333 µs |
-| chatgpt | 0.171 s | 325 µs |
-| folder | 0.101 s | 193 µs |
-| csv | 0.098 s | 187 µs |
-| log | 0.098 s | 186 µs |
-| markdown | 0.096 s | 184 µs |
-
-FileIndexer's measured alex-laptop pass was 68,192 files and 10,046 folders. At 1,079 µs that walk costs ~84 s of identification; at 7,670 µs it costs ~10 minutes. Across the lake's 1.7 M entities: ~31 minutes against ~3.6 hours.
-
-**Git is five times everything else together, and it is in the default set.** `GitHandler.identify_sync` walks every parent looking for `.git`, then calls `_history`, which calls `_state` — reads `HEAD`, reads the branch ref, stats `index`, `logs/HEAD`, `packed-refs` — once per path examined. It also turns off both caches on purpose: `record()` re-runs identify for git on a cache hit, and `_probe_record` re-probes whenever git matched. Warm-cache probe of one tracked `.py` file is 1.14 ms with git in the set and 0.23 ms without.
-
-Git spans are worth having. They belong on folders and on paths a caller asks for, not on every file the walk touches.
-
-**Identification is content sniffing on every file, with no extension or size filter.** Measured on the same tree:
+`markdown`, `csv`, `log` and `email` check a suffix. `session` and `archive` open the file. Measured on the same walk:
 
 ```
-SessionHandler._head calls     940  = 2.00 per file
-  of which repeat reads of the same file: 470
-zipfile.is_zipfile calls       470  = 1.00 per file
+SessionHandler._head calls  820 for 352 files  = 2.33 per file
+  of which repeat reads of the same file: 352
 ```
 
-Every file is opened and JSON-parsed twice. `SessionHandler.identify_sync` on a *folder* lists it and head-reads every file in it to decide whether the folder is a session folder; then the walk enters that folder and head-reads each file again for its own identify. `ArchiveHandler.identify_sync` adds `zipfile.is_zipfile`, then `rarfile.is_rarfile`, then a gzip check plus `tarfile.is_tarfile` — up to four more reads per file — for a `.py` or a `.jpg` as readily as for a `.zip`.
+Every file is opened and JSON-parsed twice: `SessionHandler.identify_sync` on a folder lists it and head-reads every file in it to decide whether the folder is a session folder, then the walk enters and head-reads each file again for its own identify. `ArchiveHandler.identify_sync` adds `zipfile.is_zipfile`, `rarfile.is_rarfile`, a gzip check and `tarfile.is_tarfile` — for a `.py` as readily as for a `.zip`. `ArchiveHandler.extensions` exists and identify does not consult it.
 
-The lake pays all of it at `refresh` and `files`, the two levels that never probe anything. `ArchiveHandler.extensions` exists and identify does not consult it.
+A caller reading a Location at a level that never probes pays all of it. Extension or size first, the way the four new handlers do, is the difference between a 31-minute walk over the lake's 1.7 M entities and a 4-hour one.
 
-## Smaller things
+**Git is seven times everything else together.** `identify_sync` walks every parent for `.git`, then `_history` calls `_state` — reads `HEAD`, reads the branch ref, stats `index`, `logs/HEAD`, `packed-refs` — once per path examined. It also turns both caches off on purpose: `record()` re-runs identify for git on a cache hit, `_probe_record` re-probes whenever git matched. Git spans are worth having on folders and on paths a caller asks for, not on every file a walk touches.
 
-- **`_head` reads a whole line.** `for line in stream` on a one-line 2 GB JSON file reads 2 GB into memory before the JSON check. The lake walks folders holding exports.
-- **`SessionFile.records` keeps the entire parsed JSONL,** and `_probed` and `_session_cache` are unbounded. Probing a Sessions folder holds every parsed session at once. The lake works around this by calling `invalidate()` after every batch, which throws away the whole cache including the parts it still wants.
-- **`_archive_children` scans the complete member tuple for each folder inside the archive** — members × folders. A RAR with 100k members and 10k folders is a billion comparisons.
-- **`children()` drops `.git` silently.** The lake wants that folder as a row with `folder_class = '.git'`; it can never see it. Hiding it from copying is right; hiding it from listing removes the caller's choice.
-- **`@sync` returns a Task inside a running loop.** `probe()` called from sync code that happens to sit inside an event loop returns a Task, not records. The `_sync` twins are the safe call and are the ones applications should use; the docs point at the decorated names.
-- **`probe(path)` defaults to `recursive=True`** and materializes a Record for every descendant in a dict. On a Location root that is the whole tree in memory.
-- **`Record.path` is `Path | PurePosixPath` and `location` is `str | Path | None`.** Every consumer writes `isinstance` checks to find out whether it is looking at a real file. A flag would carry it.
+**There is still no public walk, and the two callers hold the tree.** `_walk` is private and yields `Path`. `identify_sync` returns `[self.record(f) for f in self._walk(...)]`; `probe_sync` builds that list plus a `records` dict and a `child_paths` dict. `recursive=True` is the default on both, so `probe(location_root)` holds the whole tree before the first record comes back, and `archive_path_sync` probes a complete hierarchy to read one span.
 
-## Markdown, CSV and log — added later on 2026-09-04
-
-`handler_types` is now `chatgpt, claude, markdown, csv, log, session, archive, git, folder`, with `ImageExifHandler` and `VideoExifHandler` standing as placeholders.
-
-These three identify on extension — `path.suffix.casefold() == '.md'` and `is_file()` — and they are the cheapest handlers in the set at about 185 µs an entry, against 654 for session and 461 for archive. That is the shape the older handlers should take: extension first, content only when the extension says it might be worth opening.
-
-`MarkdownHandler` covers what the lake's own note handler did, and covers it better: the frontmatter as written through a `SafeLoader` with the timestamp resolver removed, `created..updated` as the span, plus `title`, `name` and `tags` on `MarkdownFile`. What it does not carry is the mapping onto Alex's frontmatter standard — `fileClass` or `type` to `instanceOf`, `tags`, `status`, `byAlex`, and the `up`/`down`/`prev`/`next`/`related` wikilink targets. That mapping is a vocabulary, not a parser, and it belongs to whatever stores the annotations.
-
-It also raises where the lake's version returned nothing: no closing `---`, YAML that does not parse, frontmatter that is not a mapping. That gives `metadata.unread` a cheap and deterministic trigger, which session and archive do not have.
-
-## The walk
-
-gppu already walks. `_FileHandler._walk` at line 672 is a recursive generator over `children()`, and `identify` and `probe` both run it in a worker thread behind an awaitable call. The question is not whether to have one; it is that the one there is private, and that both callers collect it into memory instead of handing entries back as they are read.
-
-- `identify_sync` returns `[self.record(found) for found in self._walk(path, recursive)]` — every descendant Record in a list.
-- `probe_sync` builds that list plus a `records` dict and a `child_paths` dict — three copies of the tree.
-- `archive_path_sync` (line 634) calls `self.probe_sync(source)[0]` to read one span, and probes the complete hierarchy to get it.
-
-`recursive=True` is the default on both. A caller who points `probe` at a Location root gets the whole tree in memory before the first record comes back.
-
-It iterates, in both call modes. A sync generator on one side, an async generator on the other, and one callback for the single thing a stream cannot say.
+An iterating walk fixes it in both call modes, and gives a caller its progress indicator:
 
 ```python
 def walk_sync(self, path, recursive=True, enter=None, on_folder_done=None):
-    """Every entry under path, depth first.
-
-    `enter(record)` decides whether a folder is descended into; a folder it refuses is still yielded.
-    `on_folder_done(record)` fires for a folder the walk went into and finished, and only for those.
-    """
+    """`enter(record)` decides whether a folder is descended into; a folder it refuses is still yielded.
+    `on_folder_done(record)` fires for a folder the walk went into and finished, and only for those."""
     for child in self.children(path):
         yield child
         if child.is_folder and recursive and (enter is None or enter(child)):
@@ -128,35 +72,27 @@ async def walk(self, path, recursive=True, enter=None, on_folder_done=None):
                 on_folder_done(child)
 ```
 
-`for record in handler.walk_sync(path)` and `async for record in handler.walk(path)`. Progress comes from the loop body in both, which is the point of iterating rather than handing back a list.
+`children()` is where the syscalls and the identification cost sit, so that is the unit worth moving off the loop. Measured over 525 entries: 0.6 s either way, and a 50 ms spinner beside the async walk ticked 10 times, so the loop was never blocked.
 
-The thread hop is per folder, not per entry — `children()` is where the syscalls and the identification cost sit, so that is the unit worth moving off the loop. Measured on `D:\Dev\CRAP\Systems`, 525 entries: 0.6 s either way, and a 50 ms spinner running beside the async walk ticked 10 times, so the loop was never blocked.
+`@sync` cannot wrap an async generator — calling one returns an async generator object, not a coroutine, and `asyncio.run` answers `TypeError: An asyncio.Future, a coroutine or an awaitable is required`. So the walk needs the two names the module already uses everywhere else.
 
-**`@sync` cannot wrap an async generator.** Calling one returns an async generator object, not a coroutine, and `sync` hands it to `asyncio.run`:
+`on_folder_done` stays a callback because a flat stream cannot say *this folder finished*: the folder was yielded long before the walk comes back up. The lake appends to `batch.entered` there, and that list is how it says a thing that was there and is not now is gone. `enter` refusing a folder while `on_folder_done` never fires for it is the same rule from the other side.
 
-```
-TypeError: An asyncio.Future, a coroutine or an awaitable is required
-```
+## Smaller things
 
-So the walk needs two names rather than one decorated call. That is already the convention here — `probe`/`probe_sync`, `identify`/`identify_sync` — so it costs nothing new.
+- **`Record` carries no link.** `is_folder` is False for a symlink to a directory, so the lake re-checks `is_junction()` and `is_symlink()` and reads `os.path.realpath`. `record()` already computed `is_symlink`. Hidden and system are covered now; the junction target is not.
+- **`_head` reads a whole line.** `for line in stream` on a one-line 2 GB JSON file reads 2 GB before the JSON check.
+- **`SessionFile.records` keeps the entire parsed JSONL,** and `_probed` and `_session_cache` are unbounded. Probing a Sessions folder holds every parsed session at once. The lake's answer is `invalidate()` after every batch, which throws away the parts it still wants.
+- **`_archive_children` scans the complete member tuple for each folder inside the archive** — members × folders. A RAR with 100k members and 10k folders is a billion comparisons.
+- **`@sync` returns a Task inside a running loop.** `probe()` from sync code that happens to sit inside an event loop returns a Task, not records. The `_sync` twins are the safe call; the docs point at the decorated names.
+- **`Record.path` is `Path | PurePosixPath` and `location` is `str | Path | None`.** Every consumer writes `isinstance` checks to find out whether it is looking at a real file.
 
-`on_folder_done` stays a callback because a flat stream cannot carry *this folder finished*: by the time the walk comes back up, the folder was yielded long ago. The lake appends to `batch.entered` there, and the entered list is how it says a thing that was there and is not now is gone. `enter` refusing a folder while `on_folder_done` never fires for it is exactly the lake's rule that a folder stored and not entered is not judged.
+## What `MarkdownHandler` does not carry
 
-`enter` is the other part worth having. Every consumer of a walk has folders it records but does not go into — exclusions, `.git`, `__pycache__`, `node_modules`, a junction, another index — and without a predicate each one rewrites the descent.
-
-`identify` and `probe` then consume the walk instead of accumulating in three structures, and `archive_path_sync` asks for the root only. `Indexer._folder` becomes a loop over `walk_sync` with two arguments, and the lake stops carrying a walk at all. Levels, batching and the folder-class names stay in the lake; they are what it stores, not how it reads.
-
-## What the lake would like handlers to carry
-
-The lake re-stats files that `record()` has already stat'ed, because `Record` does not carry what it found:
-
-- **Link and target.** `Record.is_folder` is False for a symlink to a directory, so the lake's indexer re-checks `is_junction()` and `is_symlink()` and reads `os.path.realpath`. `record()` already computed `is_symlink`.
-- **Windows hidden and system attributes.** The lake calls `stat(follow_symlinks=False)` a second time for `st_file_attributes`.
-- **A cheap identify for session and archive.** `markdown`, `csv` and `log` already work this way and cost a fifth of what session does. Session and archive still open every file in the tree; an extension or size filter first, or a way to ask for identification without sniffing at all, is the whole difference between a 31-minute walk and a 3.6-hour one.
+The frontmatter as written, `created..updated` as the span, and `title`, `name`, `tags` — everything the lake's own note handler did. What is missing is the mapping onto Alex's frontmatter standard: `fileClass` or `type` to `instanceOf`, `status`, `byAlex`, and the `up`/`down`/`prev`/`next`/`related` wikilink targets. That is a vocabulary, not a parser, and it belongs to whatever stores the annotations. Nothing is lost meanwhile — `MarkdownFile.frontmatter` holds every key.
 
 ## Measurements
 
-Scripts are in this session's scratchpad; each is ~30 lines and re-runnable:
-`bench2.py` (per-handler walk timing), `heads.py` (head-read and zip-sniff counts).
+Scripts in this session's scratchpad, each ~30 lines and re-runnable: `bench2.py` (per-handler walk timing), `heads.py` (head-read and sniff counts), `walkdemo.py` (iterating walk, sync and async, with a progress line), `review4.py` (error-as-data and the per-handler table above).
 
-Host alex-pc, `D:\Dev\gppu\.venv` (Python 3.14.7), `handlers-bigtasks` working copy. The file was edited while this was written; every number here is from the re-run after `markdown`, `csv` and `log` were added.
+Host alex-pc, `D:\Dev\gppu\.venv` (Python 3.14.7), `handlers-bigtasks` working copy at 3,829 lines.
