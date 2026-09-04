@@ -3,6 +3,27 @@
 ``FileHandler`` identifies, probes, normalizes, caches, and navigates a file
 hierarchy. A domain handler receives one ``Path`` and returns
 ``(stats, obj)``; stats are derived from the complete typed object.
+
+  2DO:
+  - [ ] Add support for git repos. Span should come from .git folder, but .git itself should not be included when exporting/copying
+  - [ ] Add support for tar.gz archives
+  - [ ] Extract datetime from filename when {ts} is present
+  - [ ] Harnesses should use Decisions\001 - Sessions - file naming convention
+    - `{model|harness}` - short slug representing harness OR model:
+      - chatgpt | cx
+      - claude | cc
+      - gemini | agy
+      - hermes
+      - openclaw
+      - manus
+
+  Big tasks:
+  - [ ] Add support for export files from LLMs. 
+    - [ ] OpenAi. Example: D:\SD.archive\Sessions\a60608bb38ceb475551dff9ce52432d8c1b885fea57ee517ab7f1f534ff10778-2026-08-27-03-46-09-3fab63159d564b92abd68e599a3facd9.zip
+    - [ ] Anthropic. Example: \\s1\Everything\Sessions\*.zip
+  - [ ] Refactor code so harness specific code is not in big if else blocks. 
+  - [ ] Refactor code to have fewer functions that do not belong to classes
+  - [ ] Make handlers support async (gppu async)
 """
 
 from __future__ import annotations
