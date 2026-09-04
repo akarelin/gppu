@@ -496,7 +496,7 @@ class FolderHandler(Handler):
         """Return empty aggregate statistics and the resolved folder path."""
 
         path = full_path(path)
-        if not self.identify_sync(path):
+        if not FolderHandler.identify_sync(self, path):
             raise ValueError(f"{path}: folder is not identifiable")
         return FileStats(0, 0, 0, None), path
 
@@ -2338,7 +2338,7 @@ class MarkdownHandler(Handler):
         """Return statistics and a Markdown object with all frontmatter keys."""
 
         path = full_path(path)
-        if not self.identify_sync(path):
+        if not MarkdownHandler.identify_sync(self, path):
             raise ValueError(f"{path}: Markdown file is not identifiable")
         markdown = MarkdownFile(path, self._frontmatter(path))
         return FileStats(1, 0, path.stat().st_size, markdown.span), markdown
@@ -2444,7 +2444,7 @@ class CSVHandler(Handler):
         """Return file statistics and the complete parsed CSV table."""
 
         path = full_path(path)
-        if not self.identify_sync(path):
+        if not CSVHandler.identify_sync(self, path):
             raise ValueError(f"{path}: CSV file is not identifiable")
         try:
             with path.open(encoding="utf-8-sig", newline="") as stream:
@@ -2567,7 +2567,7 @@ class LogHandler(Handler):
         """Return all log rows and statistics spanning timestamped rows."""
 
         path = full_path(path)
-        if not self.identify_sync(path):
+        if not LogHandler.identify_sync(self, path):
             raise ValueError(f"{path}: log file is not identifiable")
         rows = tuple(path.read_text(encoding="utf-8-sig").splitlines())
         timestamps = tuple(
@@ -2678,7 +2678,7 @@ class EmailHandler(Handler):
         """Return file statistics and metadata without parsing the message."""
 
         path = full_path(path)
-        if not self.identify_sync(path):
+        if not EmailHandler.identify_sync(self, path):
             raise ValueError(f"{path}: email file is not identifiable")
         timestamp, subject, party, collision = self._filename(path)
         email = EmailFile(path, timestamp, subject, party, collision)
