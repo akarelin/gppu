@@ -16,6 +16,14 @@ hierarchy. A domain handler receives one ``Path`` and returns
       - hermes
       - openclaw
       - manus
+  - [ ] Extract timespans from filenames/foldernames like:
+    - 260619-260513 five - langfuse
+    - report-511833076877-2026-06-21-to-2026-07-22
+    - Garage_Large_NVR_NVR_20250508202204_20250508204259_1053962
+    - 10.172.105.54_01_20260721191520979_TIMING
+    - Rabbit mom-1777250940-1777251900
+    - Camera 10-21-2023, 07.00.00 GMT+3 - 10-21-2023, 08.00.00 GMT+3
+    - 241020-2257 Alex fall (140s)
 
   Big tasks:
   - [ ] Add support for export files from LLMs. 
