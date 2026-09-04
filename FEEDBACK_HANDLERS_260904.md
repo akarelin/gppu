@@ -8,16 +8,16 @@ Read of `gppu/handlers.py` on `handlers-bigtasks` (working copy, alex-pc) agains
 
 ```python
 # D:\Dev\CRAP\Systems\Lake\indexer.py:66
-HANDLERS = FileHandler(session_handler, archive_handler, _note_handler())
+HANDLERS = FileHandler(session_handler, archive_handler)
 # D:\Dev\CRAP\Projects\textlake\handlers.py:115
 file_handler = FileHandler(session_handler, archive_handler, note_handler)
 ```
 
-The lake has its own handler — `NoteHandler`, markdown frontmatter — and it has no way in. It also needs to leave git out, and now cannot. The only route left is subclassing the private `_FileHandler`, which means every consumer reaches inside the module:
+An application cannot choose its set. The lake needs markdown, session, archive and folder, and needs git left out; the only route left is subclassing the private `_FileHandler`, which means every consumer reaches inside the module:
 
 ```python
-class LakeHandler(_FileHandler, NoteHandler, SessionHandler, ArchiveHandler, FolderHandler):
-    handler_types = (NoteHandler, SessionHandler, ArchiveHandler, FolderHandler)
+class LakeHandler(_FileHandler, MarkdownHandler, SessionHandler, ArchiveHandler, FolderHandler):
+    handler_types = (MarkdownHandler, SessionHandler, ArchiveHandler, FolderHandler)
 ```
 
 `PLAN_HANDLERS_BIGTASKS.md` lists "Compose `FileHandler` from handler mixins without constructor injection" as intended, so this is a decision, not an oversight. It needs a supported way to compose a set — a public base, or `FileHandler.with_handlers(*types)` — otherwise every application depends on a private name.
@@ -32,7 +32,7 @@ ImportError: cannot import name 'FileHandler' from 'gppu.handlers'
 
 ## Performance
 
-Identify-only walk of `D:\Dev\CRAP\Systems` — 524 entries, 470 files — measured on alex-pc, Python 3.14.7, warm page cache. No probing, no database.
+Identify-only walk of `D:\Dev\CRAP\Systems` — 525 entries, 470 files — measured on alex-pc, Python 3.14.7, warm page cache. No probing, no database.
 
 | walk | time | per entry |
 |---|---|---|
@@ -98,7 +98,7 @@ The lake re-stats files that `record()` has already stat'ed, because `Record` do
 
 - **Link and target.** `Record.is_folder` is False for a symlink to a directory, so the lake's indexer re-checks `is_junction()` and `is_symlink()` and reads `os.path.realpath`. `record()` already computed `is_symlink`.
 - **Windows hidden and system attributes.** The lake calls `stat(follow_symlinks=False)` a second time for `st_file_attributes`.
-- **A cheap identify.** Extension first, content only when the extension says it might be worth it, or a way to ask for identification without sniffing at all. This is the whole difference between a 37-minute walk and a 4-hour one.
+- **A cheap identify for session and archive.** `markdown`, `csv` and `log` already work this way and cost a fifth of what session does. Session and archive still open every file in the tree; an extension or size filter first, or a way to ask for identification without sniffing at all, is the whole difference between a 31-minute walk and a 3.6-hour one.
 
 ## Measurements
 
