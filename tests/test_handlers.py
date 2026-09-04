@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import zipfile
 from datetime import datetime, timedelta, timezone
@@ -13,15 +14,35 @@ import pytest
 
 from gppu.handlers import (
   typed,
+  ArchiveHandler,
+  ChatGPTHandler,
+  AnthropicHandler,
+  CSVFile,
+  CSVHandler,
   FileHandler,
+  FolderHandler,
+  GitHandler,
+  ImageHandler,
+  LogFile,
+  LogHandler,
+  MarkdownFile,
+  MarkdownHandler,
+  SessionHandler,
+  VideoHandler,
   valid_time,
   FileStats,
   Record,
   SessionFile,
   SessionFolder,
   archive_handler,
+  chatgpt_handler,
+  anthropic_handler,
+  csv_handler,
   file_handler,
+  folder_handler,
   git_handler,
+  log_handler,
+  markdown_handler,
   session_handler,
 )
 
@@ -93,7 +114,25 @@ HERMES = [
   {'role': 'assistant', 'content': 'Answer', 'timestamp': '2026-05-12T10:55:00+00:00'},
 ]
 
-RAR = Path(r'C:\Program Files\WinRAR\Rar.exe')
+
+
+def _rar_creator() -> Path | None:
+  if executable := shutil.which('rar'):
+    return Path(executable)
+  if os.name == 'nt':
+    roots = tuple(
+      Path(os.environ[name])
+      for name in ('ProgramFiles', 'ProgramFiles(x86)')
+      if name in os.environ
+    )
+    for root in roots:
+      executable = root / 'WinRAR' / 'Rar.exe'
+      if executable.is_file():
+        return executable
+  return None
+
+
+RAR = _rar_creator()
 
 
 def _chatgpt(uid: str, question: str = 'Question') -> dict:
@@ -214,8 +253,8 @@ def test_openai_export_chunks_are_one_session_collection(tmp_path: Path) -> None
     archive.writestr('conversations-000.json', json.dumps([_chatgpt('chatgpt-one')]))
     archive.writestr('conversations-001.json', json.dumps([_chatgpt('chatgpt-two', 'Second')]))
 
-  assert session_handler.identify(path) is True
-  stats, sessions = session_handler(path)
+  assert chatgpt_handler.identify(path) is True
+  stats, sessions = chatgpt_handler(path)
 
   assert isinstance(sessions, SessionFolder)
   assert sessions.harness == 'chatgpt'
@@ -232,7 +271,7 @@ def test_openai_export_chunks_are_one_session_collection(tmp_path: Path) -> None
     '2026-08-01T12:00:00+00:00',
     '2026-08-01T12:02:00+00:00',
   ]
-  assert file_handler.identify(path, recursive=False)[0].handlers == ('session', 'archive')
+  assert file_handler.identify(path, recursive=False)[0].handlers == ('chatgpt', 'archive')
 
 
 def test_anthropic_export_uses_flat_human_and_assistant_messages(tmp_path: Path) -> None:
@@ -241,7 +280,8 @@ def test_anthropic_export_uses_flat_human_and_assistant_messages(tmp_path: Path)
     archive.writestr('projects.json', '[]')
     archive.writestr('conversations.json', json.dumps([_claude('claude-one')]))
 
-  stats, sessions = session_handler(path)
+  assert anthropic_handler.identify(path) is True
+  stats, sessions = anthropic_handler(path)
 
   assert isinstance(sessions, SessionFolder)
   assert (sessions.harness, stats.sessions, stats.turns) == ('claude', 1, 2)
@@ -254,14 +294,168 @@ def test_anthropic_export_uses_flat_human_and_assistant_messages(tmp_path: Path)
   ]
 
 
+def test_chatgpt_and_anthropic_handlers_load_extracted_export_folders(tmp_path: Path) -> None:
+  chatgpt = tmp_path / 'chatgpt'
+  chatgpt.mkdir()
+  chatgpt_json = chatgpt / 'conversations-000.json'
+  chatgpt_json.write_text(json.dumps([_chatgpt('chatgpt-folder')]), encoding='utf-8')
+
+  claude = tmp_path / 'claude'
+  claude.mkdir()
+  claude_json = claude / 'conversations.json'
+  claude_json.write_text(json.dumps([_claude('claude-folder')]), encoding='utf-8')
+
+  chatgpt_stats, chatgpt_sessions = chatgpt_handler(chatgpt)
+  claude_stats, claude_sessions = anthropic_handler(claude)
+
+  assert chatgpt_handler.identify(chatgpt) is True
+  assert anthropic_handler.identify(claude) is True
+  assert (chatgpt_stats.files, chatgpt_sessions.files[0].location) == (1, chatgpt_json)
+  assert (claude_stats.files, claude_sessions.files[0].location) == (1, claude_json)
+  assert file_handler.identify(chatgpt, recursive=False)[0].handlers == ('chatgpt', 'folder')
+  assert file_handler.identify(claude, recursive=False)[0].handlers == ('claude', 'folder')
+
+
+def test_file_handler_uses_concrete_handler_mixins(tmp_path: Path) -> None:
+  assert isinstance(chatgpt_handler, ChatGPTHandler)
+  assert isinstance(anthropic_handler, AnthropicHandler)
+  assert isinstance(markdown_handler, MarkdownHandler)
+  assert isinstance(csv_handler, CSVHandler)
+  assert isinstance(log_handler, LogHandler)
+  assert isinstance(folder_handler, FolderHandler)
+  assert ChatGPTHandler in FileHandler.__mro__
+  assert AnthropicHandler in FileHandler.__mro__
+  assert MarkdownHandler in FileHandler.__mro__
+  assert CSVHandler in FileHandler.__mro__
+  assert LogHandler in FileHandler.__mro__
+  assert FolderHandler in FileHandler.__mro__
+
+  stats, folder = folder_handler(tmp_path)
+
+  assert folder == tmp_path
+  assert stats == FileStats(0, 0, 0, None)
+  assert file_handler.identify(tmp_path, recursive=False)[0].handlers == ('folder',)
+
+
+def test_markdown_handler_preserves_frontmatter_and_derives_standard_fields(
+  tmp_path: Path,
+) -> None:
+  path = tmp_path / 'Fallback filename.md'
+  path.write_text(
+    '''---
+name: Display name
+tags:
+  - meta
+  - handlers
+created: 2026-08-27T19:42
+updated: 2026-09-01T05:11
+unknown:
+  nested: value
+---
+# Body
+''',
+    encoding='utf-8',
+  )
+
+  stats, markdown = markdown_handler(path)
+
+  assert isinstance(markdown, MarkdownFile)
+  assert markdown.frontmatter == {
+    'name': 'Display name',
+    'tags': ['meta', 'handlers'],
+    'created': '2026-08-27T19:42',
+    'updated': '2026-09-01T05:11',
+    'unknown': {'nested': 'value'},
+  }
+  assert (markdown.title, markdown.name, markdown.tags) == (
+    'Display name',
+    'Display name',
+    ('meta', 'handlers'),
+  )
+  assert _iso(markdown.span) == [
+    '2026-08-27T19:42:00-07:00',
+    '2026-09-01T05:11:00-07:00',
+  ]
+  assert stats == FileStats(1, 0, path.stat().st_size, markdown.span)
+  assert file_handler.probe(path, recursive=False)[0].handlers == ('markdown',)
+
+
+def test_markdown_handler_uses_filename_without_frontmatter(tmp_path: Path) -> None:
+  path = tmp_path / 'Plain file.md'
+  path.write_text('# Plain file\n', encoding='utf-8')
+
+  _, markdown = markdown_handler(path)
+
+  assert markdown.frontmatter == {}
+  assert (markdown.title, markdown.name, markdown.tags, markdown.span) == (
+    'Plain file',
+    'Plain file',
+    (),
+    None,
+  )
+
+
+def test_markdown_handler_rejects_invalid_frontmatter_mapping(tmp_path: Path) -> None:
+  path = tmp_path / 'invalid.md'
+  path.write_text('---\n- not\n- a mapping\n---\n', encoding='utf-8')
+
+  with pytest.raises(ValueError, match='frontmatter must be a mapping'):
+    markdown_handler(path)
+
+
+def test_csv_handler_reads_header_and_every_row(tmp_path: Path) -> None:
+  path = tmp_path / 'table.csv'
+  path.write_text('title,tags\nOne,"a,b"\nTwo,c\n', encoding='utf-8')
+
+  stats, table = csv_handler(path)
+
+  assert isinstance(table, CSVFile)
+  assert table.header == ('title', 'tags')
+  assert table.rows == (('One', 'a,b'), ('Two', 'c'))
+  assert stats == FileStats(1, 0, path.stat().st_size, None)
+  assert file_handler.probe(path, recursive=False)[0].handlers == ('csv',)
+
+
+def test_log_handler_uses_timestamped_rows_for_span(tmp_path: Path) -> None:
+  path = tmp_path / 'service.log'
+  path.write_text(
+    '[2026-09-04T08:00:00-07:00] started\n'
+    'continuation without a timestamp\n'
+    '2026-09-04 09:15:30,500 finished\n',
+    encoding='utf-8',
+  )
+
+  stats, log = log_handler(path)
+
+  assert isinstance(log, LogFile)
+  assert log.rows == (
+    '[2026-09-04T08:00:00-07:00] started',
+    'continuation without a timestamp',
+    '2026-09-04 09:15:30,500 finished',
+  )
+  assert _iso(log.span) == [
+    '2026-09-04T08:00:00-07:00',
+    '2026-09-04T09:15:30.500000-07:00',
+  ]
+  assert stats == FileStats(1, 0, path.stat().st_size, log.span)
+  assert file_handler.probe(path, recursive=False)[0].handlers == ('log',)
+
+
+def test_exif_handlers_are_unregistered_placeholders() -> None:
+  for handler in (ImageHandler, VideoHandler):
+    assert 'identify' not in handler.__dict__
+    assert '__call__' not in handler.__dict__
+    assert handler not in FileHandler.handler_types
+
+
 def test_named_conversation_export_with_unknown_shape_fails(tmp_path: Path) -> None:
   path = tmp_path / 'unknown.zip'
   with zipfile.ZipFile(path, 'w') as archive:
     archive.writestr('conversations.json', json.dumps([{'messages': []}]))
 
-  assert session_handler.identify(path) is True
-  with pytest.raises(ValueError, match='conversation format is not identifiable'):
-    session_handler(path)
+  assert anthropic_handler.identify(path) is True
+  with pytest.raises(ValueError, match='conversation format is not claude'):
+    anthropic_handler(path)
 
 
 def test_handlers_are_awaitable_without_changing_synchronous_calls(tmp_path: Path) -> None:
@@ -426,11 +620,14 @@ def test_git_history_spans_tracked_repository_folders_and_files(tmp_path: Path) 
   _git_commit(repository, 'second', '2026-08-02T13:00:00+00:00')
   untracked.write_text('untracked', encoding='utf-8')
 
-  handler = FileHandler(git_handler)
+  class GitFileHandler(FileHandler):
+    handler_types = (GitHandler, FolderHandler)
+
+  handler = GitFileHandler()
   found = {record.path: record for record in handler.probe(repository)}
 
-  assert found[repository].handlers == ('git',)
-  assert found[nested].handlers == ('git',)
+  assert found[repository].handlers == ('git', 'folder')
+  assert found[nested].handlers == ('git', 'folder')
   assert found[first].handlers == ('git',)
   assert found[second].handlers == ('git',)
   assert found[untracked].handlers == ()
@@ -518,7 +715,7 @@ def test_archive_name_comes_from_the_handler_hierarchy_span(tmp_path: Path) -> N
   assert path.name == '260901_end-260801_start_sessions.rar'
 
 
-@pytest.mark.skipif(not RAR.is_file(), reason='WinRAR is not installed')
+@pytest.mark.skipif(RAR is None, reason='RARLAB rar is not installed')
 def test_rar_handler_determines_the_final_archive_span(tmp_path: Path) -> None:
   source = tmp_path / 'session.jsonl'
   source.write_text('{}\n', encoding='utf-8')
@@ -538,6 +735,21 @@ def test_rar_handler_determines_the_final_archive_span(tmp_path: Path) -> None:
   assert probe.stats.span[0].astimezone(timezone.utc).date().isoformat() == '2026-08-20'
 
 
+def test_rar_reader_finds_the_platform_command_from_path(
+  tmp_path: Path,
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  executable = tmp_path / ('unrar.exe' if os.name == 'nt' else 'unrar')
+  executable.touch()
+  monkeypatch.setattr(
+    shutil,
+    'which',
+    lambda command: str(executable) if command == 'unrar' else None,
+  )
+
+  assert ArchiveHandler.rar_executable() == executable.resolve()
+
+
 def test_probe_cache_is_invalidated_when_a_file_changes(tmp_path: Path) -> None:
   class CountingHandler:
     name = 'counting'
@@ -553,19 +765,21 @@ def test_probe_cache_is_invalidated_when_a_file_changes(tmp_path: Path) -> None:
       stamp = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
       return FileStats(1, 0, path.stat().st_size, (stamp, stamp)), path.read_text()
 
-  selected = CountingHandler()
-  handler = FileHandler(selected)
+  class CountingFileHandler(FileHandler, CountingHandler):
+    handler_types = (CountingHandler,)
+
+  handler = CountingFileHandler()
   path = tmp_path / 'one.count'
   path.write_text('one', encoding='utf-8')
 
   assert handler.probe(path, recursive=False)[0].probes[0].obj == 'one'
   assert handler.probe(path, recursive=False)[0].probes[0].obj == 'one'
-  assert selected.calls == 1
+  assert handler.calls == 1
 
   path.write_text('changed', encoding='utf-8')
 
   assert handler.probe(path, recursive=False)[0].probes[0].obj == 'changed'
-  assert selected.calls == 2
+  assert handler.calls == 2
 
 
 def test_identify_navigation_and_normalize_use_the_same_records(tmp_path: Path) -> None:
@@ -720,7 +934,10 @@ def test_a_child_gone_between_the_listing_and_the_reading_is_not_a_child(tmp_pat
                                                                         monkeypatch: pytest.MonkeyPatch) -> None:
   (tmp_path / 'here.txt').write_text('here', encoding='utf-8')
   (tmp_path / 'gone.txt').write_text('gone by the time it is read', encoding='utf-8')
-  handler = FileHandler(session_handler)
+  class SessionFileHandler(FileHandler):
+    handler_types = (SessionHandler, FolderHandler)
+
+  handler = SessionFileHandler()
   original = FileHandler.record
 
   def vanishing(self: FileHandler, path: Path) -> Record:

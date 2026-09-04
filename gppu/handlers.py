@@ -1,8 +1,29 @@
-r"""Typed handlers for files, folders, and sessions.
+r"""Typed handlers for files, folders, archives, Git history, and sessions.
 
-``FileHandler`` identifies, probes, normalizes, caches, and navigates a file
-hierarchy. A domain handler receives one ``Path`` and returns
-``(stats, obj)``; stats are derived from the complete typed object.
+A domain handler receives one ``Path`` and returns ``(stats, obj)``. The
+statistics are derived from the complete typed object. ``FileHandler`` mixes in
+``ChatGPTHandler``, ``AnthropicHandler``, ``MarkdownHandler``, ``CSVHandler``,
+``LogHandler``, ``SessionHandler``, ``ArchiveHandler``, ``GitHandler``, and
+``FolderHandler`` without constructor injection. It provides identification,
+probing, hierarchy navigation, normalization, archive naming, and cache
+invalidation. All local paths are resolved by :func:`gppu.full_path`.
+
+Public I/O calls decorated with :func:`gppu.sync` return their result directly
+outside an event loop and are awaitable inside one. Blocking filesystem,
+archive, Git, and session work runs in a worker thread.
+
+Archive members use the same ``Record`` hierarchy as filesystem entries, with
+the archive path stored in ``location``. ``SessionHandler`` reads native JSONL
+session logs. ``ChatGPTHandler`` and ``AnthropicHandler`` detect their required
+filenames and read extracted export folders or ZIP files. ChatGPT turns follow
+the exported ``current_node`` chain; Anthropic turns retain ``chat_messages``
+order. ``MarkdownHandler`` retains complete Markdown YAML frontmatter and
+derives its display names, tags, and created-to-updated span. ``CSVHandler``
+retains the complete header and rows.
+
+``GitHandler`` derives spans only from local history reachable from the current
+``HEAD``. It does not fetch or contact upstreams. Tracked-folder spans include
+historical paths beneath the folder, even when those files were later deleted.
 
   2DO:
   - [x] Add support for git repos. Span should come from .git folder, but .git itself should not be included when exporting/copying
@@ -43,6 +64,7 @@ hierarchy. A domain handler receives one ``Path`` and returns
 from __future__ import annotations
 
 import asyncio
+import csv
 import json
 import os
 import re
@@ -52,13 +74,14 @@ import tarfile
 import zipfile
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta, timezone, tzinfo
+from datetime import date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
+from zoneinfo import ZoneInfo
 
-import rarfile
+import yaml
 
-from .gppu import sync
+from .gppu import full_path, sync
 
 ObjectT = TypeVar("ObjectT")
 StatsT = TypeVar("StatsT")
@@ -84,6 +107,7 @@ SNIFF = 8
 UNITS = (("d", 86400), ("h", 3600), ("m", 60), ("s", 1))
 UNSAFE = '\\/:*?"<>|\r\n\t'
 NAME_LIMIT = 254
+FRONTMATTER_TIMEZONE = ZoneInfo("America/Los_Angeles")
 PREAMBLE = ("# AGENTS.md instructions",)
 # User-role text the harness or a tool generated (sessions-clean, list-sessions): matching text was not typed by a person.
 NON_HUMAN = (
@@ -156,6 +180,10 @@ FILENAME_EPOCHS = re.compile(r"(?<![A-Za-z0-9])([1-9]\d{9})(?![A-Za-z0-9])")
 FILENAME_ISO_DATES = re.compile(r"(?<![A-Za-z0-9])(\d{4}-\d{2}-\d{2})(?![A-Za-z0-9])")
 FILENAME_SHORT_DATES = re.compile(r"(?<![A-Za-z0-9])(\d{6})(?![A-Za-z0-9])")
 FILENAME_DURATION = re.compile(r"(?:~|\()\s*(\d+)\s*([dhms])\)?", re.I)
+LOG_TIMESTAMP = re.compile(
+    r"^\s*[\[(]?(?P<timestamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}"
+    r"(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)"
+)
 
 HOMES: dict[Harness, tuple[str, ...]] = {
     "hermes": ("state.db",),
@@ -170,25 +198,35 @@ EXPORT_MEMBER = re.compile(r"conversations(?:-\d+)?\.json", re.I)
 
 @runtime_checkable
 class Handler(Protocol[ObjectT, StatsT]):
-    """One configured domain handler."""
+    """Structural interface for a configured domain handler."""
 
     name: str
 
-    def identify(self, path: Path) -> bool: ...
-    def __call__(self, path: Path) -> tuple[StatsT, ObjectT]: ...
+    def identify(self, path: Path) -> bool:
+        """Return whether this handler recognizes ``path``."""
+        ...
+
+    def __call__(self, path: Path) -> tuple[StatsT, ObjectT]:
+        """Load ``path`` and return its derived statistics and typed object."""
+        ...
 
 
 @runtime_checkable
 class _SyncHandler(Protocol[ObjectT, StatsT]):
     """Synchronous implementation used while a handler runs in a worker thread."""
 
-    def identify_sync(self, path: Path) -> bool: ...
-    def call_sync(self, path: Path) -> tuple[StatsT, ObjectT]: ...
+    def identify_sync(self, path: Path) -> bool:
+        """Recognize ``path`` without entering another event loop."""
+        ...
+
+    def call_sync(self, path: Path) -> tuple[StatsT, ObjectT]:
+        """Load ``path`` without entering another event loop."""
+        ...
 
 
 @dataclass(frozen=True)
 class Probe:
-    """One handler's result for a file or folder."""
+    """One named handler's statistics and typed object for a hierarchy entry."""
 
     handler: str
     stats: Any
@@ -197,7 +235,7 @@ class Probe:
 
 @dataclass(frozen=True)
 class FileStats:
-    """Recursive statistics displayed for one hierarchy record."""
+    """File count, folder count, byte count, and span for one hierarchy."""
 
     files: int
     folders: int
@@ -207,7 +245,11 @@ class FileStats:
 
 @dataclass(frozen=True)
 class Record:
-    """One file or folder and the handlers that matched it."""
+    """One filesystem or archive entry and the handlers that matched it.
+
+    ``path`` is absolute for a filesystem entry and archive-relative for an
+    archive member. ``location`` identifies the containing archive when set.
+    """
 
     path: Path | PurePosixPath
     is_folder: bool
@@ -220,24 +262,34 @@ class Record:
 
     @property
     def name(self) -> str:
+        """Return the final path component, or the complete root path."""
+
         return self.path.name or str(self.path)
 
     @property
     def label(self) -> str:
+        """Return the display name with a trailing slash for folders."""
+
         return self.name + ("/" if self.is_folder else "")
 
     @property
     def display_path(self) -> str:
+        """Return a filesystem path or ``archive::member`` display path."""
+
         if self.location is None:
             return str(self.path)
         return f"{self.location}::{self.path.as_posix()}"
 
     @property
     def span(self) -> Span | None:
+        """Return the derived hierarchy span when statistics are available."""
+
         return self.stats.span if self.stats is not None else None
 
     @property
     def metadata(self) -> dict[str, Any]:
+        """Return serializable display metadata for this record."""
+
         value: dict[str, Any] = {
             "path": self.display_path,
             "type": "folder" if self.is_folder else "file",
@@ -259,20 +311,73 @@ class Record:
         return value
 
 
-class FileHandler:
-    """Access point for one cached hierarchy and its domain handlers."""
+class FolderHandler:
+    """Identify a physical directory as a folder object.
 
-    def __init__(self, *configured: Handler[Any, Any]) -> None:
-        names = [handler.name for handler in configured]
+    Recursive navigation and aggregation belong to ``FileHandler``. This
+    handler supplies the typed result for the folder itself.
+    """
+
+    name = "folder"
+
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Return whether ``path`` is a directory in either call mode."""
+
+        return await asyncio.to_thread(self.identify_sync, path)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Return whether ``path`` is a non-symlink directory."""
+
+        path = full_path(path)
+        return path.is_dir() and not path.is_symlink()
+
+    @sync
+    async def __call__(self, path: Path) -> tuple[FileStats, Path]:
+        """Return folder statistics and its resolved path in either call mode."""
+
+        return await asyncio.to_thread(self.call_sync, path)
+
+    def call_sync(self, path: Path) -> tuple[FileStats, Path]:
+        """Return empty aggregate statistics and the resolved folder path."""
+
+        path = full_path(path)
+        if not self.identify_sync(path):
+            raise ValueError(f"{path}: folder is not identifiable")
+        return FileStats(0, 0, 0, None), path
+
+
+class _FileHandler:
+    """Compose mixed-in domain handlers over one cached filesystem hierarchy.
+
+    Identification records which handlers recognize each path. Probing also
+    loads their typed objects and derives recursive ``FileStats``. Filesystem
+    and archive members share the ``Record`` model; ``.git`` metadata is never
+    exposed as a hierarchy child or copied by normalization.
+    """
+
+    handler_types: tuple[type[Any], ...] = ()
+
+    def __init__(self) -> None:
+        """Initialize every mixed-in handler and the hierarchy caches."""
+
+        super().__init__()
+        names = [handler.name for handler in self.handler_types]
         if len(names) != len(set(names)):
             raise ValueError("handler names must be unique")
-        self.configured = tuple(configured)
+        self.configured = self.handler_types
         self._identified: dict[Path, tuple[Signature, tuple[str, ...]]] = {}
         self._probed: dict[Path, tuple[Signature, tuple[Probe, ...]]] = {}
         self._children: dict[Path, tuple[Signature, tuple[Path, ...]]] = {}
 
     @sync
     async def identify(self, path: Path, recursive: bool = True) -> list[Record]:
+        """Identify a hierarchy synchronously or asynchronously.
+
+        Return the root and, by default, all descendants without loading typed
+        handler objects.
+        """
+
         return await asyncio.to_thread(self.identify_sync, path, recursive)
 
     def identify_sync(self, path: Path, recursive: bool = True) -> list[Record]:
@@ -282,6 +387,12 @@ class FileHandler:
 
     @sync
     async def probe(self, path: Path, recursive: bool = True) -> list[Record]:
+        """Probe a hierarchy synchronously or asynchronously.
+
+        Matching handlers are loaded and folder statistics are accumulated
+        from their descendants.
+        """
+
         return await asyncio.to_thread(self.probe_sync, path, recursive)
 
     def probe_sync(self, path: Path, recursive: bool = True) -> list[Record]:
@@ -306,24 +417,24 @@ class FileHandler:
     def record(self, path: Path) -> Record:
         """Return one cached identification record."""
 
-        path = _absolute(path)
+        path = full_path(path)
         stat = path.stat()
         signature = _signature(stat)
         cached = self._identified.get(path)
         if cached is None or cached[0] != signature:
             names = tuple(
                 handler.name
-                for handler in self.configured
+                for handler in self.handler_types
                 if self._handler_identify(handler, path)
             )
             self._identified[path] = (signature, names)
             self._probed.pop(path, None)
         else:
             names = cached[1]
-            if any(handler.name == "git" for handler in self.configured):
+            if any(handler.name == "git" for handler in self.handler_types):
                 names = tuple(
                     handler.name
-                    for handler in self.configured
+                    for handler in self.handler_types
                     if (
                         self._handler_identify(handler, path)
                         if handler.name == "git"
@@ -351,7 +462,7 @@ class FileHandler:
             if "archive" in path.handlers:
                 return self._archive_children(Path(path.path), PurePosixPath("."))
             path = Path(path.path)
-        path = _absolute(path)
+        path = full_path(path)
         if not path.is_dir() or path.is_symlink():
             return ()
         signature = _signature(path.stat())
@@ -375,9 +486,8 @@ class FileHandler:
         )
 
     def _child(self, path: Path) -> Record | None:
-        """One child, or None when it is gone. A listing and the reading of it are two moments, and on a tree being
-        written the thing named in the first can be absent by the second. It is not a child then.
-        """
+        """Return one child, or ``None`` if it vanished after directory listing."""
+
         try:
             return self.record(path)
         except FileNotFoundError:
@@ -388,7 +498,9 @@ class FileHandler:
         archive: Path,
         parent: Path | PurePosixPath,
     ) -> tuple[Record, ...]:
-        record = self._probe_record(_absolute(archive))
+        """Return direct archive members beneath ``parent``."""
+
+        record = self._probe_record(full_path(archive))
         probe = next(
             (probe for probe in record.probes if probe.handler == "archive"), None
         )
@@ -399,12 +511,14 @@ class FileHandler:
 
     @sync
     async def load(self, path: Path) -> Any:
+        """Load the first matching typed object synchronously or asynchronously."""
+
         return await asyncio.to_thread(self.load_sync, path)
 
     def load_sync(self, path: Path) -> Any:
         """Return the first matching typed object, or ``None`` when unrecognized."""
 
-        result = self._probe_record(_absolute(path))
+        result = self._probe_record(full_path(path))
         return result.probes[0].obj if result.probes else None
 
     @sync
@@ -415,6 +529,13 @@ class FileHandler:
         recursive: bool = True,
         exclude_handlers: Sequence[str] = (),
     ) -> Path:
+        """Normalize a source in place or copy it to an exact destination.
+
+        With no destination, the first matching handler that defines
+        ``normalize_name`` supplies the new filename. With a destination, the
+        source hierarchy is copied and ``.git`` is excluded.
+        """
+
         return await asyncio.to_thread(
             self.normalize_sync,
             source,
@@ -432,14 +553,14 @@ class FileHandler:
     ) -> Path:
         """Rename by handler naming or copy to an exact destination hierarchy."""
 
-        source = _absolute(source)
+        source = full_path(source)
         if destination is None:
             result = self._probe_record(source)
             selected = next(
                 (
                     (probe, handler)
                     for probe in result.probes
-                    for handler in self.configured
+                    for handler in self.handler_types
                     if probe.handler == handler.name
                     and probe.handler not in exclude_handlers
                     and callable(getattr(handler, "normalize_name", None))
@@ -449,14 +570,14 @@ class FileHandler:
             if selected is None:
                 raise ValueError(f"{source}: no naming handler")
             probe, handler = selected
-            destination = source.with_name(handler.normalize_name(probe.obj))
+            destination = source.with_name(handler.normalize_name(self, probe.obj))
             if destination == source:
                 return source
             if destination.exists():
                 raise FileExistsError(destination)
             source.rename(destination)
         else:
-            destination = _absolute(destination)
+            destination = full_path(destination)
             if destination.exists():
                 raise FileExistsError(destination)
             if source.is_dir() and not source.is_symlink():
@@ -489,6 +610,8 @@ class FileHandler:
         extension: str,
         local_time: tzinfo,
     ) -> Path:
+        """Build a dated archive destination synchronously or asynchronously."""
+
         return await asyncio.to_thread(
             self.archive_path_sync,
             source,
@@ -511,7 +634,7 @@ class FileHandler:
         root = self.probe_sync(source)[0]
         if root.span is None:
             raise ValueError(f"{source}: hierarchy has no span")
-        return _absolute(destination) / ArchiveHandler.archive_name(
+        return full_path(destination) / ArchiveHandler.archive_name(
             root.span,
             name,
             extension,
@@ -520,6 +643,8 @@ class FileHandler:
 
     @sync
     async def invalidate(self, path: Path | None = None) -> None:
+        """Invalidate cached state synchronously or asynchronously."""
+
         await asyncio.to_thread(self.invalidate_sync, path)
 
     def invalidate_sync(self, path: Path | None = None) -> None:
@@ -529,23 +654,25 @@ class FileHandler:
             self._identified.clear()
             self._probed.clear()
             self._children.clear()
-            for handler in self.configured:
-                invalidate = getattr(handler, "invalidate", None)
+            for handler in self.handler_types:
+                invalidate = handler.__dict__.get("invalidate")
                 if invalidate is not None:
-                    invalidate()
+                    invalidate(self)
             return
-        path = _absolute(path)
+        path = full_path(path)
         for cache in (self._identified, self._probed, self._children):
             for cached in tuple(cache):
                 if cached == path or path in cached.parents:
                     cache.pop(cached, None)
-        for handler in self.configured:
-            invalidate = getattr(handler, "invalidate", None)
+        for handler in self.handler_types:
+            invalidate = handler.__dict__.get("invalidate")
             if invalidate is not None:
-                invalidate(path)
+                invalidate(self, path)
 
     def _walk(self, path: Path, recursive: bool) -> Iterator[Path]:
-        path = _absolute(path)
+        """Yield the root and optionally every filesystem descendant."""
+
+        path = full_path(path)
         path.stat()
         yield path
         if recursive and path.is_dir() and not path.is_symlink():
@@ -553,11 +680,13 @@ class FileHandler:
                 yield from self._walk(child.path, True)
 
     def _probe_record(self, path: Path) -> Record:
+        """Load and cache every handler probe for one filesystem path."""
+
         record = self.record(path)
         signature = _signature(path.stat())
         cached = self._probed.get(path)
         if cached is None or cached[0] != signature or "git" in record.handlers:
-            selected = {handler.name: handler for handler in self.configured}
+            selected = {handler.name: handler for handler in self.handler_types}
             probes = tuple(
                 Probe(name, *self._handler_call(selected[name], path))
                 for name in record.handlers
@@ -567,20 +696,26 @@ class FileHandler:
             probes = cached[1]
         return replace(record, probes=probes)
 
-    @staticmethod
-    def _handler_identify(handler: Handler[Any, Any], path: Path) -> bool:
-        if isinstance(handler, _SyncHandler):
-            return handler.identify_sync(path)
-        return handler.identify(path)
+    def _handler_identify(self, handler: type[Any], path: Path) -> bool:
+        """Call a handler's worker-safe recognizer when it provides one."""
 
-    @staticmethod
-    def _handler_call(handler: Handler[Any, Any], path: Path) -> tuple[Any, Any]:
-        if isinstance(handler, _SyncHandler):
-            return handler.call_sync(path)
-        return handler(path)
+        identify_sync = getattr(handler, "identify_sync", None)
+        if identify_sync is not None:
+            return identify_sync(self, path)
+        return handler.identify(self, path)
+
+    def _handler_call(self, handler: type[Any], path: Path) -> tuple[Any, Any]:
+        """Call a handler's worker-safe loader when it provides one."""
+
+        call_sync = getattr(handler, "call_sync", None)
+        if call_sync is not None:
+            return call_sync(self, path)
+        return handler.__call__(self, path)
 
     @staticmethod
     def _file_stats(record: Record) -> FileStats:
+        """Derive statistics for one file from probes, its name, and mtime."""
+
         spans = [span for probe in record.probes if (span := _stats_span(probe.stats))]
         span = _combine_spans(spans) or FileHandler._name_span(record.name)
         modified = (
@@ -590,6 +725,8 @@ class FileHandler:
 
     @staticmethod
     def _folder_stats(record: Record, children: Sequence[Record]) -> FileStats:
+        """Aggregate direct child statistics and the folder's own span evidence."""
+
         git_spans = [
             span
             for probe in record.probes
@@ -622,6 +759,8 @@ class FileHandler:
 
     @classmethod
     def _name_span(cls, name: str) -> Span | None:
+        """Derive a span from supported dates, timestamps, epochs, and durations."""
+
         if match := FILENAME_SHORT_DATE_SPAN.search(name):
             dates = tuple(
                 moment
@@ -658,6 +797,8 @@ class FileHandler:
 
     @classmethod
     def _filename_times(cls, name: str) -> tuple[datetime, ...]:
+        """Parse explicit datetimes or Unix epochs embedded in a filename."""
+
         if values := FILENAME_GMT_TIMES.findall(name):
             parsed: list[datetime] = []
             for value, offset in values:
@@ -694,6 +835,8 @@ class FileHandler:
 
     @classmethod
     def _filename_dates(cls, name: str) -> tuple[datetime, ...]:
+        """Parse date-only values embedded in a filename."""
+
         for pattern, format_string in (
             (FILENAME_ISO_DATES, "%Y-%m-%d"),
             (FILENAME_SHORT_DATES, "%y%m%d"),
@@ -712,6 +855,8 @@ class FileHandler:
         format_string: str,
         zone: tzinfo | None = None,
     ) -> datetime | None:
+        """Parse and validate one filename timestamp."""
+
         try:
             parsed = datetime.strptime(value, format_string)
         except ValueError:
@@ -723,33 +868,53 @@ class FileHandler:
 
 
 class GitHandler:
-    """Identify Git-tracked paths and derive their spans from local history."""
+    """Identify tracked paths and derive spans from local Git history.
+
+    Only commits reachable from the current local ``HEAD`` are read; no remote
+    command, fetch, or upstream reference is used. Repository and currently
+    tracked file paths are recognized. A tracked folder's span also includes
+    historical files beneath it that have since been deleted.
+
+    The repository map is cached until ``HEAD``, its loose ref, the index, the
+    ``HEAD`` log, or packed refs change.
+    """
 
     name = "git"
 
     def __init__(self) -> None:
-        self._cache: dict[
+        """Initialize the repository-history cache."""
+
+        super().__init__()
+        self._git_cache: dict[
             Path,
             tuple[tuple[Any, ...], frozenset[Path], dict[Path, Span]],
         ] = {}
 
     @sync
     async def identify(self, path: Path) -> bool:
+        """Return whether ``path`` is tracked, synchronously or asynchronously."""
+
         return await asyncio.to_thread(self.identify_sync, path)
 
     def identify_sync(self, path: Path) -> bool:
+        """Return whether ``path`` belongs to the current tracked-path map."""
+
         repository = self._repository(path)
         if repository is None:
             return False
         tracked, _ = self._history(*repository)
-        return _absolute(path) in tracked
+        return full_path(path) in tracked
 
     @sync
     async def __call__(self, path: Path) -> tuple[FileStats, Path]:
+        """Return the local-history span and Git metadata path for ``path``."""
+
         return await asyncio.to_thread(self.call_sync, path)
 
     def call_sync(self, path: Path) -> tuple[FileStats, Path]:
-        path = _absolute(path)
+        """Load local-history statistics without entering another event loop."""
+
+        path = full_path(path)
         repository = self._repository(path)
         if repository is None:
             raise ValueError(f"{path}: Git repository is not identifiable")
@@ -759,16 +924,20 @@ class GitHandler:
         return FileStats(0, 0, 0, spans.get(path)), repository[1]
 
     def invalidate(self, path: Path | None = None) -> None:
+        """Discard all Git maps or the map containing ``path``."""
+
         if path is None:
-            self._cache.clear()
+            self._git_cache.clear()
             return
         repository = self._repository(path)
         if repository is not None:
-            self._cache.pop(repository[0], None)
+            self._git_cache.pop(repository[0], None)
 
     @classmethod
     def _repository(cls, path: Path) -> tuple[Path, Path] | None:
-        path = _absolute(path)
+        """Return the nearest repository root and resolved Git metadata path."""
+
+        path = full_path(path)
         start = path if path.is_dir() else path.parent
         for candidate in (start, *start.parents):
             if metadata := cls._metadata(candidate):
@@ -780,8 +949,10 @@ class GitHandler:
         root: Path,
         metadata: Path,
     ) -> tuple[frozenset[Path], dict[Path, Span]]:
+        """Return the cached tracked paths and local commit spans for a repository."""
+
         state = self._state(metadata)
-        cached = self._cache.get(root)
+        cached = self._git_cache.get(root)
         if cached is not None and cached[0] == state:
             return cached[1], cached[2]
 
@@ -833,11 +1004,13 @@ class GitHandler:
                     self._add_span(spans, parent, moment)
 
         frozen = frozenset(tracked)
-        self._cache[root] = state, frozen, spans
+        self._git_cache[root] = state, frozen, spans
         return frozen, spans
 
     @staticmethod
     def _git(root: Path, *arguments: str) -> bytes:
+        """Run one read-only local Git command and return its raw stdout."""
+
         result = subprocess.run(
             ("git", "-C", str(root), *arguments),
             capture_output=True,
@@ -850,6 +1023,8 @@ class GitHandler:
 
     @staticmethod
     def _relative(value: bytes) -> PurePosixPath:
+        """Decode and validate one repository-relative path from Git output."""
+
         path = PurePosixPath(value.decode("utf-8"))
         if path.is_absolute() or ".." in path.parts:
             raise ValueError(f"unsafe path in Git history: {path}")
@@ -857,6 +1032,8 @@ class GitHandler:
 
     @staticmethod
     def _add_span(spans: dict[Path, Span], path: Path, moment: datetime) -> None:
+        """Extend ``path`` to include one commit timestamp."""
+
         if span := spans.get(path):
             spans[path] = min(span[0], moment), max(span[1], moment)
         else:
@@ -864,10 +1041,12 @@ class GitHandler:
 
     @classmethod
     def _state(cls, metadata: Path) -> tuple[Any, ...]:
+        """Return the Git metadata state that invalidates a cached history map."""
+
         common = metadata
         commondir = metadata / "commondir"
         if commondir.is_file():
-            common = _absolute(metadata / commondir.read_text(encoding="utf-8").strip())
+            common = full_path(metadata / commondir.read_text(encoding="utf-8").strip())
         head_value = (metadata / "HEAD").read_text(encoding="utf-8").strip()
         ref_value: str | None = None
         if head_value.startswith("ref:"):
@@ -887,6 +1066,8 @@ class GitHandler:
 
     @staticmethod
     def _metadata(path: Path) -> Path | None:
+        """Resolve a repository's directory or indirection-file ``.git`` marker."""
+
         if not path.is_dir() or path.is_symlink():
             return None
         marker = path / ".git"
@@ -904,36 +1085,51 @@ class GitHandler:
         metadata = Path(target[len(prefix) :].strip())
         if not metadata.is_absolute():
             metadata = path / metadata
-        metadata = _absolute(metadata)
+        metadata = full_path(metadata)
         return metadata if metadata.is_dir() else None
 
 
 class ArchiveHandler:
-    """Identify and load ZIP, RAR, and TAR.GZ hierarchies from their contents."""
+    """Identify and load ZIP, RAR, and TAR.GZ member hierarchies.
+
+    Each member is represented by ``Record`` with an archive-relative path and
+    ``location`` set to the physical archive. Missing parent folders are
+    synthesized so archive traversal matches filesystem traversal. RAR files
+    are identified by their native signature and listed by the installed
+    RARLAB ``rar`` or ``unrar`` command; no Python RAR implementation is used.
+    """
 
     name = "archive"
     extensions = (".rar", ".tar.gz", ".zip")
+    rar_signatures = (b"Rar!\x1a\x07\x00", b"Rar!\x1a\x07\x01\x00")
 
     @sync
     async def identify(self, path: Path) -> bool:
+        """Recognize a supported archive synchronously or asynchronously."""
+
         return await asyncio.to_thread(self.identify_sync, path)
 
     def identify_sync(self, path: Path) -> bool:
+        """Recognize a ZIP, RAR, or gzip-compressed TAR from its contents."""
+
+        path = full_path(path)
         return path.is_file() and (
-            zipfile.is_zipfile(path)
-            or rarfile.is_rarfile(path)
-            or self._is_tar_gz(path)
+            zipfile.is_zipfile(path) or self._is_rar(path) or self._is_tar_gz(path)
         )
 
     @sync
     async def __call__(self, path: Path) -> tuple[FileStats, tuple[Record, ...]]:
+        """Load archive statistics and member records in either call mode."""
+
         return await asyncio.to_thread(self.call_sync, path)
 
     def call_sync(self, path: Path) -> tuple[FileStats, tuple[Record, ...]]:
-        path = _absolute(path)
+        """Load archive statistics and member records without another event loop."""
+
+        path = full_path(path)
         if zipfile.is_zipfile(path):
             records = self._zip_records(path)
-        elif rarfile.is_rarfile(path):
+        elif self._is_rar(path):
             records = self._rar_records(path)
         elif self._is_tar_gz(path):
             records = self._tar_records(path)
@@ -941,8 +1137,51 @@ class ArchiveHandler:
             raise ValueError(f"{path}: unsupported archive")
         return _archive_stats(records), records
 
+    @classmethod
+    def _is_rar(cls, path: Path) -> bool:
+        """Return whether ``path`` starts with a RAR 4 or RAR 5 signature."""
+
+        try:
+            with path.open("rb") as stream:
+                header = stream.read(max(map(len, cls.rar_signatures)))
+        except OSError:
+            return False
+        return any(header.startswith(signature) for signature in cls.rar_signatures)
+
+    @staticmethod
+    def rar_executable() -> Path:
+        """Return the installed RARLAB command used to list RAR archives.
+
+        macOS and Debian installations expose ``rar`` or ``unrar`` through
+        ``PATH``. Windows is checked the same way first, followed by the native
+        WinRAR installation directories because its installer does not add the
+        commands to ``PATH``. Absence is an error instead of a reduced parser.
+        """
+
+        for command in ("rar", "unrar"):
+            if executable := shutil.which(command):
+                return full_path(executable)
+
+        if os.name == "nt":
+            roots = tuple(
+                Path(os.environ[name])
+                for name in ("ProgramFiles", "ProgramFiles(x86)")
+                if name in os.environ
+            )
+            for executable in ("Rar.exe", "UnRAR.exe"):
+                for root in roots:
+                    candidate = root / "WinRAR" / executable
+                    if candidate.is_file():
+                        return full_path(candidate)
+
+        raise FileNotFoundError(
+            "RARLAB rar or unrar executable is required to read RAR archives"
+        )
+
     @staticmethod
     def _is_tar_gz(path: Path) -> bool:
+        """Return whether ``path`` has gzip bytes and a readable TAR structure."""
+
         try:
             with path.open("rb") as stream:
                 compressed = stream.read(2) == b"\x1f\x8b"
@@ -973,6 +1212,8 @@ class ArchiveHandler:
 
     @staticmethod
     def _zip_records(path: Path) -> tuple[Record, ...]:
+        """Read ZIP metadata into a complete archive-member hierarchy."""
+
         try:
             with zipfile.ZipFile(path) as archive:
                 return _complete_archive_records(
@@ -993,30 +1234,89 @@ class ArchiveHandler:
         except (OSError, zipfile.BadZipFile) as error:
             raise ValueError(f"{path}: cannot read ZIP: {error}") from error
 
-    @staticmethod
-    def _rar_records(path: Path) -> tuple[Record, ...]:
+    @classmethod
+    def _rar_records(cls, path: Path) -> tuple[Record, ...]:
+        """Read RAR metadata from the portable RARLAB technical listing."""
+
+        executable = cls.rar_executable()
         try:
-            with rarfile.RarFile(path) as archive:
-                return _complete_archive_records(
-                    path,
-                    tuple(
-                        Record(
-                            path=_record_path(info.filename),
-                            is_folder=info.isdir(),
-                            size=info.file_size,
-                            modified_at=_archive_time(info.mtime or info.date_time),
-                            handlers=(),
-                            location=path,
-                        )
-                        for info in archive.infolist()
-                        if _record_path(info.filename) != PurePosixPath(".")
-                    ),
-                )
-        except (OSError, rarfile.Error) as error:
-            raise ValueError(f"{path}: cannot read RAR: {error}") from error
+            completed = subprocess.run(
+                [
+                    str(executable),
+                    "lt",
+                    "-c-",
+                    "-p-",
+                    "-scf",
+                    "-y",
+                    str(path),
+                ],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                check=False,
+            )
+        except OSError as error:
+            raise ValueError(f"{path}: cannot run {executable}: {error}") from error
+
+        try:
+            output = completed.stdout.decode("utf-8")
+            errors = completed.stderr.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise ValueError(f"{path}: RAR command did not return UTF-8") from error
+        if completed.returncode:
+            detail = errors.strip() or output.strip()
+            raise ValueError(
+                f"{path}: RAR command exited with {completed.returncode}: {detail}"
+            )
+
+        entries: list[dict[str, str]] = []
+        entry: dict[str, str] | None = None
+        for line in output.splitlines():
+            field = re.match(r"^\s*([^:]+):\s?(.*)$", line)
+            if field is None:
+                continue
+            key, value = (part.strip() for part in field.groups())
+            if key == "Name":
+                if entry is not None:
+                    entries.append(entry)
+                entry = {}
+            if entry is not None:
+                entry[key] = value
+        if entry is not None:
+            entries.append(entry)
+
+        try:
+            records = tuple(cls._rar_record(path, entry) for entry in entries)
+        except (KeyError, ValueError) as error:
+            raise ValueError(
+                f"{path}: invalid RAR technical listing: {error}"
+            ) from error
+        return _complete_archive_records(path, records)
+
+    @staticmethod
+    def _rar_record(path: Path, fields: Mapping[str, str]) -> Record:
+        """Convert one RARLAB technical-listing entry into a member record."""
+
+        member = _record_path(fields["Name"])
+        is_folder = fields["Type"] == "Directory"
+        size = 0 if is_folder else int(fields["Size"])
+        modified_at = (
+            _archive_time(datetime.fromisoformat(fields["Modified"]))
+            if "Modified" in fields
+            else None
+        )
+        return Record(
+            path=member,
+            is_folder=is_folder,
+            size=size,
+            modified_at=modified_at,
+            handlers=(),
+            location=path,
+        )
 
     @staticmethod
     def _tar_records(path: Path) -> tuple[Record, ...]:
+        """Read TAR metadata into a complete archive-member hierarchy."""
+
         try:
             with tarfile.open(path, "r:*") as archive:
                 return _complete_archive_records(
@@ -1038,9 +1338,287 @@ class ArchiveHandler:
             raise ValueError(f"{path}: cannot read TAR.GZ: {error}") from error
 
 
+class _FrontmatterLoader(yaml.SafeLoader):
+    """Load safe YAML while retaining timestamp scalars as written."""
+
+
+_FrontmatterLoader.yaml_implicit_resolvers = {
+    first: [
+        (tag, pattern)
+        for tag, pattern in resolvers
+        if tag != "tag:yaml.org,2002:timestamp"
+    ]
+    for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+
+
+@dataclass(frozen=True)
+class MarkdownFile:
+    """A Markdown file and its complete YAML frontmatter mapping.
+
+    ``title`` and ``name`` implement the declared ``title|name`` equivalence:
+    each uses the supplied peer field and then the filename when its own field
+    is absent. ``tags`` normalizes the standard YAML list to strings while the
+    original value remains unchanged in ``frontmatter``. ``span`` is present
+    only when both ``created`` and ``updated`` are valid date values.
+    """
+
+    path: Path
+    frontmatter: dict[str, Any]
+
+    @property
+    def title(self) -> str:
+        """Return frontmatter ``title``, ``name``, or the filename stem."""
+
+        value = self.frontmatter.get("title")
+        if value is None:
+            value = self.frontmatter.get("name")
+        return self.path.stem if value is None else str(value)
+
+    @property
+    def name(self) -> str:
+        """Return frontmatter ``name``, ``title``, or the filename stem."""
+
+        value = self.frontmatter.get("name")
+        if value is None:
+            value = self.frontmatter.get("title")
+        return self.path.stem if value is None else str(value)
+
+    @property
+    def tags(self) -> tuple[str, ...]:
+        """Return frontmatter tags without splitting a scalar tag value."""
+
+        value = self.frontmatter.get("tags")
+        if value is None:
+            return ()
+        values = value if isinstance(value, list) else [value]
+        return tuple(str(item) for item in values if item is not None)
+
+    @property
+    def span(self) -> Span | None:
+        """Return the chronological ``created`` to ``updated`` span."""
+
+        created = self._time(self.frontmatter.get("created"))
+        updated = self._time(self.frontmatter.get("updated"))
+        return (
+            (min(created, updated), max(created, updated))
+            if created is not None and updated is not None
+            else None
+        )
+
+    @staticmethod
+    def _time(value: Any) -> datetime | None:
+        """Parse one frontmatter date in its offset or the project timezone."""
+
+        if isinstance(value, datetime):
+            parsed = value
+        elif isinstance(value, date):
+            parsed = datetime(value.year, value.month, value.day)
+        elif isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value.strip())
+            except ValueError:
+                return None
+        else:
+            return None
+        return (
+            parsed
+            if parsed.tzinfo is not None
+            else parsed.replace(tzinfo=FRONTMATTER_TIMEZONE)
+        )
+
+
+class MarkdownHandler:
+    """Identify Markdown files and read their complete YAML frontmatter."""
+
+    name = "markdown"
+
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Recognize a Markdown file synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self.identify_sync, path)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Return whether ``path`` is a physical ``.md`` file."""
+
+        path = full_path(path)
+        return path.suffix.casefold() == ".md" and path.is_file()
+
+    @sync
+    async def __call__(self, path: Path) -> tuple[FileStats, MarkdownFile]:
+        """Read a Markdown file synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self.call_sync, path)
+
+    def call_sync(self, path: Path) -> tuple[FileStats, MarkdownFile]:
+        """Return statistics and a Markdown object with all frontmatter keys."""
+
+        path = full_path(path)
+        if not self.identify_sync(path):
+            raise ValueError(f"{path}: Markdown file is not identifiable")
+        markdown = MarkdownFile(path, self._frontmatter(path))
+        return FileStats(1, 0, path.stat().st_size, markdown.span), markdown
+
+    @staticmethod
+    def _frontmatter(path: Path) -> dict[str, Any]:
+        """Read the complete leading YAML mapping, or an empty mapping."""
+
+        with path.open(encoding="utf-8-sig") as stream:
+            if stream.readline().strip() != "---":
+                return {}
+            lines: list[str] = []
+            for line in stream:
+                if line.strip() == "---":
+                    break
+                lines.append(line)
+            else:
+                raise ValueError(f"{path}: YAML frontmatter has no closing ---")
+        try:
+            frontmatter = yaml.load("".join(lines), Loader=_FrontmatterLoader)
+        except yaml.YAMLError as error:
+            raise ValueError(f"{path}: invalid YAML frontmatter: {error}") from error
+        if frontmatter is None:
+            return {}
+        if not isinstance(frontmatter, dict):
+            raise ValueError(f"{path}: YAML frontmatter must be a mapping")
+        return frontmatter
+
+
+@dataclass(frozen=True)
+class CSVFile:
+    """A complete comma-separated text file split into header and data rows."""
+
+    path: Path
+    header: tuple[str, ...]
+    rows: tuple[tuple[str, ...], ...]
+
+
+class CSVHandler:
+    """Identify ``.csv`` files and read their complete comma-separated table."""
+
+    name = "csv"
+
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Recognize a CSV file synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self.identify_sync, path)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Return whether ``path`` is a physical ``.csv`` file."""
+
+        path = full_path(path)
+        return path.suffix.casefold() == ".csv" and path.is_file()
+
+    @sync
+    async def __call__(self, path: Path) -> tuple[FileStats, CSVFile]:
+        """Read a CSV file synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self.call_sync, path)
+
+    def call_sync(self, path: Path) -> tuple[FileStats, CSVFile]:
+        """Return file statistics and the complete parsed CSV table."""
+
+        path = full_path(path)
+        if not self.identify_sync(path):
+            raise ValueError(f"{path}: CSV file is not identifiable")
+        try:
+            with path.open(encoding="utf-8-sig", newline="") as stream:
+                records = tuple(tuple(row) for row in csv.reader(stream, strict=True))
+        except csv.Error as error:
+            raise ValueError(f"{path}: invalid CSV: {error}") from error
+        header = records[0] if records else ()
+        csv_file = CSVFile(path, header, records[1:])
+        return FileStats(1, 0, path.stat().st_size, None), csv_file
+
+
+@dataclass(frozen=True)
+class LogFile:
+    """A complete text log and the absolute timestamps found at row starts."""
+
+    path: Path
+    rows: tuple[str, ...]
+    timestamps: tuple[datetime, ...]
+
+    @property
+    def span(self) -> Span | None:
+        """Return the first-to-last recorded timestamp, if any rows have one."""
+
+        return (min(self.timestamps), max(self.timestamps)) if self.timestamps else None
+
+
+class LogHandler:
+    """Identify ``.log`` files and derive spans from timestamped rows.
+
+    A timestamp must begin a row, optionally after whitespace and ``[`` or
+    ``(``, and use ISO 8601 date-and-time spelling. Offset-free timestamps use
+    ``America/Los_Angeles``. Every row is retained whether timestamped or not.
+    """
+
+    name = "log"
+
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Recognize a log file synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self.identify_sync, path)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Return whether ``path`` is a physical ``.log`` file."""
+
+        path = full_path(path)
+        return path.suffix.casefold() == ".log" and path.is_file()
+
+    @sync
+    async def __call__(self, path: Path) -> tuple[FileStats, LogFile]:
+        """Read a log file synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self.call_sync, path)
+
+    def call_sync(self, path: Path) -> tuple[FileStats, LogFile]:
+        """Return all log rows and statistics spanning timestamped rows."""
+
+        path = full_path(path)
+        if not self.identify_sync(path):
+            raise ValueError(f"{path}: log file is not identifiable")
+        rows = tuple(path.read_text(encoding="utf-8-sig").splitlines())
+        timestamps = tuple(
+            timestamp for row in rows if (timestamp := self._timestamp(row)) is not None
+        )
+        log = LogFile(path, rows, timestamps)
+        return FileStats(1, 0, path.stat().st_size, log.span), log
+
+    @staticmethod
+    def _timestamp(row: str) -> datetime | None:
+        """Parse an absolute ISO timestamp from the beginning of one row."""
+
+        match = LOG_TIMESTAMP.match(row)
+        if match is None:
+            return None
+        try:
+            parsed = datetime.fromisoformat(match.group("timestamp"))
+        except ValueError:
+            return None
+        localized = (
+            parsed
+            if parsed.tzinfo is not None
+            else parsed.replace(tzinfo=FRONTMATTER_TIMEZONE)
+        )
+        return valid_time(localized)
+
+
+class ImageHandler:
+    """Placeholder for image EXIF metadata after media-format recognition."""
+
+
+class VideoHandler:
+    """Placeholder for video EXIF metadata after media-format recognition."""
+
+
 @dataclass(frozen=True)
 class SessionTurn:
-    """One user or assistant message."""
+    """One extracted user or assistant message with provenance flags."""
 
     role: str
     text: str
@@ -1051,7 +1629,14 @@ class SessionTurn:
 
 @dataclass(frozen=True)
 class SessionFile:
-    """One complete session log."""
+    """One complete native or exported session.
+
+    Native sessions use an absolute ``path`` and no ``location``. Exported
+    sessions use the JSON member as ``path`` and the physical ZIP or extracted
+    conversation JSON file as ``location``. ``records`` retains the original
+    source objects while ``turns`` contains normalized user and assistant
+    messages.
+    """
 
     path: Path | PurePosixPath
     harness: Harness
@@ -1068,14 +1653,20 @@ class SessionFile:
 
     @property
     def span_start(self) -> datetime | None:
+        """Return the first valid session timestamp."""
+
         return self.span[0] if self.span else None
 
     @property
     def span_end(self) -> datetime | None:
+        """Return the last valid session timestamp."""
+
         return self.span[1] if self.span else None
 
     @property
     def user_messages(self) -> tuple[str, ...]:
+        """Return mainline, non-metadata user-message text."""
+
         return tuple(
             turn.text
             for turn in self.turns
@@ -1089,6 +1680,8 @@ class SessionFile:
 
     @property
     def length(self) -> str:
+        """Return the rounded session duration using the largest suitable unit."""
+
         if self.span is None:
             return ""
         seconds = round((self.span[1] - self.span[0]).total_seconds())
@@ -1099,12 +1692,16 @@ class SessionFile:
 
     @property
     def label(self) -> str:
+        """Return the date, turn count, duration, and topic display label."""
+
         start = f"{self.span[0].astimezone():%y%m%d-%H%M} " if self.span else ""
         topic = f" - {self.topic}" if self.topic else ""
         return f"{start}{len(self.turns)}{self.length}{topic}"
 
     @property
     def name(self) -> str:
+        """Return a length-limited normalized filename retaining id and suffix."""
+
         tail = (f".{self.uid}" if self.uid else "") + self.path.suffix
         label = self.label
         if len(label) + len(tail) > NAME_LIMIT:
@@ -1114,7 +1711,7 @@ class SessionFile:
 
 @dataclass(frozen=True)
 class SessionFolder:
-    """Session files held by one folder."""
+    """Sessions read from one directory or one LLM export ZIP."""
 
     path: Path
     harness: Harness
@@ -1122,6 +1719,8 @@ class SessionFolder:
 
     @property
     def uid(self) -> str | None:
+        """Return the shared session id only when every identified id agrees."""
+
         values = {file.uid for file in self.files if file.uid}
         return values.pop() if len(values) == 1 else None
 
@@ -1131,7 +1730,7 @@ SessionObject = SessionFile | SessionFolder
 
 @dataclass(frozen=True)
 class SessionStats:
-    """Statistics derived only from a session file or folder."""
+    """Physical-file, session, turn, byte, span, and model statistics."""
 
     files: int
     sessions: int
@@ -1143,6 +1742,8 @@ class SessionStats:
 
     @property
     def span(self) -> Span | None:
+        """Return the complete span when both bounds are available."""
+
         return (
             (self.span_start, self.span_end)
             if self.span_start is not None and self.span_end is not None
@@ -1151,6 +1752,13 @@ class SessionStats:
 
     @classmethod
     def from_object(cls, obj: SessionObject) -> SessionStats:
+        """Derive statistics from a session or collection of sessions.
+
+        Multiple conversations inside one export ZIP count as one physical
+        file for ``files`` and ``bytes``. Extracted exports count their
+        conversation JSON files. Each immutable id counts as one session.
+        """
+
         files = (obj,) if isinstance(obj, SessionFile) else obj.files
         spans = [file.span for file in files if file.span]
         paths = {file.location or Path(file.path) for file in files}
@@ -1168,13 +1776,384 @@ class SessionStats:
         )
 
 
+class _LLMExportHandler:
+    """Shared folder and ZIP mechanics for ChatGPT and Anthropic handlers."""
+
+    def __init__(self) -> None:
+        """Initialize the provider export cache and the next mixin."""
+
+        super().__init__()
+        self._llm_export_cache: dict[
+            tuple[Harness, Path], tuple[Signature, SessionFolder]
+        ] = {}
+
+    @staticmethod
+    def _source_names(path: Path) -> frozenset[str]:
+        """Return direct folder filenames or ZIP member filenames."""
+
+        if path.is_dir() and not path.is_symlink():
+            try:
+                return frozenset(
+                    child.name.casefold() for child in path.iterdir() if child.is_file()
+                )
+            except OSError:
+                return frozenset()
+        try:
+            with zipfile.ZipFile(path) as archive:
+                return frozenset(
+                    PurePosixPath(member.filename).name.casefold()
+                    for member in archive.infolist()
+                    if not member.is_dir()
+                )
+        except OSError, zipfile.BadZipFile:
+            return frozenset()
+
+    def _identify_export(self, path: Path, provider: type[Any]) -> bool:
+        """Recognize a provider export from its required filenames."""
+
+        path = full_path(path)
+        return provider.has_markers(self._source_names(path))
+
+    def _call_export(
+        self, path: Path, provider: type[Any]
+    ) -> tuple[SessionStats, SessionFolder]:
+        """Load every provider conversation from a folder or ZIP."""
+
+        path = full_path(path)
+        if not self._identify_export(path, provider):
+            raise ValueError(f"{path}: {provider.name} export is not identifiable")
+        signature = _signature(path.stat())
+        cache_key = provider.name, path
+        cached = self._llm_export_cache.get(cache_key) if path.is_file() else None
+        if cached is not None and cached[0] == signature:
+            return SessionStats.from_object(cached[1]), cached[1]
+
+        files: list[SessionFile] = []
+        try:
+            if path.is_dir() and not path.is_symlink():
+                sources = tuple(
+                    child
+                    for child in sorted(path.iterdir(), key=_display_order)
+                    if child.is_file() and provider.conversation_file(child.name)
+                )
+                for source in sources:
+                    with source.open("r", encoding="utf-8") as stream:
+                        conversations = json.load(stream, strict=False)
+                    self._append_export(
+                        files,
+                        source,
+                        source.name,
+                        conversations,
+                        provider,
+                    )
+            else:
+                with zipfile.ZipFile(path) as archive:
+                    members = tuple(
+                        member
+                        for member in archive.infolist()
+                        if not member.is_dir()
+                        and provider.conversation_file(
+                            PurePosixPath(member.filename).name
+                        )
+                    )
+                    for member in members:
+                        with archive.open(member) as stream:
+                            conversations = json.load(stream, strict=False)
+                        self._append_export(
+                            files,
+                            path,
+                            member.filename,
+                            conversations,
+                            provider,
+                        )
+        except (
+            OSError,
+            UnicodeDecodeError,
+            zipfile.BadZipFile,
+            json.JSONDecodeError,
+        ) as error:
+            raise ValueError(
+                f"{path}: cannot read {provider.name} export: {error}"
+            ) from error
+        if not files:
+            raise ValueError(
+                f"{path}: {provider.name} export contains no conversations"
+            )
+        folder = SessionFolder(path, provider.name, tuple(files))
+        if path.is_file():
+            self._llm_export_cache[cache_key] = signature, folder
+        return SessionStats.from_object(folder), folder
+
+    def _append_export(
+        self,
+        files: list[SessionFile],
+        location: Path,
+        member: str,
+        conversations: Any,
+        provider: type[Any],
+    ) -> None:
+        """Validate and append every conversation from one JSON source."""
+
+        if not isinstance(conversations, list):
+            raise ValueError(f"{location}::{member}: conversations are not a list")
+        for conversation in conversations:
+            if not isinstance(conversation, Mapping):
+                raise ValueError(f"{location}::{member}: conversation is not an object")
+            if not provider.identify_conversation(conversation):
+                raise ValueError(
+                    f"{location}::{member}: conversation format is not {provider.name}"
+                )
+            files.append(self._export_file(location, member, provider, conversation))
+
+    @staticmethod
+    def _export_file(
+        location: Path,
+        member: str,
+        provider: type[Any],
+        conversation: Mapping[str, Any],
+    ) -> SessionFile:
+        """Convert one provider conversation into a typed session file."""
+
+        uid = next(
+            (
+                value.strip()
+                for key in provider.id_keys
+                if isinstance(value := conversation.get(key), str) and value.strip()
+            ),
+            None,
+        )
+        if uid is None:
+            raise ValueError(f"{location}::{member}: conversation has no immutable id")
+        turns = tuple(
+            turn
+            for role, content, timestamp in provider.messages(conversation)
+            if (turn := SessionHandler._turn(role, content, timestamp)) is not None
+        )
+        timestamps = [turn.timestamp for turn in turns if turn.timestamp is not None]
+        timestamps += [
+            stamp
+            for key in provider.time_keys
+            if (stamp := valid_time(SessionHandler._stamp(conversation.get(key))))
+            is not None
+        ]
+        return SessionFile(
+            path=_record_path(member),
+            harness=provider.name,
+            uid=uid,
+            parent_uid=None,
+            subagent=False,
+            records=(conversation,),
+            turns=turns,
+            span=(min(timestamps), max(timestamps)) if timestamps else None,
+            models=SessionHandler._models((conversation,)),
+            topic=SessionHandler._topic(turns),
+            location=location,
+        )
+
+    def _invalidate_export(self, path: Path | None, provider: type[Any]) -> None:
+        """Discard one provider's cached ZIP exports at and beneath ``path``."""
+
+        selected = None if path is None else full_path(path)
+        for key in tuple(self._llm_export_cache):
+            name, cached = key
+            if name == provider.name and (
+                selected is None or cached == selected or selected in cached.parents
+            ):
+                self._llm_export_cache.pop(key, None)
+
+
+class ChatGPTHandler(_LLMExportHandler):
+    """Handle an extracted folder or ZIP from a ChatGPT data export.
+
+    Detection uses the export's filenames: numbered ``conversations-NNN.json``
+    files, or ``chat.html`` together with ``conversations.json``. The active
+    conversation is the chain from ``current_node`` through each parent;
+    alternate branches in ``mapping`` are not returned as transcript turns.
+    """
+
+    name: Harness = "chatgpt"
+    id_keys = ("id", "conversation_id")
+    time_keys = ("create_time", "update_time")
+
+    @staticmethod
+    def has_markers(names: frozenset[str]) -> bool:
+        """Return whether the filenames identify a ChatGPT export."""
+
+        return any(
+            re.fullmatch(r"conversations-\d+\.json", name) for name in names
+        ) or {"chat.html", "conversations.json"}.issubset(names)
+
+    @staticmethod
+    def conversation_file(name: str) -> bool:
+        """Return whether ``name`` is a ChatGPT conversation JSON file."""
+
+        return EXPORT_MEMBER.fullmatch(name) is not None
+
+    @staticmethod
+    def identify_conversation(conversation: Mapping[str, Any]) -> bool:
+        """Recognize the ChatGPT mapping and current-node representation."""
+
+        return isinstance(conversation.get("mapping"), Mapping) and isinstance(
+            conversation.get("current_node"), str
+        )
+
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Recognize a ChatGPT folder or ZIP in either call mode."""
+
+        return await asyncio.to_thread(self.identify_sync, path)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Recognize a ChatGPT folder or ZIP from its filenames."""
+
+        return self._identify_export(path, ChatGPTHandler)
+
+    @sync
+    async def __call__(self, path: Path) -> tuple[SessionStats, SessionFolder]:
+        """Load a ChatGPT folder or ZIP in either call mode."""
+
+        return await asyncio.to_thread(self.call_sync, path)
+
+    def call_sync(self, path: Path) -> tuple[SessionStats, SessionFolder]:
+        """Load all conversations from a ChatGPT folder or ZIP."""
+
+        return self._call_export(path, ChatGPTHandler)
+
+    def invalidate(self, path: Path | None = None) -> None:
+        """Discard cached ChatGPT ZIP exports at and beneath ``path``."""
+
+        self._invalidate_export(path, ChatGPTHandler)
+
+    @staticmethod
+    def messages(
+        conversation: Mapping[str, Any],
+    ) -> tuple[tuple[Any, Any, Any], ...]:
+        """Return messages along the active ChatGPT branch in reading order."""
+
+        mapping = conversation["mapping"]
+        current = conversation["current_node"]
+        chain: list[Mapping[str, Any]] = []
+        visited: set[str] = set()
+        while current is not None:
+            if (
+                not isinstance(current, str)
+                or current not in mapping
+                or current in visited
+            ):
+                raise ValueError(
+                    "ChatGPT conversation has an invalid current-node chain"
+                )
+            visited.add(current)
+            node = mapping[current]
+            if not isinstance(node, Mapping):
+                raise ValueError("ChatGPT conversation node is not an object")
+            chain.append(node)
+            current = node.get("parent")
+        return tuple(
+            (
+                author.get("role"),
+                content.get("parts"),
+                message.get("create_time"),
+            )
+            for node in reversed(chain)
+            if isinstance(message := node.get("message"), Mapping)
+            and isinstance(author := message.get("author"), Mapping)
+            and isinstance(content := message.get("content"), Mapping)
+            and content.get("content_type") in ("text", "multimodal_text")
+        )
+
+
+class AnthropicHandler(_LLMExportHandler):
+    """Handle an extracted folder or ZIP from an Anthropic Claude data export.
+
+    Detection requires ``conversations.json`` and excludes ChatGPT exports that
+    also contain ``chat.html``. Messages retain ``chat_messages`` order; the
+    common turn normalizer maps Anthropic's ``human`` sender to ``user``.
+    """
+
+    name: Harness = "claude"
+    id_keys = ("uuid", "id")
+    time_keys = ("created_at", "updated_at")
+
+    @staticmethod
+    def has_markers(names: frozenset[str]) -> bool:
+        """Return whether the filenames identify a Claude export."""
+
+        return "conversations.json" in names and "chat.html" not in names
+
+    @staticmethod
+    def conversation_file(name: str) -> bool:
+        """Return whether ``name`` is the Claude conversation JSON file."""
+
+        return name.casefold() == "conversations.json"
+
+    @staticmethod
+    def identify_conversation(conversation: Mapping[str, Any]) -> bool:
+        """Recognize the Claude UUID and chat-message representation."""
+
+        return isinstance(conversation.get("chat_messages"), list) and isinstance(
+            conversation.get("uuid"), str
+        )
+
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Recognize an Anthropic Claude folder or ZIP in either call mode."""
+
+        return await asyncio.to_thread(self.identify_sync, path)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Recognize an Anthropic Claude folder or ZIP from its filenames."""
+
+        return self._identify_export(path, AnthropicHandler)
+
+    @sync
+    async def __call__(self, path: Path) -> tuple[SessionStats, SessionFolder]:
+        """Load an Anthropic Claude folder or ZIP in either call mode."""
+
+        return await asyncio.to_thread(self.call_sync, path)
+
+    def call_sync(self, path: Path) -> tuple[SessionStats, SessionFolder]:
+        """Load all conversations from an Anthropic Claude folder or ZIP."""
+
+        return self._call_export(path, AnthropicHandler)
+
+    def invalidate(self, path: Path | None = None) -> None:
+        """Discard cached Anthropic ZIP exports at and beneath ``path``."""
+
+        self._invalidate_export(path, AnthropicHandler)
+
+    @staticmethod
+    def messages(
+        conversation: Mapping[str, Any],
+    ) -> tuple[tuple[Any, Any, Any], ...]:
+        """Return Claude messages in their exported order."""
+
+        return tuple(
+            (
+                message.get("sender"),
+                message.get("content"),
+                message.get("created_at"),
+            )
+            for message in conversation["chat_messages"]
+            if isinstance(message, Mapping)
+        )
+
+
 class SessionHandler:
-    """Identify and load Claude, Codex, OpenClaw, Hermes, and Agy sessions."""
+    """Identify, load, normalize, and cache native JSONL sessions.
+
+    Codex, Claude Code, OpenClaw, Agy, and Hermes formats are recognized from
+    their records. ChatGPT and Anthropic data exports belong to their explicit
+    handlers.
+    """
 
     name = "session"
 
     def __init__(self) -> None:
-        self._cache: dict[Path, tuple[Signature, SessionObject]] = {}
+        """Initialize native format maps, session cache, and the next mixin."""
+
+        super().__init__()
+        self._session_cache: dict[Path, tuple[Signature, SessionObject]] = {}
         self._recognizers = (
             ("cx", self._is_codex),
             ("cc", self._is_claude_code),
@@ -1189,36 +2168,24 @@ class SessionHandler:
             "agy": self._agy_uid,
             "hermes": self._hermes_uid,
         }
-        self._turn_readers = {
+        self._native_turn_readers = {
             "cx": self._codex_turns,
             "cc": self._claude_code_turns,
             "openclaw": self._openclaw_turns,
             "agy": self._agy_turns,
             "hermes": self._hermes_turns,
         }
-        self._export_recognizers = (
-            ("chatgpt", self._is_chatgpt),
-            ("claude", self._is_claude),
-        )
-        self._export_ids = {
-            "chatgpt": ("id", "conversation_id"),
-            "claude": ("uuid", "id"),
-        }
-        self._export_times = {
-            "chatgpt": ("create_time", "update_time"),
-            "claude": ("created_at", "updated_at"),
-        }
-        self._export_turn_readers = {
-            "chatgpt": self._chatgpt_turns,
-            "claude": self._claude_turns,
-        }
 
     @sync
     async def identify(self, path: Path) -> bool:
+        """Recognize a session file, folder, or export in either call mode."""
+
         return await asyncio.to_thread(self.identify_sync, path)
 
     def identify_sync(self, path: Path) -> bool:
-        path = _absolute(path)
+        """Recognize native session files and folders from JSONL records."""
+
+        path = full_path(path)
         if path.is_dir() and not path.is_symlink():
             if self._home_harness(path) is not None or self._agy_session_folder(path):
                 return True
@@ -1227,29 +2194,23 @@ class SessionHandler:
             except OSError:
                 return False  # a folder that will not be listed holds no session that can be read
             return any(
-                child.is_file()
-                and (
-                    self._export_members(child)
-                    or self._harness(self._head(child)) is not None
-                )
+                child.is_file() and self._harness(self._head(child)) is not None
                 for child in children
             )
-        return path.is_file() and (
-            bool(self._export_members(path))
-            or self._harness(self._head(path)) is not None
-        )
+        return path.is_file() and self._harness(self._head(path)) is not None
 
     @sync
     async def __call__(self, path: Path) -> tuple[SessionStats, SessionObject]:
+        """Load a session object and its derived statistics in either call mode."""
+
         return await asyncio.to_thread(self.call_sync, path)
 
     def call_sync(self, path: Path) -> tuple[SessionStats, SessionObject]:
-        path = _absolute(path)
+        """Load one native file or directory without entering another event loop."""
+
+        path = full_path(path)
         if path.is_file():
-            if members := self._export_members(path):
-                obj: SessionObject = self._export(path, members)
-            else:
-                obj = self._file(path)
+            obj: SessionObject = self._file(path)
         elif path.is_dir() and not path.is_symlink():
             hint = self._home_harness(path)
             files = tuple(
@@ -1273,6 +2234,8 @@ class SessionHandler:
         return SessionStats.from_object(obj), obj
 
     def normalize_name(self, obj: SessionObject) -> str:
+        """Return the canonical name for one native session file."""
+
         if not isinstance(obj, SessionFile):
             raise ValueError(f"{obj.path}: normalization requires one session")
         if obj.location is not None:
@@ -1282,17 +2245,21 @@ class SessionHandler:
         return obj.name
 
     def invalidate(self, path: Path | None = None) -> None:
+        """Discard all cached sessions or entries at and beneath ``path``."""
+
         if path is None:
-            self._cache.clear()
+            self._session_cache.clear()
             return
-        path = _absolute(path)
-        for key in tuple(self._cache):
+        path = full_path(path)
+        for key in tuple(self._session_cache):
             if key == path or path in key.parents:
-                self._cache.pop(key, None)
+                self._session_cache.pop(key, None)
 
     def _file(self, path: Path) -> SessionFile:
+        """Load and cache one native JSONL session file."""
+
         signature = _signature(path.stat())
-        cached = self._cache.get(path)
+        cached = self._session_cache.get(path)
         if (
             cached is not None
             and cached[0] == signature
@@ -1303,7 +2270,7 @@ class SessionHandler:
         harness = self._harness(records[:SNIFF])
         if harness is None:
             raise ValueError(f"{path}: session format is not identifiable")
-        turns = self._turn_readers[harness](records)
+        turns = self._native_turn_readers[harness](records)
         timestamps = tuple(self._timestamps(records))
         uid = self._uid_readers[harness](records, path)
         parent_uid, subagent = self._parent(records)
@@ -1322,147 +2289,23 @@ class SessionHandler:
             topic=self._topic(turns),
             sidechain_only=sidechain and not mainline,
         )
-        self._cache[path] = (signature, item)
+        self._session_cache[path] = (signature, item)
         return item
 
     def _sessions(self, path: Path) -> tuple[SessionFile, ...]:
-        if members := self._export_members(path):
-            return self._export(path, members).files
+        """Return a native session when ``path`` has a recognized JSONL head."""
+
         return (
             (self._file(path),) if self._harness(self._head(path)) is not None else ()
         )
-
-    def _export(
-        self,
-        path: Path,
-        members: Sequence[zipfile.ZipInfo],
-    ) -> SessionFolder:
-        signature = _signature(path.stat())
-        cached = self._cache.get(path)
-        if (
-            cached is not None
-            and cached[0] == signature
-            and isinstance(cached[1], SessionFolder)
-        ):
-            return cached[1]
-        files: list[SessionFile] = []
-        try:
-            with zipfile.ZipFile(path) as archive:
-                for member in members:
-                    with archive.open(member) as stream:
-                        conversations = json.load(stream, strict=False)
-                    if not isinstance(conversations, list):
-                        raise ValueError(
-                            f"{path}::{member.filename}: conversations are not a list"
-                        )
-                    for conversation in conversations:
-                        if not isinstance(conversation, Mapping):
-                            raise ValueError(
-                                f"{path}::{member.filename}: conversation is not an object"
-                            )
-                        harness = self._export_harness(conversation)
-                        if harness is None:
-                            raise ValueError(
-                                f"{path}::{member.filename}: conversation format is not identifiable"
-                            )
-                        files.append(
-                            self._export_file(
-                                path, member.filename, harness, conversation
-                            )
-                        )
-        except (
-            OSError,
-            UnicodeDecodeError,
-            zipfile.BadZipFile,
-            json.JSONDecodeError,
-        ) as error:
-            raise ValueError(
-                f"{path}: cannot read session export ZIP: {error}"
-            ) from error
-        if not files:
-            raise ValueError(f"{path}: session export contains no conversations")
-        item = SessionFolder(path, self._one_harness(path, files), tuple(files))
-        self._cache[path] = (signature, item)
-        return item
-
-    def _export_file(
-        self,
-        location: Path,
-        member: str,
-        harness: Harness,
-        conversation: Mapping[str, Any],
-    ) -> SessionFile:
-        uid = next(
-            (
-                value.strip()
-                for key in self._export_ids[harness]
-                if isinstance(value := conversation.get(key), str) and value.strip()
-            ),
-            None,
-        )
-        if uid is None:
-            raise ValueError(f"{location}::{member}: conversation has no immutable id")
-        turns = self._export_turn_readers[harness](conversation)
-        timestamps = [turn.timestamp for turn in turns if turn.timestamp is not None]
-        timestamps += [
-            stamp
-            for key in self._export_times[harness]
-            if (stamp := valid_time(self._stamp(conversation.get(key)))) is not None
-        ]
-        return SessionFile(
-            path=_record_path(member),
-            harness=harness,
-            uid=uid,
-            parent_uid=None,
-            subagent=False,
-            records=(conversation,),
-            turns=turns,
-            span=(min(timestamps), max(timestamps)) if timestamps else None,
-            models=self._models((conversation,)),
-            topic=self._topic(turns),
-            location=location,
-        )
-
-    @staticmethod
-    def _export_members(path: Path) -> tuple[zipfile.ZipInfo, ...]:
-        try:
-            with zipfile.ZipFile(path) as archive:
-                return tuple(
-                    sorted(
-                        (
-                            member
-                            for member in archive.infolist()
-                            if not member.is_dir()
-                            and EXPORT_MEMBER.fullmatch(
-                                PurePosixPath(member.filename).name
-                            )
-                        ),
-                        key=lambda member: member.filename.casefold(),
-                    )
-                )
-        except OSError, zipfile.BadZipFile:
-            return ()
-
-    def _export_harness(self, conversation: Mapping[str, Any]) -> Harness | None:
-        matches = tuple(
-            harness
-            for harness, recognize in self._export_recognizers
-            if recognize(conversation)
-        )
-        return matches[0] if len(matches) == 1 else None
-
-    @staticmethod
-    def _one_harness(path: Path, files: Sequence[SessionFile]) -> Harness:
-        harnesses = tuple(dict.fromkeys(file.harness for file in files))
-        if len(harnesses) != 1:
-            raise ValueError(f"{path}: contains multiple session harnesses")
-        return harnesses[0]
 
     def _harness(
         self,
         records: Sequence[Mapping[str, Any]],
         hint: Harness | None = None,
     ) -> Harness | None:
+        """Return the first native format matching ``records``, or ``hint``."""
+
         return next(
             (harness for harness, recognize in self._recognizers if recognize(records)),
             hint,
@@ -1470,6 +2313,8 @@ class SessionHandler:
 
     @staticmethod
     def _is_codex(records: Sequence[Mapping[str, Any]]) -> bool:
+        """Recognize Codex lifecycle and response records."""
+
         return any(
             record.get("type")
             in ("session_meta", "turn_context", "event_msg", "response_item")
@@ -1479,6 +2324,8 @@ class SessionHandler:
 
     @staticmethod
     def _is_claude_code(records: Sequence[Mapping[str, Any]]) -> bool:
+        """Recognize Claude Code session identifiers and record types."""
+
         return any(
             isinstance(record.get("sessionId"), str)
             or record.get("type") == "teleported-from"
@@ -1489,10 +2336,14 @@ class SessionHandler:
 
     @staticmethod
     def _is_openclaw(records: Sequence[Mapping[str, Any]]) -> bool:
+        """Recognize OpenClaw records from their model identifier."""
+
         return any(isinstance(record.get("modelId"), str) for record in records)
 
     @staticmethod
     def _is_agy(records: Sequence[Mapping[str, Any]]) -> bool:
+        """Recognize Agy user and planner transcript records."""
+
         return any(
             record.get("type") in ("USER_INPUT", "PLANNER_RESPONSE")
             and record.get("source") in ("USER_EXPLICIT", "MODEL")
@@ -1502,6 +2353,8 @@ class SessionHandler:
 
     @staticmethod
     def _is_hermes(records: Sequence[Mapping[str, Any]]) -> bool:
+        """Recognize a Hermes session metadata record."""
+
         return any(
             record.get("role") == "session_meta"
             and isinstance(record.get("session_id"), str)
@@ -1509,19 +2362,9 @@ class SessionHandler:
         )
 
     @staticmethod
-    def _is_chatgpt(conversation: Mapping[str, Any]) -> bool:
-        return isinstance(conversation.get("mapping"), Mapping) and isinstance(
-            conversation.get("current_node"), str
-        )
-
-    @staticmethod
-    def _is_claude(conversation: Mapping[str, Any]) -> bool:
-        return isinstance(conversation.get("chat_messages"), list) and isinstance(
-            conversation.get("uuid"), str
-        )
-
-    @staticmethod
     def _codex_uid(records: Sequence[Mapping[str, Any]], path: Path) -> str | None:
+        """Return the immutable id from Codex session metadata."""
+
         for record in records:
             if record.get("type") != "session_meta" or not isinstance(
                 payload := record.get("payload"), Mapping
@@ -1533,6 +2376,8 @@ class SessionHandler:
 
     @staticmethod
     def _agy_uid(records: Sequence[Mapping[str, Any]], path: Path) -> str | None:
+        """Return the UUID-named Agy session folder beneath ``brain``."""
+
         return next(
             (
                 parent.name
@@ -1546,24 +2391,32 @@ class SessionHandler:
     def _claude_code_uid(
         cls, records: Sequence[Mapping[str, Any]], path: Path
     ) -> str | None:
+        """Return the first Claude Code session identifier."""
+
         return cls._record_uid(records, ID_KEYS)
 
     @classmethod
     def _openclaw_uid(
         cls, records: Sequence[Mapping[str, Any]], path: Path
     ) -> str | None:
+        """Return the first OpenClaw session identifier."""
+
         return cls._record_uid(records, ("id", "session_id"))
 
     @classmethod
     def _hermes_uid(
         cls, records: Sequence[Mapping[str, Any]], path: Path
     ) -> str | None:
+        """Return the first Hermes session identifier."""
+
         return cls._record_uid(records, ID_KEYS)
 
     @staticmethod
     def _record_uid(
         records: Sequence[Mapping[str, Any]], keys: Sequence[str]
     ) -> str | None:
+        """Find the first non-empty identifier in supported record scopes."""
+
         for record in records:
             scopes = [record]
             scopes += [
@@ -1582,6 +2435,8 @@ class SessionHandler:
     def _codex_turns(
         cls, records: Sequence[Mapping[str, Any]]
     ) -> tuple[SessionTurn, ...]:
+        """Extract Codex response messages, or legacy event messages when absent."""
+
         response = tuple(
             item
             for record in records
@@ -1617,6 +2472,8 @@ class SessionHandler:
     def _claude_code_turns(
         cls, records: Sequence[Mapping[str, Any]]
     ) -> tuple[SessionTurn, ...]:
+        """Extract Claude Code user and assistant turns with record flags."""
+
         return tuple(
             item
             for record in records
@@ -1638,6 +2495,8 @@ class SessionHandler:
     def _openclaw_turns(
         cls, records: Sequence[Mapping[str, Any]]
     ) -> tuple[SessionTurn, ...]:
+        """Extract OpenClaw turns from nested message records."""
+
         return tuple(
             item
             for record in records
@@ -1656,6 +2515,8 @@ class SessionHandler:
     def _agy_turns(
         cls, records: Sequence[Mapping[str, Any]]
     ) -> tuple[SessionTurn, ...]:
+        """Map Agy user input and planner responses to canonical turns."""
+
         roles = {"USER_INPUT": "user", "PLANNER_RESPONSE": "assistant"}
         return tuple(
             item
@@ -1674,6 +2535,8 @@ class SessionHandler:
     def _hermes_turns(
         cls, records: Sequence[Mapping[str, Any]]
     ) -> tuple[SessionTurn, ...]:
+        """Extract Hermes turns from flat role and content records."""
+
         return tuple(
             item
             for record in records
@@ -1685,62 +2548,10 @@ class SessionHandler:
             if item is not None
         )
 
-    @classmethod
-    def _chatgpt_turns(cls, conversation: Mapping[str, Any]) -> tuple[SessionTurn, ...]:
-        mapping = conversation["mapping"]
-        current = conversation["current_node"]
-        chain: list[Mapping[str, Any]] = []
-        visited: set[str] = set()
-        while current is not None:
-            if (
-                not isinstance(current, str)
-                or current not in mapping
-                or current in visited
-            ):
-                raise ValueError(
-                    "ChatGPT conversation has an invalid current-node chain"
-                )
-            visited.add(current)
-            node = mapping[current]
-            if not isinstance(node, Mapping):
-                raise ValueError("ChatGPT conversation node is not an object")
-            chain.append(node)
-            current = node.get("parent")
-        return tuple(
-            item
-            for node in reversed(chain)
-            if isinstance(message := node.get("message"), Mapping)
-            and isinstance(author := message.get("author"), Mapping)
-            and isinstance(content := message.get("content"), Mapping)
-            and content.get("content_type") in ("text", "multimodal_text")
-            for item in [
-                cls._turn(
-                    author.get("role"),
-                    content.get("parts"),
-                    message.get("create_time"),
-                )
-            ]
-            if item is not None
-        )
-
-    @classmethod
-    def _claude_turns(cls, conversation: Mapping[str, Any]) -> tuple[SessionTurn, ...]:
-        return tuple(
-            item
-            for message in conversation["chat_messages"]
-            if isinstance(message, Mapping)
-            for item in [
-                cls._turn(
-                    message.get("sender"),
-                    message.get("content"),
-                    message.get("created_at"),
-                )
-            ]
-            if item is not None
-        )
-
     @staticmethod
     def _records(path: Path) -> tuple[Mapping[str, Any], ...]:
+        """Read valid JSON objects from a JSONL session file."""
+
         # a writer crash or interrupted flush can leave one line truncated mid-record;
         # skip that line rather than losing every record in the file over it.
         records: list[Mapping[str, Any]] = []
@@ -1760,6 +2571,8 @@ class SessionHandler:
 
     @staticmethod
     def _head(path: Path) -> tuple[Mapping[str, Any], ...]:
+        """Read up to ``SNIFF`` leading JSONL objects, or return no records."""
+
         found: list[Mapping[str, Any]] = []
         try:
             with path.open("r", encoding="utf-8") as stream:
@@ -1778,6 +2591,8 @@ class SessionHandler:
 
     @classmethod
     def _walk_values(cls, value: Any) -> Iterator[tuple[str, Any]]:
+        """Yield every mapping key and value recursively."""
+
         if isinstance(value, Mapping):
             for key, nested in value.items():
                 yield str(key), nested
@@ -1788,6 +2603,8 @@ class SessionHandler:
 
     @staticmethod
     def _stamp(value: Any) -> datetime | None:
+        """Parse an ISO string or second/millisecond Unix timestamp."""
+
         if isinstance(value, str):
             try:
                 parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
@@ -1824,6 +2641,8 @@ class SessionHandler:
 
     @classmethod
     def _models(cls, records: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
+        """Return unique model names found anywhere in the records."""
+
         return cls._uniq(
             value
             for record in records
@@ -1833,6 +2652,8 @@ class SessionHandler:
 
     @staticmethod
     def _parent(records: Sequence[Mapping[str, Any]]) -> tuple[str | None, bool]:
+        """Return a Codex parent session id and whether the session is a subagent."""
+
         for record in records:
             if record.get("type") != "session_meta":
                 continue
@@ -1861,6 +2682,8 @@ class SessionHandler:
 
     @staticmethod
     def _content_text(content: Any) -> str:
+        """Join supported string and structured text content blocks."""
+
         if isinstance(content, str):
             return content
         if not isinstance(content, list):
@@ -1890,6 +2713,8 @@ class SessionHandler:
         meta: bool = False,
         sidechain: bool = False,
     ) -> SessionTurn | None:
+        """Normalize one supported role and non-empty content into a turn."""
+
         if isinstance(role, str) and role.casefold() == "human":
             role = "user"
         if not isinstance(role, str) or role.casefold() not in ROLES:
@@ -1917,6 +2742,8 @@ class SessionHandler:
 
     @staticmethod
     def _uniq(values) -> tuple[str, ...]:
+        """Return non-empty strings once, preserving their first order."""
+
         return tuple(
             dict.fromkeys(
                 value.strip()
@@ -1927,6 +2754,8 @@ class SessionHandler:
 
     @staticmethod
     def _home_harness(path: Path) -> Harness | None:
+        """Identify a harness home directory from its required marker file."""
+
         return next(
             (
                 harness
@@ -1938,6 +2767,8 @@ class SessionHandler:
 
     @staticmethod
     def _agy_session_folder(path: Path) -> bool:
+        """Recognize an Agy UUID folder containing a transcript file."""
+
         return SESSION_UID.fullmatch(path.name) is not None and any(
             (path / ".system_generated" / "logs" / name).is_file()
             for name in ("transcript_full.jsonl", "transcript.jsonl")
@@ -1967,19 +2798,21 @@ def valid_time(value: datetime | None) -> datetime | None:
     return value
 
 
-def _absolute(path: Path) -> Path:
-    return Path(os.path.abspath(os.path.expanduser(str(path))))
-
-
 def _signature(stat: os.stat_result) -> Signature:
+    """Return the filesystem fields used to invalidate path caches."""
+
     return stat.st_mode, stat.st_size, stat.st_mtime_ns
 
 
 def _display_order(path: Path) -> tuple[bool, str]:
+    """Sort folders before files, then names without case sensitivity."""
+
     return not (path.is_dir() and not path.is_symlink()), path.name.casefold()
 
 
 def _record_path(value: str) -> PurePosixPath:
+    """Return a safe archive-relative path from an archive member name."""
+
     path = PurePosixPath(value.lstrip("/").replace("\\", "/"))
     if (
         path.is_absolute()
@@ -2012,6 +2845,8 @@ def _complete_archive_records(
     location: Path,
     records: Sequence[Record],
 ) -> tuple[Record, ...]:
+    """Add missing parent folders, derive stats, and order archive records."""
+
     complete = {record.path: record for record in records}
     for record in records:
         for parent in record.path.parents:
@@ -2054,6 +2889,8 @@ def _complete_archive_records(
 
 
 def _archive_stats(records: Sequence[Record]) -> FileStats:
+    """Aggregate top-level archive records into complete archive statistics."""
+
     root = Record(PurePosixPath("."), True, 0, None, ())
     children = [
         record for record in records if record.path.parent == PurePosixPath(".")
@@ -2062,6 +2899,8 @@ def _archive_stats(records: Sequence[Record]) -> FileStats:
 
 
 def _stats_span(stats: Any) -> Span | None:
+    """Read a complete span from either supported statistics representation."""
+
     span = getattr(stats, "span", None)
     if isinstance(span, tuple) and len(span) == 2:
         return span
@@ -2075,6 +2914,8 @@ def _stats_span(stats: Any) -> Span | None:
 
 
 def _combine_spans(spans: Sequence[Span]) -> Span | None:
+    """Return the earliest start and latest end across all spans."""
+
     return (
         (min(span[0] for span in spans), max(span[1] for span in spans))
         if spans
@@ -2099,7 +2940,46 @@ def typed(text: str) -> str:
     return text
 
 
+class FileHandler(
+    _FileHandler,
+    ChatGPTHandler,
+    AnthropicHandler,
+    MarkdownHandler,
+    CSVHandler,
+    LogHandler,
+    SessionHandler,
+    ArchiveHandler,
+    GitHandler,
+    FolderHandler,
+):
+    """Mixed-in handler for text, folders, sessions, archives, and Git paths.
+
+    Handler behavior is inherited directly; no handler instances are injected
+    into the constructor. Provider-specific handlers precede general archive
+    and folder handlers so loading a ChatGPT or Anthropic export returns
+    sessions.
+    """
+
+    handler_types = (
+        ChatGPTHandler,
+        AnthropicHandler,
+        MarkdownHandler,
+        CSVHandler,
+        LogHandler,
+        SessionHandler,
+        ArchiveHandler,
+        GitHandler,
+        FolderHandler,
+    )
+
+
+chatgpt_handler = ChatGPTHandler()
+anthropic_handler = AnthropicHandler()
+markdown_handler = MarkdownHandler()
+csv_handler = CSVHandler()
+log_handler = LogHandler()
 session_handler = SessionHandler()
 archive_handler = ArchiveHandler()
 git_handler = GitHandler()
-file_handler = FileHandler(session_handler, archive_handler, git_handler)
+folder_handler = FolderHandler()
+file_handler = FileHandler()
