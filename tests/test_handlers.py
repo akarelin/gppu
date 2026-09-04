@@ -93,6 +93,63 @@ HERMES = [
 RAR = Path(r'C:\Program Files\WinRAR\Rar.exe')
 
 
+def _chatgpt(uid: str, question: str = 'Question') -> dict:
+  return {
+    'id': uid,
+    'title': question,
+    'create_time': 1785585600,
+    'update_time': 1785585720,
+    'current_node': 'answer',
+    'default_model_slug': 'gpt-5.6',
+    'mapping': {
+      'root': {'id': 'root', 'parent': None, 'message': None},
+      'question': {
+        'id': 'question',
+        'parent': 'root',
+        'message': {
+          'author': {'role': 'user'},
+          'create_time': 1785585660,
+          'content': {'content_type': 'text', 'parts': [question]},
+        },
+      },
+      'answer': {
+        'id': 'answer',
+        'parent': 'question',
+        'message': {
+          'author': {'role': 'assistant'},
+          'create_time': 1785585720,
+          'content': {'content_type': 'text', 'parts': ['Answer']},
+          'metadata': {'model_slug': 'gpt-5.6'},
+        },
+      },
+    },
+  }
+
+
+def _claude(uid: str) -> dict:
+  return {
+    'uuid': uid,
+    'name': 'Question',
+    'created_at': '2026-08-01T12:00:00Z',
+    'updated_at': '2026-08-01T12:02:00Z',
+    'chat_messages': [
+      {
+        'sender': 'human',
+        'created_at': '2026-08-01T12:01:00Z',
+        'content': [
+          {'type': 'text', 'text': 'Question'},
+          {'type': 'tool_use', 'name': 'ignored'},
+        ],
+      },
+      {
+        'sender': 'assistant',
+        'created_at': '2026-08-01T12:02:00Z',
+        'content': [{'type': 'text', 'text': 'Answer'}],
+      },
+    ],
+  }
+
+
 def _jsonl(path: Path, records: list[dict]) -> Path:
   path.parent.mkdir(parents=True, exist_ok=True)
   path.write_text(
@@ -124,6 +181,63 @@ def test_session_handler_returns_stats_and_complete_object(tmp_path: Path) -> No
   record = file_handler.probe(path, recursive=False)[0]
   assert record.handlers == ('session',)
   assert record.span == stats.span
+
+
+def test_openai_export_chunks_are_one_session_collection(tmp_path: Path) -> None:
+  path = tmp_path / 'openai.zip'
+  with zipfile.ZipFile(path, 'w') as archive:
+    archive.writestr('conversation_asset_file_names.json', '{}')
+    archive.writestr('conversations-000.json', json.dumps([_chatgpt('chatgpt-one')]))
+    archive.writestr('conversations-001.json', json.dumps([_chatgpt('chatgpt-two', 'Second')]))
+
+  assert session_handler.identify(path) is True
+  stats, sessions = session_handler(path)
+
+  assert isinstance(sessions, SessionFolder)
+  assert sessions.harness == 'chatgpt'
+  assert [session.uid for session in sessions.files] == ['chatgpt-one', 'chatgpt-two']
+  assert [session.path for session in sessions.files] == [
+    PurePosixPath('conversations-000.json'),
+    PurePosixPath('conversations-001.json'),
+  ]
+  assert all(session.location == path for session in sessions.files)
+  assert sessions.files[0].user_messages == ('Question',)
+  assert sessions.files[0].models == ('gpt-5.6',)
+  assert (stats.files, stats.sessions, stats.turns, stats.bytes) == (1, 2, 4, path.stat().st_size)
+  assert _iso(stats.span) == [
+    '2026-08-01T12:00:00+00:00',
+    '2026-08-01T12:02:00+00:00',
+  ]
+  assert file_handler.identify(path, recursive=False)[0].handlers == ('session', 'archive')
+
+
+def test_anthropic_export_uses_flat_human_and_assistant_messages(tmp_path: Path) -> None:
+  path = tmp_path / 'anthropic.zip'
+  with zipfile.ZipFile(path, 'w') as archive:
+    archive.writestr('projects.json', '[]')
+    archive.writestr('conversations.json', json.dumps([_claude('claude-one')]))
+
+  stats, sessions = session_handler(path)
+
+  assert isinstance(sessions, SessionFolder)
+  assert (sessions.harness, stats.sessions, stats.turns) == ('claude', 1, 2)
+  assert sessions.files[0].uid == 'claude-one'
+  assert sessions.files[0].user_messages == ('Question',)
+  assert sessions.files[0].topic == 'Question'
+  assert _iso(stats.span) == [
+    '2026-08-01T12:00:00+00:00',
+    '2026-08-01T12:02:00+00:00',
+  ]
+
+
+def test_named_conversation_export_with_unknown_shape_fails(tmp_path: Path) -> None:
+  path = tmp_path / 'unknown.zip'
+  with zipfile.ZipFile(path, 'w') as archive:
+    archive.writestr('conversations.json', json.dumps([{'messages': []}]))
+
+  assert session_handler.identify(path) is True
+  with pytest.raises(ValueError, match='conversation format is not identifiable'):
+    session_handler(path)
 
 
 def test_session_topic_skips_machine_preamble_and_marks_internal_turns(tmp_path: Path) -> None:
