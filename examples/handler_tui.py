@@ -26,10 +26,11 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, RichLog, Static
 
-from gppu.handlers import SessionFile, SessionFolder, SessionStats, session_handler
+from gppu.handlers import SessionFile, SessionFolder, SessionHandler, SessionStats
 from gppu.tui import FilesystemAdapter, LoaderMixin, TreeBrowser, TUIApp
 
 LOGS_LISTED = 40
+session_handler = SessionHandler()
 
 
 def fmt_span(span) -> str:

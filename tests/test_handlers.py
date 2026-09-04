@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 from zoneinfo import ZoneInfo
 
 import pytest
+import gppu.handlers as handlers_module
 
 from gppu.handlers import (
   typed,
@@ -19,10 +20,16 @@ from gppu.handlers import (
   AnthropicHandler,
   CSVFile,
   CSVHandler,
+  EmailFile,
+  EmailHandler,
   FileHandler,
   FolderHandler,
+  GitRepository,
   GitHandler,
+  Handler,
+  HandlerError,
   ImageHandler,
+  IgnoredHandler,
   LogFile,
   LogHandler,
   MarkdownFile,
@@ -34,17 +41,37 @@ from gppu.handlers import (
   Record,
   SessionFile,
   SessionFolder,
-  archive_handler,
-  chatgpt_handler,
-  anthropic_handler,
-  csv_handler,
-  file_handler,
-  folder_handler,
-  git_handler,
-  log_handler,
-  markdown_handler,
-  session_handler,
 )
+
+
+class CompleteFileHandler(
+  FileHandler,
+  IgnoredHandler,
+  ChatGPTHandler,
+  AnthropicHandler,
+  MarkdownHandler,
+  CSVHandler,
+  LogHandler,
+  EmailHandler,
+  SessionHandler,
+  ArchiveHandler,
+  GitHandler,
+  FolderHandler,
+):
+  """The handler composition exercised by this consumer test module."""
+
+
+archive_handler = ArchiveHandler()
+chatgpt_handler = ChatGPTHandler()
+anthropic_handler = AnthropicHandler()
+csv_handler = CSVHandler()
+file_handler = CompleteFileHandler()
+folder_handler = FolderHandler()
+git_handler = GitHandler()
+log_handler = LogHandler()
+email_handler = EmailHandler()
+markdown_handler = MarkdownHandler()
+session_handler = SessionHandler()
 
 CODEX = [
   {
@@ -323,18 +350,58 @@ def test_file_handler_uses_concrete_handler_mixins(tmp_path: Path) -> None:
   assert isinstance(csv_handler, CSVHandler)
   assert isinstance(log_handler, LogHandler)
   assert isinstance(folder_handler, FolderHandler)
-  assert ChatGPTHandler in FileHandler.__mro__
-  assert AnthropicHandler in FileHandler.__mro__
-  assert MarkdownHandler in FileHandler.__mro__
-  assert CSVHandler in FileHandler.__mro__
-  assert LogHandler in FileHandler.__mro__
-  assert FolderHandler in FileHandler.__mro__
+  assert ChatGPTHandler in CompleteFileHandler.__mro__
+  assert AnthropicHandler in CompleteFileHandler.__mro__
+  assert MarkdownHandler in CompleteFileHandler.__mro__
+  assert CSVHandler in CompleteFileHandler.__mro__
+  assert LogHandler in CompleteFileHandler.__mro__
+  assert FolderHandler in CompleteFileHandler.__mro__
+  assert file_handler.handler_types == (
+    IgnoredHandler,
+    ChatGPTHandler,
+    AnthropicHandler,
+    MarkdownHandler,
+    CSVHandler,
+    LogHandler,
+    EmailHandler,
+    SessionHandler,
+    ArchiveHandler,
+    GitHandler,
+    FolderHandler,
+  )
 
   stats, folder = folder_handler(tmp_path)
 
   assert folder == tmp_path
   assert stats == FileStats(0, 0, 0, None)
   assert file_handler.identify(tmp_path, recursive=False)[0].handlers == ('folder',)
+
+
+def test_handlers_module_constructs_no_handler_objects() -> None:
+  constructed = {
+    name: value
+    for name, value in vars(handlers_module).items()
+    if isinstance(value, Handler)
+  }
+
+  assert constructed == {}
+
+
+def test_handlers_copy_additional_metadata_into_probes(tmp_path: Path) -> None:
+  supplied = {'source': 'fixture', 'title': 'Caller title'}
+  handler = MarkdownHandler(metadata=supplied)
+  files = CompleteFileHandler(metadata=supplied)
+  supplied['source'] = 'changed later'
+  path = tmp_path / 'document.md'
+  path.write_text('---\ntitle: Example\n---\n', encoding='utf-8')
+
+  _, markdown = handler(path)
+  probe = files.probe(path, recursive=False)[0].probes[0]
+
+  assert handler.metadata == {'source': 'fixture', 'title': 'Caller title'}
+  assert markdown.title == 'Example'
+  assert probe.metadata == {'source': 'fixture', 'title': 'Caller title'}
+  assert probe.handler == 'markdown'
 
 
 def test_markdown_handler_preserves_frontmatter_and_derives_standard_fields(
@@ -399,8 +466,15 @@ def test_markdown_handler_rejects_invalid_frontmatter_mapping(tmp_path: Path) ->
   path = tmp_path / 'invalid.md'
   path.write_text('---\n- not\n- a mapping\n---\n', encoding='utf-8')
 
+  stats, error = markdown_handler(path)
+
+  assert stats is None
+  assert isinstance(error, HandlerError)
+  assert error.error_type == 'ValueError'
+  assert 'frontmatter must be a mapping' in error.message
+
   with pytest.raises(ValueError, match='frontmatter must be a mapping'):
-    markdown_handler(path)
+    MarkdownHandler(strict=True)(path)
 
 
 def test_csv_handler_reads_header_and_every_row(tmp_path: Path) -> None:
@@ -414,6 +488,30 @@ def test_csv_handler_reads_header_and_every_row(tmp_path: Path) -> None:
   assert table.rows == (('One', 'a,b'), ('Two', 'c'))
   assert stats == FileStats(1, 0, path.stat().st_size, None)
   assert file_handler.probe(path, recursive=False)[0].handlers == ('csv',)
+
+
+def test_csv_handler_derives_span_and_allows_subclass_time_format(
+  tmp_path: Path,
+) -> None:
+  class BillingCSVHandler(CSVHandler):
+    time_keys = (*CSVHandler.time_keys, 'billed_at')
+    time_formats = (*CSVHandler.time_formats, '%m/%d/%Y %H:%M')
+
+  path = tmp_path / 'billing.csv'
+  path.write_text(
+    'title,billed_at,timestamp\n'
+    'First,08/27/2026 19:42,\n'
+    'Second,,2026-09-01T05:11:00-07:00\n',
+    encoding='utf-8',
+  )
+
+  stats, table = BillingCSVHandler()(path)
+
+  assert _iso(table.span) == [
+    '2026-08-27T19:42:00-07:00',
+    '2026-09-01T05:11:00-07:00',
+  ]
+  assert stats.span == table.span
 
 
 def test_log_handler_uses_timestamped_rows_for_span(tmp_path: Path) -> None:
@@ -441,11 +539,148 @@ def test_log_handler_uses_timestamped_rows_for_span(tmp_path: Path) -> None:
   assert file_handler.probe(path, recursive=False)[0].handlers == ('log',)
 
 
+@pytest.mark.parametrize(
+  ('filename', 'timestamp', 'subject', 'party', 'collision'),
+  (
+    (
+      '110628.155519 - Fertilize Invoice - Alon Sahar.msg',
+      '2011-06-28T15:55:19-07:00',
+      'Fertilize Invoice',
+      'Alon Sahar',
+      None,
+    ),
+    (
+      '110628.155519 - Fertilize Invoice - Alon Sahar - 1.msg',
+      '2011-06-28T15:55:19-07:00',
+      'Fertilize Invoice',
+      'Alon Sahar',
+      1,
+    ),
+    (
+      "110628.211159 - Guests' flight schedule - Kimberly Ramos.eml",
+      '2011-06-28T21:11:59-07:00',
+      "Guests' flight schedule",
+      'Kimberly Ramos',
+      None,
+    ),
+    (
+      '110629.191106 - Re- International SIM card - Eric Wong.msg',
+      '2011-06-29T19:11:06-07:00',
+      'Re- International SIM card',
+      'Eric Wong',
+      None,
+    ),
+  ),
+)
+def test_email_handler_derives_filename_metadata_without_parsing_message(
+  tmp_path: Path,
+  filename: str,
+  timestamp: str,
+  subject: str,
+  party: str,
+  collision: int | None,
+) -> None:
+  path = tmp_path / filename
+  path.write_bytes(b'email payload is intentionally not parsed')
+
+  stats, email = email_handler(path)
+
+  assert isinstance(email, EmailFile)
+  assert email.subject == subject
+  assert email.party == party
+  assert email.collision == collision
+  assert email.timestamp.isoformat() == timestamp
+  assert stats.span == email.span
+  assert EmailHandler.parse_message(path) is NotImplemented
+  record = file_handler.probe(path, recursive=False)[0]
+  assert record.handlers == ('email',)
+  assert record.metadata['email']['subject'] == subject
+
+
+def test_email_handler_accepts_a_filename_without_declared_metadata(
+  tmp_path: Path,
+) -> None:
+  path = tmp_path / 'message.EML'
+  path.write_bytes(b'payload')
+
+  stats, email = email_handler(path)
+
+  assert email.metadata == {}
+  assert email.span is None
+  assert stats.span is None
+
+
+def test_composed_handler_retains_load_error_and_processes_other_files(
+  tmp_path: Path,
+) -> None:
+  class BrokenHandler(Handler):
+    name = 'broken'
+
+    def identify_sync(self, path: Path) -> bool:
+      return path.suffix == '.bad'
+
+    def call_sync(self, path: Path):
+      raise OSError('unreadable fixture')
+
+  class TreeHandler(FileHandler, BrokenHandler, FolderHandler):
+    pass
+
+  broken = tmp_path / 'a.bad'
+  other = tmp_path / 'b.txt'
+  broken.write_text('bad', encoding='utf-8')
+  other.write_text('good', encoding='utf-8')
+
+  records = TreeHandler().probe(tmp_path)
+  found = {record.path: record for record in records}
+
+  assert set(found) == {tmp_path, broken, other}
+  assert found[tmp_path].stats.files == 2
+  assert found[broken].probes[0].obj is None
+  assert found[broken].probes[0].error.error_type == 'OSError'
+  assert found[broken].errors == (found[broken].probes[0].error,)
+
+  with pytest.raises(OSError, match='unreadable fixture'):
+    TreeHandler(strict=True).probe(tmp_path)
+
+
+def test_ignored_paths_remain_visible_without_folder_descent(tmp_path: Path) -> None:
+  class TreeHandler(FileHandler, IgnoredHandler, FolderHandler):
+    pass
+
+  git_folder = tmp_path / '.git'
+  cache_folder = tmp_path / '.cache'
+  git_folder.mkdir()
+  cache_folder.mkdir()
+  (git_folder / 'config').write_text('not a repository', encoding='utf-8')
+  (cache_folder / 'cached.txt').write_text('cached', encoding='utf-8')
+  ignored_file = tmp_path / 'scratch.tmp'
+  retained_file = tmp_path / 'retained.txt'
+  ignored_file.write_text('scratch', encoding='utf-8')
+  retained_file.write_text('retained', encoding='utf-8')
+
+  records = TreeHandler().probe(tmp_path)
+  found = {record.path: record for record in records}
+
+  assert set(found) == {
+    tmp_path,
+    git_folder,
+    cache_folder,
+    ignored_file,
+    retained_file,
+  }
+  assert found[git_folder].handlers == ('ignored', 'folder')
+  assert found[cache_folder].handlers == ('ignored', 'folder')
+  assert found[ignored_file].handlers == ('ignored',)
+  assert found[git_folder].metadata['ignored']['classification'] == 'Ignored'
+  assert found[git_folder].metadata['ignored']['no_descent'] is True
+  assert found[ignored_file].metadata['ignored']['no_descent'] is False
+
+
 def test_exif_handlers_are_unregistered_placeholders() -> None:
   for handler in (ImageHandler, VideoHandler):
     assert 'identify' not in handler.__dict__
     assert '__call__' not in handler.__dict__
-    assert handler not in FileHandler.handler_types
+    assert handler not in file_handler.handler_types
 
 
 def test_named_conversation_export_with_unknown_shape_fails(tmp_path: Path) -> None:
@@ -454,8 +689,14 @@ def test_named_conversation_export_with_unknown_shape_fails(tmp_path: Path) -> N
     archive.writestr('conversations.json', json.dumps([{'messages': []}]))
 
   assert anthropic_handler.identify(path) is True
+  stats, error = anthropic_handler(path)
+
+  assert stats is None
+  assert isinstance(error, HandlerError)
+  assert 'conversation format is not claude' in error.message
+
   with pytest.raises(ValueError, match='conversation format is not claude'):
-    anthropic_handler(path)
+    AnthropicHandler(strict=True)(path)
 
 
 def test_handlers_are_awaitable_without_changing_synchronous_calls(tmp_path: Path) -> None:
@@ -619,9 +860,34 @@ def test_git_history_spans_tracked_repository_folders_and_files(tmp_path: Path) 
   second.write_text('second', encoding='utf-8')
   _git_commit(repository, 'second', '2026-08-02T13:00:00+00:00')
   untracked.write_text('untracked', encoding='utf-8')
+  branch = subprocess.run(
+    ['git', 'branch', '--show-current'],
+    cwd=repository,
+    check=True,
+    capture_output=True,
+    text=True,
+  ).stdout.strip()
+  subprocess.run(
+    ['git', 'remote', 'add', 'origin', 'git@github.com:example/repository.git'],
+    cwd=repository,
+    check=True,
+    capture_output=True,
+  )
+  subprocess.run(
+    ['git', 'config', f'branch.{branch}.remote', 'origin'],
+    cwd=repository,
+    check=True,
+    capture_output=True,
+  )
+  subprocess.run(
+    ['git', 'config', f'branch.{branch}.merge', f'refs/heads/{branch}'],
+    cwd=repository,
+    check=True,
+    capture_output=True,
+  )
 
-  class GitFileHandler(FileHandler):
-    handler_types = (GitHandler, FolderHandler)
+  class GitFileHandler(FileHandler, IgnoredHandler, GitHandler, FolderHandler):
+    pass
 
   handler = GitFileHandler()
   found = {record.path: record for record in handler.probe(repository)}
@@ -644,12 +910,22 @@ def test_git_history_spans_tracked_repository_folders_and_files(tmp_path: Path) 
     '2026-08-02T13:00:00+00:00',
     '2026-08-02T13:00:00+00:00',
   ]
-  assert git_handler(first)[1] == repository / '.git'
+  git_repository = git_handler(first)[1]
+  assert isinstance(git_repository, GitRepository)
+  assert git_repository.metadata_path == repository / '.git'
+  assert git_repository.upstream_remote == 'origin'
+  assert git_repository.upstream_url == 'git@github.com:example/repository.git'
+  assert git_repository.metadata['remotes'] == {
+    'origin': 'git@github.com:example/repository.git',
+  }
+  git_probe = found[repository].probes[0]
+  assert git_probe.metadata['upstream_url'] == 'git@github.com:example/repository.git'
 
   async def exercise() -> None:
     assert await git_handler.identify(first) is True
     stats, metadata = await git_handler(first)
-    assert (stats.span, metadata) == (found[first].span, repository / '.git')
+    assert stats.span == found[first].span
+    assert metadata.metadata_path == repository / '.git'
 
   asyncio.run(exercise())
 
@@ -690,6 +966,33 @@ def test_archive_files_and_folders_are_the_same_records(tmp_path: Path) -> None:
     found[PurePosixPath('logs/first.txt')],
     found[PurePosixPath('logs/second.txt')],
   )
+
+
+def test_archive_members_use_ignored_rules_and_prune_descendants(
+  tmp_path: Path,
+) -> None:
+  class ArchiveFileHandler(FileHandler, IgnoredHandler, ArchiveHandler):
+    pass
+
+  path = tmp_path / 'ignored.zip'
+  with zipfile.ZipFile(path, 'w') as archive:
+    archive.writestr('.git/config', 'config')
+    archive.writestr('.git/objects/object', 'object')
+    archive.writestr('Thumbs.db', 'thumbnail')
+    archive.writestr('retained.txt', 'retained')
+
+  record = ArchiveFileHandler().probe(path, recursive=False)[0]
+  records = record.probes[0].obj
+  found = {member.path: member for member in records}
+
+  assert set(found) == {
+    PurePosixPath('.git'),
+    PurePosixPath('Thumbs.db'),
+    PurePosixPath('retained.txt'),
+  }
+  assert found[PurePosixPath('.git')].handlers == ('ignored',)
+  assert found[PurePosixPath('.git')].metadata['ignored']['no_descent'] is True
+  assert found[PurePosixPath('Thumbs.db')].handlers == ('ignored',)
 
 
 def test_archive_name_comes_from_the_handler_hierarchy_span(tmp_path: Path) -> None:
@@ -751,22 +1054,23 @@ def test_rar_reader_finds_the_platform_command_from_path(
 
 
 def test_probe_cache_is_invalidated_when_a_file_changes(tmp_path: Path) -> None:
-  class CountingHandler:
+  class CountingHandler(Handler):
     name = 'counting'
 
-    def __init__(self) -> None:
+    def __init__(self, metadata=None, *, strict: bool = False) -> None:
+      super().__init__(metadata, strict=strict)
       self.calls = 0
 
-    def identify(self, path: Path) -> bool:
+    def identify_sync(self, path: Path) -> bool:
       return path.suffix == '.count'
 
-    def __call__(self, path: Path):
+    def call_sync(self, path: Path):
       self.calls += 1
       stamp = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
       return FileStats(1, 0, path.stat().st_size, (stamp, stamp)), path.read_text()
 
   class CountingFileHandler(FileHandler, CountingHandler):
-    handler_types = (CountingHandler,)
+    pass
 
   handler = CountingFileHandler()
   path = tmp_path / 'one.count'
@@ -916,9 +1220,14 @@ def test_session_of_generated_text_only_has_no_topic(tmp_path: Path) -> None:
   assert session.topic == ''
 
 
-def test_a_folder_that_will_not_be_listed_is_not_a_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_folder_that_will_not_be_listed_is_retained_as_an_error(
+  tmp_path: Path,
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
   closed = tmp_path / 'closed'
   closed.mkdir()
+  readable = tmp_path / 'readable.txt'
+  readable.write_text('readable', encoding='utf-8')
   original = Path.iterdir
 
   def denied(self: Path):
@@ -928,14 +1237,20 @@ def test_a_folder_that_will_not_be_listed_is_not_a_session(tmp_path: Path, monke
 
   monkeypatch.setattr(Path, 'iterdir', denied)
   assert session_handler.identify(closed) is False
+  records = file_handler.probe(tmp_path)
+  found = {record.path: record for record in records}
+
+  assert readable in found
+  assert found[closed].errors[0].operation == 'list'
+  assert found[closed].errors[0].error_type == 'PermissionError'
 
 
 def test_a_child_gone_between_the_listing_and_the_reading_is_not_a_child(tmp_path: Path,
                                                                         monkeypatch: pytest.MonkeyPatch) -> None:
   (tmp_path / 'here.txt').write_text('here', encoding='utf-8')
   (tmp_path / 'gone.txt').write_text('gone by the time it is read', encoding='utf-8')
-  class SessionFileHandler(FileHandler):
-    handler_types = (SessionHandler, FolderHandler)
+  class SessionFileHandler(FileHandler, SessionHandler, FolderHandler):
+    pass
 
   handler = SessionFileHandler()
   original = FileHandler.record

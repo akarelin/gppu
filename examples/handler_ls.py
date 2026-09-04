@@ -7,18 +7,49 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from gppu.handlers import (
+  AnthropicHandler,
+  ArchiveHandler,
+  ChatGPTHandler,
+  CSVHandler,
+  EmailHandler,
   FileHandler,
   FileStats,
+  FolderHandler,
+  GitHandler,
+  HandlerError,
+  IgnoredHandler,
+  LogHandler,
+  MarkdownHandler,
   Probe,
   Record,
   SessionFile,
   SessionFolder,
+  SessionHandler,
   SessionStats,
-  file_handler,
 )
 
 EMPTY = '-'
 INDENT = '  '
+
+
+class ListingHandler(
+  FileHandler,
+  IgnoredHandler,
+  ChatGPTHandler,
+  AnthropicHandler,
+  MarkdownHandler,
+  CSVHandler,
+  LogHandler,
+  EmailHandler,
+  SessionHandler,
+  ArchiveHandler,
+  GitHandler,
+  FolderHandler,
+):
+  """Caller-owned handler composition used by this example."""
+
+
+file_handler = ListingHandler()
 
 
 def _time(value) -> str:
@@ -56,6 +87,11 @@ def _stats(value) -> str:
 
 
 def _probe(probe: Probe) -> str:
+  if probe.error is not None:
+    return (
+      f'handler={probe.handler} error={probe.error.error_type} '
+      f'message={probe.error.message}'
+    )
   obj = probe.obj
   result = f'handler={probe.handler} stats=({_stats(probe.stats)})'
   if isinstance(obj, SessionFile):
@@ -96,6 +132,16 @@ def records(
   """Yield probed filesystem and archive records in recursive display order."""
 
   found = handler.probe(path)
+  if isinstance(found, HandlerError):
+    yield 0, Record(
+      path=path,
+      is_folder=False,
+      size=0,
+      modified_at=None,
+      handlers=(),
+      errors=(found,),
+    )
+    return
   root = Path(found[0].path)
   for record in found:
     depth = 0 if record.path == root else len(Path(record.path).relative_to(root).parts)

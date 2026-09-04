@@ -1,70 +1,48 @@
-r"""Typed handlers for files, folders, archives, Git history, and sessions.
+r"""Typed, caller-composed handlers for large file hierarchies.
 
-A domain handler receives one ``Path`` and returns ``(stats, obj)``. The
-statistics are derived from the complete typed object. ``FileHandler`` mixes in
-``ChatGPTHandler``, ``AnthropicHandler``, ``MarkdownHandler``, ``CSVHandler``,
-``LogHandler``, ``SessionHandler``, ``ArchiveHandler``, ``GitHandler``, and
-``FolderHandler`` without constructor injection. It provides identification,
-probing, hierarchy navigation, normalization, archive naming, and cache
-invalidation. All local paths are resolved by :func:`gppu.full_path`.
+A domain handler receives one :class:`pathlib.Path` and returns ``(stats,
+typed_object)``. Statistics are derived from the complete typed object. Users
+select behavior with normal multiple inheritance; this module constructs no
+handler objects::
 
-Public I/O calls decorated with :func:`gppu.sync` return their result directly
-outside an event loop and are awaitable inside one. Blocking filesystem,
-archive, Git, and session work runs in a worker thread.
+    class MyFiles(
+        FileHandler,
+        IgnoredHandler,
+        MarkdownHandler,
+        CSVHandler,
+        LogHandler,
+        FolderHandler,
+    ):
+        pass
 
-Archive members use the same ``Record`` hierarchy as filesystem entries, with
-the archive path stored in ``location``. ``SessionHandler`` reads native JSONL
-session logs. ``ChatGPTHandler`` and ``AnthropicHandler`` detect their required
-filenames and read extracted export folders or ZIP files. ChatGPT turns follow
-the exported ``current_node`` chain; Anthropic turns retain ``chat_messages``
-order. ``MarkdownHandler`` retains complete Markdown YAML frontmatter and
-derives its display names, tags, and created-to-updated span. ``CSVHandler``
-retains the complete header and rows.
+    files = MyFiles(metadata={"source": "local"})
 
-``GitHandler`` derives spans only from local history reachable from the current
-``HEAD``. It does not fetch or contact upstreams. Tracked-folder spans include
-historical paths beneath the folder, even when those files were later deleted.
+Every handler copies the optional metadata mapping supplied by its caller.
+``Probe.metadata`` combines that mapping with metadata detected by the typed
+object. Caller metadata wins when the same key exists in both mappings.
 
-  2DO:
-  - [x] Add support for git repos. Span should come from .git folder, but .git itself should not be included when exporting/copying
-  - [x] Add support for tar.gz archives
-  - [x] Extract datetime from filename when {ts} is present
-  - [x] Harnesses should use Decisions\001 - Sessions - file naming convention
-    - `{model|harness}` - short slug representing harness OR model:
-      - chatgpt | cx
-      - claude | cc
-      - gemini | agy
-      - hermes
-      - openclaw
-      - manus
-  - [x] Extract timespans from filenames/foldernames like:
-    - 260619-260513 five - langfuse
-    - report-511833076877-2026-06-21-to-2026-07-22
-    - Garage_Large_NVR_NVR_20250508202204_20250508204259_1053962
-    - 10.172.105.54_01_20260721191520979_TIMING
-    - Rabbit mom-1777250940-1777251900
-    - Camera 10-21-2023, 07.00.00 GMT+3 - 10-21-2023, 08.00.00 GMT+3
-    - 241020-2257 Alex fall (140s)
+Default calls do not stop a hierarchy scan. A read failure is represented by
+:class:`HandlerError`; a composed probe stores it on ``Probe.error`` and
+``Record.errors``. Construct a handler with ``strict=True`` when an exception
+and traceback are required. Cancellation and process-exit exceptions are not
+captured.
 
-  Big tasks:
-  - [x] Add support for export files from LLMs.
-    - [x] OpenAi. Example: D:\SD.archive\Sessions\a60608bb38ceb475551dff9ce52432d8c1b885fea57ee517ab7f1f534ff10778-2026-08-27-03-46-09-3fab63159d564b92abd68e599a3facd9.zip
-    - [x] Anthropic. Example: \\s1\Everything\Sessions\*.zip
-  - [x] Refactor code so harness specific code is not in big if else blocks.
-  - [x] Refactor code to have fewer functions that do not belong to classes
-  - [x] Make handlers support async (gppu async)
-  - [x] extract spans from git history (local, no upstreams)
-    - [x] Folders that are git-tracked - extract spans from
-    - [x] files that are git-tracked - codex memories folder
+Public I/O calls decorated with :func:`gppu.sync` return directly outside an
+event loop and are awaitable inside one. Their ``*_sync`` methods are the
+strict worker implementations. All local paths are resolved by
+:func:`gppu.full_path`.
 
-  In consideration
-  - [ ] file/folder history from SynologyDrive history
+Archive members use the same :class:`Record` hierarchy as filesystem entries,
+with the archive path in ``location``. Ignored folders remain visible but are
+not descended into. ``GitHandler`` reads only local history and configuration;
+it never fetches or contacts an upstream.
 """
 
 from __future__ import annotations
 
 import asyncio
 import csv
+import fnmatch
 import json
 import os
 import re
@@ -72,7 +50,7 @@ import shutil
 import subprocess
 import tarfile
 import zipfile
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path, PurePosixPath
@@ -184,6 +162,38 @@ LOG_TIMESTAMP = re.compile(
     r"^\s*[\[(]?(?P<timestamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}"
     r"(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)"
 )
+IGNORED_NAME_PATTERNS = (
+    "*.tmp",
+    "*.bak",
+    "*.swp",
+    "~$*",
+    "Thumbs.db",
+    ".DS_Store",
+    "desktop.ini",
+    "monero-gui-*",
+)
+IGNORED_FOLDER_PATTERNS = (
+    ".git",
+    ".svn",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "node_modules",
+    ".idea",
+    ".vscode",
+    ".SynologyWorking Directory",
+    ".SynologyWorkingDirectory",
+    "$RECYCLE.BIN",
+    "RECYCLE.BIN",
+    "System Volume Information",
+    "OneDriveTemp",
+    "Cache",
+    ".cache",
+    "EL.now",
+    "monero-gui-*",
+)
+WINDOWS_HIDDEN = 2
+WINDOWS_SYSTEM = 4
 
 HOMES: dict[Harness, tuple[str, ...]] = {
     "hermes": ("state.db",),
@@ -196,19 +206,111 @@ SESSION_UID = re.compile(
 EXPORT_MEMBER = re.compile(r"conversations(?:-\d+)?\.json", re.I)
 
 
-@runtime_checkable
-class Handler(Protocol[ObjectT, StatsT]):
-    """Structural interface for a configured domain handler."""
+@dataclass(frozen=True)
+class HandlerError:
+    """A handler failure retained as data so a hierarchy scan can continue."""
+
+    handler: str
+    operation: str
+    path: Path | PurePosixPath
+    error_type: str
+    message: str
+
+
+class Handler:
+    """Cooperative base for caller-composed domain handler mixins.
+
+    ``metadata`` is copied, so later changes to the caller's dictionary do not
+    change results. With the default ``strict=False``, public handler calls
+    return ``(None, HandlerError)`` on a load failure and ``False`` on an
+    identification failure. ``strict=True`` re-raises the original exception.
+    Worker-facing ``identify_sync`` and ``call_sync`` implementations remain
+    strict; :class:`FileHandler` captures their failures per record.
+    """
 
     name: str
 
-    def identify(self, path: Path) -> bool:
-        """Return whether this handler recognizes ``path``."""
-        ...
+    def __init__(
+        self,
+        metadata: Mapping[str, Any] | None = None,
+        *,
+        strict: bool = False,
+    ) -> None:
+        """Copy caller metadata and set the public-call error policy."""
 
-    def __call__(self, path: Path) -> tuple[StatsT, ObjectT]:
-        """Load ``path`` and return its derived statistics and typed object."""
-        ...
+        super().__init__()
+        self.metadata = dict(metadata) if metadata is not None else {}
+        self.strict = strict
+
+    def _error(
+        self,
+        path: Path | PurePosixPath,
+        operation: str,
+        error: Exception,
+    ) -> HandlerError:
+        """Describe one failed operation without retaining a traceback."""
+
+        return HandlerError(
+            handler=self.name,
+            operation=operation,
+            path=path,
+            error_type=type(error).__name__,
+            message=str(error),
+        )
+
+    def _safe_identify(
+        self,
+        path: Path,
+        identify: Callable[[Path], bool],
+    ) -> bool:
+        """Run a strict recognizer under the configured public error policy."""
+
+        try:
+            return identify(path)
+        except Exception:
+            if self.strict:
+                raise
+            return False
+
+    def _safe_call(
+        self,
+        path: Path,
+        call: Callable[[Path], tuple[Any, Any]],
+    ) -> tuple[Any | None, Any | HandlerError]:
+        """Run a strict loader and represent its default failure as data."""
+
+        try:
+            return call(path)
+        except Exception as error:
+            if self.strict:
+                raise
+            return None, self._error(path, "load", error)
+
+    def _safe_operation(
+        self,
+        path: Path | PurePosixPath,
+        operation: str,
+        call: Callable[..., Any],
+        *arguments: Any,
+    ) -> Any | HandlerError:
+        """Run any public operation and return a typed error by default."""
+
+        try:
+            return call(*arguments)
+        except Exception as error:
+            if self.strict:
+                raise
+            return self._error(path, operation, error)
+
+    def _probe_metadata(self, obj: Any) -> dict[str, Any]:
+        """Combine copied caller metadata with metadata exposed by ``obj``."""
+
+        metadata: dict[str, Any] = {}
+        detected = getattr(obj, "metadata", None)
+        if isinstance(detected, Mapping):
+            metadata.update(detected)
+        metadata.update(self.metadata)
+        return metadata
 
 
 @runtime_checkable
@@ -226,11 +328,13 @@ class _SyncHandler(Protocol[ObjectT, StatsT]):
 
 @dataclass(frozen=True)
 class Probe:
-    """One named handler's statistics and typed object for a hierarchy entry."""
+    """One named handler's result, contextual metadata, and optional error."""
 
     handler: str
-    stats: Any
-    obj: Any = field(repr=False, compare=False)
+    stats: Any | None
+    obj: Any | None = field(repr=False, compare=False)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    error: HandlerError | None = None
 
 
 @dataclass(frozen=True)
@@ -259,6 +363,7 @@ class Record:
     location: str | Path | None = None
     probes: tuple[Probe, ...] = ()
     stats: FileStats | None = None
+    errors: tuple[HandlerError, ...] = ()
 
     @property
     def name(self) -> str:
@@ -308,14 +413,29 @@ class Record:
                     "span": self.stats.span,
                 }
             )
+        for probe in self.probes:
+            if probe.metadata:
+                value[probe.handler] = probe.metadata
+        if self.errors:
+            value["errors"] = tuple(
+                {
+                    "handler": error.handler,
+                    "operation": error.operation,
+                    "error_type": error.error_type,
+                    "message": error.message,
+                }
+                for error in self.errors
+            )
         return value
 
 
-class FolderHandler:
+class FolderHandler(Handler):
     """Identify a physical directory as a folder object.
 
-    Recursive navigation and aggregation belong to ``FileHandler``. This
-    handler supplies the typed result for the folder itself.
+    A supported folder is an existing local directory that is not a symbolic
+    link. The typed object is its resolved :class:`Path`; its own statistics
+    are empty because recursive navigation and aggregation belong to
+    :class:`FileHandler`.
     """
 
     name = "folder"
@@ -324,7 +444,7 @@ class FolderHandler:
     async def identify(self, path: Path) -> bool:
         """Return whether ``path`` is a directory in either call mode."""
 
-        return await asyncio.to_thread(self.identify_sync, path)
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
 
     def identify_sync(self, path: Path) -> bool:
         """Return whether ``path`` is a non-symlink directory."""
@@ -333,10 +453,13 @@ class FolderHandler:
         return path.is_dir() and not path.is_symlink()
 
     @sync
-    async def __call__(self, path: Path) -> tuple[FileStats, Path]:
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[FileStats | None, Path | HandlerError]:
         """Return folder statistics and its resolved path in either call mode."""
 
-        return await asyncio.to_thread(self.call_sync, path)
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
 
     def call_sync(self, path: Path) -> tuple[FileStats, Path]:
         """Return empty aggregate statistics and the resolved folder path."""
@@ -347,53 +470,233 @@ class FolderHandler:
         return FileStats(0, 0, 0, None), path
 
 
-class _FileHandler:
-    """Compose mixed-in domain handlers over one cached filesystem hierarchy.
+@dataclass(frozen=True)
+class IgnoredPath:
+    """A visible ignored file or a visible folder that must not be descended."""
 
-    Identification records which handlers recognize each path. Probing also
-    loads their typed objects and derives recursive ``FileStats``. Filesystem
-    and archive members share the ``Record`` model; ``.git`` metadata is never
-    exposed as a hierarchy child or copied by normalization.
+    path: Path | PurePosixPath
+    reason: str
+    no_descent: bool
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Return the canonical classification and the matched rule."""
+
+        return {
+            "classification": "Ignored",
+            "reason": self.reason,
+            "no_descent": self.no_descent,
+        }
+
+
+class IgnoredHandler(Handler):
+    """Identify ignored names and no-descent folder boundaries.
+
+    The native rules are ported from the active FileIndexer configuration and
+    TextLake traversal. These case-sensitive file-or-folder patterns match:
+    ``*.tmp``, ``*.bak``, ``*.swp``, ``~$*``, ``Thumbs.db``, ``.DS_Store``,
+    ``desktop.ini``, and ``monero-gui-*``.
+
+    These case-sensitive folder patterns are visible but never descended:
+    ``.git``, ``.svn``, ``__pycache__``, ``.venv``, ``venv``,
+    ``node_modules``, ``.idea``, ``.vscode``, ``.SynologyWorking Directory``,
+    ``.SynologyWorkingDirectory``, ``$RECYCLE.BIN``, ``RECYCLE.BIN``,
+    ``System Volume Information``, ``OneDriveTemp``, ``Cache``, ``.cache``,
+    ``EL.now``, and ``monero-gui-*``. Any other dot-prefixed folder and any
+    Windows folder carrying ``FILE_ATTRIBUTE_HIDDEN`` or
+    ``FILE_ATTRIBUTE_SYSTEM`` is also an ignored no-descent boundary.
+
+    Matching entries remain :class:`Record` objects. This differs from a path
+    exclusion, which would remove the entry from the hierarchy entirely.
+    Archive-member folders use the name and dot-prefix rules because archive
+    listings do not expose Windows filesystem attributes.
     """
 
-    handler_types: tuple[type[Any], ...] = ()
+    name = "ignored"
+    name_patterns = IGNORED_NAME_PATTERNS
+    folder_patterns = IGNORED_FOLDER_PATTERNS
 
-    def __init__(self) -> None:
-        """Initialize every mixed-in handler and the hierarchy caches."""
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Recognize an ignored path synchronously or asynchronously."""
 
-        super().__init__()
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Return whether a physical file or folder matches an ignored rule."""
+
+        return self.reason(full_path(path)) is not None
+
+    @sync
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[FileStats | None, IgnoredPath | HandlerError]:
+        """Return ignored-path metadata synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
+
+    def call_sync(self, path: Path) -> tuple[FileStats, IgnoredPath]:
+        """Return the matched rule and zero descent statistics for ``path``."""
+
+        path = full_path(path)
+        reason = self.reason(path)
+        if reason is None:
+            raise ValueError(f"{path}: ignored path is not identifiable")
+        is_folder = path.is_dir() and not path.is_symlink()
+        size = 0 if is_folder else path.stat().st_size
+        ignored = IgnoredPath(path, reason, is_folder)
+        return FileStats(0 if is_folder else 1, 0, size, None), ignored
+
+    @classmethod
+    def reason(cls, path: Path) -> str | None:
+        """Return the first active rule matching a physical path."""
+
+        is_folder = path.is_dir() and not path.is_symlink()
+        if not is_folder and not path.is_file():
+            return None
+        if pattern := cls.match(path.name, cls.name_patterns):
+            return f"name:{pattern}"
+        if not is_folder:
+            return None
+        if pattern := cls.match(path.name, cls.folder_patterns):
+            return f"folder:{pattern}"
+        if path.name.startswith("."):
+            return "folder:dot-prefix"
+        attributes = getattr(path.stat(follow_symlinks=False), "st_file_attributes", 0)
+        if attributes & WINDOWS_HIDDEN:
+            return "folder:FILE_ATTRIBUTE_HIDDEN"
+        if attributes & WINDOWS_SYSTEM:
+            return "folder:FILE_ATTRIBUTE_SYSTEM"
+        return None
+
+    @staticmethod
+    def match(name: str, patterns: Sequence[str]) -> str | None:
+        """Return the first case-sensitive FileIndexer pattern matching ``name``."""
+
+        return next(
+            (pattern for pattern in patterns if fnmatch.fnmatchcase(name, pattern)),
+            None,
+        )
+
+    @classmethod
+    def member_reason(cls, path: PurePosixPath, is_folder: bool) -> str | None:
+        """Return the name-only ignored rule for one archive member."""
+
+        if pattern := cls.match(path.name, cls.name_patterns):
+            return f"name:{pattern}"
+        if not is_folder:
+            return None
+        if pattern := cls.match(path.name, cls.folder_patterns):
+            return f"folder:{pattern}"
+        return "folder:dot-prefix" if path.name.startswith(".") else None
+
+
+class FileHandler(Handler):
+    """Public base for a caller-selected set of domain handler mixins.
+
+    Put ``FileHandler`` first and domain handlers after it in a subclass. The
+    domain handler order in that base list is the identification and probing
+    order. ``handler_types`` is derived from the resulting MRO; users neither
+    pass constructed handlers nor repeat a registry tuple.
+
+    Identification records every matching handler. Probing loads their typed
+    objects and derives recursive :class:`FileStats`. Handler and filesystem
+    failures remain attached to their :class:`Record`, so another entry in a
+    large tree can still be processed. An ``IgnoredHandler`` match on a folder
+    retains that folder as a boundary and prevents descent into its contents.
+    ``.git`` is visible during navigation but remains excluded from normalized
+    copies.
+    """
+
+    name = "file"
+
+    def __init__(
+        self,
+        metadata: Mapping[str, Any] | None = None,
+        *,
+        strict: bool = False,
+    ) -> None:
+        """Initialize mixed-in handlers, caller metadata, and hierarchy caches."""
+
+        super().__init__(metadata, strict=strict)
+        self.handler_types = self._handler_types()
         names = [handler.name for handler in self.handler_types]
         if len(names) != len(set(names)):
             raise ValueError("handler names must be unique")
         self.configured = self.handler_types
-        self._identified: dict[Path, tuple[Signature, tuple[str, ...]]] = {}
+        self._identified: dict[
+            Path,
+            tuple[Signature, tuple[str, ...], tuple[HandlerError, ...]],
+        ] = {}
         self._probed: dict[Path, tuple[Signature, tuple[Probe, ...]]] = {}
         self._children: dict[Path, tuple[Signature, tuple[Path, ...]]] = {}
+        self._walk_errors: dict[Path, HandlerError] = {}
+
+    def _handler_types(self) -> tuple[type[Handler], ...]:
+        """Return the most-specific named handler classes in composition order."""
+
+        selected: list[type[Handler]] = []
+        names: set[str] = set()
+        for handler in type(self).__mro__[1:]:
+            if handler in (FileHandler, Handler, _LLMExportHandler):
+                continue
+            if not issubclass(handler, Handler):
+                continue
+            name = getattr(handler, "name", None)
+            if not isinstance(name, str) or name in names:
+                continue
+            selected.append(handler)
+            names.add(name)
+        return tuple(selected)
 
     @sync
-    async def identify(self, path: Path, recursive: bool = True) -> list[Record]:
+    async def identify(
+        self,
+        path: Path,
+        recursive: bool = True,
+    ) -> list[Record] | HandlerError:
         """Identify a hierarchy synchronously or asynchronously.
 
         Return the root and, by default, all descendants without loading typed
         handler objects.
         """
 
-        return await asyncio.to_thread(self.identify_sync, path, recursive)
+        return await asyncio.to_thread(
+            self._safe_operation,
+            path,
+            "identify",
+            self.identify_sync,
+            path,
+            recursive,
+        )
 
     def identify_sync(self, path: Path, recursive: bool = True) -> list[Record]:
         """Return metadata and matching handler names without probing objects."""
 
-        return [self.record(found) for found in self._walk(path, recursive)]
+        paths = tuple(self._walk(path, recursive))
+        return [self.record(found) for found in paths]
 
     @sync
-    async def probe(self, path: Path, recursive: bool = True) -> list[Record]:
+    async def probe(
+        self,
+        path: Path,
+        recursive: bool = True,
+    ) -> list[Record] | HandlerError:
         """Probe a hierarchy synchronously or asynchronously.
 
         Matching handlers are loaded and folder statistics are accumulated
         from their descendants.
         """
 
-        return await asyncio.to_thread(self.probe_sync, path, recursive)
+        return await asyncio.to_thread(
+            self._safe_operation,
+            path,
+            "probe",
+            self.probe_sync,
+            path,
+            recursive,
+        )
 
     def probe_sync(self, path: Path, recursive: bool = True) -> list[Record]:
         """Probe matching handlers and derive recursive folder statistics."""
@@ -415,44 +718,60 @@ class _FileHandler:
         return [records[found] for found in paths]
 
     def record(self, path: Path) -> Record:
-        """Return one cached identification record."""
+        """Return one cached identification record or a record carrying failure."""
 
         path = full_path(path)
-        stat = path.stat()
+        try:
+            stat = path.stat()
+        except Exception as error:
+            if self.strict:
+                raise
+            failure = self._error(path, "stat", error)
+            self._walk_errors[path] = failure
+            return Record(path, False, 0, None, (), errors=(failure,))
         signature = _signature(stat)
         cached = self._identified.get(path)
         if cached is None or cached[0] != signature:
-            names = tuple(
-                handler.name
+            identified = tuple(
+                (handler, *self._handler_identify(handler, path))
                 for handler in self.handler_types
-                if self._handler_identify(handler, path)
             )
-            self._identified[path] = (signature, names)
+            names = tuple(handler.name for handler, matched, _ in identified if matched)
+            errors = tuple(error for _, _, error in identified if error is not None)
+            self._identified[path] = signature, names, errors
             self._probed.pop(path, None)
         else:
             names = cached[1]
+            errors = cached[2]
             if any(handler.name == "git" for handler in self.handler_types):
+                git = next(
+                    handler for handler in self.handler_types if handler.name == "git"
+                )
+                matched, git_error = self._handler_identify(git, path)
                 names = tuple(
                     handler.name
                     for handler in self.handler_types
-                    if (
-                        self._handler_identify(handler, path)
-                        if handler.name == "git"
-                        else handler.name in names
-                    )
+                    if (matched if handler.name == "git" else handler.name in names)
                 )
-                self._identified[path] = (signature, names)
+                errors = tuple(error for error in errors if error.handler != "git")
+                if git_error is not None:
+                    errors += (git_error,)
+                self._identified[path] = signature, names, errors
         is_folder = path.is_dir() and not path.is_symlink()
+        walk_error = self._walk_errors.get(path)
+        if walk_error is not None and walk_error not in errors:
+            errors += (walk_error,)
         return Record(
             path=path,
             is_folder=is_folder,
             size=0 if is_folder else stat.st_size,
             modified_at=valid_time(datetime.fromtimestamp(stat.st_mtime, timezone.utc)),
             handlers=names,
+            errors=errors,
         )
 
     def children(self, path: Path | Record) -> tuple[Record, ...]:
-        """Return direct children in display order from the hierarchy cache."""
+        """Return direct children, or an empty tuple after a retained read error."""
 
         if isinstance(path, Record):
             if path.location is not None:
@@ -461,23 +780,31 @@ class _FileHandler:
                 return self._archive_children(path.location, path.path)
             if "archive" in path.handlers:
                 return self._archive_children(Path(path.path), PurePosixPath("."))
+            if "ignored" in path.handlers:
+                return ()
             path = Path(path.path)
         path = full_path(path)
         if not path.is_dir() or path.is_symlink():
             return ()
-        signature = _signature(path.stat())
+        current = self.record(path)
+        if "ignored" in current.handlers:
+            return ()
+        try:
+            signature = _signature(path.stat())
+        except Exception as error:
+            if self.strict:
+                raise
+            self._walk_errors[path] = self._error(path, "list", error)
+            return ()
         cached = self._children.get(path)
         if cached is None or cached[0] != signature:
-            paths = tuple(
-                sorted(
-                    (
-                        child
-                        for child in path.iterdir()
-                        if child.name.casefold() != ".git"
-                    ),
-                    key=_display_order,
-                )
-            )
+            try:
+                paths = tuple(sorted(path.iterdir(), key=_display_order))
+            except Exception as error:
+                if self.strict:
+                    raise
+                self._walk_errors[path] = self._error(path, "list", error)
+                return ()
             self._children[path] = (signature, paths)
         else:
             paths = cached[1]
@@ -489,8 +816,12 @@ class _FileHandler:
         """Return one child, or ``None`` if it vanished after directory listing."""
 
         try:
+            path.stat()
             return self.record(path)
-        except FileNotFoundError:
+        except Exception as error:
+            if self.strict:
+                raise
+            self._walk_errors[path] = self._error(path, "stat", error)
             return None
 
     def _archive_children(
@@ -504,22 +835,70 @@ class _FileHandler:
         probe = next(
             (probe for probe in record.probes if probe.handler == "archive"), None
         )
-        if probe is None:
-            raise ValueError(f"{archive}: archive handler did not return records")
+        if probe is None or probe.error is not None or not isinstance(probe.obj, tuple):
+            if self.strict:
+                raise ValueError(f"{archive}: archive handler did not return records")
+            return ()
         parent = PurePosixPath(parent.as_posix())
         return tuple(child for child in probe.obj if child.path.parent == parent)
 
+    def _archive_records(
+        self,
+        archive: Path,
+        records: tuple[Record, ...],
+    ) -> tuple[Record, ...]:
+        """Apply configured ignored rules to archive members and their descent."""
+
+        ignored_handler = next(
+            (handler for handler in self.handler_types if handler.name == "ignored"),
+            None,
+        )
+        if ignored_handler is None:
+            return records
+        skipped: set[PurePosixPath] = set()
+        selected: list[Record] = []
+        for record in sorted(records, key=lambda item: len(item.path.parts)):
+            if any(parent in skipped for parent in record.path.parents):
+                continue
+            reason = ignored_handler.member_reason(record.path, record.is_folder)
+            if reason is not None:
+                ignored = IgnoredPath(record.path, reason, record.is_folder)
+                probe = Probe(
+                    "ignored",
+                    FileStats(0 if record.is_folder else 1, 0, record.size, None),
+                    ignored,
+                    metadata=self._probe_metadata(ignored),
+                )
+                record = replace(
+                    record,
+                    handlers=("ignored",),
+                    probes=(probe,),
+                )
+                if record.is_folder:
+                    skipped.add(record.path)
+            selected.append(record)
+        return _complete_archive_records(archive, selected)
+
     @sync
-    async def load(self, path: Path) -> Any:
+    async def load(self, path: Path) -> Any | HandlerError:
         """Load the first matching typed object synchronously or asynchronously."""
 
-        return await asyncio.to_thread(self.load_sync, path)
+        return await asyncio.to_thread(
+            self._safe_operation,
+            path,
+            "load",
+            self.load_sync,
+            path,
+        )
 
     def load_sync(self, path: Path) -> Any:
         """Return the first matching typed object, or ``None`` when unrecognized."""
 
         result = self._probe_record(full_path(path))
-        return result.probes[0].obj if result.probes else None
+        if not result.probes:
+            return None
+        probe = result.probes[0]
+        return probe.error if probe.error is not None else probe.obj
 
     @sync
     async def normalize(
@@ -528,7 +907,7 @@ class _FileHandler:
         destination: Path | None = None,
         recursive: bool = True,
         exclude_handlers: Sequence[str] = (),
-    ) -> Path:
+    ) -> Path | HandlerError:
         """Normalize a source in place or copy it to an exact destination.
 
         With no destination, the first matching handler that defines
@@ -537,6 +916,9 @@ class _FileHandler:
         """
 
         return await asyncio.to_thread(
+            self._safe_operation,
+            source,
+            "normalize",
             self.normalize_sync,
             source,
             destination,
@@ -550,7 +932,7 @@ class _FileHandler:
         destination: Path | None = None,
         recursive: bool = True,
         exclude_handlers: Sequence[str] = (),
-    ) -> Path:
+    ) -> Path | HandlerError:
         """Rename by handler naming or copy to an exact destination hierarchy."""
 
         source = full_path(source)
@@ -562,6 +944,7 @@ class _FileHandler:
                     for probe in result.probes
                     for handler in self.handler_types
                     if probe.handler == handler.name
+                    and probe.error is None
                     and probe.handler not in exclude_handlers
                     and callable(getattr(handler, "normalize_name", None))
                 ),
@@ -613,6 +996,9 @@ class _FileHandler:
         """Build a dated archive destination synchronously or asynchronously."""
 
         return await asyncio.to_thread(
+            self._safe_operation,
+            source,
+            "archive_path",
             self.archive_path_sync,
             source,
             destination,
@@ -642,10 +1028,17 @@ class _FileHandler:
         )
 
     @sync
-    async def invalidate(self, path: Path | None = None) -> None:
+    async def invalidate(self, path: Path | None = None) -> None | HandlerError:
         """Invalidate cached state synchronously or asynchronously."""
 
-        await asyncio.to_thread(self.invalidate_sync, path)
+        selected = path if path is not None else PurePosixPath(".")
+        return await asyncio.to_thread(
+            self._safe_operation,
+            selected,
+            "invalidate",
+            self.invalidate_sync,
+            path,
+        )
 
     def invalidate_sync(self, path: Path | None = None) -> None:
         """Discard one cached branch, or the complete hierarchy cache."""
@@ -654,6 +1047,7 @@ class _FileHandler:
             self._identified.clear()
             self._probed.clear()
             self._children.clear()
+            self._walk_errors.clear()
             for handler in self.handler_types:
                 invalidate = handler.__dict__.get("invalidate")
                 if invalidate is not None:
@@ -664,53 +1058,111 @@ class _FileHandler:
             for cached in tuple(cache):
                 if cached == path or path in cached.parents:
                     cache.pop(cached, None)
+        for cached in tuple(self._walk_errors):
+            if cached == path or path in cached.parents:
+                self._walk_errors.pop(cached, None)
         for handler in self.handler_types:
             invalidate = handler.__dict__.get("invalidate")
             if invalidate is not None:
                 invalidate(self, path)
 
     def _walk(self, path: Path, recursive: bool) -> Iterator[Path]:
-        """Yield the root and optionally every filesystem descendant."""
+        """Yield readable entries without descending into ignored boundaries."""
 
         path = full_path(path)
-        path.stat()
+        self._walk_errors.pop(path, None)
         yield path
-        if recursive and path.is_dir() and not path.is_symlink():
+        try:
+            is_folder = path.is_dir() and not path.is_symlink()
+        except Exception as error:
+            if self.strict:
+                raise
+            self._walk_errors[path] = self._error(path, "stat", error)
+            return
+        if recursive and is_folder and "ignored" not in self.record(path).handlers:
             for child in self.children(path):
                 yield from self._walk(child.path, True)
 
     def _probe_record(self, path: Path) -> Record:
-        """Load and cache every handler probe for one filesystem path."""
+        """Load each matching handler while retaining individual failures."""
 
         record = self.record(path)
-        signature = _signature(path.stat())
+        try:
+            signature = _signature(path.stat())
+        except Exception:
+            return replace(record, stats=FileStats(0, 0, 0, None))
         cached = self._probed.get(path)
         if cached is None or cached[0] != signature or "git" in record.handlers:
             selected = {handler.name: handler for handler in self.handler_types}
             probes = tuple(
-                Probe(name, *self._handler_call(selected[name], path))
-                for name in record.handlers
+                self._handler_probe(selected[name], path) for name in record.handlers
             )
             self._probed[path] = (signature, probes)
         else:
             probes = cached[1]
-        return replace(record, probes=probes)
+        errors = record.errors + tuple(
+            probe.error for probe in probes if probe.error is not None
+        )
+        return replace(record, probes=probes, errors=errors)
 
-    def _handler_identify(self, handler: type[Any], path: Path) -> bool:
-        """Call a handler's worker-safe recognizer when it provides one."""
+    def _handler_identify(
+        self,
+        handler: type[Handler],
+        path: Path,
+    ) -> tuple[bool, HandlerError | None]:
+        """Call one recognizer and retain its failure without stopping the tree."""
 
-        identify_sync = getattr(handler, "identify_sync", None)
-        if identify_sync is not None:
-            return identify_sync(self, path)
-        return handler.identify(self, path)
+        try:
+            identify_sync = getattr(handler, "identify_sync", None)
+            if identify_sync is not None:
+                return identify_sync(self, path), None
+            return handler.identify(self, path), None
+        except Exception as error:
+            if self.strict:
+                raise
+            return False, HandlerError(
+                handler.name,
+                "identify",
+                path,
+                type(error).__name__,
+                str(error),
+            )
 
-    def _handler_call(self, handler: type[Any], path: Path) -> tuple[Any, Any]:
-        """Call a handler's worker-safe loader when it provides one."""
+    def _handler_probe(self, handler: type[Handler], path: Path) -> Probe:
+        """Call one loader and return either its result or a typed error."""
 
-        call_sync = getattr(handler, "call_sync", None)
-        if call_sync is not None:
-            return call_sync(self, path)
-        return handler.__call__(self, path)
+        try:
+            call_sync = getattr(handler, "call_sync", None)
+            if call_sync is not None:
+                stats, obj = call_sync(self, path)
+            else:
+                stats, obj = handler.__call__(self, path)
+            if handler.name == "archive" and isinstance(obj, tuple):
+                obj = self._archive_records(path, obj)
+                stats = _archive_stats(obj)
+            return Probe(
+                handler.name,
+                stats,
+                obj,
+                metadata=self._probe_metadata(obj),
+            )
+        except Exception as error:
+            if self.strict:
+                raise
+            failure = HandlerError(
+                handler.name,
+                "load",
+                path,
+                type(error).__name__,
+                str(error),
+            )
+            return Probe(
+                handler.name,
+                None,
+                None,
+                metadata=dict(self.metadata),
+                error=failure,
+            )
 
     @staticmethod
     def _file_stats(record: Record) -> FileStats:
@@ -867,24 +1319,59 @@ class _FileHandler:
         return valid_time(parsed)
 
 
-class GitHandler:
+@dataclass(frozen=True)
+class GitRepository:
+    """Local repository identity and configured remote metadata."""
+
+    root: Path
+    metadata_path: Path
+    upstream_remote: str | None
+    upstream_url: str | None
+    remotes: tuple[tuple[str, str], ...]
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Return repository paths and URLs suitable for identity matching."""
+
+        return {
+            "root": str(self.root),
+            "metadata_path": str(self.metadata_path),
+            "upstream_remote": self.upstream_remote,
+            "upstream_url": self.upstream_url,
+            "remotes": dict(self.remotes),
+        }
+
+
+class GitHandler(Handler):
     """Identify tracked paths and derive spans from local Git history.
 
     Only commits reachable from the current local ``HEAD`` are read; no remote
-    command, fetch, or upstream reference is used. Repository and currently
-    tracked file paths are recognized. A tracked folder's span also includes
-    historical files beneath it that have since been deleted.
+    command or fetch is used. Repository and currently tracked file paths are
+    recognized. A tracked folder's span also includes historical files beneath
+    it that have since been deleted.
+
+    The typed :class:`GitRepository` reads every ``remote.<name>.url`` from
+    local Git configuration. ``upstream_remote`` is set only when the current
+    symbolic branch has both ``branch.<name>.remote`` and
+    ``branch.<name>.merge``. ``upstream_url`` is the matching configured remote
+    URL. Both are ``None`` for detached ``HEAD`` or a branch without that pair.
+    All configured remote URLs remain in ``remotes`` for deduplication.
 
     The repository map is cached until ``HEAD``, its loose ref, the index, the
-    ``HEAD`` log, or packed refs change.
+    ``HEAD`` log, packed refs, or Git configuration changes.
     """
 
     name = "git"
 
-    def __init__(self) -> None:
-        """Initialize the repository-history cache."""
+    def __init__(
+        self,
+        metadata: Mapping[str, Any] | None = None,
+        *,
+        strict: bool = False,
+    ) -> None:
+        """Initialize metadata, error policy, and repository-history cache."""
 
-        super().__init__()
+        super().__init__(metadata, strict=strict)
         self._git_cache: dict[
             Path,
             tuple[tuple[Any, ...], frozenset[Path], dict[Path, Span]],
@@ -894,7 +1381,7 @@ class GitHandler:
     async def identify(self, path: Path) -> bool:
         """Return whether ``path`` is tracked, synchronously or asynchronously."""
 
-        return await asyncio.to_thread(self.identify_sync, path)
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
 
     def identify_sync(self, path: Path) -> bool:
         """Return whether ``path`` belongs to the current tracked-path map."""
@@ -906,13 +1393,16 @@ class GitHandler:
         return full_path(path) in tracked
 
     @sync
-    async def __call__(self, path: Path) -> tuple[FileStats, Path]:
-        """Return the local-history span and Git metadata path for ``path``."""
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[FileStats | None, GitRepository | HandlerError]:
+        """Return local-history statistics and repository metadata."""
 
-        return await asyncio.to_thread(self.call_sync, path)
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
 
-    def call_sync(self, path: Path) -> tuple[FileStats, Path]:
-        """Load local-history statistics without entering another event loop."""
+    def call_sync(self, path: Path) -> tuple[FileStats, GitRepository]:
+        """Load local-history statistics and local Git remote configuration."""
 
         path = full_path(path)
         repository = self._repository(path)
@@ -921,7 +1411,10 @@ class GitHandler:
         tracked, spans = self._history(*repository)
         if path not in tracked:
             raise ValueError(f"{path}: path is not Git-tracked")
-        return FileStats(0, 0, 0, spans.get(path)), repository[1]
+        return (
+            FileStats(0, 0, 0, spans.get(path)),
+            self._repository_object(*repository),
+        )
 
     def invalidate(self, path: Path | None = None) -> None:
         """Discard all Git maps or the map containing ``path``."""
@@ -1007,6 +1500,53 @@ class GitHandler:
         self._git_cache[root] = state, frozen, spans
         return frozen, spans
 
+    @classmethod
+    def _repository_object(cls, root: Path, metadata: Path) -> GitRepository:
+        """Read repository remote identity from local Git configuration."""
+
+        remotes: list[tuple[str, str]] = []
+        configured = cls._git_optional(
+            root,
+            "config",
+            "--get-regexp",
+            r"^remote\..*\.url$",
+        )
+        if configured is not None:
+            for line in configured.splitlines():
+                key, separator, url = line.partition(" ")
+                if not separator or not url:
+                    continue
+                remote = key.removeprefix("remote.").removesuffix(".url")
+                remotes.append((remote, url))
+        branch = cls._git_optional(root, "symbolic-ref", "--quiet", "--short", "HEAD")
+        upstream_remote = None
+        if branch is not None:
+            remote = cls._git_optional(
+                root,
+                "config",
+                "--get",
+                f"branch.{branch}.remote",
+            )
+            merge = cls._git_optional(
+                root,
+                "config",
+                "--get",
+                f"branch.{branch}.merge",
+            )
+            if remote is not None and merge is not None:
+                upstream_remote = remote
+        upstream_url = next(
+            (url for remote, url in remotes if remote == upstream_remote),
+            None,
+        )
+        return GitRepository(
+            root,
+            metadata,
+            upstream_remote,
+            upstream_url,
+            tuple(remotes),
+        )
+
     @staticmethod
     def _git(root: Path, *arguments: str) -> bytes:
         """Run one read-only local Git command and return its raw stdout."""
@@ -1020,6 +1560,20 @@ class GitHandler:
             detail = result.stderr.decode("utf-8", errors="replace").strip()
             raise ValueError(f"{root}: Git failed: {detail}")
         return result.stdout
+
+    @staticmethod
+    def _git_optional(root: Path, *arguments: str) -> str | None:
+        """Return stripped local Git output, or ``None`` for an absent value."""
+
+        result = subprocess.run(
+            ("git", "-C", str(root), *arguments),
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode:
+            return None
+        value = result.stdout.decode("utf-8", errors="surrogateescape").strip()
+        return value or None
 
     @staticmethod
     def _relative(value: bytes) -> PurePosixPath:
@@ -1058,6 +1612,7 @@ class GitHandler:
             for path in (
                 metadata / "index",
                 metadata / "logs" / "HEAD",
+                common / "config",
                 common / "packed-refs",
             )
             if path.is_file()
@@ -1089,14 +1644,23 @@ class GitHandler:
         return metadata if metadata.is_dir() else None
 
 
-class ArchiveHandler:
+class ArchiveHandler(Handler):
     """Identify and load ZIP, RAR, and TAR.GZ member hierarchies.
 
-    Each member is represented by ``Record`` with an archive-relative path and
-    ``location`` set to the physical archive. Missing parent folders are
-    synthesized so archive traversal matches filesystem traversal. RAR files
-    are identified by their native signature and listed by the installed
-    RARLAB ``rar`` or ``unrar`` command; no Python RAR implementation is used.
+    Identification is content-based and does not depend on the filename: ZIP
+    uses :func:`zipfile.is_zipfile`, RAR accepts the RAR 4 or RAR 5 signature,
+    and TAR.GZ requires the gzip signature plus a readable TAR structure. Each
+    member is a :class:`Record` with a safe relative POSIX path and ``location``
+    set to the physical archive. Absolute member paths and ``..`` components
+    are errors. Missing parent folders are synthesized so archive traversal
+    matches filesystem traversal.
+
+    ZIP timestamps come from the central directory. TAR timestamps come from
+    each member's Unix modification time. RAR name, type, size, and optional
+    modified time come from the UTF-8 RARLAB technical listing. RAR uses the
+    installed native ``rar`` or ``unrar`` command; no Python RAR implementation
+    is used. Password-protected or otherwise unreadable archives produce a
+    :class:`HandlerError` under the default error policy.
     """
 
     name = "archive"
@@ -1107,7 +1671,7 @@ class ArchiveHandler:
     async def identify(self, path: Path) -> bool:
         """Recognize a supported archive synchronously or asynchronously."""
 
-        return await asyncio.to_thread(self.identify_sync, path)
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
 
     def identify_sync(self, path: Path) -> bool:
         """Recognize a ZIP, RAR, or gzip-compressed TAR from its contents."""
@@ -1118,10 +1682,13 @@ class ArchiveHandler:
         )
 
     @sync
-    async def __call__(self, path: Path) -> tuple[FileStats, tuple[Record, ...]]:
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[FileStats | None, tuple[Record, ...] | HandlerError]:
         """Load archive statistics and member records in either call mode."""
 
-        return await asyncio.to_thread(self.call_sync, path)
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
 
     def call_sync(self, path: Path) -> tuple[FileStats, tuple[Record, ...]]:
         """Load archive statistics and member records without another event loop."""
@@ -1367,6 +1934,12 @@ class MarkdownFile:
     frontmatter: dict[str, Any]
 
     @property
+    def metadata(self) -> dict[str, Any]:
+        """Return a copy of every source frontmatter key and value."""
+
+        return dict(self.frontmatter)
+
+    @property
     def title(self) -> str:
         """Return frontmatter ``title``, ``name``, or the filename stem."""
 
@@ -1428,8 +2001,29 @@ class MarkdownFile:
         )
 
 
-class MarkdownHandler:
-    """Identify Markdown files and read their complete YAML frontmatter."""
+class MarkdownHandler(Handler):
+    """Identify Markdown files and read their complete YAML frontmatter.
+
+    Supported input is a physical file whose suffix is ``.md`` ignoring case,
+    decoded as UTF-8 with an optional BOM. Frontmatter exists only when the
+    first decoded line strips to ``---`` and ends at a later line that strips
+    to ``---``. The enclosed text must be an empty YAML document or a YAML
+    mapping accepted by :class:`yaml.SafeLoader`. YAML timestamp scalars remain
+    strings; every key and nested value remains in ``MarkdownFile.frontmatter``.
+    The Markdown body is not parsed.
+
+    ``title`` and ``name`` use their matching frontmatter field, then the peer
+    field, then the filename stem. ``tags`` accepts a YAML list or one scalar
+    and exposes a tuple of strings. ``span`` requires both ``created`` and
+    ``updated`` values accepted by :meth:`datetime.fromisoformat`; a date-only
+    value starts at midnight and a value without an offset uses
+    ``America/Los_Angeles``. The earlier parsed value is the start and the later
+    is the end.
+
+    A missing frontmatter block is valid and produces an empty mapping. With
+    the default error policy, malformed YAML, a non-mapping document, or an
+    unclosed block returns ``(None, HandlerError)`` instead of stopping a tree.
+    """
 
     name = "markdown"
 
@@ -1437,7 +2031,7 @@ class MarkdownHandler:
     async def identify(self, path: Path) -> bool:
         """Recognize a Markdown file synchronously or asynchronously."""
 
-        return await asyncio.to_thread(self.identify_sync, path)
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
 
     def identify_sync(self, path: Path) -> bool:
         """Return whether ``path`` is a physical ``.md`` file."""
@@ -1446,10 +2040,13 @@ class MarkdownHandler:
         return path.suffix.casefold() == ".md" and path.is_file()
 
     @sync
-    async def __call__(self, path: Path) -> tuple[FileStats, MarkdownFile]:
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[FileStats | None, MarkdownFile | HandlerError]:
         """Read a Markdown file synchronously or asynchronously."""
 
-        return await asyncio.to_thread(self.call_sync, path)
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
 
     def call_sync(self, path: Path) -> tuple[FileStats, MarkdownFile]:
         """Return statistics and a Markdown object with all frontmatter keys."""
@@ -1487,23 +2084,60 @@ class MarkdownHandler:
 
 @dataclass(frozen=True)
 class CSVFile:
-    """A complete comma-separated text file split into header and data rows."""
+    """A complete comma-separated table and timestamps found in time columns."""
 
     path: Path
     header: tuple[str, ...]
     rows: tuple[tuple[str, ...], ...]
+    timestamps: tuple[datetime, ...]
+
+    @property
+    def span(self) -> Span | None:
+        """Return the earliest-to-latest valid timestamp cell."""
+
+        return (min(self.timestamps), max(self.timestamps)) if self.timestamps else None
 
 
-class CSVHandler:
-    """Identify ``.csv`` files and read their complete comma-separated table."""
+class CSVHandler(Handler):
+    """Read comma-separated text and derive a span from named time columns.
+
+    Supported input is a physical file whose suffix is ``.csv`` ignoring case,
+    decoded as UTF-8 with an optional BOM. Python's strict :mod:`csv` reader is
+    used with the ``excel`` dialect: comma delimiter, double-quote quoting,
+    doubled embedded quotes, and either CRLF or LF records. The first record is
+    the complete header and every later record is retained without type
+    conversion. An empty file has an empty header and no rows.
+
+    A header matches a time column case-insensitively after surrounding spaces
+    are removed. The built-in names are ``timestamp``, ``ts``, ``started_at``,
+    ``session_start``, ``time``, and ``created_at``. Values in those columns
+    support ISO 8601 date or date-time spelling accepted by
+    :meth:`datetime.fromisoformat`, including ``Z`` and numeric offsets, plus
+    Unix seconds greater than 1,000,000,000 and Unix milliseconds greater than
+    10,000,000,000. Offset-free values use ``America/Los_Angeles``. Invalid,
+    placeholder, and future values do not contribute to the span.
+
+    Add a column name or a :meth:`datetime.strptime` format in a subclass; the
+    base handler remains unchanged::
+
+        class BillingCSVHandler(CSVHandler):
+            time_keys = (*CSVHandler.time_keys, "billed_at")
+            time_formats = (*CSVHandler.time_formats, "%m/%d/%Y %H:%M")
+
+    The subclass can then be one of the caller's ``FileHandler`` mixins. With
+    the default error policy, invalid CSV or undecodable text returns ``(None,
+    HandlerError)`` instead of stopping a tree.
+    """
 
     name = "csv"
+    time_keys = TIME_KEYS
+    time_formats: tuple[str, ...] = ()
 
     @sync
     async def identify(self, path: Path) -> bool:
         """Recognize a CSV file synchronously or asynchronously."""
 
-        return await asyncio.to_thread(self.identify_sync, path)
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
 
     def identify_sync(self, path: Path) -> bool:
         """Return whether ``path`` is a physical ``.csv`` file."""
@@ -1512,10 +2146,13 @@ class CSVHandler:
         return path.suffix.casefold() == ".csv" and path.is_file()
 
     @sync
-    async def __call__(self, path: Path) -> tuple[FileStats, CSVFile]:
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[FileStats | None, CSVFile | HandlerError]:
         """Read a CSV file synchronously or asynchronously."""
 
-        return await asyncio.to_thread(self.call_sync, path)
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
 
     def call_sync(self, path: Path) -> tuple[FileStats, CSVFile]:
         """Return file statistics and the complete parsed CSV table."""
@@ -1529,8 +2166,59 @@ class CSVHandler:
         except csv.Error as error:
             raise ValueError(f"{path}: invalid CSV: {error}") from error
         header = records[0] if records else ()
-        csv_file = CSVFile(path, header, records[1:])
-        return FileStats(1, 0, path.stat().st_size, None), csv_file
+        rows = records[1:]
+        indexes = tuple(
+            index
+            for index, name in enumerate(header)
+            if name.strip().casefold()
+            in {time_key.casefold() for time_key in self.time_keys}
+        )
+        timestamps = tuple(
+            timestamp
+            for row in rows
+            for index in indexes
+            if index < len(row)
+            and (timestamp := self._timestamp(row[index])) is not None
+        )
+        csv_file = CSVFile(path, header, rows, timestamps)
+        return FileStats(1, 0, path.stat().st_size, csv_file.span), csv_file
+
+    @classmethod
+    def _timestamp(cls, value: str) -> datetime | None:
+        """Parse one built-in or subclass-supplied CSV timestamp spelling."""
+
+        value = value.strip()
+        if not value:
+            return None
+        parsed: datetime | None = None
+        try:
+            number = float(value)
+        except ValueError:
+            number = 0
+        if number > 1_000_000_000:
+            seconds = number / 1000 if number > 10_000_000_000 else number
+            try:
+                parsed = datetime.fromtimestamp(seconds, timezone.utc)
+            except OSError, OverflowError, ValueError:
+                return None
+        else:
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                for time_format in cls.time_formats:
+                    try:
+                        parsed = datetime.strptime(value, time_format)
+                    except ValueError:
+                        continue
+                    break
+        if parsed is None:
+            return None
+        localized = (
+            parsed
+            if parsed.tzinfo is not None
+            else parsed.replace(tzinfo=FRONTMATTER_TIMEZONE)
+        )
+        return valid_time(localized)
 
 
 @dataclass(frozen=True)
@@ -1548,12 +2236,22 @@ class LogFile:
         return (min(self.timestamps), max(self.timestamps)) if self.timestamps else None
 
 
-class LogHandler:
+class LogHandler(Handler):
     """Identify ``.log`` files and derive spans from timestamped rows.
 
-    A timestamp must begin a row, optionally after whitespace and ``[`` or
-    ``(``, and use ISO 8601 date-and-time spelling. Offset-free timestamps use
-    ``America/Los_Angeles``. Every row is retained whether timestamped or not.
+    Supported input is a physical file whose suffix is ``.log`` ignoring case,
+    decoded as UTF-8 with an optional BOM. Every row is retained without its
+    line ending. A timestamp must begin after optional whitespace and one
+    optional ``[`` or ``(``. Its exact accepted shape is
+    ``YYYY-MM-DD[T or space]HH:MM:SS``, an optional dot-or-comma fractional
+    second, and optional ``Z``, ``+HH:MM``, ``-HH:MM``, ``+HHMM``, or ``-HHMM``
+    offset. Text may follow immediately after that timestamp.
+
+    Offset-free timestamps use ``America/Los_Angeles``. Invalid, placeholder,
+    and future timestamps do not contribute. The span is the earliest through
+    latest accepted row timestamp. A file with no accepted timestamp has no
+    span. With the default error policy, undecodable text returns ``(None,
+    HandlerError)`` instead of stopping a tree.
     """
 
     name = "log"
@@ -1562,7 +2260,7 @@ class LogHandler:
     async def identify(self, path: Path) -> bool:
         """Recognize a log file synchronously or asynchronously."""
 
-        return await asyncio.to_thread(self.identify_sync, path)
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
 
     def identify_sync(self, path: Path) -> bool:
         """Return whether ``path`` is a physical ``.log`` file."""
@@ -1571,10 +2269,13 @@ class LogHandler:
         return path.suffix.casefold() == ".log" and path.is_file()
 
     @sync
-    async def __call__(self, path: Path) -> tuple[FileStats, LogFile]:
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[FileStats | None, LogFile | HandlerError]:
         """Read a log file synchronously or asynchronously."""
 
-        return await asyncio.to_thread(self.call_sync, path)
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
 
     def call_sync(self, path: Path) -> tuple[FileStats, LogFile]:
         """Return all log rows and statistics spanning timestamped rows."""
@@ -1608,11 +2309,137 @@ class LogHandler:
         return valid_time(localized)
 
 
-class ImageHandler:
+@dataclass(frozen=True)
+class EmailFile:
+    """An email file with metadata derived only from its filename.
+
+    ``timestamp``, ``subject``, and ``party`` are all ``None`` when the filename
+    does not use the supported convention. ``collision`` is the optional final
+    decimal suffix used to distinguish otherwise identical paths.
+    """
+
+    path: Path
+    timestamp: datetime | None
+    subject: str | None
+    party: str | None
+    collision: int | None
+
+    @property
+    def span(self) -> Span | None:
+        """Return the filename timestamp as a one-instant span."""
+
+        return (self.timestamp, self.timestamp) if self.timestamp is not None else None
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Return only metadata present in the supported filename."""
+
+        return {
+            key: value
+            for key, value in (
+                ("timestamp", self.timestamp),
+                ("subject", self.subject),
+                ("party", self.party),
+                ("collision", self.collision),
+            )
+            if value is not None
+        }
+
+
+class EmailHandler(Handler):
+    """Identify email files and derive metadata from their filenames.
+
+    Supported input is an existing physical file whose suffix is ``.msg`` or
+    ``.eml`` ignoring case. The handler does not open or parse Outlook MSG,
+    MIME headers, bodies, attachments, or embedded messages. Message parsing is
+    explicitly represented by :meth:`parse_message` returning
+    :data:`NotImplemented`.
+
+    Filename metadata uses exactly
+    ``YYMMDD.HHMMSS - subject - party[ - collision]`` before the extension.
+    Separators are one space, hyphen, one space. The timestamp uses
+    ``%y%m%d.%H%M%S`` and ``America/Los_Angeles``. The optional collision is a
+    decimal integer. Splitting from the right allows the subject to contain the
+    separator. A filename outside this convention remains a valid email file
+    with no filename-derived fields or span.
+    """
+
+    name = "email"
+    extensions = (".eml", ".msg")
+
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Recognize an email file synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Return whether ``path`` is a physical MSG or EML file."""
+
+        path = full_path(path)
+        return path.suffix.casefold() in self.extensions and path.is_file()
+
+    @sync
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[FileStats | None, EmailFile | HandlerError]:
+        """Read filename metadata synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
+
+    def call_sync(self, path: Path) -> tuple[FileStats, EmailFile]:
+        """Return file statistics and metadata without parsing the message."""
+
+        path = full_path(path)
+        if not self.identify_sync(path):
+            raise ValueError(f"{path}: email file is not identifiable")
+        timestamp, subject, party, collision = self._filename(path)
+        email = EmailFile(path, timestamp, subject, party, collision)
+        return FileStats(1, 0, path.stat().st_size, email.span), email
+
+    @staticmethod
+    def parse_message(path: Path) -> Any:
+        """Return ``NotImplemented``; email payload parsing is not implemented."""
+
+        return NotImplemented
+
+    @staticmethod
+    def _filename(
+        path: Path,
+    ) -> tuple[datetime | None, str | None, str | None, int | None]:
+        """Parse the supported timestamp, subject, party, and collision suffix."""
+
+        timestamp_text, separator, remainder = path.stem.partition(" - ")
+        if not separator:
+            return None, None, None, None
+        collision: int | None = None
+        content, separator, final = remainder.rpartition(" - ")
+        if not separator:
+            return None, None, None, None
+        if final.isdecimal():
+            collision = int(final)
+            content, separator, final = content.rpartition(" - ")
+            if not separator:
+                return None, None, None, None
+        subject = content.strip()
+        party = final.strip()
+        if not subject or not party:
+            return None, None, None, None
+        try:
+            timestamp = datetime.strptime(timestamp_text, "%y%m%d.%H%M%S").replace(
+                tzinfo=FRONTMATTER_TIMEZONE
+            )
+        except ValueError:
+            return None, None, None, None
+        return valid_time(timestamp), subject, party, collision
+
+
+class ImageHandler(Handler):
     """Placeholder for image EXIF metadata after media-format recognition."""
 
 
-class VideoHandler:
+class VideoHandler(Handler):
     """Placeholder for video EXIF metadata after media-format recognition."""
 
 
@@ -1776,13 +2603,18 @@ class SessionStats:
         )
 
 
-class _LLMExportHandler:
+class _LLMExportHandler(Handler):
     """Shared folder and ZIP mechanics for ChatGPT and Anthropic handlers."""
 
-    def __init__(self) -> None:
-        """Initialize the provider export cache and the next mixin."""
+    def __init__(
+        self,
+        metadata: Mapping[str, Any] | None = None,
+        *,
+        strict: bool = False,
+    ) -> None:
+        """Initialize metadata, error policy, and provider export cache."""
 
-        super().__init__()
+        super().__init__(metadata, strict=strict)
         self._llm_export_cache: dict[
             tuple[Harness, Path], tuple[Signature, SessionFolder]
         ] = {}
@@ -1965,10 +2797,19 @@ class _LLMExportHandler:
 class ChatGPTHandler(_LLMExportHandler):
     """Handle an extracted folder or ZIP from a ChatGPT data export.
 
-    Detection uses the export's filenames: numbered ``conversations-NNN.json``
-    files, or ``chat.html`` together with ``conversations.json``. The active
-    conversation is the chain from ``current_node`` through each parent;
-    alternate branches in ``mapping`` are not returned as transcript turns.
+    A folder is detected from direct files; a ZIP is detected from member
+    basenames. Detection requires a case-insensitive
+    ``conversations-NNN.json`` name, or both ``chat.html`` and
+    ``conversations.json``. Each selected conversations file must contain a
+    JSON list. Every item must be an object with string ``current_node`` and an
+    object ``mapping``, plus a non-empty string ``id`` or ``conversation_id``.
+
+    Transcript turns follow the chain from ``current_node`` through each
+    node's ``parent`` and are returned in reading order. Only message objects
+    whose content type is ``text`` or ``multimodal_text`` contribute turns;
+    alternate mapping branches are not returned. Conversation and turn times
+    accept exported ISO or Unix second/millisecond values. The complete source
+    conversation remains in :attr:`SessionFile.records`.
     """
 
     name: Harness = "chatgpt"
@@ -2001,7 +2842,7 @@ class ChatGPTHandler(_LLMExportHandler):
     async def identify(self, path: Path) -> bool:
         """Recognize a ChatGPT folder or ZIP in either call mode."""
 
-        return await asyncio.to_thread(self.identify_sync, path)
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
 
     def identify_sync(self, path: Path) -> bool:
         """Recognize a ChatGPT folder or ZIP from its filenames."""
@@ -2009,10 +2850,13 @@ class ChatGPTHandler(_LLMExportHandler):
         return self._identify_export(path, ChatGPTHandler)
 
     @sync
-    async def __call__(self, path: Path) -> tuple[SessionStats, SessionFolder]:
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[SessionStats | None, SessionFolder | HandlerError]:
         """Load a ChatGPT folder or ZIP in either call mode."""
 
-        return await asyncio.to_thread(self.call_sync, path)
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
 
     def call_sync(self, path: Path) -> tuple[SessionStats, SessionFolder]:
         """Load all conversations from a ChatGPT folder or ZIP."""
@@ -2066,9 +2910,19 @@ class ChatGPTHandler(_LLMExportHandler):
 class AnthropicHandler(_LLMExportHandler):
     """Handle an extracted folder or ZIP from an Anthropic Claude data export.
 
-    Detection requires ``conversations.json`` and excludes ChatGPT exports that
-    also contain ``chat.html``. Messages retain ``chat_messages`` order; the
-    common turn normalizer maps Anthropic's ``human`` sender to ``user``.
+    A folder is detected from direct files; a ZIP is detected from member
+    basenames. Detection requires case-insensitive ``conversations.json`` and
+    excludes an export that also contains ``chat.html``. The file must contain
+    a JSON list. Every item must be an object with a string ``uuid`` and a list
+    ``chat_messages``; its immutable ID is the first non-empty ``uuid`` or
+    ``id``.
+
+    Messages retain ``chat_messages`` order. ``sender`` supplies the role,
+    ``content`` supplies text or supported text blocks, and ``created_at``
+    supplies the turn time. The common turn normalizer maps ``human`` to
+    ``user``. Conversation ``created_at`` and ``updated_at`` values also
+    contribute to the span. The complete source conversation remains in
+    :attr:`SessionFile.records`.
     """
 
     name: Harness = "claude"
@@ -2099,7 +2953,7 @@ class AnthropicHandler(_LLMExportHandler):
     async def identify(self, path: Path) -> bool:
         """Recognize an Anthropic Claude folder or ZIP in either call mode."""
 
-        return await asyncio.to_thread(self.identify_sync, path)
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
 
     def identify_sync(self, path: Path) -> bool:
         """Recognize an Anthropic Claude folder or ZIP from its filenames."""
@@ -2107,10 +2961,13 @@ class AnthropicHandler(_LLMExportHandler):
         return self._identify_export(path, AnthropicHandler)
 
     @sync
-    async def __call__(self, path: Path) -> tuple[SessionStats, SessionFolder]:
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[SessionStats | None, SessionFolder | HandlerError]:
         """Load an Anthropic Claude folder or ZIP in either call mode."""
 
-        return await asyncio.to_thread(self.call_sync, path)
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
 
     def call_sync(self, path: Path) -> tuple[SessionStats, SessionFolder]:
         """Load all conversations from an Anthropic Claude folder or ZIP."""
@@ -2139,20 +2996,45 @@ class AnthropicHandler(_LLMExportHandler):
         )
 
 
-class SessionHandler:
+class SessionHandler(Handler):
     """Identify, load, normalize, and cache native JSONL sessions.
 
-    Codex, Claude Code, OpenClaw, Agy, and Hermes formats are recognized from
-    their records. ChatGPT and Anthropic data exports belong to their explicit
-    handlers.
+    A session file is UTF-8 JSON Lines with at least one object. Identification
+    examines at most eight leading non-empty lines; a malformed line or a JSON
+    value other than an object makes that file unrecognized. Full loading
+    retains every valid object, skips blank, malformed, and non-object lines,
+    and returns an error only when no object remains.
+
+    Native formats are recognized from these object fields:
+
+    * Codex: ``type`` is ``session_meta``, ``turn_context``, ``event_msg``, or
+      ``response_item`` and ``payload`` is an object.
+    * Claude Code: a string ``sessionId``, ``uuid``, or ``parentUuid``, or
+      ``type`` equal to ``teleported-from``.
+    * OpenClaw: a string ``modelId``.
+    * Agy: ``USER_INPUT`` from ``USER_EXPLICIT`` or ``PLANNER_RESPONSE`` from
+      ``MODEL``, with string ``created_at``.
+    * Hermes: ``role`` equal to ``session_meta`` and string ``session_id``.
+
+    A directory is recognized when it contains a direct recognized file, the
+    Hermes marker ``state.db``, either Agy marker ``antigravity_state.pbtxt`` or
+    ``jetski_state.pbtxt``, or an Agy UUID directory containing
+    ``.system_generated/logs/transcript_full.jsonl`` or ``transcript.jsonl``.
+    Loading a directory returns every recognized file below it. ChatGPT and
+    Anthropic data exports belong to their explicit handlers.
     """
 
     name = "session"
 
-    def __init__(self) -> None:
-        """Initialize native format maps, session cache, and the next mixin."""
+    def __init__(
+        self,
+        metadata: Mapping[str, Any] | None = None,
+        *,
+        strict: bool = False,
+    ) -> None:
+        """Initialize metadata, error policy, native readers, and session cache."""
 
-        super().__init__()
+        super().__init__(metadata, strict=strict)
         self._session_cache: dict[Path, tuple[Signature, SessionObject]] = {}
         self._recognizers = (
             ("cx", self._is_codex),
@@ -2180,7 +3062,7 @@ class SessionHandler:
     async def identify(self, path: Path) -> bool:
         """Recognize a session file, folder, or export in either call mode."""
 
-        return await asyncio.to_thread(self.identify_sync, path)
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
 
     def identify_sync(self, path: Path) -> bool:
         """Recognize native session files and folders from JSONL records."""
@@ -2200,10 +3082,13 @@ class SessionHandler:
         return path.is_file() and self._harness(self._head(path)) is not None
 
     @sync
-    async def __call__(self, path: Path) -> tuple[SessionStats, SessionObject]:
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[SessionStats | None, SessionObject | HandlerError]:
         """Load a session object and its derived statistics in either call mode."""
 
-        return await asyncio.to_thread(self.call_sync, path)
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
 
     def call_sync(self, path: Path) -> tuple[SessionStats, SessionObject]:
         """Load one native file or directory without entering another event loop."""
@@ -2938,48 +3823,3 @@ def typed(text: str) -> str:
     ):
         return ""
     return text
-
-
-class FileHandler(
-    _FileHandler,
-    ChatGPTHandler,
-    AnthropicHandler,
-    MarkdownHandler,
-    CSVHandler,
-    LogHandler,
-    SessionHandler,
-    ArchiveHandler,
-    GitHandler,
-    FolderHandler,
-):
-    """Mixed-in handler for text, folders, sessions, archives, and Git paths.
-
-    Handler behavior is inherited directly; no handler instances are injected
-    into the constructor. Provider-specific handlers precede general archive
-    and folder handlers so loading a ChatGPT or Anthropic export returns
-    sessions.
-    """
-
-    handler_types = (
-        ChatGPTHandler,
-        AnthropicHandler,
-        MarkdownHandler,
-        CSVHandler,
-        LogHandler,
-        SessionHandler,
-        ArchiveHandler,
-        GitHandler,
-        FolderHandler,
-    )
-
-
-chatgpt_handler = ChatGPTHandler()
-anthropic_handler = AnthropicHandler()
-markdown_handler = MarkdownHandler()
-csv_handler = CSVHandler()
-log_handler = LogHandler()
-session_handler = SessionHandler()
-archive_handler = ArchiveHandler()
-git_handler = GitHandler()
-folder_handler = FolderHandler()
-file_handler = FileHandler()
