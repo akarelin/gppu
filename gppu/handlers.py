@@ -2144,9 +2144,17 @@ class ArchiveHandler(Handler):
         member = _record_path(fields["Name"])
         is_folder = fields["Type"] == "Directory"
         size = 0 if is_folder else int(fields["Size"])
+        modified = next(
+            (
+                value
+                for key, value in fields.items()
+                if key.casefold() in ("modified", "mtime")
+            ),
+            None,
+        )
         modified_at = (
-            _archive_time(datetime.fromisoformat(fields["Modified"]))
-            if "Modified" in fields
+            _archive_time(datetime.fromisoformat(modified))
+            if modified is not None
             else None
         )
         return Record(
