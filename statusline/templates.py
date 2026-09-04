@@ -73,8 +73,10 @@ _LIMIT_7D = """
 """
 
 _EFFORT = """
-{% if effort is mapping and effort.level -%}
-  {{ (effort.level | effort_icon) | c('BM') }}
+{% if thinking is mapping and thinking.enabled is sameas false -%}
+  {{ 'disabled' | effort_icon }}
+{%- elif effort is mapping and effort.level -%}
+  {{ effort.level | effort_icon }}
 {%- endif %}
 """
 

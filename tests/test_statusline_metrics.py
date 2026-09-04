@@ -36,16 +36,18 @@ def test_weekly_limit_shows_percent_left_and_time_left(monkeypatch):
     assert _plain(_render_template(TEMPLATES["limit_7d"], ctx)) == "📅 10% 2d"
 
 
-def test_effort_icons_cover_every_claude_level():
+def test_effort_icons_cover_every_supported_state():
     assert {
         level: _feffort_icon(level)
-        for level in ("low", "medium", "high", "xhigh", "max")
+        for level in ("disabled", "low", "medium", "high", "xhigh", "max", "ultra")
     } == {
-        "low": "▁",
-        "medium": "▃",
-        "high": "▅",
-        "xhigh": "▇",
-        "max": "█",
+        "disabled": "⚫",
+        "low": "🔵",
+        "medium": "🟢",
+        "high": "🟡",
+        "xhigh": "🟠",
+        "max": "🔴",
+        "ultra": "🟣",
     }
 
 
@@ -61,4 +63,20 @@ def test_effort_icon_follows_context_size():
     }
     rendered = _pre_render(stats)
 
-    assert _plain(_render_template(LINE1, {**stats, **rendered})) == "O 4.7·1M▇"
+    assert _plain(_render_template(LINE1, {**stats, **rendered})) == "O 4.7·1M🟠"
+
+
+def test_disabled_thinking_takes_precedence_over_effort():
+    stats = {
+        "model": {"display_name": "Opus 4.7"},
+        "output_style": {"name": "default"},
+        "context_window": {
+            "context_window_size": 1_000_000,
+            "used_percentage": None,
+        },
+        "effort": {"level": "ultra"},
+        "thinking": {"enabled": False},
+    }
+    rendered = _pre_render(stats)
+
+    assert _plain(_render_template(LINE1, {**stats, **rendered})) == "O 4.7·1M⚫"
