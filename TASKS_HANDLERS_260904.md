@@ -1,8 +1,6 @@
-# Handlers — 13 tasks, 2026-09-04
+# Handlers — 6 tasks for gppu, 2026-09-04
 
-Evidence and measurements: `FEEDBACK_HANDLERS_260904.md`. Lake side: `D:\Dev\CRAP\Systems\Lake\PLAN_HANDLERS_260904.md`.
-
-## gppu — 1 to 6
+Evidence and measurements: `FEEDBACK_HANDLERS_260904.md`. Every file named here is in this repository.
 
 1. Make `SessionHandler.identify_sync` check extension and size before opening the file.
 2. Make `ArchiveHandler.identify_sync` consult `ArchiveHandler.extensions` before the zip, rar, gzip and tar signature checks.
@@ -13,16 +11,4 @@ Evidence and measurements: `FEEDBACK_HANDLERS_260904.md`. Lake side: `D:\Dev\CRA
 
 1 to 3 are the cost: 1,214 µs an entry against 6 µs for `os.walk`, which is about half an hour of identification across the lake's 1.7 M entities on a pass that stores nothing new.
 
-## Lake — 7 to 13
-
-Blocked until gppu is built and installed on alex-pc.
-
-7. Add `Systems/Lake/handlers.py` with `LakeHandler(FileHandler, IgnoredHandler, MarkdownHandler, SessionHandler, ArchiveHandler, FolderHandler)`.
-8. Delete `EXCLUSIONS`, `FOLDER_CLASS_RULES`, `HIDDEN/SYSTEM` and `_folder_class()` from `indexer.py`.
-9. Delete `_probe()`'s try/except and the `unread` key; read `Record.errors`.
-10. Replace `_folder()`'s recursion with `walk_sync(enter=..., on_folder_done=...)`.
-11. Switch `probe` and `invalidate` to `probe_sync` and `invalidate_sync`.
-12. Restore the broken-markdown check in `demo()`.
-13. Add git spans per repository root, one call each, not during the walk.
-
-13 is new behaviour, not a move.
+The seven follow-on tasks belong to the lake and touch nothing here. They are in `D:\Dev\CRAP\Systems\Lake\PLAN_HANDLERS_260904.md`.
