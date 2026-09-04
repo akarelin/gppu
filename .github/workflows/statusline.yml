@@ -86,12 +86,12 @@ jobs:
       - uses: actions/setup-python@v6
         if: matrix.os != 'linux'
         with:
-          python-version: '3.12'
+          python-version: '3.14'
 
       - name: Build binary (Linux)
         if: matrix.os == 'linux'
         run: |
-          python3 -m venv .venv
+          python3.14 -m venv .venv
           .venv/bin/pip install pyinstaller jinja2
           .venv/bin/pip install -e .
           .venv/bin/pyinstaller --onefile --name statusline --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=jinja2 --hidden-import=yaml --collect-all jinja2 --copy-metadata gppu statusline/__main__.py

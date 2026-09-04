@@ -15,4 +15,13 @@ Complete every unchecked item under `Big tasks` in `gppu/handlers.py` on the `ha
 - [x] Format `gppu/handlers.py` with Black and four-space indentation.
 - [ ] Document its module, classes, methods, and public helper functions in Python docstrings.
 - [ ] Keep operational semantics in Python; Markdown remains supplementary.
+- [ ] Use gppu `full_path` rather than a private path resolver.
+- [ ] Add `FolderHandler`.
+- [ ] Add explicit `ChatGPTHandler` and `AnthropicHandler` detection for extracted folders and ZIP archives.
+- [ ] Compose `FileHandler` from handler mixins without constructor injection.
+- [ ] Add explicit Markdown and CSV handlers; preserve complete Markdown frontmatter and derive its title, name, tags, and span.
+- [ ] Add a log handler whose timestamped rows determine its span.
+- [ ] Add unimplemented image and video EXIF handler placeholders informed by CRAP photo-indexer concepts.
+- [ ] Read RAR metadata through the platform RARLAB command without `rarfile`.
+- [ ] Require Python 3.14 in package, analysis, test, and build declarations.
 - [ ] Verify behavior, commit, and push the branch.

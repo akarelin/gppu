@@ -1,6 +1,6 @@
 # gppu.handlers
 
-`gppu.handlers` reads files, folders, archives, Git history, native LLM session logs, and OpenAI or Anthropic export ZIP files through one typed handler interface.
+`gppu.handlers` reads text files, folders, archives, Git history, native LLM session logs, and ChatGPT or Anthropic exports through one typed handler interface. `FileHandler` combines the domain handlers as mixins and resolves supplied paths with `gppu.full_path`.
 
 ## Calls
 
@@ -14,13 +14,25 @@ stats, session = session_handler(path)
 stats, session = await session_handler(path)
 ```
 
-`FileHandler.identify`, `probe`, `load`, `normalize`, `archive_path`, and `invalidate` use this behavior. `SessionHandler`, `ArchiveHandler`, and `GitHandler` identification and loading do too.
+`FileHandler.identify`, `probe`, `load`, `normalize`, `archive_path`, and `invalidate` use this behavior. `ChatGPTHandler`, `AnthropicHandler`, `MarkdownHandler`, `CSVHandler`, `LogHandler`, `SessionHandler`, `ArchiveHandler`, `GitHandler`, and `FolderHandler` identification and loading do too.
+
+## Text files
+
+`MarkdownHandler` recognizes `.md` files and returns a `MarkdownFile`. Its `frontmatter` dictionary retains every key and keeps date scalar spelling intact. `title` and `name` follow the declared `title|name` equivalence, then use the filename when neither exists. `tags` exposes the declared tag list. Its span covers `created` through `updated` when both values parse; datetimes without offsets use `America/Los_Angeles`.
+
+`CSVHandler` recognizes `.csv` files and returns a `CSVFile` containing the complete header and data rows. `LogHandler` recognizes `.log` files, retains every row, and derives its span from absolute ISO 8601 timestamps at the beginnings of rows.
+
+`ImageHandler` and `VideoHandler` reserve image and video EXIF metadata beside the structural recognition used by CRAP photo-indexer. They intentionally have no implementation and are not registered in `FileHandler`.
 
 ## LLM exports
 
-`SessionHandler` recognizes OpenAI `conversations-NNN.json` members and Anthropic `conversations.json` inside ZIP files. It returns a `SessionFolder` containing one `SessionFile` per conversation. Each session keeps the ZIP in `location`, the JSON member in `path`, the provider ID in `uid`, and the original conversation object in `records`.
+`ChatGPTHandler` recognizes `conversations-NNN.json`, or the pair `chat.html` and `conversations.json`. `AnthropicHandler` recognizes `conversations.json` without `chat.html`. Both accept an extracted export folder or its ZIP archive and return a `SessionFolder` containing one `SessionFile` per conversation. `SessionHandler` is reserved for native JSONL logs.
 
 OpenAI turns follow the exported `current_node` chain. Anthropic turns follow the exported `chat_messages` order. A named conversation member with an unsupported shape raises an error.
+
+## RAR archives
+
+`ArchiveHandler` identifies RAR 4 and RAR 5 signatures directly. It obtains member metadata from the installed RARLAB `rar` or `unrar` command. macOS and Debian resolve either command from `PATH`; Windows also checks the standard WinRAR installation directories. A missing command or failed listing is an error.
 
 ## Git spans
 
