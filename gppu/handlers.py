@@ -47,10 +47,11 @@ import json
 import os
 import re
 import shutil
+import stat as stat_module
 import subprocess
 import tarfile
 import zipfile
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path, PurePosixPath
@@ -59,7 +60,7 @@ from zoneinfo import ZoneInfo
 
 import yaml
 
-from .gppu import full_path, sync
+from .gppu import OSType, detect_os, full_path, sync
 
 ObjectT = TypeVar("ObjectT")
 StatsT = TypeVar("StatsT")
@@ -429,6 +430,36 @@ class Record:
         return value
 
 
+@dataclass
+class _FolderFrame:
+    """Incremental statistics for one folder currently being traversed."""
+
+    record: Record
+    index: int | None
+    files: int = 0
+    folders: int = 0
+    bytes: int = 0
+    span: Span | None = None
+
+    def add(self, child: Record) -> None:
+        """Accumulate one completed direct child record."""
+
+        if child.stats is None:
+            return
+        self.files += child.stats.files
+        self.folders += child.stats.folders + int(child.is_folder)
+        self.bytes += child.stats.bytes
+        if child.stats.span is not None:
+            self.span = (
+                child.stats.span
+                if self.span is None
+                else (
+                    min(self.span[0], child.stats.span[0]),
+                    max(self.span[1], child.stats.span[1]),
+                )
+            )
+
+
 class FolderHandler(Handler):
     """Identify a physical directory as a folder object.
 
@@ -674,8 +705,26 @@ class FileHandler(Handler):
     def identify_sync(self, path: Path, recursive: bool = True) -> list[Record]:
         """Return metadata and matching handler names without probing objects."""
 
-        paths = tuple(self._walk(path, recursive))
-        return [self.record(found) for found in paths]
+        root = self._walk_source(path)
+        records = [root]
+        entered: list[int] = []
+
+        def enter(record: Record) -> bool:
+            entered.append(len(records) - 1)
+            return True
+
+        def on_folder_done(record: Record) -> None:
+            records[entered.pop()] = record
+
+        if recursive and root.is_folder and "ignored" not in root.handlers:
+            for record in self.walk_sync(
+                root,
+                enter=enter,
+                on_folder_done=on_folder_done,
+            ):
+                records.append(record)
+        records[0] = self._walk_completed(root)
+        return records
 
     @sync
     async def probe(
@@ -701,21 +750,8 @@ class FileHandler(Handler):
     def probe_sync(self, path: Path, recursive: bool = True) -> list[Record]:
         """Probe matching handlers and derive recursive folder statistics."""
 
-        paths = list(self._walk(path, recursive))
-        records = {found: self._probe_record(found) for found in paths}
-        child_paths: dict[Path, list[Path]] = {}
-        for found in paths[1:]:
-            child_paths.setdefault(found.parent, []).append(found)
-
-        for found in reversed(paths):
-            record = records[found]
-            if record.is_folder:
-                children = [records[child] for child in child_paths.get(found, ())]
-                record = replace(record, stats=self._folder_stats(record, children))
-            else:
-                record = replace(record, stats=self._file_stats(record))
-            records[found] = record
-        return [records[found] for found in paths]
+        _, records = self._probe_hierarchy(path, recursive, retain_records=True)
+        return records
 
     def record(self, path: Path) -> Record:
         """Return one cached identification record or a record carrying failure."""
@@ -773,6 +809,7 @@ class FileHandler(Handler):
     def children(self, path: Path | Record) -> tuple[Record, ...]:
         """Return direct children, or an empty tuple after a retained read error."""
 
+        current: Record | None = None
         if isinstance(path, Record):
             if path.location is not None:
                 if not path.is_folder or not isinstance(path.location, Path):
@@ -782,13 +819,15 @@ class FileHandler(Handler):
                 return self._archive_children(Path(path.path), PurePosixPath("."))
             if "ignored" in path.handlers:
                 return ()
+            current = path
             path = Path(path.path)
         path = full_path(path)
         if not path.is_dir() or path.is_symlink():
             return ()
-        current = self.record(path)
-        if "ignored" in current.handlers:
-            return ()
+        if current is None:
+            current = self.record(path)
+            if "ignored" in current.handlers:
+                return ()
         try:
             signature = _signature(path.stat())
         except Exception as error:
@@ -1017,7 +1056,7 @@ class FileHandler(Handler):
     ) -> Path:
         """Name an archive from the complete source hierarchy span."""
 
-        root = self.probe_sync(source)[0]
+        root = self._probe_root_sync(source)
         if root.span is None:
             raise ValueError(f"{source}: hierarchy has no span")
         return full_path(destination) / ArchiveHandler.archive_name(
@@ -1066,27 +1105,235 @@ class FileHandler(Handler):
             if invalidate is not None:
                 invalidate(self, path)
 
-    def _walk(self, path: Path, recursive: bool) -> Iterator[Path]:
-        """Yield readable entries without descending into ignored boundaries."""
+    def walk_sync(
+        self,
+        path: Path | Record,
+        recursive: bool = True,
+        enter: Callable[[Record], bool] | None = None,
+        on_folder_done: Callable[[Record], None] | None = None,
+    ) -> Iterator[Record]:
+        """Yield descendants while reporting folder traversal boundaries.
 
-        path = full_path(path)
-        self._walk_errors.pop(path, None)
-        yield path
-        try:
-            is_folder = path.is_dir() and not path.is_symlink()
-        except Exception as error:
-            if self.strict:
-                raise
-            self._walk_errors[path] = self._error(path, "stat", error)
-            return
-        if recursive and is_folder and "ignored" not in self.record(path).handlers:
-            for child in self.children(path):
-                yield from self._walk(child.path, True)
+        Direct children are yielded in display order. With ``recursive=True``,
+        ``enter(record)`` decides whether each non-ignored folder is descended;
+        a refused folder remains in the stream. ``on_folder_done(record)`` is
+        called after an entered folder has been completely yielded, and only
+        for folders that were entered. The starting path is not yielded and
+        does not produce either callback.
+        """
 
-    def _probe_record(self, path: Path) -> Record:
+        _, children = self._walk_children(path)
+        for child in children:
+            yield child
+            if (
+                not recursive
+                or not child.is_folder
+                or "ignored" in child.handlers
+                or (enter is not None and not enter(child))
+            ):
+                continue
+            yield from self.walk_sync(
+                child,
+                recursive=True,
+                enter=enter,
+                on_folder_done=on_folder_done,
+            )
+            if on_folder_done is not None:
+                on_folder_done(self._walk_completed(child))
+
+    async def walk(
+        self,
+        path: Path | Record,
+        recursive: bool = True,
+        enter: Callable[[Record], bool] | None = None,
+        on_folder_done: Callable[[Record], None] | None = None,
+    ) -> AsyncIterator[Record]:
+        """Asynchronously yield descendants with the ``walk_sync`` semantics.
+
+        Filesystem identification and listing run in a worker thread once per
+        visited folder. The callbacks run in the consuming event-loop thread.
+        """
+
+        _, children = await asyncio.to_thread(self._walk_children, path)
+        for child in children:
+            yield child
+            if (
+                not recursive
+                or not child.is_folder
+                or "ignored" in child.handlers
+                or (enter is not None and not enter(child))
+            ):
+                continue
+            async for found in self.walk(
+                child,
+                recursive=True,
+                enter=enter,
+                on_folder_done=on_folder_done,
+            ):
+                yield found
+            if on_folder_done is not None:
+                on_folder_done(self._walk_completed(child))
+
+    def _walk_source(self, path: Path | Record) -> Record:
+        """Return the starting record after clearing an earlier walk failure."""
+
+        if isinstance(path, Record):
+            if path.location is not None:
+                return path
+            physical = Path(path.path)
+            self._walk_errors.pop(physical, None)
+            return self._walk_completed(path)
+        physical = full_path(path)
+        self._walk_errors.pop(physical, None)
+        return self.record(physical)
+
+    def _walk_children(
+        self,
+        path: Path | Record,
+    ) -> tuple[Record, tuple[Record, ...]]:
+        """Prepare one traversal source and identify its direct children."""
+
+        source = self._walk_source(path)
+        return source, self.children(source)
+
+    def _walk_completed(self, record: Record) -> Record:
+        """Return ``record`` with only the current filesystem walk failure."""
+
+        if record.location is not None:
+            return record
+        physical = Path(record.path)
+        failure = self._walk_errors.get(physical)
+        errors = tuple(
+            error
+            for error in record.errors
+            if not (
+                error.handler == self.name
+                and error.operation in ("list", "stat")
+                and error.path == physical
+            )
+        )
+        if failure is not None:
+            errors += (failure,)
+        return record if errors == record.errors else replace(record, errors=errors)
+
+    def _probe_hierarchy(
+        self,
+        path: Path,
+        recursive: bool,
+        *,
+        retain_records: bool,
+    ) -> tuple[Record, list[Record]]:
+        """Probe a stream, retaining either all records or only its root."""
+
+        source = self._walk_source(path)
+        root = self._probe_record(source)
+        root = replace(
+            root,
+            stats=(
+                self._folder_stats(root, ())
+                if root.is_folder
+                else self._file_stats(root)
+            ),
+        )
+        records = [root] if retain_records else []
+        if not recursive or not root.is_folder or "ignored" in root.handlers:
+            return root, records
+
+        frames = [_FolderFrame(root, 0 if retain_records else None)]
+        pending: Record | None = None
+
+        def enter(record: Record) -> bool:
+            if pending is None or pending.path != record.path:
+                raise RuntimeError("walk yielded a folder without its probe record")
+            frames.append(
+                _FolderFrame(
+                    pending,
+                    len(records) - 1 if retain_records else None,
+                )
+            )
+            return True
+
+        def on_folder_done(record: Record) -> None:
+            frame = frames.pop()
+            completed = self._finish_folder(frame, record)
+            if retain_records:
+                if frame.index is None:
+                    raise RuntimeError("retained folder has no record index")
+                records[frame.index] = completed
+            frames[-1].add(completed)
+
+        for identified in self.walk_sync(
+            source,
+            enter=enter,
+            on_folder_done=on_folder_done,
+        ):
+            probed = self._probe_record(identified)
+            pending = replace(
+                probed,
+                stats=(
+                    self._folder_stats(probed, ())
+                    if probed.is_folder
+                    else self._file_stats(probed)
+                ),
+            )
+            if retain_records:
+                records.append(pending)
+            if not pending.is_folder or "ignored" in pending.handlers:
+                frames[-1].add(pending)
+
+        completed_root = self._finish_folder(
+            frames.pop(),
+            self._walk_completed(source),
+        )
+        if frames:
+            raise RuntimeError("walk ended before every folder was completed")
+        if retain_records:
+            records[0] = completed_root
+        return completed_root, records
+
+    def _probe_root_sync(self, path: Path) -> Record:
+        """Return one recursively aggregated root without retaining its stream."""
+
+        root, _ = self._probe_hierarchy(path, True, retain_records=False)
+        return root
+
+    @staticmethod
+    def _finish_folder(frame: _FolderFrame, walked: Record) -> Record:
+        """Merge late traversal errors and finish one folder's statistics."""
+
+        errors = tuple(
+            error
+            for error in frame.record.errors
+            if not (
+                error.handler == FileHandler.name
+                and error.operation in ("list", "stat")
+                and error.path == frame.record.path
+            )
+        )
+        errors += tuple(error for error in walked.errors if error not in errors)
+        record = replace(frame.record, errors=errors)
+        return replace(
+            record,
+            stats=FileHandler._folder_stats_from(
+                record,
+                frame.files,
+                frame.folders,
+                frame.bytes,
+                frame.span,
+            ),
+        )
+
+    def _probe_record(self, path: Path | Record) -> Record:
         """Load each matching handler while retaining individual failures."""
 
-        record = self.record(path)
+        if isinstance(path, Record):
+            if path.location is not None:
+                raise ValueError(f"{path.display_path}: archive member is not physical")
+            record = path
+            path = full_path(Path(path.path))
+        else:
+            path = full_path(path)
+            record = self.record(path)
         try:
             signature = _signature(path.stat())
         except Exception:
@@ -1179,6 +1426,31 @@ class FileHandler(Handler):
     def _folder_stats(record: Record, children: Sequence[Record]) -> FileStats:
         """Aggregate direct child statistics and the folder's own span evidence."""
 
+        child_spans = [
+            child.stats.span for child in children if child.stats and child.stats.span
+        ]
+        return FileHandler._folder_stats_from(
+            record,
+            sum(child.stats.files for child in children if child.stats),
+            sum(
+                child.stats.folders + int(child.is_folder)
+                for child in children
+                if child.stats
+            ),
+            sum(child.stats.bytes for child in children if child.stats),
+            _combine_spans(child_spans),
+        )
+
+    @staticmethod
+    def _folder_stats_from(
+        record: Record,
+        files: int,
+        folders: int,
+        size: int,
+        child_span: Span | None,
+    ) -> FileStats:
+        """Combine incremental child totals with a folder's own span evidence."""
+
         git_spans = [
             span
             for probe in record.probes
@@ -1192,18 +1464,8 @@ class FileHandler(Handler):
             ]
             if named := FileHandler._name_span(record.name):
                 spans.append(named)
-            spans += [
-                child.stats.span
-                for child in children
-                if child.stats and child.stats.span
-            ]
-        files = sum(child.stats.files for child in children if child.stats)
-        folders = sum(
-            child.stats.folders + int(child.is_folder)
-            for child in children
-            if child.stats
-        )
-        size = sum(child.stats.bytes for child in children if child.stats)
+            if child_span is not None:
+                spans.append(child_span)
         modified = (
             (record.modified_at, record.modified_at) if record.modified_at else None
         )
@@ -1647,9 +1909,10 @@ class GitHandler(Handler):
 class ArchiveHandler(Handler):
     """Identify and load ZIP, RAR, and TAR.GZ member hierarchies.
 
-    Identification is content-based and does not depend on the filename: ZIP
-    uses :func:`zipfile.is_zipfile`, RAR accepts the RAR 4 or RAR 5 signature,
-    and TAR.GZ requires the gzip signature plus a readable TAR structure. Each
+    Identification first requires a case-insensitive ``.zip``, ``.rar``, or
+    ``.tar.gz`` filename, then verifies only that format. ZIP uses
+    :func:`zipfile.is_zipfile`, RAR accepts the RAR 4 or RAR 5 signature, and
+    TAR.GZ requires the gzip signature plus a readable TAR structure. Each
     member is a :class:`Record` with a safe relative POSIX path and ``location``
     set to the physical archive. Absolute member paths and ``..`` components
     are errors. Missing parent folders are synthesized so archive traversal
@@ -1674,12 +1937,27 @@ class ArchiveHandler(Handler):
         return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
 
     def identify_sync(self, path: Path) -> bool:
-        """Recognize a ZIP, RAR, or gzip-compressed TAR from its contents."""
+        """Recognize a supported extension and its matching archive format."""
 
         path = full_path(path)
-        return path.is_file() and (
-            zipfile.is_zipfile(path) or self._is_rar(path) or self._is_tar_gz(path)
+        name = path.name.casefold()
+        extension = next(
+            (
+                extension
+                for extension in ArchiveHandler.extensions
+                if name.endswith(extension)
+            ),
+            None,
         )
+        if extension is None or not path.is_file():
+            return False
+        if extension == ".zip":
+            return zipfile.is_zipfile(path)
+        if extension == ".rar":
+            return self._is_rar(path)
+        if extension == ".tar.gz":
+            return self._is_tar_gz(path)
+        return False
 
     @sync
     async def __call__(
@@ -1729,7 +2007,7 @@ class ArchiveHandler(Handler):
             if executable := shutil.which(command):
                 return full_path(executable)
 
-        if os.name == "nt":
+        if detect_os() == OSType.W11:
             roots = tuple(
                 Path(os.environ[name])
                 for name in ("ProgramFiles", "ProgramFiles(x86)")
@@ -2999,7 +3277,8 @@ class AnthropicHandler(_LLMExportHandler):
 class SessionHandler(Handler):
     """Identify, load, normalize, and cache native JSONL sessions.
 
-    A session file is UTF-8 JSON Lines with at least one object. Identification
+    A session file has a case-insensitive ``.jsonl`` extension, is non-empty,
+    and contains UTF-8 JSON Lines with at least one object. Identification
     examines at most eight leading non-empty lines; a malformed line or a JSON
     value other than an object makes that file unrecognized. Full loading
     retains every valid object, skips blank, malformed, and non-object lines,
@@ -3016,15 +3295,16 @@ class SessionHandler(Handler):
       ``MODEL``, with string ``created_at``.
     * Hermes: ``role`` equal to ``session_meta`` and string ``session_id``.
 
-    A directory is recognized when it contains a direct recognized file, the
-    Hermes marker ``state.db``, either Agy marker ``antigravity_state.pbtxt`` or
-    ``jetski_state.pbtxt``, or an Agy UUID directory containing
+    A directory is recognized from the Hermes marker ``state.db``, either Agy
+    marker ``antigravity_state.pbtxt`` or ``jetski_state.pbtxt``, or an Agy UUID
+    directory containing
     ``.system_generated/logs/transcript_full.jsonl`` or ``transcript.jsonl``.
     Loading a directory returns every recognized file below it. ChatGPT and
     Anthropic data exports belong to their explicit handlers.
     """
 
     name = "session"
+    extensions = (".jsonl",)
 
     def __init__(
         self,
@@ -3065,21 +3345,17 @@ class SessionHandler(Handler):
         return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
 
     def identify_sync(self, path: Path) -> bool:
-        """Recognize native session files and folders from JSONL records."""
+        """Recognize structural folders or non-empty native JSONL files."""
 
         path = full_path(path)
         if path.is_dir() and not path.is_symlink():
-            if self._home_harness(path) is not None or self._agy_session_folder(path):
-                return True
-            try:
-                children = tuple(path.iterdir())
-            except OSError:
-                return False  # a folder that will not be listed holds no session that can be read
-            return any(
-                child.is_file() and self._harness(self._head(child)) is not None
-                for child in children
+            return self._home_harness(path) is not None or self._agy_session_folder(
+                path
             )
-        return path.is_file() and self._harness(self._head(path)) is not None
+        return (
+            self._session_candidate(path)
+            and self._harness(self._head(path)) is not None
+        )
 
     @sync
     async def __call__(
@@ -3181,8 +3457,23 @@ class SessionHandler(Handler):
         """Return a native session when ``path`` has a recognized JSONL head."""
 
         return (
-            (self._file(path),) if self._harness(self._head(path)) is not None else ()
+            (self._file(path),)
+            if self._session_candidate(path)
+            and self._harness(self._head(path)) is not None
+            else ()
         )
+
+    @staticmethod
+    def _session_candidate(path: Path) -> bool:
+        """Reject unsupported or empty paths without opening their contents."""
+
+        if path.suffix.casefold() not in SessionHandler.extensions:
+            return False
+        try:
+            status = path.stat()
+        except OSError:
+            return False
+        return stat_module.S_ISREG(status.st_mode) and status.st_size > 0
 
     def _harness(
         self,
