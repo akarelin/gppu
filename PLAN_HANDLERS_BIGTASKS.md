@@ -9,3 +9,10 @@ Complete every unchecked item under `Big tasks` in `gppu/handlers.py` on the `ha
 - [x] Derive spans for Git-tracked repositories, folders, and files from local Git history without contacting upstreams.
 - [x] Verify focused behavior against generated fixtures and the named export examples.
 - [x] Commit and push the completed branch.
+
+## Formatting and in-code documentation
+
+- [x] Format `gppu/handlers.py` with Black and four-space indentation.
+- [ ] Document its module, classes, methods, and public helper functions in Python docstrings.
+- [ ] Keep operational semantics in Python; Markdown remains supplementary.
+- [ ] Verify behavior, commit, and push the branch.
