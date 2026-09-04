@@ -5,10 +5,10 @@ hierarchy. A domain handler receives one ``Path`` and returns
 ``(stats, obj)``; stats are derived from the complete typed object.
 
   2DO:
-  - [ ] Add support for git repos. Span should come from .git folder, but .git itself should not be included when exporting/copying
-  - [ ] Add support for tar.gz archives
-  - [ ] Extract datetime from filename when {ts} is present
-  - [ ] Harnesses should use Decisions\001 - Sessions - file naming convention
+  - [x] Add support for git repos. Span should come from .git folder, but .git itself should not be included when exporting/copying
+  - [x] Add support for tar.gz archives
+  - [x] Extract datetime from filename when {ts} is present
+  - [x] Harnesses should use Decisions\001 - Sessions - file naming convention
     - `{model|harness}` - short slug representing harness OR model:
       - chatgpt | cx
       - claude | cc
@@ -16,7 +16,7 @@ hierarchy. A domain handler receives one ``Path`` and returns
       - hermes
       - openclaw
       - manus
-  - [ ] Extract timespans from filenames/foldernames like:
+  - [x] Extract timespans from filenames/foldernames like:
     - 260619-260513 five - langfuse
     - report-511833076877-2026-06-21-to-2026-07-22
     - Garage_Large_NVR_NVR_20250508202204_20250508204259_1053962
@@ -32,6 +32,12 @@ hierarchy. A domain handler receives one ``Path`` and returns
   - [ ] Refactor code so harness specific code is not in big if else blocks. 
   - [ ] Refactor code to have fewer functions that do not belong to classes
   - [ ] Make handlers support async (gppu async)
+  - [ ] extract spans from git history (local, no upstreams)
+    - [ ] Folders that are git-tracked - extract spans from 
+    - [ ] files that are git-tracked - codex memories folder 
+  
+  In consideration
+  - [ ] file/folder history from SynologyDrive history
 """
 
 from __future__ import annotations
@@ -40,12 +46,13 @@ import json
 import os
 import re
 import shutil
+import tarfile
 import zipfile
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path, PurePosixPath
-from typing import Any, Protocol, TypeVar, runtime_checkable
+from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
 
 import rarfile
 
@@ -53,6 +60,12 @@ ObjectT = TypeVar('ObjectT')
 StatsT = TypeVar('StatsT')
 Span = tuple[datetime, datetime]
 Signature = tuple[int, int, int]
+Harness = Literal[
+  'chatgpt', 'cx',
+  'claude', 'cc',
+  'gemini', 'agy',
+  'hermes', 'openclaw', 'manus',
+]
 
 TIME_KEYS = ('timestamp', 'ts', 'started_at', 'session_start', 'time', 'created_at')
 MODEL_KEYS = ('model', 'modelId')
@@ -105,7 +118,27 @@ PLACEHOLDER_TIMES = (
 )
 FUTURE_TOLERANCE = timedelta(days=1)
 
-HOMES = {
+FILENAME_GMT_TIMES = re.compile(
+  r'(?<![A-Za-z0-9])(\d{2}-\d{2}-\d{4},\s*\d{2}\.\d{2}\.\d{2})\s*GMT([+-]\d{1,2})(?!\d)',
+  re.I,
+)
+FILENAME_SHORT_DATE_SPAN = re.compile(
+  r'(?<![A-Za-z0-9])(\d{6})-(\d{6})(?![A-Za-z0-9])'
+)
+FILENAME_DATETIMES = (
+  (re.compile(r'(?<![A-Za-z0-9])(\d{17})(?![A-Za-z0-9])'), '%Y%m%d%H%M%S%f'),
+  (re.compile(r'(?<![A-Za-z0-9])(\d{14})(?![A-Za-z0-9])'), '%Y%m%d%H%M%S'),
+  (re.compile(r'(?<![A-Za-z0-9])(\d{8}-\d{6})(?![A-Za-z0-9])'), '%Y%m%d-%H%M%S'),
+  (re.compile(r'(?<![A-Za-z0-9])(\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2})(?![A-Za-z0-9])'), '%Y-%m-%d-%H-%M-%S'),
+  (re.compile(r'(?<![A-Za-z0-9])(\d{6}\.\d{6})(?![A-Za-z0-9])'), '%y%m%d.%H%M%S'),
+  (re.compile(r'(?<![A-Za-z0-9])(\d{6}-\d{4})(?![A-Za-z0-9])'), '%y%m%d-%H%M'),
+)
+FILENAME_EPOCHS = re.compile(r'(?<![A-Za-z0-9])([1-9]\d{9})(?![A-Za-z0-9])')
+FILENAME_ISO_DATES = re.compile(r'(?<![A-Za-z0-9])(\d{4}-\d{2}-\d{2})(?![A-Za-z0-9])')
+FILENAME_SHORT_DATES = re.compile(r'(?<![A-Za-z0-9])(\d{6})(?![A-Za-z0-9])')
+FILENAME_DURATION = re.compile(r'(?:~|\()\s*(\d+)\s*([dhms])\)?', re.I)
+
+HOMES: dict[Harness, tuple[str, ...]] = {
   'hermes': ('state.db',),
   'agy': ('antigravity_state.pbtxt', 'jetski_state.pbtxt'),
 }
@@ -271,7 +304,10 @@ class FileHandler:
     signature = _signature(path.stat())
     cached = self._children.get(path)
     if cached is None or cached[0] != signature:
-      paths = tuple(sorted(path.iterdir(), key=_display_order))
+      paths = tuple(sorted(
+        (child for child in path.iterdir() if child.name.casefold() != '.git'),
+        key=_display_order,
+      ))
       self._children[path] = (signature, paths)
     else:
       paths = cached[1]
@@ -342,7 +378,7 @@ class FileHandler:
       if source.is_dir() and not source.is_symlink():
         destination.parent.mkdir(parents=True, exist_ok=True)
         if recursive:
-          shutil.copytree(source, destination)
+          shutil.copytree(source, destination, ignore=shutil.ignore_patterns('.git'))
         else:
           destination.mkdir(parents=True)
           for child in self.children(source):
@@ -412,7 +448,7 @@ class FileHandler:
     record = self.record(path)
     signature = _signature(path.stat())
     cached = self._probed.get(path)
-    if cached is None or cached[0] != signature:
+    if cached is None or cached[0] != signature or 'git' in record.handlers:
       selected = {handler.name: handler for handler in self.configured}
       probes = tuple(
         Probe(name, *selected[name](path))
@@ -426,13 +462,24 @@ class FileHandler:
   @staticmethod
   def _file_stats(record: Record) -> FileStats:
     spans = [span for probe in record.probes if (span := _stats_span(probe.stats))]
+    span = _combine_spans(spans) or FileHandler._name_span(record.name)
     modified = (record.modified_at, record.modified_at) if record.modified_at else None
-    return FileStats(1, 0, record.size, _combine_spans(spans) or modified)
+    return FileStats(1, 0, record.size, span or modified)
 
   @staticmethod
   def _folder_stats(record: Record, children: Sequence[Record]) -> FileStats:
-    spans = [span for probe in record.probes if (span := _stats_span(probe.stats))]
-    spans += [child.stats.span for child in children if child.stats and child.stats.span]
+    git_spans = [
+      span
+      for probe in record.probes
+      if probe.handler == 'git' and (span := _stats_span(probe.stats))
+    ]
+    if git_spans:
+      spans = git_spans
+    else:
+      spans = [span for probe in record.probes if (span := _stats_span(probe.stats))]
+      if named := FileHandler._name_span(record.name):
+        spans.append(named)
+      spans += [child.stats.span for child in children if child.stats and child.stats.span]
     files = sum(child.stats.files for child in children if child.stats)
     folders = sum(
       child.stats.folders + int(child.is_folder)
@@ -443,15 +490,150 @@ class FileHandler:
     modified = (record.modified_at, record.modified_at) if record.modified_at else None
     return FileStats(files, folders, size, _combine_spans(spans) or modified)
 
+  @classmethod
+  def _name_span(cls, name: str) -> Span | None:
+    if match := FILENAME_SHORT_DATE_SPAN.search(name):
+      dates = tuple(
+        moment
+        for value in match.groups()
+        if (moment := cls._filename_time(value, '%y%m%d')) is not None
+      )
+      if len(dates) != 2:
+        return None
+      return cls._date_span(dates)
 
-class ArchiveHandler:
-  """Identify and load ZIP and RAR hierarchies from their contents."""
+    times = cls._filename_times(name)
+    if times:
+      span = min(times), max(times)
+      if len(times) == 1 and (duration := FILENAME_DURATION.search(name)):
+        seconds = int(duration.group(1)) * next(
+          size for unit, size in UNITS if unit == duration.group(2).casefold()
+        )
+        if (end := valid_time(span[0] + timedelta(seconds=seconds))) is not None:
+          span = span[0], end
+      return span
 
-  name = 'archive'
-  extensions = ('.rar', '.zip')
+    dates = cls._filename_dates(name)
+    if not dates:
+      return None
+    return cls._date_span(dates)
+
+  @staticmethod
+  def _date_span(dates: Sequence[datetime]) -> Span:
+    """Inclusive span covering every representable instant of each date."""
+
+    return min(dates), max(dates) + timedelta(days=1, microseconds=-1)
+
+  @classmethod
+  def _filename_times(cls, name: str) -> tuple[datetime, ...]:
+    if values := FILENAME_GMT_TIMES.findall(name):
+      parsed: list[datetime] = []
+      for value, offset in values:
+        try:
+          zone = timezone(timedelta(hours=int(offset)))
+        except ValueError:
+          continue
+        if moment := cls._filename_time(value, '%m-%d-%Y, %H.%M.%S', zone):
+          parsed.append(moment)
+      return tuple(parsed)
+
+    for pattern, format_string in FILENAME_DATETIMES:
+      if values := pattern.findall(name):
+        parsed = tuple(
+          moment
+          for value in values
+          if (moment := cls._filename_time(value, format_string)) is not None
+        )
+        if parsed:
+          return parsed
+
+    if values := FILENAME_EPOCHS.findall(name):
+      return tuple(
+        moment
+        for value in values
+        if (moment := valid_time(_stamp(int(value)))) is not None
+      )
+    return ()
+
+  @classmethod
+  def _filename_dates(cls, name: str) -> tuple[datetime, ...]:
+    for pattern, format_string in (
+      (FILENAME_ISO_DATES, '%Y-%m-%d'),
+      (FILENAME_SHORT_DATES, '%y%m%d'),
+    ):
+      if values := pattern.findall(name):
+        return tuple(
+          moment
+          for value in values
+          if (moment := cls._filename_time(value, format_string)) is not None
+        )
+    return ()
+
+  @staticmethod
+  def _filename_time(
+    value: str,
+    format_string: str,
+    zone: tzinfo | None = None,
+  ) -> datetime | None:
+    try:
+      parsed = datetime.strptime(value, format_string)
+    except ValueError:
+      return None
+    parsed = parsed.replace(tzinfo=zone) if zone is not None else parsed.astimezone()
+    return valid_time(parsed)
+
+
+class GitHandler:
+  """Identify a Git repository and derive its span from its metadata."""
+
+  name = 'git'
 
   def identify(self, path: Path) -> bool:
-    return path.is_file() and (zipfile.is_zipfile(path) or rarfile.is_rarfile(path))
+    return self._metadata(path) is not None
+
+  def __call__(self, path: Path) -> tuple[FileStats, Path]:
+    path = _absolute(path)
+    metadata = self._metadata(path)
+    if metadata is None:
+      raise ValueError(f'{path}: Git metadata is not identifiable')
+    root = FileHandler().probe(metadata)[0]
+    return FileStats(0, 0, 0, root.span), metadata
+
+  @staticmethod
+  def _metadata(path: Path) -> Path | None:
+    if not path.is_dir() or path.is_symlink():
+      return None
+    marker = path / '.git'
+    if marker.is_dir():
+      return marker
+    if not marker.is_file():
+      return None
+    try:
+      target = marker.read_text(encoding='utf-8').strip()
+    except (OSError, UnicodeDecodeError):
+      return None
+    prefix = 'gitdir:'
+    if not target.casefold().startswith(prefix):
+      return None
+    metadata = Path(target[len(prefix):].strip())
+    if not metadata.is_absolute():
+      metadata = path / metadata
+    metadata = _absolute(metadata)
+    return metadata if metadata.is_dir() else None
+
+
+class ArchiveHandler:
+  """Identify and load ZIP, RAR, and TAR.GZ hierarchies from their contents."""
+
+  name = 'archive'
+  extensions = ('.rar', '.tar.gz', '.zip')
+
+  def identify(self, path: Path) -> bool:
+    return path.is_file() and (
+      zipfile.is_zipfile(path)
+      or rarfile.is_rarfile(path)
+      or self._is_tar_gz(path)
+    )
 
   def __call__(self, path: Path) -> tuple[FileStats, tuple[Record, ...]]:
     path = _absolute(path)
@@ -459,9 +641,20 @@ class ArchiveHandler:
       records = self._zip_records(path)
     elif rarfile.is_rarfile(path):
       records = self._rar_records(path)
+    elif self._is_tar_gz(path):
+      records = self._tar_records(path)
     else:
       raise ValueError(f'{path}: unsupported archive')
     return _archive_stats(records), records
+
+  @staticmethod
+  def _is_tar_gz(path: Path) -> bool:
+    try:
+      with path.open('rb') as stream:
+        compressed = stream.read(2) == b'\x1f\x8b'
+    except OSError:
+      return False
+    return compressed and tarfile.is_tarfile(path)
 
   @classmethod
   def archive_name(
@@ -522,6 +715,25 @@ class ArchiveHandler:
     except (OSError, rarfile.Error) as error:
       raise ValueError(f'{path}: cannot read RAR: {error}') from error
 
+  @staticmethod
+  def _tar_records(path: Path) -> tuple[Record, ...]:
+    try:
+      with tarfile.open(path, 'r:*') as archive:
+        return _complete_archive_records(path, tuple(
+          Record(
+            path=_record_path(info.name),
+            is_folder=info.isdir(),
+            size=info.size,
+            modified_at=_archive_time(info.mtime),
+            handlers=(),
+            location=path,
+          )
+          for info in archive.getmembers()
+          if _record_path(info.name) != PurePosixPath('.')
+        ))
+    except (OSError, tarfile.TarError) as error:
+      raise ValueError(f'{path}: cannot read TAR.GZ: {error}') from error
+
 
 @dataclass(frozen=True)
 class SessionTurn:
@@ -539,7 +751,7 @@ class SessionFile:
   """One complete session log."""
 
   path: Path
-  harness: str
+  harness: Harness
   uid: str | None
   parent_uid: str | None
   subagent: bool
@@ -601,7 +813,7 @@ class SessionFolder:
   """Session files held by one folder."""
 
   path: Path
-  harness: str
+  harness: Harness
   files: tuple[SessionFile, ...]
 
   @property
@@ -779,6 +991,11 @@ def _archive_time(value: Any) -> datetime | None:
 
   if isinstance(value, datetime):
     parsed = value
+  elif isinstance(value, (int, float)) and not isinstance(value, bool):
+    try:
+      parsed = datetime.fromtimestamp(value, timezone.utc)
+    except (OSError, OverflowError, ValueError):
+      return None
   else:
     try:
       parsed = datetime(*value)
@@ -880,7 +1097,10 @@ def _head(path: Path) -> tuple[Mapping[str, Any], ...]:
   return tuple(found)
 
 
-def _harness(records: Sequence[Mapping[str, Any]], hint: str | None = None) -> str | None:
+def _harness(
+  records: Sequence[Mapping[str, Any]],
+  hint: Harness | None = None,
+) -> Harness | None:
   if any(
     record.get('type') in ('session_meta', 'turn_context', 'event_msg', 'response_item')
     and isinstance(record.get('payload'), Mapping)
@@ -961,7 +1181,7 @@ def _models(records: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
   )
 
 
-def _uid(harness: str, records: Sequence[Mapping[str, Any]], path: Path) -> str | None:
+def _uid(harness: Harness, records: Sequence[Mapping[str, Any]], path: Path) -> str | None:
   if harness == 'cx':
     for record in records:
       if record.get('type') != 'session_meta' or not isinstance(payload := record.get('payload'), Mapping):
@@ -1045,7 +1265,7 @@ def _turn(
   return SessionTurn(role.casefold(), text, valid_time(_stamp(timestamp)), meta, sidechain)
 
 
-def _messages(harness: str, records: Sequence[Mapping[str, Any]]) -> tuple[SessionTurn, ...]:
+def _messages(harness: Harness, records: Sequence[Mapping[str, Any]]) -> tuple[SessionTurn, ...]:
   if harness == 'cx':
     response = tuple(
       item
@@ -1139,7 +1359,7 @@ def _uniq(values) -> tuple[str, ...]:
   ))
 
 
-def _home_harness(path: Path) -> str | None:
+def _home_harness(path: Path) -> Harness | None:
   return next((
     harness
     for harness, markers in HOMES.items()
@@ -1159,4 +1379,5 @@ def _agy_session_folder(path: Path) -> bool:
 
 session_handler = SessionHandler()
 archive_handler = ArchiveHandler()
-file_handler = FileHandler(session_handler, archive_handler)
+git_handler = GitHandler()
+file_handler = FileHandler(session_handler, archive_handler, git_handler)
