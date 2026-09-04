@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "gppu"
 dynamic = ["version"]
 description = "General Purpose Python Utilities"
-requires-python = ">=3.14"
+requires-python = ">=3.11"
 dependencies = [
     "tzdata; platform_system == 'Windows'",
     "PyYAML",
