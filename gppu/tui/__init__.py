@@ -102,6 +102,8 @@ from .tree import (
 
 from .tree_table import TreeTable, TreeTableColumn
 
+from .task_matrix import TaskMatrix
+
 
 __all__ = [
     # Base TUI classes
@@ -176,4 +178,5 @@ __all__ = [
     'TreeBrowser',
     'TreeTable',
     'TreeTableColumn',
+    'TaskMatrix',
 ]
