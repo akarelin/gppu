@@ -36,7 +36,7 @@ permissions:
 
 jobs:
   matrix:
-    runs-on: [self-hosted, linux, five]
+    runs-on: [self-hosted, linux]
     if: inputs.run_tests
     outputs:
       tests: ${{ steps.build.outputs.tests }}
@@ -50,7 +50,7 @@ jobs:
           win = "${{ inputs.test_windows }}" == "true"
           tui = "${{ inputs.test_tui }}" == "true"
 
-          L = ["self-hosted", "linux", "five"]
+          L = ["self-hosted", "linux"]
           W = ["self-hosted", "Windows"]
           # Exclude all TUI tests from non-tui matrix entries — every
           # test_tui*.py imports gppu.tui which needs textual at collect time.
@@ -128,7 +128,7 @@ jobs:
       always()
       && (needs.matrix.result == 'success' || needs.matrix.result == 'skipped')
       && (needs.test.result == 'success' || needs.test.result == 'skipped')
-    runs-on: [self-hosted, linux, five]
+    runs-on: [self-hosted, linux]
 
     steps:
       - uses: actions/checkout@v6
