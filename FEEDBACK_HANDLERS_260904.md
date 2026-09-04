@@ -13,8 +13,6 @@ Two reads of `gppu/handlers.py` on `handlers-bigtasks`, morning and evening, aga
 
 ## What is left
 
-**It is not released.** Installed gppu is 3.5.7 and its `handlers.py` is still the old 24-line `Handler(load_object, derive_stats)`. `from gppu.handlers import FileHandler` is an ImportError on alex-pc, so nothing in the lake can be verified until the Action builds and publishes.
-
 **Identify still opens every file.** Identify-only walk of `D:\Dev\CRAP\Systems`, 403 entries after ignored folders are skipped, alex-pc, Python 3.14.7, warm cache:
 
 | set | per entry |
