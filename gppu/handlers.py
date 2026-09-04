@@ -1,4 +1,4 @@
-"""Typed handlers for files, folders, and sessions.
+r"""Typed handlers for files, folders, and sessions.
 
 ``FileHandler`` identifies, probes, normalizes, caches, and navigates a file
 hierarchy. A domain handler receives one ``Path`` and returns
