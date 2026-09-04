@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 import gppu.handlers as handlers_module
+from gppu import OSType, detect_os
 
 from gppu.handlers import (
   typed,
@@ -146,7 +147,7 @@ HERMES = [
 def _rar_creator() -> Path | None:
   if executable := shutil.which('rar'):
     return Path(executable)
-  if os.name == 'nt':
+  if detect_os() == OSType.W11:
     roots = tuple(
       Path(os.environ[name])
       for name in ('ProgramFiles', 'ProgramFiles(x86)')
@@ -271,6 +272,77 @@ def test_session_handler_returns_stats_and_complete_object(tmp_path: Path) -> No
   record = file_handler.probe(path, recursive=False)[0]
   assert record.handlers == ('session',)
   assert record.span == stats.span
+
+
+def test_session_identification_checks_extension_and_size_before_reading(
+  tmp_path: Path,
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  unsupported = tmp_path / 'rollout.json'
+  unsupported.write_text(json.dumps(CODEX[0]), encoding='utf-8')
+  empty = tmp_path / 'empty.jsonl'
+  empty.touch()
+  supported = _jsonl(tmp_path / 'rollout.JSONL', CODEX)
+  reads = []
+  original = SessionHandler._head
+
+  def counted(path: Path):
+    reads.append(path)
+    return original(path)
+
+  monkeypatch.setattr(SessionHandler, '_head', staticmethod(counted))
+
+  assert session_handler.identify_sync(unsupported) is False
+  assert session_handler.identify_sync(empty) is False
+  assert session_handler.identify_sync(supported) is True
+  assert reads == [supported]
+
+
+def test_session_folder_identification_uses_structural_markers_only(
+  tmp_path: Path,
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  folder = tmp_path / 'sessions'
+  _jsonl(folder / 'nested.jsonl', CODEX)
+  reads = []
+  original = SessionHandler._head
+
+  def counted(path: Path):
+    reads.append(path)
+    return original(path)
+
+  monkeypatch.setattr(SessionHandler, '_head', staticmethod(counted))
+
+  assert session_handler.identify_sync(folder) is False
+  assert reads == []
+
+  (folder / 'state.db').touch()
+  assert session_handler.identify_sync(folder) is True
+  assert reads == []
+
+
+def test_file_identification_reads_each_session_head_once(
+  tmp_path: Path,
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  class SessionFileHandler(FileHandler, SessionHandler, FolderHandler):
+    pass
+
+  first = _jsonl(tmp_path / 'first.jsonl', CODEX)
+  second = _jsonl(tmp_path / 'nested' / 'second.jsonl', CLAUDE)
+  reads = []
+  original = SessionHandler._head
+
+  def counted(path: Path):
+    reads.append(path)
+    return original(path)
+
+  monkeypatch.setattr(SessionHandler, '_head', staticmethod(counted))
+
+  SessionFileHandler().identify_sync(tmp_path)
+
+  assert sorted(reads) == sorted((first, second))
+  assert len(reads) == 2
 
 
 def test_openai_export_chunks_are_one_session_collection(tmp_path: Path) -> None:
@@ -676,6 +748,121 @@ def test_ignored_paths_remain_visible_without_folder_descent(tmp_path: Path) -> 
   assert found[ignored_file].metadata['ignored']['no_descent'] is False
 
 
+def test_walk_generators_report_only_folders_they_enter(
+  tmp_path: Path,
+) -> None:
+  class TreeHandler(FileHandler, IgnoredHandler, FolderHandler):
+    pass
+
+  entered_folder = tmp_path / 'entered'
+  refused_folder = tmp_path / 'refused'
+  ignored_folder = tmp_path / '.git'
+  for folder in (entered_folder, refused_folder, ignored_folder):
+    folder.mkdir()
+    (folder / 'child.txt').write_text(folder.name, encoding='utf-8')
+  (tmp_path / 'root.txt').write_text('root', encoding='utf-8')
+  handler = TreeHandler()
+
+  sync_entered = []
+  sync_done = []
+
+  def sync_enter(record: Record) -> bool:
+    sync_entered.append(record.path)
+    return record.path != refused_folder
+
+  sync_records = list(
+    handler.walk_sync(
+      tmp_path,
+      enter=sync_enter,
+      on_folder_done=lambda record: sync_done.append(record.path),
+    )
+  )
+  sync_paths = [record.path for record in sync_records]
+
+  assert tmp_path not in sync_paths
+  assert entered_folder / 'child.txt' in sync_paths
+  assert refused_folder / 'child.txt' not in sync_paths
+  assert ignored_folder / 'child.txt' not in sync_paths
+  assert sync_entered == [entered_folder, refused_folder]
+  assert sync_done == [entered_folder]
+
+  direct_entered = []
+  direct_done = []
+  direct = list(
+    handler.walk_sync(
+      tmp_path,
+      recursive=False,
+      enter=lambda record: direct_entered.append(record.path) or True,
+      on_folder_done=lambda record: direct_done.append(record.path),
+    )
+  )
+
+  assert {record.path for record in direct} == {
+    entered_folder,
+    refused_folder,
+    ignored_folder,
+    tmp_path / 'root.txt',
+  }
+  assert direct_entered == []
+  assert direct_done == []
+
+  async def collect():
+    entered = []
+    done = []
+
+    def enter(record: Record) -> bool:
+      entered.append(record.path)
+      return record.path != refused_folder
+
+    records = [
+      record
+      async for record in handler.walk(
+        tmp_path,
+        enter=enter,
+        on_folder_done=lambda record: done.append(record.path),
+      )
+    ]
+    return records, entered, done
+
+  async_records, async_entered, async_done = asyncio.run(collect())
+
+  assert [record.path for record in async_records] == sync_paths
+  assert async_entered == sync_entered
+  assert async_done == sync_done
+
+
+def test_identify_and_probe_consume_the_public_walk(
+  tmp_path: Path,
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  class TreeHandler(FileHandler, FolderHandler):
+    pass
+
+  nested = tmp_path / 'nested'
+  nested.mkdir()
+  (nested / 'one.txt').write_text('one', encoding='utf-8')
+  handler = TreeHandler()
+  original = handler.walk_sync
+  calls = []
+
+  def counted(path, recursive=True, enter=None, on_folder_done=None):
+    calls.append(path.path if isinstance(path, Record) else path)
+    yield from original(path, recursive, enter, on_folder_done)
+
+  monkeypatch.setattr(handler, 'walk_sync', counted)
+
+  identified = handler.identify_sync(tmp_path)
+  identify_calls = len(calls)
+  probed = handler.probe_sync(tmp_path)
+
+  assert identify_calls > 0
+  assert len(calls) > identify_calls
+  assert [record.path for record in probed] == [
+    record.path for record in identified
+  ]
+  assert probed[0].stats == FileStats(1, 1, 3, probed[0].span)
+
+
 def test_exif_handlers_are_unregistered_placeholders() -> None:
   for handler in (ImageHandler, VideoHandler):
     assert 'identify' not in handler.__dict__
@@ -968,6 +1155,59 @@ def test_archive_files_and_folders_are_the_same_records(tmp_path: Path) -> None:
   )
 
 
+def test_archive_identification_dispatches_only_after_extension_check(
+  tmp_path: Path,
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  calls = []
+  monkeypatch.setattr(
+    zipfile,
+    'is_zipfile',
+    lambda path: calls.append('zip') or True,
+  )
+  monkeypatch.setattr(
+    ArchiveHandler,
+    '_is_rar',
+    classmethod(lambda cls, path: calls.append('rar') or True),
+  )
+  monkeypatch.setattr(
+    ArchiveHandler,
+    '_is_tar_gz',
+    staticmethod(lambda path: calls.append('tar.gz') or True),
+  )
+
+  unsupported = tmp_path / 'archive.bin'
+  unsupported.touch()
+  assert archive_handler.identify_sync(unsupported) is False
+  assert calls == []
+
+  for name, expected in (
+    ('archive.ZIP', 'zip'),
+    ('archive.RAR', 'rar'),
+    ('archive.TAR.GZ', 'tar.gz'),
+  ):
+    path = tmp_path / name
+    path.touch()
+    calls.clear()
+    assert archive_handler.identify_sync(path) is True
+    assert calls == [expected]
+
+
+@pytest.mark.parametrize('field', ('Modified', 'mtime'))
+def test_rar_record_accepts_platform_timestamp_labels(field: str) -> None:
+  record = ArchiveHandler._rar_record(
+    Path('archive.rar'),
+    {
+      'Name': 'one.txt',
+      'Type': 'File',
+      'Size': '3',
+      field: '2026-08-20 05:00:00,000000000',
+    },
+  )
+
+  assert record.modified_at is not None
+
+
 def test_archive_members_use_ignored_rules_and_prune_descendants(
   tmp_path: Path,
 ) -> None:
@@ -1018,6 +1258,43 @@ def test_archive_name_comes_from_the_handler_hierarchy_span(tmp_path: Path) -> N
   assert path.name == '260901_end-260801_start_sessions.rar'
 
 
+def test_archive_path_requests_only_the_aggregate_root(
+  tmp_path: Path,
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  class TreeHandler(FileHandler, FolderHandler):
+    pass
+
+  source = tmp_path / 'source'
+  source.mkdir()
+  (source / 'one.txt').write_text('one', encoding='utf-8')
+  handler = TreeHandler()
+  original = handler._probe_hierarchy
+  retained = []
+
+  def capture(path, recursive, *, retain_records):
+    retained.append(retain_records)
+    return original(path, recursive, retain_records=retain_records)
+
+  monkeypatch.setattr(handler, '_probe_hierarchy', capture)
+  monkeypatch.setattr(
+    handler,
+    'probe_sync',
+    lambda *args, **kwargs: pytest.fail('archive_path_sync called probe_sync'),
+  )
+
+  path = handler.archive_path_sync(
+    source,
+    tmp_path / 'archives',
+    'files',
+    'zip',
+    ZoneInfo('America/Los_Angeles'),
+  )
+
+  assert path.suffix == '.zip'
+  assert retained == [False]
+
+
 @pytest.mark.skipif(RAR is None, reason='RARLAB rar is not installed')
 def test_rar_handler_determines_the_final_archive_span(tmp_path: Path) -> None:
   source = tmp_path / 'session.jsonl'
@@ -1042,7 +1319,7 @@ def test_rar_reader_finds_the_platform_command_from_path(
   tmp_path: Path,
   monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-  executable = tmp_path / ('unrar.exe' if os.name == 'nt' else 'unrar')
+  executable = tmp_path / ('unrar.exe' if detect_os() == OSType.W11 else 'unrar')
   executable.touch()
   monkeypatch.setattr(
     shutil,
@@ -1184,7 +1461,7 @@ def test_placeholder_and_future_times_are_not_times(tmp_path: Path) -> None:
   real = datetime(1994, 10, 7, 3, 0, 54, tzinfo=timezone.utc)
   assert valid_time(real) == real
 
-  archive = tmp_path / 'app.apk'
+  archive = tmp_path / 'app.zip'
   with zipfile.ZipFile(archive, 'w') as bundle:
     bundle.writestr(zipfile.ZipInfo('AndroidManifest.xml', date_time=(1981, 1, 1, 1, 1, 2)), 'x')
   records = {record.path: record for record in file_handler.probe(archive)[0].probes[0].obj}

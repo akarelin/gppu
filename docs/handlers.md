@@ -257,6 +257,24 @@ Invalidate cached state synchronously or asynchronously.
 
 Discard one cached branch, or the complete hierarchy cache.
 
+### `FileHandler.walk_sync(self, path: 'Path | Record', recursive: 'bool' = True, enter: 'Callable[[Record], bool] | None' = None, on_folder_done: 'Callable[[Record], None] | None' = None) -> 'Iterator[Record]'`
+
+Yield descendants while reporting folder traversal boundaries.
+
+Direct children are yielded in display order. With `recursive=True`,
+`enter(record)` decides whether each non-ignored folder is descended;
+a refused folder remains in the stream. `on_folder_done(record)` is
+called after an entered folder has been completely yielded, and only
+for folders that were entered. The starting path is not yielded and
+does not produce either callback.
+
+### `FileHandler.walk(self, path: 'Path | Record', recursive: 'bool' = True, enter: 'Callable[[Record], bool] | None' = None, on_folder_done: 'Callable[[Record], None] | None' = None) -> 'AsyncIterator[Record]'`
+
+Asynchronously yield descendants with the `walk_sync` semantics.
+
+Filesystem identification and listing run in a worker thread once per
+visited folder. The callbacks run in the consuming event-loop thread.
+
 ## `GitRepository(root: 'Path', metadata_path: 'Path', upstream_remote: 'str | None', upstream_url: 'str | None', remotes: 'tuple[tuple[str, str], ...]') -> None`
 
 Local repository identity and configured remote metadata.
@@ -308,9 +326,10 @@ Discard all Git maps or the map containing `path`.
 
 Identify and load ZIP, RAR, and TAR.GZ member hierarchies.
 
-Identification is content-based and does not depend on the filename: ZIP
-uses `zipfile.is_zipfile`, RAR accepts the RAR 4 or RAR 5 signature,
-and TAR.GZ requires the gzip signature plus a readable TAR structure. Each
+Identification first requires a case-insensitive `.zip`, `.rar`, or
+`.tar.gz` filename, then verifies only that format. ZIP uses
+`zipfile.is_zipfile`, RAR accepts the RAR 4 or RAR 5 signature, and
+TAR.GZ requires the gzip signature plus a readable TAR structure. Each
 member is a `Record` with a safe relative POSIX path and `location`
 set to the physical archive. Absolute member paths and `..` components
 are errors. Missing parent folders are synthesized so archive traversal
@@ -329,7 +348,7 @@ Recognize a supported archive synchronously or asynchronously.
 
 ### `ArchiveHandler.identify_sync(self, path: 'Path') -> 'bool'`
 
-Recognize a ZIP, RAR, or gzip-compressed TAR from its contents.
+Recognize a supported extension and its matching archive format.
 
 ### `ArchiveHandler.__call__(self, path: 'Path') -> 'tuple[FileStats | None, tuple[Record, ...] | HandlerError]'`
 
@@ -759,7 +778,8 @@ Return Claude messages in their exported order.
 
 Identify, load, normalize, and cache native JSONL sessions.
 
-A session file is UTF-8 JSON Lines with at least one object. Identification
+A session file has a case-insensitive `.jsonl` extension, is non-empty,
+and contains UTF-8 JSON Lines with at least one object. Identification
 examines at most eight leading non-empty lines; a malformed line or a JSON
 value other than an object makes that file unrecognized. Full loading
 retains every valid object, skips blank, malformed, and non-object lines,
@@ -776,9 +796,9 @@ Native formats are recognized from these object fields:
   `MODEL`, with string `created_at`.
 * Hermes: `role` equal to `session_meta` and string `session_id`.
 
-A directory is recognized when it contains a direct recognized file, the
-Hermes marker `state.db`, either Agy marker `antigravity_state.pbtxt` or
-`jetski_state.pbtxt`, or an Agy UUID directory containing
+A directory is recognized from the Hermes marker `state.db`, either Agy
+marker `antigravity_state.pbtxt` or `jetski_state.pbtxt`, or an Agy UUID
+directory containing
 `.system_generated/logs/transcript_full.jsonl` or `transcript.jsonl`.
 Loading a directory returns every recognized file below it. ChatGPT and
 Anthropic data exports belong to their explicit handlers.
@@ -789,7 +809,7 @@ Recognize a session file, folder, or export in either call mode.
 
 ### `SessionHandler.identify_sync(self, path: 'Path') -> 'bool'`
 
-Recognize native session files and folders from JSONL records.
+Recognize structural folders or non-empty native JSONL files.
 
 ### `SessionHandler.__call__(self, path: 'Path') -> 'tuple[SessionStats | None, SessionObject | HandlerError]'`
 
