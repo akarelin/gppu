@@ -242,7 +242,15 @@ class FileHandler:
       self._children[path] = (signature, paths)
     else:
       paths = cached[1]
-    return tuple(self.record(child) for child in paths)
+    return tuple(record for child in paths if (record := self._child(child)) is not None)
+
+  def _child(self, path: Path) -> Record | None:
+    """One child, or None when it is gone. A listing and the reading of it are two moments, and on a tree being
+    written the thing named in the first can be absent by the second. It is not a child then."""
+    try:
+      return self.record(path)
+    except FileNotFoundError:
+      return None
 
   def _archive_children(
     self,
@@ -615,9 +623,13 @@ class SessionHandler:
     if path.is_dir() and not path.is_symlink():
       if any((path / marker).exists() for marker in HOMES.values()):
         return True
+      try:
+        children = tuple(path.iterdir())
+      except OSError:
+        return False              # a folder that will not be listed holds no session that can be read
       return any(
         child.is_file() and _harness(_head(child)) is not None
-        for child in path.iterdir()
+        for child in children
       )
     return path.is_file() and _harness(_head(path)) is not None
 

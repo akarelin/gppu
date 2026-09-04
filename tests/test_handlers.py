@@ -462,3 +462,33 @@ def test_session_of_generated_text_only_has_no_topic(tmp_path: Path) -> None:
   _, session = session_handler(_jsonl(tmp_path / 'claude.jsonl', [probe, CLAUDE[1]]))
   assert session.human_messages == ()
   assert session.topic == ''
+
+
+def test_a_folder_that_will_not_be_listed_is_not_a_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  closed = tmp_path / 'closed'
+  closed.mkdir()
+  original = Path.iterdir
+
+  def denied(self: Path):
+    if self == closed:
+      raise PermissionError(5, 'Access is denied')
+    return original(self)
+
+  monkeypatch.setattr(Path, 'iterdir', denied)
+  assert session_handler.identify(closed) is False
+
+
+def test_a_child_gone_between_the_listing_and_the_reading_is_not_a_child(tmp_path: Path,
+                                                                        monkeypatch: pytest.MonkeyPatch) -> None:
+  (tmp_path / 'here.txt').write_text('here', encoding='utf-8')
+  (tmp_path / 'gone.txt').write_text('gone by the time it is read', encoding='utf-8')
+  handler = FileHandler(session_handler)
+  original = FileHandler.record
+
+  def vanishing(self: FileHandler, path: Path) -> Record:
+    if path.name == 'gone.txt':
+      raise FileNotFoundError(2, 'The system cannot find the file specified', str(path))
+    return original(self, path)
+
+  monkeypatch.setattr(FileHandler, 'record', vanishing)
+  assert [child.name for child in handler.children(tmp_path)] == ['here.txt']
