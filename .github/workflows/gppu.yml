@@ -102,14 +102,13 @@ jobs:
           fetch-depth: 0
 
       - uses: actions/setup-python@v6
-        if: matrix.os == 'windows'
         with:
           python-version: '3.14'
 
       - name: Setup and test (Linux)
         if: matrix.os == 'linux'
         run: |
-          python3.14 -m venv .venv
+          python -m venv .venv
           .venv/bin/pip install Jinja2 PyYAML pytest setuptools-scm
           .venv/bin/pip install -e ".${{ matrix.extras }}"
           .venv/bin/python -m pytest ${{ matrix.test_path }} -v
@@ -197,9 +196,13 @@ jobs:
         if: env.TAG_EXISTS == 'true'
         run: git checkout "${TAG}"
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
       - name: Build and release
         run: |
-          python3.14 -m venv .venv
+          python -m venv .venv
           .venv/bin/pip install build setuptools-scm
           .venv/bin/python -m build
 
@@ -214,13 +217,17 @@ jobs:
             echo "IS_PRE=false" >> $GITHUB_ENV
           fi
 
-      - name: Create Release
+      - name: Publish Release
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
-          FLAGS=(--title "gppu v${VERSION}" --generate-notes)
-          if [[ "${IS_PRE}" == "true" ]]; then FLAGS+=(--prerelease); fi
-          gh release create "${TAG}" dist/* "${FLAGS[@]}"
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" dist/*
+          else
+            FLAGS=(--title "gppu v${VERSION}" --generate-notes)
+            if [[ "${IS_PRE}" == "true" ]]; then FLAGS+=(--prerelease); fi
+            gh release create "${TAG}" dist/* "${FLAGS[@]}"
+          fi
 
       - name: Update gppu/latest tag and Release assets
         if: env.IS_PRE == 'false'
