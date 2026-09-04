@@ -1193,6 +1193,21 @@ def test_archive_identification_dispatches_only_after_extension_check(
     assert calls == [expected]
 
 
+@pytest.mark.parametrize('field', ('Modified', 'mtime'))
+def test_rar_record_accepts_platform_timestamp_labels(field: str) -> None:
+  record = ArchiveHandler._rar_record(
+    Path('archive.rar'),
+    {
+      'Name': 'one.txt',
+      'Type': 'File',
+      'Size': '3',
+      field: '2026-08-20 05:00:00,000000000',
+    },
+  )
+
+  assert record.modified_at is not None
+
+
 def test_archive_members_use_ignored_rules_and_prune_descendants(
   tmp_path: Path,
 ) -> None:
