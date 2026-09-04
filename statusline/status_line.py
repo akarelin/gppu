@@ -103,11 +103,13 @@ def _fpct(val):
 
 
 _EFFORT_ICONS = {
-    "low": "▁",
-    "medium": "▃",
-    "high": "▅",
-    "xhigh": "▇",
-    "max": "█",
+    "disabled": "⚫",
+    "low": "🔵",
+    "medium": "🟢",
+    "high": "🟡",
+    "xhigh": "🟠",
+    "max": "🔴",
+    "ultra": "🟣",
 }
 
 
@@ -139,7 +141,7 @@ _TOOL_ICONS = {
     "PushNotification": "🔔",
     "WebFetch": "🌐", "WebSearch": "🌐",
     "ToolSearch": "🧰", "Skill": "🎓", "StructuredOutput": "🧾",
-    "EnterPlanMode": "🗺️", "ExitPlanMode": "🗺️", "EnterWorktree": "🌳",
+    "EnterPlanMode": "🗺️", "ExitPlanMode": "🗺️", "EnterWorktree": "⑂",
     "CronCreate": "⏰", "CronDelete": "⏰", "CronList": "⏰",
     "ScheduleWakeup": "⏰", "Monitor": "👁️",
 }

@@ -41,3 +41,7 @@ def test_supported_claude_tools_have_icons():
 
 def test_unknown_tool_name_remains_visible():
     assert _tool_icon("Grag") == "Grag"
+
+
+def test_worktree_uses_the_session_fork_icon():
+    assert _tool_icon("EnterWorktree") == "⑂"
