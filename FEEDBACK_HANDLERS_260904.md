@@ -2,7 +2,7 @@
 
 Read of `gppu/handlers.py` on `handlers-bigtasks` (working copy, alex-pc) against the one application that already uses handlers: the lake's indexer, `D:\Dev\CRAP\Systems\Lake\indexer.py`.
 
-## Three things stop the lake from using this today
+## What stops the lake from using this today
 
 **1. `FileHandler` no longer accepts handlers.** It is a mixin class with a fixed `handler_types` tuple and `FileHandler()` takes no arguments. Both callers pass instances:
 
@@ -22,15 +22,7 @@ class LakeHandler(_FileHandler, NoteHandler, SessionHandler, ArchiveHandler, Fol
 
 `PLAN_HANDLERS_BIGTASKS.md` lists "Compose `FileHandler` from handler mixins without constructor injection" as intended, so this is a decision, not an oversight. It needs a supported way to compose a set — a public base, or `FileHandler.with_handlers(*types)` — otherwise every application depends on a private name.
 
-**2. The module needs Python 3.14.** Five `except A, B:` clauses (PEP 758) — lines 1072, 1423, 2163, 2197, 2385. `pyproject.toml` declares `requires-python = ">=3.11"`. On 3.13 the import is a SyntaxError:
-
-```
-  File "D:\Dev\gppu\gppu\handlers.py", line 1072
-    except OSError, UnicodeDecodeError:
-SyntaxError: multiple exception types must be parenthesized
-```
-
-alex-pc's 3.13 carries gppu 2.50.6, so this is not theoretical. Either parenthesize them or raise `requires-python` to `>=3.14`.
+**2. The module needs Python 3.14** — settled later the same day. The `except A, B:` clauses (PEP 758) make the import a SyntaxError on 3.13, and `requires-python` is now `>=3.14`, which says so. alex-pc's 3.13 carries gppu 2.50.6 and will keep it.
 
 **3. It is not released.** Installed gppu is 3.5.7 and its `handlers.py` is the old 24-line `Handler(load_object, derive_stats)`. Both lake modules fail to import right now:
 
@@ -45,23 +37,26 @@ Identify-only walk of `D:\Dev\CRAP\Systems` — 524 entries, 470 files — measu
 | walk | time | per entry |
 |---|---|---|
 | `os.walk` | 0.002 s | 4 µs |
-| session + archive + folder (what the lake configures today) | 0.684 s | 1,305 µs |
-| new `FileHandler` default, all six | 4.283 s | 8,173 µs |
+| markdown + session + archive + folder (what the lake wants) | 0.567 s | 1,079 µs |
+| new `FileHandler` default, all nine | 4.027 s | 7,670 µs |
 
 Per handler, same walk:
 
 | handler | time | per entry |
 |---|---|---|
-| git | 4.087 s | 7,800 µs |
-| session | 0.512 s | 977 µs |
-| archive | 0.371 s | 709 µs |
-| anthropic | 0.239 s | 457 µs |
-| chatgpt | 0.218 s | 417 µs |
-| folder | 0.179 s | 342 µs |
+| git | 2.904 s | 5,531 µs |
+| session | 0.343 s | 654 µs |
+| archive | 0.242 s | 461 µs |
+| anthropic | 0.175 s | 333 µs |
+| chatgpt | 0.171 s | 325 µs |
+| folder | 0.101 s | 193 µs |
+| csv | 0.098 s | 187 µs |
+| log | 0.098 s | 186 µs |
+| markdown | 0.096 s | 184 µs |
 
-FileIndexer's measured alex-laptop pass was 68,192 files and 10,046 folders. At 1,305 µs that walk costs ~102 s of identification; at 8,173 µs it costs ~10.7 minutes. Across the lake's 1.7 M entities: ~37 minutes against ~3.9 hours.
+FileIndexer's measured alex-laptop pass was 68,192 files and 10,046 folders. At 1,079 µs that walk costs ~84 s of identification; at 7,670 µs it costs ~10 minutes. Across the lake's 1.7 M entities: ~31 minutes against ~3.6 hours.
 
-**Git is six times everything else together, and it is in the default set.** `GitHandler.identify_sync` walks every parent looking for `.git`, then calls `_history`, which calls `_state` — reads `HEAD`, reads the branch ref, stats `index`, `logs/HEAD`, `packed-refs` — once per path examined. It also turns off both caches on purpose: `record()` re-runs identify for git on a cache hit, and `_probe_record` re-probes whenever git matched. Warm-cache probe of one tracked `.py` file is 1.21 ms with git in the set and 0.18 ms without.
+**Git is five times everything else together, and it is in the default set.** `GitHandler.identify_sync` walks every parent looking for `.git`, then calls `_history`, which calls `_state` — reads `HEAD`, reads the branch ref, stats `index`, `logs/HEAD`, `packed-refs` — once per path examined. It also turns off both caches on purpose: `record()` re-runs identify for git on a cache hit, and `_probe_record` re-probes whenever git matched. Warm-cache probe of one tracked `.py` file is 1.14 ms with git in the set and 0.23 ms without.
 
 Git spans are worth having. They belong on folders and on paths a caller asks for, not on every file the walk touches.
 
@@ -87,28 +82,15 @@ The lake pays all of it at `refresh` and `files`, the two levels that never prob
 - **`probe(path)` defaults to `recursive=True`** and materializes a Record for every descendant in a dict. On a Location root that is the whole tree in memory.
 - **`Record.path` is `Path | PurePosixPath` and `location` is `str | Path | None`.** Every consumer writes `isinstance` checks to find out whether it is looking at a real file. A flag would carry it.
 
-## There is no note handler
+## Markdown, CSV and log — added later on 2026-09-04
 
-`FileHandler.handler_types` is `chatgpt, claude, session, archive, git, folder`. Nothing reads a markdown file. The only YAML frontmatter reader in gppu is `gppu/tui/sidecar.py`, and that is a launcher manifest — it reads `{name}.{ext}.md` beside a utility for `name`, `description`, `nav`, `icon`, `platform` and `modes`. It has no handler `name`, no `identify`, no `__call__`, and it returns no `FileStats`. Same on `master` and in installed 3.5.7.
+`handler_types` is now `chatgpt, claude, markdown, csv, log, session, archive, git, folder`, with `ImageExifHandler` and `VideoExifHandler` standing as placeholders.
 
-The lake carried its own until 2026-09-04 — `NoteHandler` in `D:\Dev\CRAP\Projects\textlake\handlers.py`, reached by file path through `importlib`. It is out of the lake now because nothing there read what it produced. The code is 115 lines and it is the right shape for a mixin: a `SafeLoader` with the timestamp resolver removed so every scalar keeps its spelling, the frontmatter as written, and `created..updated` as the span when both parse.
+These three identify on extension — `path.suffix.casefold() == '.md'` and `is_file()` — and they are the cheapest handlers in the set at about 185 µs an entry, against 654 for session and 461 for archive. That is the shape the older handlers should take: extension first, content only when the extension says it might be worth opening.
 
-If it belongs in gppu it is a class beside the others:
+`MarkdownHandler` covers what the lake's own note handler did, and covers it better: the frontmatter as written through a `SafeLoader` with the timestamp resolver removed, `created..updated` as the span, plus `title`, `name` and `tags` on `MarkdownFile`. What it does not carry is the mapping onto Alex's frontmatter standard — `fileClass` or `type` to `instanceOf`, `tags`, `status`, `byAlex`, and the `up`/`down`/`prev`/`next`/`related` wikilink targets. That mapping is a vocabulary, not a parser, and it belongs to whatever stores the annotations.
 
-```python
-class NoteHandler:
-    """Markdown notes: the YAML frontmatter as written, created..updated as the span."""
-
-    name = "note"
-
-    def identify_sync(self, path: Path) -> bool:
-        return path.suffix.casefold() == ".md" and path.is_file()
-
-    def call_sync(self, path: Path) -> tuple[FileStats, dict[str, Any]]:
-        ...
-```
-
-Extension first, so it costs one `str` comparison for every file that is not a note — unlike session and archive, which open everything.
+It also raises where the lake's version returned nothing: no closing `---`, YAML that does not parse, frontmatter that is not a mapping. That gives `metadata.unread` a cheap and deterministic trigger, which session and archive do not have.
 
 ## What the lake would like handlers to carry
 
@@ -123,4 +105,4 @@ The lake re-stats files that `record()` has already stat'ed, because `Record` do
 Scripts are in this session's scratchpad; each is ~30 lines and re-runnable:
 `bench2.py` (per-handler walk timing), `heads.py` (head-read and zip-sniff counts).
 
-Host alex-pc, `D:\Dev\gppu\.venv` (Python 3.14.7), `handlers-bigtasks` working copy as of 2026-09-04.
+Host alex-pc, `D:\Dev\gppu\.venv` (Python 3.14.7), `handlers-bigtasks` working copy. The file was edited while this was written; every number here is from the re-run after `markdown`, `csv` and `log` were added.
