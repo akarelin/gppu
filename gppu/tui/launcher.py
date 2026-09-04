@@ -461,17 +461,24 @@ class ProcessRow(Horizontal):
         self.proc_id = proc_id
         self.app_name = app_name
         self.log_lines: list[str] = []
-
-    def compose(self) -> ComposeResult:
-        yield SpinnerIndicator(classes='proc-spinner')
-        yield Static(
+        self._finished = False
+        self._spinner = SpinnerIndicator(classes='proc-spinner')
+        self._status = Static(
             f' [bold]{self.app_name}[/bold] [dim]running…[/dim]',
             classes='proc-status',
         )
-        yield Static(' [dim]▸ logs[/dim]', classes='log-toggle')
+        self._log_toggle = Static(
+            ' [dim]▸ logs[/dim]', classes='log-toggle',
+        )
+
+    def compose(self) -> ComposeResult:
+        yield self._spinner
+        yield self._status
+        yield self._log_toggle
 
     def on_mount(self) -> None:
-        self.query_one(SpinnerIndicator).start()
+        if not self._finished:
+            self._spinner.start()
 
     def on_click(self) -> None:
         self.app.show_process_logs(self.proc_id)
@@ -1025,10 +1032,9 @@ class TUILauncher(TUIApp):
         if not row:
             return
         row.log_lines.append(line)
-        status = row.query_one('.proc-status', Static)
         display = line if len(line) <= 70 else line[:67] + '…'
         display = display.replace('[', '\\[')
-        status.update(f' [dim]{display}[/dim]')
+        row._status.update(f' [dim]{display}[/dim]')
         # Live-append if this process's logs are currently shown
         if self._active_log == proc_id:
             panel = self.query_one('#output-panel', RichLog)
@@ -1039,16 +1045,15 @@ class TUILauncher(TUIApp):
         row = self._processes.get(proc_id)
         if not row:
             return
-        spinner = row.query_one(SpinnerIndicator)
-        spinner.stop()
-        status = row.query_one('.proc-status', Static)
+        row._finished = True
+        row._spinner.stop()
         if rc == 0:
             verdict = '[green]done[/green]'
         elif rc is None:
             verdict = '[red]error[/red]'
         else:
             verdict = f'[red]failed (rc={rc})[/red]'
-        status.update(
+        row._status.update(
             f' [bold]{row.app_name}[/bold] {verdict}'
             f'  [dim]click for logs[/dim]'
         )

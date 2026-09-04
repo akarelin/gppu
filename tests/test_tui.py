@@ -135,6 +135,20 @@ class TestProcessRow:
             assert row.query_one('.proc-status', Static) is not None
             assert row.query_one('.log-toggle', Static) is not None
 
+    @pytest.mark.asyncio
+    async def test_output_and_completion_before_mount(self):
+        app = _TestApp({}, Path('.'))
+        async with app.run_test():
+            row = ProcessRow(1, 'Fast Task')
+            app._processes[1] = row
+
+            app._append_output(1, 'line 0')
+            app._process_done(1, 0)
+            await app.query_one('#process-bar').mount(row)
+
+            assert row.log_lines == ['line 0']
+            assert not row._spinner._active
+
 
 class TestStatusHeader:
     @pytest.mark.asyncio
