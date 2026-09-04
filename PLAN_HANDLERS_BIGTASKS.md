@@ -7,5 +7,5 @@ Complete every unchecked item under `Big tasks` in `gppu/handlers.py` on the `ha
 - [x] Move helper behavior into the classes that own it.
 - [x] Support the existing handler calls from synchronous and asynchronous code through gppu async.
 - [x] Derive spans for Git-tracked repositories, folders, and files from local Git history without contacting upstreams.
-- [ ] Verify focused behavior against generated fixtures and the named export examples.
-- [ ] Commit and push the completed branch.
+- [x] Verify focused behavior against generated fixtures and the named export examples.
+- [x] Commit and push the completed branch.
