@@ -6,7 +6,7 @@ YAML to keep in sync across installs), cache.py for incremental parsing.
 
 build_stats() → {**stdin_data, enrichments} — raw merged dicts
 line1/line2: Jinja templates with pre-rendered widget values.
-Filters: c(color,prefix,suffix) seg(sep,sep_color) tok ms ago pct counter_sum top_tools nonzero
+Filters: c grad sep tok ms ago time_left pct effort_icon counter_sum top_tools nonzero
 """
 
 import json
@@ -80,10 +80,41 @@ def _fago(val):
     return f"{d}d{h}h" if h else f"{d}d"
 
 
+def _ftime_left(epoch):
+    """Whole time until an epoch: hours through 50h, then whole days."""
+    if not epoch:
+        return ""
+    try:
+        seconds = float(epoch) - time.time()
+    except (TypeError, ValueError):
+        return ""
+    if seconds <= 0:
+        return "0h"
+    hours = int(seconds // 3600)
+    if seconds > 50 * 3600:
+        return f"{hours // 24}d"
+    return f"{hours}h"
+
+
 def _fpct(val):
     if val is None:
         return ""
     return str(int(float(val)))
+
+
+_EFFORT_ICONS = {
+    "low": "▁",
+    "medium": "▃",
+    "high": "▅",
+    "xhigh": "▇",
+    "max": "█",
+}
+
+
+def _feffort_icon(level):
+    if not level:
+        return ""
+    return _EFFORT_ICONS.get(str(level).lower(), "?")
 
 
 def _fcounter_sum(val):
@@ -100,10 +131,17 @@ _SHELL_ICON = "❯"
 _TOOL_ICONS = {
     "Bash": _SHELL_ICON, "PowerShell": _SHELL_ICON,
     "Read": "📖", "Edit": "✏️", "Write": "📝", "NotebookEdit": "📓",
-    "Glob": "📁", "Grep": "🔍",
-    "Task": "👥", "Agent": "👥", "SendMessage": "💬", "AskUserQuestion": "❓",
+    "Glob": "📁", "Grep": "🔍", "Artifact": "📦", "SendUserFile": "📤",
+    "Task": "👥", "Agent": "👥", "ListAgents": "👥", "Workflow": "🔄",
+    "TaskCreate": "☑️", "TaskList": "☑️", "TaskOutput": "☑️",
+    "TaskStop": "☑️", "TaskUpdate": "☑️", "TodoWrite": "☑️",
+    "SendMessage": "💬", "SendFeedback": "💬", "AskUserQuestion": "❓",
+    "PushNotification": "🔔",
     "WebFetch": "🌐", "WebSearch": "🌐",
-    "TodoWrite": "☑️", "Skill": "🎓",
+    "ToolSearch": "🧰", "Skill": "🎓", "StructuredOutput": "🧾",
+    "EnterPlanMode": "🗺️", "ExitPlanMode": "🗺️", "EnterWorktree": "🌳",
+    "CronCreate": "⏰", "CronDelete": "⏰", "CronList": "⏰",
+    "ScheduleWakeup": "⏰", "Monitor": "👁️",
 }
 
 
@@ -186,7 +224,9 @@ _JINJA_ENV = Environment(undefined=_SilentUndefined)
 _JINJA_ENV.filters["tok"] = _ftok
 _JINJA_ENV.filters["ms"] = _fms
 _JINJA_ENV.filters["ago"] = _fago
+_JINJA_ENV.filters["time_left"] = _ftime_left
 _JINJA_ENV.filters["pct"] = _fpct
+_JINJA_ENV.filters["effort_icon"] = _feffort_icon
 _JINJA_ENV.filters["counter_sum"] = _fcounter_sum
 _JINJA_ENV.filters["top_tools"] = _ftop_tools
 _JINJA_ENV.filters["nonzero"] = _fnonzero

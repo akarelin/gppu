@@ -13,7 +13,7 @@ OV_TTL = 5
 # Each element carries its own color so it is identifiable without reading it.
 # Colors that ramp (context badge, 📅 weekly, +/- lines, OV health) mean state;
 # every other color is just that element's identity.
-LINE1 = "{{ model }} {{ context_pct }}{{ limit_7d|sep }}{{ user_turns|c('DC','🐯 ')|sep }} {{ assistant_msgs|c('BP','🤖 ') }}{{ top_tools|sep }}{{ started_ago|c('DGOLD','🕐 ')|sep }}{{ wall_time|c('BO','⏱️ ')|sep }}{{ api_time|c('DPINK','⚙️ ')|sep }}"
+LINE1 = "{{ model }}{{ effort_icon }} {{ context_pct }}{{ limit_7d|sep }}{{ user_turns|c('DC','🐯 ')|sep }} {{ assistant_msgs|c('BP','🤖 ') }}{{ top_tools|sep }}{{ started_ago|c('DGOLD','🕐 ')|sep }}{{ wall_time|c('BO','⏱️ ')|sep }}{{ api_time|c('DPINK','⚙️ ')|sep }}"
 LINE2 = "{{ project|c('BGOLD') }} {{ project_folder|c('GRAY4','📂 ') }}{{ hostname|c('DM','💻 ')|sep }}{{ git_remote|c('DB')|sep }}{{ git_branch|sep }}{{ lines_changed|sep }}{{ ov_score|sep }}{{ ov_recall|sep }}{{ ov_state|sep }}{{ ov_capture|sep }}"
 LINE2_INDENT = "  "
 
@@ -61,11 +61,20 @@ _LIMIT_5H = """
 {%- endif %}
 """
 
-# Weekly headroom left, not consumed — the gradient runs red at empty.
+# Weekly headroom and time until reset — the gradient runs red at empty.
 _LIMIT_7D = """
 {% if rate_limits.seven_day.used_percentage is number -%}
   {% set left = (100 - rate_limits.seven_day.used_percentage) | round | int -%}
-  {{ ('📅 ' ~ left ~ '%') | grad(left, 0, 100) }}
+  {% set reset = rate_limits.seven_day.resets_at | time_left -%}
+  {% set text = '📅 ' ~ left ~ '%' -%}
+  {% if reset -%}{% set text = text ~ ' ' ~ reset -%}{% endif -%}
+  {{ text | grad(left, 0, 100) }}
+{%- endif %}
+"""
+
+_EFFORT = """
+{% if effort is mapping and effort.level -%}
+  {{ (effort.level | effort_icon) | c('BM') }}
 {%- endif %}
 """
 
@@ -144,6 +153,7 @@ _API_EFFICIENCY = """
 
 TEMPLATES = {
     "model": _MODEL,
+    "effort_icon": _EFFORT,
     "context_pct": _CONTEXT_PCT,
     "limit_5h": _LIMIT_5H,
     "limit_7d": _LIMIT_7D,
