@@ -750,11 +750,9 @@ def sync(func: Callable) -> Callable:
     coro = func(*args, **kwargs)
     try:
       loop = asyncio.get_running_loop()
-      return asyncio.create_task(coro)
     except RuntimeError:
-      loop = asyncio.new_event_loop()
-      asyncio.set_event_loop(loop)
-    return loop.run_until_complete(coro)
+      return asyncio.run(coro)
+    return loop.create_task(coro)
   return wrapper
 # endregion
 
