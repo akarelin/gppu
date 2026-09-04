@@ -36,7 +36,7 @@ permissions:
 
 jobs:
   matrix:
-    runs-on: [self-hosted, linux]
+    runs-on: [self-hosted, linux, five]
     if: inputs.run_tests
     outputs:
       tests: ${{ steps.build.outputs.tests }}
@@ -50,7 +50,7 @@ jobs:
           win = "${{ inputs.test_windows }}" == "true"
           tui = "${{ inputs.test_tui }}" == "true"
 
-          L = ["self-hosted", "linux"]
+          L = ["self-hosted", "linux", "five"]
           W = ["self-hosted", "Windows"]
           # Exclude all TUI tests from non-tui matrix entries — every
           # test_tui*.py imports gppu.tui which needs textual at collect time.
@@ -106,19 +106,13 @@ jobs:
         with:
           python-version: '3.14'
 
-      - uses: astral-sh/setup-uv@v10.0.1
-        if: matrix.os == 'linux'
-        with:
-          python-version: '3.14'
-
       - name: Setup and test (Linux)
         if: matrix.os == 'linux'
         run: |
-          uv venv --python 3.14 .venv
-          source .venv/bin/activate
-          uv pip install Jinja2 PyYAML pytest setuptools-scm
-          uv pip install -e ".${{ matrix.extras }}"
-          python -m pytest ${{ matrix.test_path }} -v
+          python3.14 -m venv .venv
+          .venv/bin/pip install Jinja2 PyYAML pytest setuptools-scm
+          .venv/bin/pip install -e ".${{ matrix.extras }}"
+          .venv/bin/python -m pytest ${{ matrix.test_path }} -v
 
       - name: Setup and test (Windows)
         if: matrix.os == 'windows'
@@ -134,7 +128,7 @@ jobs:
       always()
       && (needs.matrix.result == 'success' || needs.matrix.result == 'skipped')
       && (needs.test.result == 'success' || needs.test.result == 'skipped')
-    runs-on: [self-hosted, linux]
+    runs-on: [self-hosted, linux, five]
 
     steps:
       - uses: actions/checkout@v6
@@ -203,16 +197,11 @@ jobs:
         if: env.TAG_EXISTS == 'true'
         run: git checkout "${TAG}"
 
-      - uses: astral-sh/setup-uv@v10.0.1
-        with:
-          python-version: '3.14'
-
       - name: Build and release
         run: |
-          uv venv --python 3.14 .venv
-          source .venv/bin/activate
-          uv pip install build setuptools-scm
-          python -m build
+          python3 -m venv .venv
+          .venv/bin/pip install build setuptools-scm
+          .venv/bin/python -m build
 
       - name: Compute release name
         run: |
