@@ -92,6 +92,33 @@ These three identify on extension — `path.suffix.casefold() == '.md'` and `is_
 
 It also raises where the lake's version returned nothing: no closing `---`, YAML that does not parse, frontmatter that is not a mapping. That gives `metadata.unread` a cheap and deterministic trigger, which session and archive do not have.
 
+## The walk
+
+gppu already walks. `_FileHandler._walk` at line 672 is a recursive generator over `children()`, and `identify` and `probe` both run it. The question is not whether to have one; it is that the one there is private and does not stream.
+
+- `identify_sync` returns `[self.record(found) for found in self._walk(path, recursive)]` — every descendant Record in a list.
+- `probe_sync` builds that list plus a `records` dict and a `child_paths` dict — three copies of the tree.
+- `archive_path_sync` (line 634) calls `self.probe_sync(source)[0]` to read one span, and probes the complete hierarchy to get it.
+
+`recursive=True` is the default on both. A caller who points `probe` at a Location root gets the whole tree in memory before the first record comes back.
+
+Streaming is the fix, and `children()` is already the public primitive to build it on:
+
+```python
+def walk(self, path, recursive=True, enter=None):
+    """Every entry under path, depth first. `enter(record)` decides whether a folder is descended into."""
+    for child in self.children(path):
+        yield child
+        if child.is_folder and recursive and (enter is None or enter(child)):
+            yield from self.walk(child, recursive, enter)
+```
+
+`identify` and `probe` then consume that instead of accumulating, and `archive_path_sync` asks for the root only.
+
+`enter` is the part worth having beyond the yield. Every consumer of a walk has folders it records but does not go into — exclusions, `.git`, `__pycache__`, `node_modules`, a junction, another index — and without a predicate each one re-implements the descent to get that.
+
+**The lake should keep its own recursion even so.** `Indexer._folder` is not a loop over a flat stream: it needs *this folder finished* as an event, because that is what appends to `batch.entered`, and the entered list is how the lake says a thing that was there and is not now is gone. A flat generator cannot carry that without an exit event, and an exit event makes the API worse than the recursion it would replace. What belongs in gppu is the streaming and the `enter` predicate. Levels, batching, the entered list and the folder-class names are the lake's own and should stay there.
+
 ## What the lake would like handlers to carry
 
 The lake re-stats files that `record()` has already stat'ed, because `Record` does not carry what it found:
