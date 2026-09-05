@@ -48,12 +48,14 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import stat as stat_module
 import subprocess
 import tarfile
+import tempfile
 import zipfile
 from collections.abc import AsyncIterator, Callable, Collection, Iterator, Mapping, Sequence
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path, PurePosixPath
@@ -2922,6 +2924,341 @@ class EmailHandler(Handler):
         except ValueError:
             return None, None, None, None
         return valid_time(timestamp), subject, party, collision
+
+
+CHROMIUM_MARKER = "History"
+FIREFOX_MARKER = "places.sqlite"
+CHROMIUM_BROWSERS = ("edge", "brave", "opera", "vivaldi", "chrome", "chromium")
+SQLITE_HEADER = b"SQLite format 3\x00"
+CHROMIUM_EPOCH = datetime(1601, 1, 1, tzinfo=timezone.utc)
+
+
+@dataclass(frozen=True)
+class BrowserProfile:
+    """One browser profile's history, bookmarks, and downloads, as counts and a span.
+
+    ``family`` is ``chromium`` or ``firefox``. ``browser`` is the product read
+    from the profile's own path, and ``profile`` is the folder holding the
+    database. No URL, page title, or visited page is read or retained.
+    """
+
+    path: Path
+    family: str
+    browser: str
+    profile: str
+    history: int
+    urls: int
+    favorites: int
+    downloads: int
+    span: Span | None
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Return the browser, the profile, and what each table holds."""
+
+        return {
+            "family": self.family,
+            "browser": self.browser,
+            "profile": self.profile,
+            "history": self.history,
+            "urls": self.urls,
+            "favorites": self.favorites,
+            "downloads": self.downloads,
+        }
+
+
+class BrowserHandler(Handler):
+    """Identify a browser profile and count its history, bookmarks, and downloads.
+
+    Supported input is a Chromium ``History`` database, a Firefox
+    ``places.sqlite``, or a directory holding either. Both must start with the
+    SQLite file header and carry that engine's tables: ``urls`` or ``visits``
+    for Chromium, ``moz_places`` for Firefox. A directory is the profile, so
+    identifying one answers for the database inside it.
+
+    The database is copied with its ``-wal`` and ``-shm`` companions and opened
+    read-only from the copy, so a running browser is neither locked nor read
+    mid-write. Only counts and the earliest and latest times are read: visits,
+    URLs, bookmarks, and downloads. No URL, page title, or search term is read
+    or retained, and a Chromium profile's ``Bookmarks`` JSON contributes its
+    bookmark count and ``date_added`` times only.
+
+    Chromium times are microseconds from 1601-01-01 UTC and Firefox times are
+    microseconds from the Unix epoch. Placeholder and future values do not
+    contribute, so a profile with no usable time has no span. A file or folder
+    that is not a browser profile is unrecognized rather than an error.
+    """
+
+    name = "browser-history"
+
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Recognize a browser profile synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Return whether ``path`` is a profile database or a folder with one."""
+
+        return self._database(full_path(path)) is not None
+
+    @sync
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[FileStats | None, BrowserProfile | HandlerError]:
+        """Read a browser profile synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
+
+    def call_sync(self, path: Path) -> tuple[FileStats, BrowserProfile]:
+        """Return profile statistics and the counts read from its database."""
+
+        path = full_path(path)
+        database = self._database(path)
+        if database is None:
+            raise ValueError(f"{path}: not a browser profile")
+        profile = (
+            self._chromium(database)
+            if database.name == CHROMIUM_MARKER
+            else self._firefox(database)
+        )
+        return FileStats(1, 0, database.stat().st_size, profile.span), profile
+
+    @classmethod
+    def _database(cls, path: Path) -> Path | None:
+        """Return the profile database at or inside ``path``, if there is one."""
+
+        if path.is_dir():
+            return next(
+                (
+                    found
+                    for marker in (CHROMIUM_MARKER, FIREFOX_MARKER)
+                    if (found := cls._database(path / marker)) is not None
+                ),
+                None,
+            )
+        if path.name.casefold() not in (CHROMIUM_MARKER.casefold(), FIREFOX_MARKER):
+            return None
+        try:
+            with path.open("rb") as stream:
+                header = stream.read(len(SQLITE_HEADER))
+        except OSError:
+            return None
+        return path if header == SQLITE_HEADER else None
+
+    @staticmethod
+    @contextmanager
+    def _read_only(path: Path) -> Iterator[sqlite3.Connection]:
+        """Open a copy of the database so a running browser is never locked."""
+
+        with tempfile.TemporaryDirectory() as folder:
+            copy = Path(folder) / path.name
+            for suffix in ("", "-wal", "-shm"):
+                companion = Path(str(path) + suffix)
+                if companion.is_file():
+                    shutil.copy2(companion, Path(str(copy) + suffix))
+            connection = sqlite3.connect(f"file:{copy.as_posix()}?mode=ro", uri=True)
+            try:
+                yield connection
+            finally:
+                connection.close()
+
+    @staticmethod
+    def _columns(connection: sqlite3.Connection) -> dict[str, set[str]]:
+        """Return every table in the database with its column names."""
+
+        return {
+            str(name): {
+                str(column[1])
+                for column in connection.execute(f'PRAGMA table_info("{name}")')
+            }
+            for (name,) in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+
+    @staticmethod
+    def _counted(
+        connection: sqlite3.Connection,
+        query: str,
+        moment: Callable[[Any], datetime | None],
+        times: list[datetime],
+    ) -> int:
+        """Run one count/min/max query and keep the times it returned."""
+
+        row = connection.execute(query).fetchone()
+        if row is None:
+            return 0
+        times += [value for value in map(moment, row[1:]) if value is not None]
+        return int(row[0] or 0)
+
+    @staticmethod
+    def _chromium_time(value: Any) -> datetime | None:
+        """Convert microseconds from 1601-01-01 UTC into a recorded time."""
+
+        try:
+            return valid_time(CHROMIUM_EPOCH + timedelta(microseconds=int(value)))
+        except (OverflowError, TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _firefox_time(value: Any) -> datetime | None:
+        """Convert microseconds from the Unix epoch into a recorded time."""
+
+        try:
+            return valid_time(
+                datetime.fromtimestamp(int(value) / 1_000_000, timezone.utc)
+            )
+        except (OSError, OverflowError, TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _browser(path: Path) -> str:
+        """Name the Chromium product from the profile's own path."""
+
+        value = str(path).casefold()
+        return next((name for name in CHROMIUM_BROWSERS if name in value), "chromium")
+
+    @classmethod
+    def _chromium(cls, path: Path) -> BrowserProfile:
+        """Read a Chromium profile's visits, URLs, downloads, and bookmarks."""
+
+        times: list[datetime] = []
+        history = urls = downloads = 0
+        with cls._read_only(path) as connection:
+            columns = cls._columns(connection)
+            if "visits" in columns and "visit_time" in columns["visits"]:
+                history = cls._counted(
+                    connection,
+                    "SELECT count(*), min(visit_time), max(visit_time) FROM visits",
+                    cls._chromium_time,
+                    times,
+                )
+            elif "urls" in columns and "last_visit_time" in columns["urls"]:
+                history = cls._counted(
+                    connection,
+                    "SELECT count(*), min(last_visit_time), max(last_visit_time) "
+                    "FROM urls WHERE last_visit_time IS NOT NULL",
+                    cls._chromium_time,
+                    times,
+                )
+            if "urls" in columns:
+                urls = cls._counted(
+                    connection,
+                    "SELECT count(*) FROM urls",
+                    cls._chromium_time,
+                    times,
+                )
+            if "downloads" in columns:
+                downloads = cls._counted(
+                    connection,
+                    "SELECT count(*), min(start_time), max(start_time) FROM downloads"
+                    if "start_time" in columns["downloads"]
+                    else "SELECT count(*) FROM downloads",
+                    cls._chromium_time,
+                    times,
+                )
+        favorites = cls._bookmarks(path.parent / "Bookmarks", times)
+        return BrowserProfile(
+            path=path,
+            family="chromium",
+            browser=cls._browser(path),
+            profile=path.parent.name,
+            history=history,
+            urls=urls,
+            favorites=favorites,
+            downloads=downloads,
+            span=(min(times), max(times)) if times else None,
+        )
+
+    @classmethod
+    def _bookmarks(cls, path: Path, times: list[datetime]) -> int:
+        """Count the bookmarks in a Chromium profile and keep their times."""
+
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return 0
+        if not isinstance(document, Mapping):
+            return 0
+        found = 0
+        pending = list((document.get("roots") or {}).values())
+        while pending:
+            node = pending.pop()
+            if not isinstance(node, Mapping):
+                continue
+            if node.get("type") == "url":
+                found += 1
+                if moment := cls._chromium_time(node.get("date_added")):
+                    times.append(moment)
+            children = node.get("children")
+            if isinstance(children, list):
+                pending += children
+        return found
+
+    @classmethod
+    def _firefox(cls, path: Path) -> BrowserProfile:
+        """Read a Firefox profile's visits, places, bookmarks, and downloads."""
+
+        times: list[datetime] = []
+        history = urls = favorites = downloads = 0
+        with cls._read_only(path) as connection:
+            columns = cls._columns(connection)
+            if (
+                "moz_historyvisits" in columns
+                and "visit_date" in columns["moz_historyvisits"]
+            ):
+                history = cls._counted(
+                    connection,
+                    "SELECT count(*), min(visit_date), max(visit_date) "
+                    "FROM moz_historyvisits",
+                    cls._firefox_time,
+                    times,
+                )
+            if "moz_places" in columns:
+                urls = cls._counted(
+                    connection,
+                    "SELECT count(*) FROM moz_places",
+                    cls._firefox_time,
+                    times,
+                )
+            if "moz_bookmarks" in columns:
+                favorites = cls._counted(
+                    connection,
+                    "SELECT count(*), min(dateAdded), max(dateAdded) "
+                    "FROM moz_bookmarks WHERE type = 1"
+                    if "dateAdded" in columns["moz_bookmarks"]
+                    else "SELECT count(*) FROM moz_bookmarks WHERE type = 1",
+                    cls._firefox_time,
+                    times,
+                )
+            if "moz_annos" in columns and "moz_anno_attributes" in columns:
+                source = (
+                    "FROM moz_annos annotation JOIN moz_anno_attributes attribute "
+                    "ON annotation.anno_attribute_id = attribute.id "
+                    "WHERE attribute.name = 'downloads/destinationFileURI'"
+                )
+                downloads = cls._counted(
+                    connection,
+                    f"SELECT count(*), min(annotation.dateAdded), "
+                    f"max(annotation.dateAdded) {source}"
+                    if "dateAdded" in columns["moz_annos"]
+                    else f"SELECT count(*) {source}",
+                    cls._firefox_time,
+                    times,
+                )
+        return BrowserProfile(
+            path=path,
+            family="firefox",
+            browser="firefox",
+            profile=path.parent.name,
+            history=history,
+            urls=urls,
+            favorites=favorites,
+            downloads=downloads,
+            span=(min(times), max(times)) if times else None,
+        )
 
 
 class ImageHandler(Handler):

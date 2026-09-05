@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import tarfile
 import zipfile
@@ -19,6 +20,7 @@ from gppu import OSType, detect_os
 from gppu.handlers import (
   typed,
   ArchiveHandler,
+  BrowserHandler,
   ChatGPTHandler,
   AnthropicHandler,
   CSVFile,
@@ -1632,3 +1634,73 @@ def test_archive_extraction_of_an_unreadable_member_is_an_error_not_the_end(tmp_
 
   assert [error.path for error in contents.errors] == [PurePosixPath('broken.txt')]
   assert set(contents.files) == {PurePosixPath('good.txt')}
+
+
+def _chromium_profile(folder: Path, visits: tuple[int, ...]) -> Path:
+  """A Chromium profile: the History database its browser writes, and a Bookmarks file beside it."""
+  folder.mkdir(parents=True, exist_ok=True)
+  database = folder / 'History'
+  with sqlite3.connect(database) as connection:
+    connection.execute('CREATE TABLE urls (id INTEGER PRIMARY KEY, url TEXT, last_visit_time INTEGER)')
+    connection.execute('CREATE TABLE visits (id INTEGER PRIMARY KEY, url INTEGER, visit_time INTEGER)')
+    connection.execute('CREATE TABLE downloads (id INTEGER PRIMARY KEY, start_time INTEGER)')
+    connection.execute("INSERT INTO urls VALUES (1, 'https://example.test', ?)", (visits[0],))
+    connection.executemany('INSERT INTO visits VALUES (NULL, 1, ?)', [(value,) for value in visits])
+    connection.execute('INSERT INTO downloads VALUES (NULL, ?)', (visits[-1],))
+  (folder / 'Bookmarks').write_text(json.dumps({'roots': {'bar': {'type': 'folder', 'children': [
+    {'type': 'url', 'date_added': str(visits[0])},
+    {'type': 'folder', 'children': [{'type': 'url', 'date_added': str(visits[-1])}]},
+  ]}}}), encoding='utf-8')
+  return database
+
+
+def test_browser_handler_reads_a_chromium_profile_from_its_folder(tmp_path: Path) -> None:
+  moment = datetime(2026, 8, 1, 12, tzinfo=timezone.utc)
+  microseconds = int((moment - datetime(1601, 1, 1, tzinfo=timezone.utc)).total_seconds() * 1_000_000)
+  folder = tmp_path / 'Google' / 'Chrome' / 'User Data' / 'Default'
+  _chromium_profile(folder, (microseconds, microseconds + 86_400_000_000))
+
+  handler = BrowserHandler()
+  assert handler.identify_sync(folder)                       # the profile folder answers for the database in it
+  assert handler.identify_sync(folder / 'History')
+  assert not handler.identify_sync(folder / 'Bookmarks')
+
+  stats, profile = handler.call_sync(folder)
+  assert (profile.family, profile.browser, profile.profile) == ('chromium', 'chrome', 'Default')
+  assert (profile.history, profile.urls, profile.favorites, profile.downloads) == (2, 1, 2, 1)
+  assert stats.span == (moment, moment + timedelta(days=1))
+  assert profile.metadata['history'] == 2 and 'url' not in profile.metadata
+
+
+def test_browser_handler_reads_a_firefox_profile_and_leaves_the_original_alone(tmp_path: Path) -> None:
+  moment = datetime(2026, 7, 3, 9, tzinfo=timezone.utc)
+  microseconds = int(moment.timestamp() * 1_000_000)
+  folder = tmp_path / 'Mozilla' / 'Firefox' / 'Profiles' / 'abc.default'
+  folder.mkdir(parents=True)
+  database = folder / 'places.sqlite'
+  with sqlite3.connect(database) as connection:
+    connection.execute('CREATE TABLE moz_places (id INTEGER PRIMARY KEY, url TEXT)')
+    connection.execute('CREATE TABLE moz_historyvisits (id INTEGER PRIMARY KEY, visit_date INTEGER)')
+    connection.execute('CREATE TABLE moz_bookmarks (id INTEGER PRIMARY KEY, type INTEGER, dateAdded INTEGER)')
+    connection.execute("INSERT INTO moz_places VALUES (1, 'https://example.test')")
+    connection.execute('INSERT INTO moz_historyvisits VALUES (NULL, ?)', (microseconds,))
+    connection.execute('INSERT INTO moz_bookmarks VALUES (NULL, 1, ?)', (microseconds,))
+  before = database.read_bytes()
+
+  stats, profile = BrowserHandler().call_sync(folder)
+
+  assert (profile.family, profile.browser, profile.profile) == ('firefox', 'firefox', 'abc.default')
+  assert (profile.history, profile.urls, profile.favorites, profile.downloads) == (1, 1, 1, 0)
+  assert stats.span == (moment, moment)
+  assert database.read_bytes() == before                     # the profile is read through a copy, never in place
+
+
+def test_browser_handler_leaves_anything_that_is_not_a_profile_unrecognized(tmp_path: Path) -> None:
+  (tmp_path / 'History').write_text('not a database', encoding='utf-8')
+  (tmp_path / 'notes').mkdir()
+
+  handler = BrowserHandler()
+  assert not handler.identify_sync(tmp_path / 'History')
+  assert not handler.identify_sync(tmp_path / 'notes')
+  with pytest.raises(ValueError, match='not a browser profile'):
+    handler.call_sync(tmp_path / 'notes')
