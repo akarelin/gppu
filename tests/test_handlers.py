@@ -1640,13 +1640,15 @@ def _chromium_profile(folder: Path, visits: tuple[int, ...]) -> Path:
   """A Chromium profile: the History database its browser writes, and a Bookmarks file beside it."""
   folder.mkdir(parents=True, exist_ok=True)
   database = folder / 'History'
-  with sqlite3.connect(database) as connection:
+  connection = sqlite3.connect(database)
+  with connection:
     connection.execute('CREATE TABLE urls (id INTEGER PRIMARY KEY, url TEXT, last_visit_time INTEGER)')
     connection.execute('CREATE TABLE visits (id INTEGER PRIMARY KEY, url INTEGER, visit_time INTEGER)')
     connection.execute('CREATE TABLE downloads (id INTEGER PRIMARY KEY, start_time INTEGER)')
     connection.execute("INSERT INTO urls VALUES (1, 'https://example.test', ?)", (visits[0],))
     connection.executemany('INSERT INTO visits VALUES (NULL, 1, ?)', [(value,) for value in visits])
     connection.execute('INSERT INTO downloads VALUES (NULL, ?)', (visits[-1],))
+  connection.close()   # sqlite3's context manager commits; it does not close, and Windows will not remove an open file
   (folder / 'Bookmarks').write_text(json.dumps({'roots': {'bar': {'type': 'folder', 'children': [
     {'type': 'url', 'date_added': str(visits[0])},
     {'type': 'folder', 'children': [{'type': 'url', 'date_added': str(visits[-1])}]},
@@ -1678,13 +1680,15 @@ def test_browser_handler_reads_a_firefox_profile_and_leaves_the_original_alone(t
   folder = tmp_path / 'Mozilla' / 'Firefox' / 'Profiles' / 'abc.default'
   folder.mkdir(parents=True)
   database = folder / 'places.sqlite'
-  with sqlite3.connect(database) as connection:
+  connection = sqlite3.connect(database)
+  with connection:
     connection.execute('CREATE TABLE moz_places (id INTEGER PRIMARY KEY, url TEXT)')
     connection.execute('CREATE TABLE moz_historyvisits (id INTEGER PRIMARY KEY, visit_date INTEGER)')
     connection.execute('CREATE TABLE moz_bookmarks (id INTEGER PRIMARY KEY, type INTEGER, dateAdded INTEGER)')
     connection.execute("INSERT INTO moz_places VALUES (1, 'https://example.test')")
     connection.execute('INSERT INTO moz_historyvisits VALUES (NULL, ?)', (microseconds,))
     connection.execute('INSERT INTO moz_bookmarks VALUES (NULL, 1, ?)', (microseconds,))
+  connection.close()
   before = database.read_bytes()
 
   stats, profile = BrowserHandler().call_sync(folder)
