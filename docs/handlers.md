@@ -620,6 +620,56 @@ Return file statistics and metadata without parsing the message.
 
 Return `NotImplemented`; email payload parsing is not implemented.
 
+## `BrowserProfile(path: 'Path', family: 'str', browser: 'str', profile: 'str', history: 'int', urls: 'int', favorites: 'int', downloads: 'int', span: 'Span | None') -> None`
+
+One browser profile's history, bookmarks, and downloads, as counts and a span.
+
+`family` is `chromium` or `firefox`. `browser` is the product read
+from the profile's own path, and `profile` is the folder holding the
+database. No URL, page title, or visited page is read or retained.
+
+### `BrowserProfile.metadata`
+
+Return the browser, the profile, and what each table holds.
+
+## `BrowserHandler(metadata: 'Mapping[str, Any] | None' = None, *, strict: 'bool' = False) -> 'None'`
+
+Identify a browser profile and count its history, bookmarks, and downloads.
+
+Supported input is a Chromium `History` database, a Firefox
+`places.sqlite`, or a directory holding either. Both must start with the
+SQLite file header and carry that engine's tables: `urls` or `visits`
+for Chromium, `moz_places` for Firefox. A directory is the profile, so
+identifying one answers for the database inside it.
+
+The database is copied with its `-wal` and `-shm` companions and opened
+read-only from the copy, so a running browser is neither locked nor read
+mid-write. Only counts and the earliest and latest times are read: visits,
+URLs, bookmarks, and downloads. No URL, page title, or search term is read
+or retained, and a Chromium profile's `Bookmarks` JSON contributes its
+bookmark count and `date_added` times only.
+
+Chromium times are microseconds from 1601-01-01 UTC and Firefox times are
+microseconds from the Unix epoch. Placeholder and future values do not
+contribute, so a profile with no usable time has no span. A file or folder
+that is not a browser profile is unrecognized rather than an error.
+
+### `BrowserHandler.identify(self, path: 'Path') -> 'bool'`
+
+Recognize a browser profile synchronously or asynchronously.
+
+### `BrowserHandler.identify_sync(self, path: 'Path') -> 'bool'`
+
+Return whether `path` is a profile database or a folder with one.
+
+### `BrowserHandler.__call__(self, path: 'Path') -> 'tuple[FileStats | None, BrowserProfile | HandlerError]'`
+
+Read a browser profile synchronously or asynchronously.
+
+### `BrowserHandler.call_sync(self, path: 'Path') -> 'tuple[FileStats, BrowserProfile]'`
+
+Return profile statistics and the counts read from its database.
+
 ## `ImageHandler(metadata: 'Mapping[str, Any] | None' = None, *, strict: 'bool' = False) -> 'None'`
 
 Placeholder for image EXIF metadata after media-format recognition.
