@@ -43,6 +43,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import fnmatch
+import hashlib
 import json
 import os
 import re
@@ -51,11 +52,12 @@ import stat as stat_module
 import subprocess
 import tarfile
 import zipfile
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Collection, Iterator, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
+from typing import Any, BinaryIO, Literal, Protocol, TypeVar, runtime_checkable
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -1906,6 +1908,20 @@ class GitHandler(Handler):
         return metadata if metadata.is_dir() else None
 
 
+@dataclass(frozen=True)
+class ArchiveContents:
+    """One extraction pass over an archive, member by member.
+
+    ``files`` is where each wanted member was written, ``digests`` the MD5 of
+    every member the pass read, and ``errors`` one failure for each member that
+    could not be read.
+    """
+
+    files: dict[PurePosixPath, Path]
+    digests: dict[PurePosixPath, str]
+    errors: tuple[HandlerError, ...] = ()
+
+
 class ArchiveHandler(Handler):
     """Identify and load ZIP, RAR, and TAR.GZ member hierarchies.
 
@@ -1929,6 +1945,7 @@ class ArchiveHandler(Handler):
     name = "archive"
     extensions = (".rar", ".tar.gz", ".zip")
     rar_signatures = (b"Rar!\x1a\x07\x00", b"Rar!\x1a\x07\x01\x00")
+    rar_timeout = 1800   # one RAR gets half an hour of the command; a longer one is an error, not a partial extraction
 
     @sync
     async def identify(self, path: Path) -> bool:
@@ -1981,6 +1998,192 @@ class ArchiveHandler(Handler):
         else:
             raise ValueError(f"{path}: unsupported archive")
         return _archive_stats(records), records
+
+    @sync
+    async def extract(
+        self,
+        path: Path,
+        destination: Path,
+        members: Collection[PurePosixPath] | None = None,
+    ) -> ArchiveContents | HandlerError:
+        """Write archive members to a directory in either call mode."""
+
+        return await asyncio.to_thread(
+            self._safe_operation,
+            path,
+            "extract",
+            self.extract_sync,
+            path,
+            destination,
+            members,
+        )
+
+    def extract_sync(
+        self,
+        path: Path,
+        destination: Path,
+        members: Collection[PurePosixPath] | None = None,
+    ) -> ArchiveContents:
+        """Write ``members`` under ``destination`` and digest what was read.
+
+        ``members`` is every file member by default. Every member is read,
+        because the MD5 that read gives identifies content that is copied
+        between archives, and because a RAR is stored solid: asking for one
+        member decompresses everything before it, so the archive is extracted
+        in one command instead of once per member. A ZIP and a TAR.GZ are read
+        member by member and only the wanted ones are written. Folder members
+        are never written. A member that cannot be read becomes an entry in
+        :attr:`ArchiveContents.errors` and does not end the pass.
+
+        Written names are flat and unique, so one destination holds members
+        from any depth without creating the archive's folders.
+        """
+
+        path = full_path(path)
+        destination.mkdir(parents=True, exist_ok=True)
+        contents = ArchiveContents(files={}, digests={}, errors=())
+        errors: list[HandlerError] = []
+        wanted = None if members is None else set(members)
+        if zipfile.is_zipfile(path):
+            self._zip_extract(path, destination, wanted, contents, errors)
+        elif self._is_rar(path):
+            self._rar_extract(path, destination, wanted, contents, errors)
+        elif self._is_tar_gz(path):
+            self._tar_extract(path, destination, wanted, contents, errors)
+        else:
+            raise ValueError(f"{path}: unsupported archive")
+        return replace(contents, errors=tuple(errors))
+
+    def _read_member(
+        self,
+        member: PurePosixPath,
+        source: BinaryIO,
+        copy: Path | None,
+        contents: ArchiveContents,
+        errors: list[HandlerError],
+    ) -> None:
+        """Read one member once: its MD5, and a copy of it when one is wanted."""
+
+        digest = hashlib.md5()
+        try:
+            with source, (open(copy, "wb") if copy else nullcontext()) as out:
+                for chunk in iter(lambda: source.read(1 << 20), b""):
+                    digest.update(chunk)
+                    if out is not None:
+                        out.write(chunk)
+        except Exception as error:
+            errors.append(self._error(member, "extract", error))
+            return
+        contents.digests[member] = digest.hexdigest()
+        if copy is not None:
+            contents.files[member] = copy
+
+    @staticmethod
+    def _copy_path(
+        destination: Path,
+        index: int,
+        member: PurePosixPath,
+        wanted: set[PurePosixPath] | None,
+    ) -> Path | None:
+        """Return the flat unique name a wanted member is written under."""
+
+        if wanted is not None and member not in wanted:
+            return None
+        return destination / f"{index}_{member.name}"
+
+    def _zip_extract(
+        self,
+        path: Path,
+        destination: Path,
+        wanted: set[PurePosixPath] | None,
+        contents: ArchiveContents,
+        errors: list[HandlerError],
+    ) -> None:
+        """Read a ZIP member by member, writing the wanted ones."""
+
+        try:
+            archive = zipfile.ZipFile(path)
+        except (OSError, zipfile.BadZipFile) as error:
+            raise ValueError(f"{path}: cannot read ZIP: {error}") from error
+        with archive:
+            for index, info in enumerate(archive.infolist()):
+                if info.is_dir():
+                    continue
+                member = _record_path(info.filename)
+                copy = self._copy_path(destination, index, member, wanted)
+                try:
+                    source = archive.open(info)
+                except Exception as error:
+                    errors.append(self._error(member, "extract", error))
+                    continue
+                self._read_member(member, source, copy, contents, errors)
+
+    def _tar_extract(
+        self,
+        path: Path,
+        destination: Path,
+        wanted: set[PurePosixPath] | None,
+        contents: ArchiveContents,
+        errors: list[HandlerError],
+    ) -> None:
+        """Read a TAR.GZ in one sequential pass, writing the wanted members."""
+
+        try:
+            archive = tarfile.open(path, "r:*")
+        except (OSError, tarfile.TarError) as error:
+            raise ValueError(f"{path}: cannot read TAR.GZ: {error}") from error
+        with archive:
+            for index, info in enumerate(archive):
+                if not info.isfile():
+                    continue
+                member = _record_path(info.name)
+                copy = self._copy_path(destination, index, member, wanted)
+                source = archive.extractfile(info)
+                if source is None:
+                    continue
+                self._read_member(member, source, copy, contents, errors)
+
+    def _rar_extract(
+        self,
+        path: Path,
+        destination: Path,
+        wanted: set[PurePosixPath] | None,
+        contents: ArchiveContents,
+        errors: list[HandlerError],
+    ) -> None:
+        """Extract a solid RAR in one command, then read what it wrote."""
+
+        executable = self.rar_executable()
+        try:
+            subprocess.run(
+                [
+                    str(executable),
+                    "x",
+                    "-y",
+                    "-inul",
+                    "-p-",
+                    str(path),
+                    str(destination) + os.sep,
+                ],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                check=True,
+                timeout=self.rar_timeout,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise ValueError(f"{path}: cannot extract RAR: {error}") from error
+        for written in sorted(destination.rglob("*")):
+            if not written.is_file():
+                continue
+            member = PurePosixPath(written.relative_to(destination).as_posix())
+            try:
+                source = written.open("rb")
+            except OSError as error:
+                errors.append(self._error(member, "extract", error))
+                continue
+            self._read_member(member, source, None, contents, errors)
+            if wanted is None or member in wanted:
+                contents.files[member] = written
 
     @classmethod
     def _is_rar(cls, path: Path) -> bool:
