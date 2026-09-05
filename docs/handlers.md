@@ -322,6 +322,14 @@ Load local-history statistics and local Git remote configuration.
 
 Discard all Git maps or the map containing `path`.
 
+## `ArchiveContents(files: 'dict[PurePosixPath, Path]', digests: 'dict[PurePosixPath, str]', errors: 'tuple[HandlerError, ...]' = ()) -> None`
+
+One extraction pass over an archive, member by member.
+
+`files` is where each wanted member was written, `digests` the MD5 of
+every member the pass read, and `errors` one failure for each member that
+could not be read.
+
 ## `ArchiveHandler(metadata: 'Mapping[str, Any] | None' = None, *, strict: 'bool' = False) -> 'None'`
 
 Identify and load ZIP, RAR, and TAR.GZ member hierarchies.
@@ -357,6 +365,26 @@ Load archive statistics and member records in either call mode.
 ### `ArchiveHandler.call_sync(self, path: 'Path') -> 'tuple[FileStats, tuple[Record, ...]]'`
 
 Load archive statistics and member records without another event loop.
+
+### `ArchiveHandler.extract(self, path: 'Path', destination: 'Path', members: 'Collection[PurePosixPath] | None' = None) -> 'ArchiveContents | HandlerError'`
+
+Write archive members to a directory in either call mode.
+
+### `ArchiveHandler.extract_sync(self, path: 'Path', destination: 'Path', members: 'Collection[PurePosixPath] | None' = None) -> 'ArchiveContents'`
+
+Write `members` under `destination` and digest what was read.
+
+`members` is every file member by default. Every member is read,
+because the MD5 that read gives identifies content that is copied
+between archives, and because a RAR is stored solid: asking for one
+member decompresses everything before it, so the archive is extracted
+in one command instead of once per member. A ZIP and a TAR.GZ are read
+member by member and only the wanted ones are written. Folder members
+are never written. A member that cannot be read becomes an entry in
+:attr:`ArchiveContents.errors` and does not end the pass.
+
+Written names are flat and unique, so one destination holds members
+from any depth without creating the archive's folders.
 
 ### `ArchiveHandler.rar_executable() -> 'Path'`
 

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import shutil
 import subprocess
+import tarfile
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
@@ -1584,3 +1586,49 @@ def test_an_agy_transcript_and_its_session_folder_are_identified(tmp_path: Path)
   assert isinstance(folder, SessionFolder)
   assert (folder.harness, folder.uid) == ('agy', uid)
   assert folder_stats.sessions == 1
+
+
+def test_archive_extraction_writes_wanted_members_and_digests_every_one(tmp_path: Path) -> None:
+  path = tmp_path / 'bundle.zip'
+  with zipfile.ZipFile(path, 'w') as archive:
+    archive.writestr('logs/first.jsonl', 'one')
+    archive.writestr('logs/second.txt', 'two')
+  destination = tmp_path / 'out'
+
+  contents = archive_handler.extract_sync(path, destination, [PurePosixPath('logs/first.jsonl')])
+
+  assert set(contents.files) == {PurePosixPath('logs/first.jsonl')}
+  assert contents.files[PurePosixPath('logs/first.jsonl')].read_text(encoding='utf-8') == 'one'
+  assert set(contents.digests) == {PurePosixPath('logs/first.jsonl'), PurePosixPath('logs/second.txt')}
+  assert contents.digests[PurePosixPath('logs/second.txt')] == hashlib.md5(b'two').hexdigest()
+  assert contents.errors == ()
+
+
+def test_archive_extraction_takes_every_file_member_by_default(tmp_path: Path) -> None:
+  path = tmp_path / 'bundle.tar.gz'
+  source = tmp_path / 'src'
+  (source / 'inner').mkdir(parents=True)
+  (source / 'inner' / 'note.md').write_text('body', encoding='utf-8')
+  with tarfile.open(path, 'w:gz') as archive:
+    archive.add(source / 'inner', arcname='inner')
+  destination = tmp_path / 'out'
+
+  contents = archive_handler.extract_sync(path, destination)
+
+  assert set(contents.files) == {PurePosixPath('inner/note.md')}
+  assert contents.digests[PurePosixPath('inner/note.md')] == hashlib.md5(b'body').hexdigest()
+
+
+def test_archive_extraction_of_an_unreadable_member_is_an_error_not_the_end(tmp_path: Path) -> None:
+  path = tmp_path / 'bundle.zip'
+  with zipfile.ZipFile(path, 'w') as archive:
+    archive.writestr('broken.txt', 'one')
+    archive.writestr('good.txt', 'two')
+  data = bytearray(path.read_bytes())
+  data[data.index(b'one')] = data[data.index(b'one')] ^ 0xFF   # the stored bytes no longer match their CRC
+  path.write_bytes(bytes(data))
+
+  contents = archive_handler.extract_sync(path, tmp_path / 'out')
+
+  assert [error.path for error in contents.errors] == [PurePosixPath('broken.txt')]
+  assert set(contents.files) == {PurePosixPath('good.txt')}
