@@ -473,6 +473,10 @@ Return statistics and a Markdown object with all frontmatter keys.
 
 A complete comma-separated table and timestamps found in time columns.
 
+### `CSVFile.metadata`
+
+Expose column names and row count without copying table contents.
+
 ### `CSVFile.span`
 
 Return the earliest-to-latest valid timestamp cell.
@@ -527,6 +531,10 @@ Return file statistics and the complete parsed CSV table.
 ## `LogFile(path: 'Path', rows: 'tuple[str, ...]', timestamps: 'tuple[datetime, ...]') -> None`
 
 A complete text log and the absolute timestamps found at row starts.
+
+### `LogFile.metadata`
+
+Expose the row count without copying log contents.
 
 ### `LogFile.span`
 
@@ -692,6 +700,10 @@ conversation JSON file as `location`. `records` retains the original
 source objects while `turns` contains normalized user and assistant
 messages.
 
+### `SessionFile.metadata`
+
+Expose session identity and descriptive metadata without transcript text.
+
 ### `SessionFile.span_start`
 
 Return the first valid session timestamp.
@@ -723,6 +735,10 @@ Return a length-limited normalized filename retaining id and suffix.
 ## `SessionFolder(path: 'Path', harness: 'Harness', files: 'tuple[SessionFile, ...]') -> None`
 
 Sessions read from one directory or one LLM export ZIP.
+
+### `SessionFolder.metadata`
+
+Expose collection identity and each session's metadata.
 
 ### `SessionFolder.uid`
 
