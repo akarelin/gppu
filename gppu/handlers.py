@@ -62,6 +62,7 @@ from contextlib import closing, contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path, PurePosixPath
+from types import SimpleNamespace
 from typing import Any, BinaryIO, Literal, Protocol, TypeVar, runtime_checkable
 from zoneinfo import ZoneInfo
 from threading import RLock
@@ -4946,7 +4947,56 @@ class GppuFileSystem(AbstractFileSystem):
         if field in metadata['git']:
           metadata['git'][field] = convert(metadata['git'][field])
 
+  @staticmethod
+  def _record_from_metadata(metadata: dict) -> Record:
+    """Rehydrate statistics for the existing folder aggregation functions."""
+    value = metadata['gppu']
+    probes = []
+    for handler, stored in value['stats'].items():
+      stats = dict(stored)
+      if 'span' in stats and stats['span'] is not None:
+        stats['span'] = tuple(datetime.fromisoformat(bound) for bound in stats['span'])
+      for field in ('span_start', 'span_end'):
+        if field in stats and stats[field] is not None:
+          stats[field] = datetime.fromisoformat(stats[field])
+      probes.append(Probe(handler, SimpleNamespace(**stats), None))
+    return Record(PurePosixPath(value['path'].split('::', 1)[0]), value['type'] == 'folder',
+      value['size'], datetime.fromisoformat(value['modified_at']) if value['modified_at'] else None,
+      tuple(value['handlers']), probes=tuple(probes),
+      stats=FileStats(value['files'], value['folders'], value['bytes'],
+        tuple(datetime.fromisoformat(bound) for bound in value['span']) if value['span'] else None))
+
   def _save(self, rows: dict[str, tuple[dict, list[str] | None]], scope: str) -> None:
+    def metadata_for(key):
+      if key in rows:
+        return rows[key][0]
+      cached = self._cached(key)
+      if cached is None:
+        raise FileNotFoundError(self._uri(key))
+      return cached[0]
+
+    # Keep ancestor totals consistent with the refreshed subtree and cached siblings.
+    # Archive members do not change their physical archive's byte count.
+    if '::' not in scope:
+      child = scope
+      for parent in PurePosixPath(scope).parents:
+        key = parent.as_posix()
+        cached = self._cached(key)
+        if cached is None or cached[1] is None:
+          break
+        metadata, members = cached
+        children = list(dict.fromkeys([*(item['path'] for item in members), child]))
+        children.sort(key=lambda item: (metadata_for(item)['type'] != 'directory', item.casefold()))
+        stats = FileHandler._folder_stats(self._record_from_metadata(metadata),
+          [self._record_from_metadata(metadata_for(item)) for item in children])
+        metadata['gppu'].update(json.loads(json.dumps(vars(stats), default=str)))
+        del metadata['gppu']['name'], metadata['gppu']['parent']
+        self._metadata_paths(metadata['gppu'], lambda item:
+          self._key(item) if item.rsplit('::', 1)[-1] == self.location or
+          item.rsplit('::', 1)[-1].startswith(self.location.rstrip('/') + '/') else item)
+        rows[key] = metadata, children
+        child = key
+
     grouped: dict[str, list[tuple]] = {}
     for key, (metadata, children) in rows.items():
       owner = self._owner(key)
@@ -4959,7 +5009,7 @@ class GppuFileSystem(AbstractFileSystem):
         item if '://' in item.rsplit('::', 1)[-1] else self._relative(item, owner))
       grouped[owner].append((self._relative(key, owner), json.dumps(value, default=str),
         None if children is None else json.dumps([
-          {'path': self._relative(child, owner), 'type': rows[child][0]['type'], 'ino': rows[child][0].get('ino')}
+          {'path': self._relative(child, owner), 'type': (item := metadata_for(child))['type'], 'ino': item.get('ino')}
           for child in children])))
     # Publish descendant databases before the listing which references them.
     for owner in sorted(grouped, key=lambda item: len(PurePosixPath(item).parts), reverse=True):
@@ -5063,6 +5113,7 @@ class GppuFileSystem(AbstractFileSystem):
       fs.invalidate_cache()
       native = self._inventory(fs, source)
       if isinstance(fs, LocalFileSystem):
+        self._handlers.invalidate_sync(Path(source))
         self._parse(key, Path(source), native, source, self._handlers)
       else:
         with tempfile.TemporaryDirectory(prefix='gppufs-') as scratch:

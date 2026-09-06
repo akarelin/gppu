@@ -45,6 +45,9 @@ def test_tui_navigation_metadata_refresh_and_errors(tmp_path, monkeypatch):
       await pilot.press('backspace')
       await settled(app, pilot)
       assert app.current['name'] == fs.info()['name']
+      assert app.current['gppu']['files'] == 3
+      assert app.current['gppu']['bytes'] == sum(
+        path.stat().st_size for path in (child / 'note.md', child / 'added.txt', tmp_path / 'bundle.zip'))
       archive_row = next(i for i, value in enumerate(app.rows.values()) if value['gppu']['name'] == 'bundle.zip')
       table.move_cursor(row=archive_row)
       await pilot.press('enter')
