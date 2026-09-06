@@ -5,17 +5,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 
-from gppu import Error, format_size
+from gppu import Env, Error, format_size
 from gppu.handlers import GppuFileSystem
 from gppu.tui import TUIApp
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widgets import DataTable, Footer, Static, TextArea
-
-from examples.handler_ls import filesystem
-
 
 class HandlerBrowser(TUIApp):
   TITLE = 'gppufs · handler metadata'
@@ -57,7 +55,7 @@ class HandlerBrowser(TUIApp):
       table.clear()
       for row in rows:
         meta = row['gppu']
-        span = ' – '.join(meta['span']) if meta['span'] else ''
+        span = ' – '.join(moment[:10] for moment in meta['span']) if meta['span'] else ''
         table.add_row(meta['name'], row['type'], ', '.join(meta['handlers']),
           str(meta['files']), str(meta['folders']), format_size(meta['bytes']), span, key=row['name'])
       self.show_metadata(current)
@@ -67,7 +65,7 @@ class HandlerBrowser(TUIApp):
       status.update(f'Error: {error}')
 
   def show_metadata(self, metadata: dict) -> None:
-    self.query_one(TextArea).load_text(json.dumps(metadata, indent=2, ensure_ascii=False))
+    self.query_one(TextArea).load_text(json.dumps({'gppu': metadata['gppu'], **metadata}, indent=2, ensure_ascii=False))
 
   @work(exclusive=True, group='info')
   async def show_info(self, path: str) -> None:
@@ -94,7 +92,8 @@ class HandlerBrowser(TUIApp):
 
 
 def main() -> None:
-  HandlerBrowser(filesystem()).run()
+  Env.from_env(name='handlers', app_path=Path(__file__).parent)
+  HandlerBrowser(GppuFileSystem(location=Env.glob('location'))).run()
 
 
 if __name__ == '__main__':

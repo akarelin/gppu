@@ -2,8 +2,7 @@ r"""Typed, caller-composed handlers for large file hierarchies.
 
 A domain handler receives one :class:`pathlib.Path` and returns ``(stats,
 typed_object)``. Statistics are derived from the complete typed object. Users
-select behavior with normal multiple inheritance; this module constructs no
-handler objects::
+select behavior with normal multiple inheritance::
 
     class MyFiles(
         FileHandler,
@@ -16,6 +15,9 @@ handler objects::
         pass
 
     files = MyFiles(metadata={"source": "local"})
+
+``GppuFileSystem(location)`` composes the implemented parsers behind fsspec
+``ls`` and ``info``, with SQLite metadata indexes beside the source folders.
 
 Every handler copies the optional metadata mapping supplied by its caller.
 ``Probe.metadata`` combines that mapping with metadata detected by the typed
@@ -65,6 +67,8 @@ from zoneinfo import ZoneInfo
 from threading import RLock
 
 import yaml
+from fsspec import open as open_uri, register_implementation
+from fsspec.archive import AbstractArchiveFileSystem
 from fsspec.core import url_to_fs
 from fsspec.implementations.local import LocalFileSystem
 from fsspec.spec import AbstractFileSystem
@@ -4707,6 +4711,46 @@ class _MetadataHandlers(
     """The implemented metadata parsers used by the filesystem interface."""
 
 
+class _RarFileSystem(AbstractArchiveFileSystem):
+  """Expose the existing RAR handler through fsspec's archive interface."""
+
+  protocol = 'gppu-rar'
+  cachable = False
+
+  def __init__(self, fo: str, target_protocol=None, target_options=None, **kwargs):
+    super().__init__(**kwargs)
+    self._scratch = tempfile.TemporaryDirectory(prefix='gppufs-rar-')
+    self._archive = Path(self._scratch.name) / 'archive.rar'
+    options = {} if target_options is None else target_options
+    with open_uri(fo, protocol=target_protocol, **options) as source, self._archive.open('wb') as target:
+      shutil.copyfileobj(source, target)
+    self._handler = ArchiveHandler(strict=True)
+    _, records = self._handler.call_sync(self._archive)
+    self.dir_cache = {record.path.as_posix(): {
+      'name': record.path.as_posix(), 'type': 'directory' if record.is_folder else 'file',
+      'size': record.size, 'mtime': record.modified_at,
+    } for record in records}
+    self._contents = None
+
+  def _get_dirs(self):
+    return self.dir_cache
+
+  def _open(self, path, mode='rb', **kwargs):
+    if mode != 'rb':
+      raise NotImplementedError('RAR listings are read-only')
+    if self._contents is None:
+      self._contents = self._handler.extract_sync(self._archive, Path(self._scratch.name) / 'members')
+      if self._contents.errors:
+        raise OSError('; '.join(error.message for error in self._contents.errors))
+    return self._contents.files[PurePosixPath(path)].open('rb')
+
+  def close(self):
+    self._scratch.cleanup()
+
+
+register_implementation('gppu-rar', _RarFileSystem)
+
+
 class GppuFileSystem(AbstractFileSystem):
   """fsspec listings enriched by handlers and stored beside their location.
 
@@ -4731,7 +4775,8 @@ class GppuFileSystem(AbstractFileSystem):
       raise ValueError('location is required')
     super().__init__()
     self.fs, self.root = url_to_fs(str(location), **storage_options)
-    self.root = self.root.rstrip('/')
+    if not re.fullmatch(r'[A-Za-z]:/', self.root):
+      self.root = self.root.rstrip('/')
     self.location = self.fs.unstrip_protocol(self.root)
     self._lock = RLock()
     self._handlers = _MetadataHandlers()
@@ -4741,11 +4786,15 @@ class GppuFileSystem(AbstractFileSystem):
     name = folder.rstrip('/').rsplit('/', 1)[-1].rstrip(':')
     if not name:
       raise ValueError('gppufs requires a named location root')
-    return f'{folder}/.{name}.gppufs.sqlite'
+    return f'{folder.rstrip("/")}/.{name}.gppufs.sqlite'
 
   def _existing_index(self, folder: str) -> str | None:
     expected = self._database_path(folder)
     if self.fs.isfile(expected):
+      if isinstance(self.fs, LocalFileSystem) and os.name == 'nt':
+        actual_name = Path(expected).resolve(strict=True).name
+        if actual_name != PurePosixPath(expected).name:
+          self.fs.mv(str(PurePosixPath(folder) / actual_name), expected)
       return expected
     if not self.fs.isdir(folder):
       return None
@@ -4757,11 +4806,12 @@ class GppuFileSystem(AbstractFileSystem):
     identity = self.fs.info(folder).get('ino')
     matches = []
     for path in candidates:
-      with closing(sqlite3.connect(path if isinstance(self.fs, LocalFileSystem) else ':memory:')) as database:
+      local = isinstance(self.fs, LocalFileSystem)
+      with closing(sqlite3.connect(Path(path).as_uri() + '?mode=ro' if local else ':memory:', uri=local)) as database:
         if not isinstance(self.fs, LocalFileSystem):
           database.deserialize(self.fs.cat_file(path))
-        row = database.execute("SELECT metadata FROM gppufs_entries WHERE path='.'").fetchone()
-      if row is not None and (identity is None or json.loads(row[0]).get('ino') == identity):
+        row = database.execute('SELECT ino FROM gppufs_index').fetchone()
+      if row is not None and (identity is None or row[0] == identity):
         matches.append(path)
     if len(matches) != 1:
       raise ValueError(f'{folder}: cannot identify a unique index after rename')
@@ -4779,9 +4829,10 @@ class GppuFileSystem(AbstractFileSystem):
       value = self.fs._strip_protocol(value)
     if value == self.root or value.rstrip('/') == self.root:
       return '.'
-    if value.startswith(self.root + '/'):
-      return value[len(self.root) + 1:].rstrip('/')
-    if value.startswith('/') or re.match(r'^[A-Za-z]:', value):
+    prefix = self.root.rstrip('/') + '/'
+    if value.startswith(prefix):
+      value = value[len(prefix):].rstrip('/')
+    elif value.startswith('/') or re.match(r'^[A-Za-z]:', value):
       raise ValueError(f'{path}: outside location {self.location}')
     parts = PurePosixPath(value).parts
     if '..' in parts:
@@ -4789,7 +4840,7 @@ class GppuFileSystem(AbstractFileSystem):
     return PurePosixPath(value).as_posix()
 
   def _path(self, key: str) -> str:
-    return self.root if key == '.' else self.root + '/' + key
+    return self.root if key == '.' else posixpath.join(self.root, key)
 
   def _uri(self, key: str) -> str:
     if '::' in key:
@@ -4845,6 +4896,9 @@ class GppuFileSystem(AbstractFileSystem):
         database.deserialize(self.fs.cat_file(path))
       with database:
         if write:
+          if not exists:
+            database.execute('CREATE TABLE gppufs_index (ino INTEGER)')
+            database.execute('INSERT INTO gppufs_index VALUES (?)', (self.fs.info(self._path(owner)).get('ino'),))
           database.execute('CREATE TABLE IF NOT EXISTS gppufs_entries ('
             'path TEXT PRIMARY KEY, metadata TEXT NOT NULL, children TEXT)')
         yield database
@@ -4852,7 +4906,7 @@ class GppuFileSystem(AbstractFileSystem):
         with self.fs.transaction:
           self.fs.pipe_file(path, database.serialize())
 
-  def _cached(self, key: str) -> tuple[dict, list[str] | None] | None:
+  def _cached(self, key: str) -> tuple[dict, list[dict] | None] | None:
     owner = self._owner(key)
     with self._database(owner) as database:
       if database is None:
@@ -4878,7 +4932,7 @@ class GppuFileSystem(AbstractFileSystem):
   @staticmethod
   def _metadata_paths(metadata: dict, convert: Callable) -> None:
     """Rebase handler-owned paths without changing user frontmatter or text."""
-    for name in ('session', 'chatgpt', 'anthropic', 'claude'):
+    for name in ('session', 'chatgpt', 'claude'):
       if name not in metadata:
         continue
       section = metadata[name]
@@ -4930,15 +4984,16 @@ class GppuFileSystem(AbstractFileSystem):
   def _folder_renames(self, key: str, children: list[dict]) -> bool:
     if '::' in key:
       return False
-    missing = [child for child in children if child['type'] == 'directory'
-      and child['ino'] is not None and not self.fs.isdir(self._path(child['path']))]
-    if not missing:
+    folders = [child for child in children if child['type'] == 'directory' and child['ino'] is not None]
+    if not folders:
       return False
     live = [self.fs.info(row['name']) for row in self.fs.ls(self._path(key), detail=True)
       if row['type'] == 'directory']
     changed = False
     owner = self._owner(key)
-    for child in missing:
+    for child in folders:
+      if any(self._key(row['name']) == child['path'] for row in live):
+        continue
       matches = [row for row in live if row['type'] == 'directory' and row.get('ino') == child['ino']]
       if len(matches) != 1:
         continue
@@ -4956,6 +5011,8 @@ class GppuFileSystem(AbstractFileSystem):
               value['path'] = self._relative(renamed_child, owner)
             members = json.dumps(values)
           value = json.loads(metadata)
+          value['name'] = renamed
+          value['gppu']['path'] = renamed
           self._metadata_paths(value['gppu'], lambda item:
             item if '://' in item.rsplit('::', 1)[-1] else
             self._relative(self._renamed_key(self._absolute(item, owner), old, new), owner))
@@ -4979,7 +5036,9 @@ class GppuFileSystem(AbstractFileSystem):
     return None
 
   def _inventory(self, fs: AbstractFileSystem, root: str) -> dict[str, dict]:
-    native = {root: fs.info(root)}
+    # fsspec's archive info omits an empty archive root; it is still listable.
+    native = {root: {'name': root, 'type': 'directory', 'size': 0}
+      if isinstance(fs, AbstractArchiveFileSystem) and root in ('', '/') else fs.info(root)}
     if native[root]['type'] != 'directory' or native[root].get('islink'):
       return native
     if IgnoredHandler.member_reason(PurePosixPath(root), True):
@@ -5001,6 +5060,7 @@ class GppuFileSystem(AbstractFileSystem):
     else:
       fs, source = self.fs, self._path(key)
     try:
+      fs.invalidate_cache()
       native = self._inventory(fs, source)
       if isinstance(fs, LocalFileSystem):
         self._parse(key, Path(source), native, source, self._handlers)
@@ -5078,10 +5138,8 @@ class GppuFileSystem(AbstractFileSystem):
       stats = FileHandler._folder_stats(record, [records[child] for child in children[path]]) if record.is_folder else FileHandler._file_stats(record)
       record = records[path] = replace(record, stats=stats)
       extra = record.metadata
-      for probe in record.probes:
-        if probe.stats is not None:
-          values = dict(vars(probe.stats))
-          extra[probe.handler] = {**probe.metadata, 'stats': values}
+      extra['stats'] = {probe.handler: vars(probe.stats)
+        for probe in record.probes if probe.stats is not None}
       extra = json.loads(json.dumps(extra, default=str))
       self._metadata_paths(extra, reference)
       address = addresses[path]
@@ -5106,14 +5164,15 @@ class GppuFileSystem(AbstractFileSystem):
     with self._lock:
       key = self._key(path)
       cached = None if refresh else self._cached(key)
-      if cached is None and not refresh:
+      if cached is None:
         physical = key.rsplit('::', 1)[-1]
         for parent in reversed(PurePosixPath(physical).parents):
           parent_key = parent.as_posix()
           listing = self._cached(parent_key)
           if listing is not None and listing[1] is not None and self.fs.isdir(self._path(parent_key)):
             self._folder_renames(parent_key, listing[1])
-        cached = self._cached(key)
+        if not refresh:
+          cached = self._cached(key)
       if cached is None:
         self._live(key)
         cached = self._cached(key)
