@@ -1,7 +1,100 @@
 """Tests for Logger, init_logger, mixin_Logger."""
 import logging
+import importlib
+import io
+
+import pytest
 from gppu import TRACE_RULES
 from gppu import Logger, init_logger, mixin_Logger
+
+
+@pytest.fixture
+def output(monkeypatch, tmp_path):
+    core = importlib.import_module('gppu.gppu')
+    previous_rules = dict(TRACE_RULES)
+    console = io.StringIO()
+    original = core._sh.setStream(console)
+    init_logger('logging-verification', trace_rules={'all': True})
+    path = core.enable_file_logging('verification', log_dir=tmp_path)
+    yield core, console, path
+    core._sh.setStream(original)
+    for handler in tuple(core._file_handlers.values()):
+        core._log_root.removeHandler(handler)
+        handler.close()
+    core._file_handlers.clear()
+    TRACE_RULES.clear()
+    TRACE_RULES.update(previous_rules)
+
+
+def test_console_and_file_share_content_and_keep_real_caller(output):
+    core, console, path = output
+    core.Info('WBLUE', 'message', 'NONE', 'value')
+    assert 'test_console_and_file_share_content_and_keep_real_caller' in console.getvalue()
+    assert 'StreamHandler.format' not in console.getvalue()
+    assert '\x1b[' in console.getvalue()
+    assert path.read_text().strip() == 'message value'
+
+
+def test_standard_handlers_accept_gppu_multiple_arguments(output):
+    core, _, _ = output
+    text = io.StringIO()
+    handler = logging.StreamHandler(text)
+    core._logger.addHandler(handler)
+    try:
+        core.Info('WBLUE', 'message', 'NONE', 'value')
+        core._logger.info('ordinary %s', 'message')
+    finally:
+        core._logger.removeHandler(handler)
+    assert text.getvalue().splitlines() == ['message value', 'ordinary message']
+
+
+def test_mixin_created_before_init_keeps_both_outputs(output):
+    core, console, path = output
+
+    class Component(mixin_Logger):
+        def publish(self): self.Info('mixin message')
+
+    init_logger('renamed-application')
+    Component().publish()
+    assert console.getvalue().count('mixin message') == 1
+    assert path.read_text().count('mixin message') == 1
+
+
+def test_exception_is_present_in_both_destinations(output):
+    core, console, path = output
+    try:
+        raise ValueError('failure evidence')
+    except ValueError:
+        core.Error('operation failed', exc_info=True)
+    assert 'ValueError: failure evidence' in console.getvalue()
+    assert 'ValueError: failure evidence' in path.read_text()
+
+
+@pytest.mark.parametrize('excluded', [
+    'publish', 'test_logger', 'test_logger.publish', 'Component', 'Component.publish',
+])
+def test_rich_trace_exclusions_are_preserved(output, excluded):
+    core, console, path = output
+
+    class Component:
+        def publish(self): core.Debug('trace message')
+
+    TRACE_RULES.clear()
+    TRACE_RULES.update({'all': True, excluded: False})
+    Component().publish()
+    assert console.getvalue() == ''
+    assert path.read_text() == ''
+    TRACE_RULES[excluded] = True
+    Component().publish()
+    assert 'trace message' in console.getvalue()
+    assert 'trace message' in path.read_text()
+
+
+def test_file_only_messages_do_not_write_to_console(output):
+    core, console, path = output
+    core.file_log('WBLUE', 'panel line')
+    assert console.getvalue() == ''
+    assert path.read_text().strip() == 'panel line'
 
 
 class TestLogger:
