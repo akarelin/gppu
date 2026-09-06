@@ -2583,6 +2583,11 @@ class CSVFile:
     timestamps: tuple[datetime, ...]
 
     @property
+    def metadata(self) -> dict[str, Any]:
+        """Expose column names and row count without copying table contents."""
+        return {"header": self.header, "rows": len(self.rows)}
+
+    @property
     def span(self) -> Span | None:
         """Return the earliest-to-latest valid timestamp cell."""
 
@@ -2719,6 +2724,11 @@ class LogFile:
     path: Path
     rows: tuple[str, ...]
     timestamps: tuple[datetime, ...]
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Expose the row count without copying log contents."""
+        return {"rows": len(self.rows)}
 
     @property
     def span(self) -> Span | None:
@@ -3305,6 +3315,18 @@ class SessionFile:
     location: Path | None = None
 
     @property
+    def metadata(self) -> dict[str, Any]:
+        """Expose session identity and descriptive metadata without transcript text."""
+        return {
+            "path": self.path, "location": self.location,
+            "harness": self.harness, "uid": self.uid, "parent_uid": self.parent_uid,
+            "subagent": self.subagent, "sidechain_only": self.sidechain_only,
+            "source_records": len(self.records), "turns": len(self.turns),
+            "models": self.models, "topic": self.topic, "span": self.span,
+            "name": self.name,
+        }
+
+    @property
     def span_start(self) -> datetime | None:
         """Return the first valid session timestamp."""
 
@@ -3369,6 +3391,14 @@ class SessionFolder:
     path: Path
     harness: Harness
     files: tuple[SessionFile, ...]
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Expose collection identity and each session's metadata."""
+        return {
+            "harness": self.harness, "uid": self.uid,
+            "sessions": tuple(session.metadata for session in self.files),
+        }
 
     @property
     def uid(self) -> str | None:
