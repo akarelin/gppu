@@ -192,7 +192,7 @@ class _TableApp(App):
     def compose(self) -> ComposeResult:
         yield TreeTable(
             self.adapter,
-            columns=(TreeTableColumn('state', 'State', 14),),
+            columns=(TreeTableColumn('state', 'State', 100),),
             id='tree-table',
         )
 
