@@ -63,8 +63,8 @@ class TreeTable(Widget):
     """
 
     BINDINGS: ClassVar[list[Binding]] = [
-        Binding('left,h', 'collapse', 'Collapse', show=False),
-        Binding('right,l', 'expand', 'Expand', show=False),
+        Binding('left,h', 'collapse', 'Collapse', show=False, priority=True),
+        Binding('right,l', 'expand', 'Expand', show=False, priority=True),
         Binding('space', 'toggle', 'Expand / collapse', show=False),
     ]
 
