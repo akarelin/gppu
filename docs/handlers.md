@@ -921,6 +921,29 @@ Return the canonical name for one native session file.
 
 Discard all cached sessions or entries at and beneath `path`.
 
+## `GppuFileSystem(*args, **kwargs)`
+
+fsspec listings enriched by handlers and stored beside their location.
+
+`location` is the only required setting. Its index is
+`location/.<location-name>.gppufs.sqlite`. An existing index named for
+a descendant folder owns that subtree. Index rows use relative addresses
+so moving a folder with its database preserves its listings.
+
+`ls` and `info` return the same metadata dictionaries from SQLite or
+live parsing. `refresh=True` requests live data. An absent cached row
+is populated by a live read; a failed read never substitutes stale data.
+Index files and SQLite journal companions are excluded from listings
+and aggregates. The example applications do no parsing or persistence.
+
+### `GppuFileSystem.info(self, path: 'str | Path | None' = None, refresh: 'bool' = False, **kwargs) -> 'dict'`
+
+Return one native entry with its complete cached or live handler metadata.
+
+### `GppuFileSystem.ls(self, path: 'str | Path | None' = None, detail: 'bool' = True, recurse: 'bool' = False, refresh: 'bool' = False, **kwargs) -> 'list'`
+
+List enriched entries, optionally descending, using colocated SQLite indexes.
+
 ## `valid_time(value: 'datetime | None') -> 'datetime | None'`
 
 A recorded time, or None. Placeholders that tools write instead of a time, anything at or before DOS zero, and future times are not times.

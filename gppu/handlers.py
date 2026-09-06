@@ -46,6 +46,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import posixpath
 import re
 import shutil
 import sqlite3
@@ -55,14 +56,18 @@ import tarfile
 import tempfile
 import zipfile
 from collections.abc import AsyncIterator, Callable, Collection, Iterator, Mapping, Sequence
-from contextlib import contextmanager, nullcontext
+from contextlib import closing, contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, Literal, Protocol, TypeVar, runtime_checkable
 from zoneinfo import ZoneInfo
+from threading import RLock
 
 import yaml
+from fsspec.core import url_to_fs
+from fsspec.implementations.local import LocalFileSystem
+from fsspec.spec import AbstractFileSystem
 
 from .gppu import OSType, detect_os, full_path, sync
 
@@ -4692,3 +4697,457 @@ def typed(text: str) -> str:
     ):
         return ""
     return text
+
+
+class _MetadataHandlers(
+    FileHandler, IgnoredHandler, ChatGPTHandler, AnthropicHandler,
+    MarkdownHandler, CSVHandler, LogHandler, EmailHandler, BrowserHandler,
+    SessionHandler, ArchiveHandler, GitHandler, FolderHandler,
+):
+    """The implemented metadata parsers used by the filesystem interface."""
+
+
+class GppuFileSystem(AbstractFileSystem):
+  """fsspec listings enriched by handlers and stored beside their location.
+
+  ``location`` is the only required setting. Its index is
+  ``location/.<location-name>.gppufs.sqlite``. An existing index named for
+  a descendant folder owns that subtree. Index rows use relative addresses
+  so moving a folder with its database preserves its listings.
+
+  ``ls`` and ``info`` return the same metadata dictionaries from SQLite or
+  live parsing. ``refresh=True`` requests live data. An absent cached row
+  is populated by a live read; a failed read never substitutes stale data.
+  Index files and SQLite journal companions are excluded from listings
+  and aggregates. The example applications do no parsing or persistence.
+  """
+
+  protocol = 'gppu'
+  cachable = False
+  _index_name = re.compile(r'^\..+\.gppufs\.sqlite(?:-(?:journal|wal|shm))?$')
+
+  def __init__(self, location: str | Path, **storage_options: Any) -> None:
+    if location is None:
+      raise ValueError('location is required')
+    super().__init__()
+    self.fs, self.root = url_to_fs(str(location), **storage_options)
+    self.root = self.root.rstrip('/')
+    self.location = self.fs.unstrip_protocol(self.root)
+    self._lock = RLock()
+    self._handlers = _MetadataHandlers()
+    self._database_path(self.root)  # Validate the required location name.
+
+  def _database_path(self, folder: str) -> str:
+    name = folder.rstrip('/').rsplit('/', 1)[-1].rstrip(':')
+    if not name:
+      raise ValueError('gppufs requires a named location root')
+    return f'{folder}/.{name}.gppufs.sqlite'
+
+  def _existing_index(self, folder: str) -> str | None:
+    expected = self._database_path(folder)
+    if self.fs.isfile(expected):
+      return expected
+    if not self.fs.isdir(folder):
+      return None
+    candidates = [item['name'] for item in self.fs.ls(folder, detail=True)
+      if item['type'] == 'file' and item['name'].endswith('.gppufs.sqlite')
+      and self._index_name.fullmatch(PurePosixPath(item['name']).name)]
+    if not candidates:
+      return None
+    identity = self.fs.info(folder).get('ino')
+    matches = []
+    for path in candidates:
+      with closing(sqlite3.connect(path if isinstance(self.fs, LocalFileSystem) else ':memory:')) as database:
+        if not isinstance(self.fs, LocalFileSystem):
+          database.deserialize(self.fs.cat_file(path))
+        row = database.execute("SELECT metadata FROM gppufs_entries WHERE path='.'").fetchone()
+      if row is not None and (identity is None or json.loads(row[0]).get('ino') == identity):
+        matches.append(path)
+    if len(matches) != 1:
+      raise ValueError(f'{folder}: cannot identify a unique index after rename')
+    self.fs.mv(matches[0], expected)
+    return expected
+
+  def _key(self, path: str | Path | None) -> str:
+    if path is None:
+      return '.'
+    value = str(path).replace('\\', '/')
+    if '::' in value:
+      member, source = value.rsplit('::', 1)
+      return member + '::' + self._key(source)
+    if '://' in value:
+      value = self.fs._strip_protocol(value)
+    if value == self.root or value.rstrip('/') == self.root:
+      return '.'
+    if value.startswith(self.root + '/'):
+      return value[len(self.root) + 1:].rstrip('/')
+    if value.startswith('/') or re.match(r'^[A-Za-z]:', value):
+      raise ValueError(f'{path}: outside location {self.location}')
+    parts = PurePosixPath(value).parts
+    if '..' in parts:
+      raise ValueError(f'{path}: parent traversal is outside the listing address')
+    return PurePosixPath(value).as_posix()
+
+  def _path(self, key: str) -> str:
+    return self.root if key == '.' else self.root + '/' + key
+
+  def _uri(self, key: str) -> str:
+    if '::' in key:
+      member, source = key.rsplit('::', 1)
+      return member + '::' + self._uri(source)
+    return self.fs.unstrip_protocol(self._path(key))
+
+  def _parent_key(self, key: str) -> str | None:
+    if key == '.':
+      return None
+    if '::' in key:
+      head, source = key.split('::', 1)
+      protocol, member = head.split('://', 1)
+      parent = str(PurePosixPath(member).parent)
+      return source if parent == '.' else protocol + '://' + parent + '::' + source
+    return str(PurePosixPath(key).parent)
+
+  def _owner(self, key: str) -> str:
+    physical = key.rsplit('::', 1)[-1]
+    folder = PurePosixPath(physical)
+    for candidate in (folder, *folder.parents):
+      if candidate == PurePosixPath('.'):
+        break
+      directory = self._path(candidate.as_posix())
+      if self._existing_index(directory) is not None:
+        return candidate.as_posix()
+    return '.'
+
+  @staticmethod
+  def _relative(key: str, owner: str) -> str:
+    if '::' in key:
+      head, source = key.rsplit('::', 1)
+      return head + '::' + GppuFileSystem._relative(source, owner)
+    return posixpath.relpath(key, owner)
+
+  @staticmethod
+  def _absolute(key: str, owner: str) -> str:
+    if '::' in key:
+      head, source = key.rsplit('::', 1)
+      return head + '::' + GppuFileSystem._absolute(source, owner)
+    return posixpath.normpath(str(PurePosixPath(owner) / key))
+
+  @contextmanager
+  def _database(self, owner: str, *, write: bool = False):
+    path = self._database_path(self._path(owner))
+    exists = self._existing_index(self._path(owner)) is not None
+    if not exists and not write:
+      yield None
+      return
+    local = isinstance(self.fs, LocalFileSystem)
+    with closing(sqlite3.connect(path if local else ':memory:')) as database:
+      if exists and not local:
+        database.deserialize(self.fs.cat_file(path))
+      with database:
+        if write:
+          database.execute('CREATE TABLE IF NOT EXISTS gppufs_entries ('
+            'path TEXT PRIMARY KEY, metadata TEXT NOT NULL, children TEXT)')
+        yield database
+      if write and not local:
+        with self.fs.transaction:
+          self.fs.pipe_file(path, database.serialize())
+
+  def _cached(self, key: str) -> tuple[dict, list[str] | None] | None:
+    owner = self._owner(key)
+    with self._database(owner) as database:
+      if database is None:
+        return None
+      row = database.execute('SELECT metadata, children FROM gppufs_entries WHERE path=?',
+        (self._relative(key, owner),)).fetchone()
+    if row is None:
+      return None
+    metadata = json.loads(row[0])
+    metadata['name'] = self._uri(key)
+    metadata['gppu']['path'] = metadata['name']
+    head = key.split('::', 1)[0]
+    metadata['gppu']['name'] = (PurePosixPath(self.root).name if key == '.' else
+      PurePosixPath(head).name if not head.endswith('://') else PurePosixPath(key.rsplit('::', 1)[-1]).name)
+    self._metadata_paths(metadata['gppu'], lambda value:
+      value if '://' in value.rsplit('::', 1)[-1] else self._uri(self._absolute(value, owner)))
+    parent = self._parent_key(key)
+    metadata['gppu']['parent'] = self._uri(parent) if parent is not None else None
+    children = None if row[1] is None else [
+      {**child, 'path': self._absolute(child['path'], owner)} for child in json.loads(row[1])]
+    return metadata, children
+
+  @staticmethod
+  def _metadata_paths(metadata: dict, convert: Callable) -> None:
+    """Rebase handler-owned paths without changing user frontmatter or text."""
+    for name in ('session', 'chatgpt', 'anthropic', 'claude'):
+      if name not in metadata:
+        continue
+      section = metadata[name]
+      for item in (section, *section.get('sessions', ())):
+        # Exported session member paths are relative to their own location.
+        for field in (('location',) if item.get('location') is not None else ('path',)):
+          if field in item and item[field] is not None:
+            item[field] = convert(item[field])
+    if 'git' in metadata:
+      for field in ('root', 'metadata_path'):
+        if field in metadata['git']:
+          metadata['git'][field] = convert(metadata['git'][field])
+
+  def _save(self, rows: dict[str, tuple[dict, list[str] | None]], scope: str) -> None:
+    grouped: dict[str, list[tuple]] = {}
+    for key, (metadata, children) in rows.items():
+      owner = self._owner(key)
+      if owner not in grouped:
+        grouped[owner] = []
+      value = json.loads(json.dumps(metadata, default=str))
+      value['name'] = self._relative(key, owner)
+      value['gppu']['path'] = value['name']
+      self._metadata_paths(value['gppu'], lambda item:
+        item if '://' in item.rsplit('::', 1)[-1] else self._relative(item, owner))
+      grouped[owner].append((self._relative(key, owner), json.dumps(value, default=str),
+        None if children is None else json.dumps([
+          {'path': self._relative(child, owner), 'type': rows[child][0]['type'], 'ino': rows[child][0].get('ino')}
+          for child in children])))
+    # Publish descendant databases before the listing which references them.
+    for owner in sorted(grouped, key=lambda item: len(PurePosixPath(item).parts), reverse=True):
+      with self._database(owner, write=True) as database:
+        if scope == '.' or owner == scope or owner.startswith(scope + '/'):
+          database.execute('DELETE FROM gppufs_entries')
+        else:
+          relative = self._relative(scope, owner)
+          database.execute('DELETE FROM gppufs_entries WHERE path=? OR substr(path,1,?)=? '
+            'OR substr(path,-?)=?', (relative, len(relative) + 1, relative + '/',
+            len(relative) + 2, '::' + relative))
+        database.executemany('INSERT INTO gppufs_entries VALUES (?, ?, ?) '
+          'ON CONFLICT(path) DO UPDATE SET metadata=excluded.metadata, children=excluded.children', grouped[owner])
+
+  @staticmethod
+  def _renamed_key(key: str, old: str, new: str) -> str:
+    if '::' in key:
+      head, tail = key.rsplit('::', 1)
+      return head + '::' + GppuFileSystem._renamed_key(tail, old, new)
+    return new + key[len(old):] if key == old or key.startswith(old + '/') else key
+
+  def _folder_renames(self, key: str, children: list[dict]) -> bool:
+    if '::' in key:
+      return False
+    missing = [child for child in children if child['type'] == 'directory'
+      and child['ino'] is not None and not self.fs.isdir(self._path(child['path']))]
+    if not missing:
+      return False
+    live = [self.fs.info(row['name']) for row in self.fs.ls(self._path(key), detail=True)
+      if row['type'] == 'directory']
+    changed = False
+    owner = self._owner(key)
+    for child in missing:
+      matches = [row for row in live if row['type'] == 'directory' and row.get('ino') == child['ino']]
+      if len(matches) != 1:
+        continue
+      old, new = child['path'], self._key(matches[0]['name'])
+      self._existing_index(self._path(new))
+      with self._database(owner, write=True) as database:
+        stored = database.execute('SELECT path, metadata, children FROM gppufs_entries').fetchall()
+        for path, metadata, members in stored:
+          renamed = self._renamed_key(self._absolute(path, owner), old, new)
+          renamed = self._relative(renamed, owner)
+          if members is not None:
+            values = json.loads(members)
+            for value in values:
+              renamed_child = self._renamed_key(self._absolute(value['path'], owner), old, new)
+              value['path'] = self._relative(renamed_child, owner)
+            members = json.dumps(values)
+          value = json.loads(metadata)
+          self._metadata_paths(value['gppu'], lambda item:
+            item if '://' in item.rsplit('::', 1)[-1] else
+            self._relative(self._renamed_key(self._absolute(item, owner), old, new), owner))
+          database.execute('UPDATE gppufs_entries SET path=?, metadata=?, children=? WHERE path=?',
+            (renamed, json.dumps(value), members, path))
+      changed = True
+    return changed
+
+  @staticmethod
+  def _modified(native: dict) -> datetime | None:
+    if 'mtime' in native:
+      value = native['mtime']
+      if isinstance(value, (float, int)):
+        return valid_time(datetime.fromtimestamp(value, timezone.utc))
+      if isinstance(value, datetime):
+        return valid_time(value)
+      if isinstance(value, str):
+        return valid_time(datetime.fromisoformat(value.replace('Z', '+00:00')))
+    if 'date_time' in native:
+      return valid_time(datetime(*native['date_time']).astimezone())
+    return None
+
+  def _inventory(self, fs: AbstractFileSystem, root: str) -> dict[str, dict]:
+    native = {root: fs.info(root)}
+    if native[root]['type'] != 'directory' or native[root].get('islink'):
+      return native
+    if IgnoredHandler.member_reason(PurePosixPath(root), True):
+      return native
+    for _, directories, files in fs.walk(root, detail=True, on_error='raise'):
+      for item in (*directories.values(), *files.values()):
+        if not self._index_name.fullmatch(PurePosixPath(item['name']).name):
+          native[item['name'].rstrip('/')] = fs.info(item['name'])
+      for name in tuple(directories):
+        if IgnoredHandler.member_reason(PurePosixPath(name), True) or directories[name].get('islink'):
+          del directories[name]
+    return native
+
+  def _live(self, key: str) -> None:
+    uri = self._uri(key)
+    virtual = '::' in key
+    if virtual:
+      fs, source = url_to_fs(uri, skip_instance_cache=True)
+    else:
+      fs, source = self.fs, self._path(key)
+    try:
+      native = self._inventory(fs, source)
+      if isinstance(fs, LocalFileSystem):
+        self._parse(key, Path(source), native, source, self._handlers)
+      else:
+        with tempfile.TemporaryDirectory(prefix='gppufs-') as scratch:
+          base = Path(scratch) / (PurePosixPath(source).name or 'archive')
+          for path, item in native.items():
+            relative = PurePosixPath(path).relative_to(PurePosixPath(source))
+            if '..' in relative.parts:
+              raise ValueError(f'{uri}: unsafe member {path}')
+            target = base / relative
+            if item['type'] == 'directory':
+              target.mkdir(parents=True, exist_ok=True)
+            else:
+              target.parent.mkdir(parents=True, exist_ok=True)
+              fs.get_file(path, str(target))
+          self._parse(key, base, native, source, _MetadataHandlers())
+    finally:
+      if virtual:
+        fs.close()
+
+  def _parse(self, key: str, local: Path, native: dict[str, dict], source: str,
+             handlers: FileHandler) -> None:
+    # Reuse the existing parsers; the fsspec inventory supplies native attributes.
+    local = full_path(local)
+    identified = handlers.probe_sync(local)
+    records: dict[Path, Record] = {}
+    addresses: dict[Path, str] = {}
+    attributes: dict[Path, dict] = {}
+    for record in identified:
+      relative = Path(record.path).relative_to(local)
+      path = str(PurePosixPath(source) / PurePosixPath(relative.as_posix()))
+      if path == '.' and source == '':
+        path = ''
+      if path not in native or self._index_name.fullmatch(record.name):
+        continue
+      item = native[path]
+      if relative == Path('.'):
+        address = key
+      elif '::' in key:
+        head, tail = key.split('::', 1)
+        protocol, member = head.split('://', 1)
+        address = protocol + '://' + str(PurePosixPath(member) / relative.as_posix()) + '::' + tail
+      else:
+        address = str(PurePosixPath(key) / PurePosixPath(relative.as_posix()))
+      records[Path(record.path)] = replace(record,
+        modified_at=self._modified(item),
+        size=0 if record.is_folder else record.size)
+      addresses[Path(record.path)] = address
+      attributes[Path(record.path)] = item
+    children: dict[Path, list[Path]] = {path: [] for path in records}
+    for path in records:
+      if path != local:
+        children[path.parent].append(path)
+    rows = {}
+    def reference(value):
+      candidate = Path(value)
+      if not candidate.is_absolute():
+        return value  # Exported session members are relative to their location.
+      if candidate.is_relative_to(local):
+        relative = candidate.relative_to(local).as_posix()
+        if relative == '.':
+          return key
+        if '::' in key:
+          head, tail = key.split('::', 1)
+          protocol, member = head.split('://', 1)
+          return protocol + '://' + str(PurePosixPath(member) / relative) + '::' + tail
+        return str(PurePosixPath(key) / relative)
+      if isinstance(self.fs, LocalFileSystem) and candidate.is_relative_to(full_path(self.root)):
+        return candidate.relative_to(full_path(self.root)).as_posix()
+      return candidate.as_uri()
+
+    for path in sorted(records, key=lambda item: len(item.parts), reverse=True):
+      record = records[path]
+      stats = FileHandler._folder_stats(record, [records[child] for child in children[path]]) if record.is_folder else FileHandler._file_stats(record)
+      record = records[path] = replace(record, stats=stats)
+      extra = record.metadata
+      for probe in record.probes:
+        if probe.stats is not None:
+          values = dict(vars(probe.stats))
+          extra[probe.handler] = {**probe.metadata, 'stats': values}
+      extra = json.loads(json.dumps(extra, default=str))
+      self._metadata_paths(extra, reference)
+      address = addresses[path]
+      extra['is_container'] = (record.is_folder or 'archive' in record.handlers) and 'ignored' not in record.handlers
+      metadata = {**attributes[path], 'name': self._uri(address), 'gppu': extra}
+      members = [addresses[child] for child in children[path]] if record.is_folder else None
+      rows[address] = metadata, members
+    self._save(rows, key)
+
+  def _archive_key(self, key: str) -> str:
+    name = key.split('::', 1)[0].casefold()
+    if name.endswith('.zip'):
+      return 'zip://::' + key
+    if name.endswith('.tar.gz'):
+      return 'tar://::' + key
+    if name.endswith('.rar'):
+      return 'gppu-rar://::' + key
+    raise ValueError(f'{key}: unsupported archive')
+
+  def info(self, path: str | Path | None = None, refresh: bool = False, **kwargs) -> dict:
+    """Return one native entry with its complete cached or live handler metadata."""
+    with self._lock:
+      key = self._key(path)
+      cached = None if refresh else self._cached(key)
+      if cached is None and not refresh:
+        physical = key.rsplit('::', 1)[-1]
+        for parent in reversed(PurePosixPath(physical).parents):
+          parent_key = parent.as_posix()
+          listing = self._cached(parent_key)
+          if listing is not None and listing[1] is not None and self.fs.isdir(self._path(parent_key)):
+            self._folder_renames(parent_key, listing[1])
+        cached = self._cached(key)
+      if cached is None:
+        self._live(key)
+        cached = self._cached(key)
+      if cached is None:
+        raise FileNotFoundError(self._uri(key))
+      return cached[0]
+
+  def ls(self, path: str | Path | None = None, detail: bool = True,
+         recurse: bool = False, refresh: bool = False, **kwargs) -> list:
+    """List enriched entries, optionally descending, using colocated SQLite indexes."""
+    with self._lock:
+      key = self._key(path)
+      metadata = self.info(path, refresh=refresh)
+      if 'archive' in metadata['gppu']['handlers']:
+        key = self._archive_key(key)
+        cached = None if refresh else self._cached(key)
+        if cached is None:
+          self._live(key)
+      cached = self._cached(key)
+      if cached is None:
+        raise FileNotFoundError(self._uri(key))
+      current, children = cached
+      if children is None:
+        if current['type'] == 'directory':
+          self._live(key)
+          current, children = self._cached(key)
+        else:
+          return [current] if detail else [current['name']]
+      result = []
+      if self._folder_renames(key, children):
+        current, children = self._cached(key)
+      for child in children:
+        row = self.info(self._uri(child['path']))
+        result.append(row)
+        if recurse and row['gppu']['is_container']:
+          result.extend(self.ls(row['name'], recurse=True))
+      return result if detail else [row['name'] for row in result]
