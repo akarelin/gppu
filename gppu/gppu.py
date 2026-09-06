@@ -16,14 +16,15 @@ import platform
 import asyncio
 import json
 import getpass
-import ast
+from jinja2 import StrictUndefined
+from jinja2.nativetypes import NativeEnvironment
+from jinja2.sandbox import SandboxedEnvironment
 
 from typing import Union, Any, Literal, List, Optional, Tuple, Dict, DefaultDict
 from typing import TypeAlias, ClassVar, Callable, Protocol
-from types import CodeType, ModuleType
 from collections import defaultdict, UserDict, UserList
 from enum import Enum
-from functools import wraps, partial
+from functools import wraps, partial, cache
 from datetime import datetime, timezone
 
 from copy import deepcopy
@@ -358,221 +359,30 @@ def template_populate(o, data: dict = {}, excludes:list = []) -> Any:
   return __tp(_, data)
 
 
-_jinja_env = None
+class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
+  """Jinja templates with native values and gppu's formatting helpers."""
 
-def _get_jinja_env():
-  """Lazy-initialized SandboxedEnvironment. Returns None if jinja2 isn't installed."""
-  global _jinja_env
-  if _jinja_env is not None: return _jinja_env
-  try:
-    from jinja2 import Undefined
-    from jinja2.sandbox import SandboxedEnvironment
-  except ImportError:
-    return None
-  env = SandboxedEnvironment(undefined=Undefined, autoescape=False, keep_trailing_newline=False)
-  env.filters['safe_int']         = safe_int
-  env.filters['safe_float']       = safe_float
-  env.filters['safe_list']        = safe_list
-  env.filters['safe_timedelta']   = safe_timedelta
-  env.filters['dict_sanitize']    = dict_sanitize
-  env.filters['pretty_timedelta'] = pretty_timedelta
-  env.filters['pfy']              = pfy
-  env.filters['slugify']          = slugify
-  _jinja_env = env
-  return env
+  def __init__(self, **options):
+    super().__init__(undefined=StrictUndefined, autoescape=False, **options)
+    helpers = {
+      'safe_int': safe_int, 'safe_float': safe_float, 'safe_list': safe_list,
+      'safe_timedelta': safe_timedelta, 'dict_sanitize': dict_sanitize,
+      'pretty_timedelta': pretty_timedelta, 'pfy': pfy, 'slugify': slugify,
+    }
+    self.filters.update(helpers)
+    self.globals.update(helpers)
 
 
-def jinja_template(template: str, **data) -> Optional[str]:
-  """Render `template` as a Jinja2 template in a sandboxed environment.
-    Variables are passed as kwargs. Gppu helpers registered as filters:
-    safe_int, safe_float, safe_list, safe_timedelta, dict_sanitize,
-    pretty_timedelta, pfy, slugify.
-    Returns None if jinja2 isn't installed; raises jinja2.TemplateError
-    on syntax/runtime errors (caller decides how to handle)."""
-  env = _get_jinja_env()
-  if env is None: return None
-  return env.from_string(template).render(**data)
-# endregion
+@cache
+def _jinja_compile(template: str):
+  return JinjaEnvironment().from_string(template)
 
 
-# region Safe template eval: _py_compile (compiler), py_evaluate (Evaluator), py_generate (Generator)
-# AST node types allowed in a config expression. Anything outside this set
-# (statements, lambda, comprehensions, walrus, starred, f-strings, ...) is
-# rejected at compile time, so a config string can never reach assignment,
-# import, or arbitrary execution — it can only compute a value.
-_EXPR_ALLOWED_NODES: Tuple[type, ...] = (
-  ast.Expression,
-  ast.BoolOp, ast.And, ast.Or,
-  ast.UnaryOp, ast.Not, ast.USub, ast.UAdd, ast.Invert,
-  ast.BinOp, ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow,
-  ast.BitOr,   # dict-union inheritance: `dimmer | i1`, rightmost wins
-  ast.IfExp,
-  ast.Compare, ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE,
-  ast.Is, ast.IsNot, ast.In, ast.NotIn,
-  ast.Call, ast.keyword,
-  ast.Attribute, ast.Subscript, ast.Slice, ast.Load,
-  ast.Name, ast.Constant,
-  ast.List, ast.Tuple, ast.Dict, ast.Set,
-)
-
-# Names exposed to expressions in place of real builtins (which are stripped).
-# `default` mirrors the Jinja `default` filter: fall back when value is None.
-_EXPR_BUILTINS: Dict[str, Callable | ModuleType] = {
-  'default': lambda value, fallback=None: fallback if value is None else value,
-  'len': len, 'round': round, 'min': min, 'max': max,
-  'int': int, 'float': float, 'str': str, 'bool': bool,
-  'safe_int': safe_int, 'safe_float': safe_float, 'safe_list': safe_list,
-  're': re,
-}
-
-_py_cache: Dict[str, CodeType] = {}
-
-# A Generator is a function body, so on top of the expression nodes it needs
-# assignment, `if`, and `return` (plus the `def` wrapper). Same bans otherwise
-# (no import / lambda / comprehension / walrus / dunder).
-_PY_ALLOWED_NODES: Tuple[type, ...] = _EXPR_ALLOWED_NODES + (
-  ast.Module, ast.FunctionDef, ast.arguments, ast.arg,
-  ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Store,
-  ast.If, ast.Return, ast.Expr, ast.Pass,
-)
-
-
-def _py_compile(src: str) -> CodeType:
-  """Internal unified compiler → code that defines `_gen()`. Handles both forms:
-  an Evaluator (a single expression, wrapped as `return <expr>`) and a Generator
-  (a multi-statement function body that `return`s an object). A `{{ ... }}` wrapper
-  is stripped. Strict AST allow-list (`_PY_ALLOWED_NODES`); same dunder / import /
-  lambda / comprehension bans. Cached by source."""
-  body = src.strip()
-  if body.startswith('{{') and body.endswith('}}'): body = body[2:-2].strip()
-
-  cached = _py_cache.get(body)
-  if cached is not None: return cached
-
-  try:                                 # a single expression -> `return <expr>`
-    ast.parse(body, mode='eval')
-    inner = 'return ' + body
-  except SyntaxError:                  # a statement body is used verbatim
-    inner = body
-
-  wrapped = "def _gen():\n" + "\n".join("  " + ln for ln in inner.splitlines())
-  try: tree = ast.parse(wrapped, mode='exec')
-  except SyntaxError as e: raise ValueError(f"Invalid template {src!r}: {e}") from e
-
-  for node in ast.walk(tree):
-    if not isinstance(node, _PY_ALLOWED_NODES): raise ValueError(f"Disallowed element {type(node).__name__} in {src!r}")
-    if isinstance(node, ast.Attribute) and node.attr.startswith('__'): raise ValueError(f"Disallowed dunder attribute {node.attr!r} in {src!r}")
-    if isinstance(node, ast.Name) and node.id.startswith('__'): raise ValueError(f"Disallowed dunder name {node.id!r} in {src!r}")
-
-  code = compile(tree, '<py>', 'exec')
-  _py_cache[body] = code
-  return code
-
-# Named templates: registered once (compiled), then runnable by name — directly
-# (py_evaluate('dimmer_i1', **values)) or by bare-name reference from another
-# template ('dimmer | i1'), resolved with the same values at run time.
-_py_templates: Dict[str, CodeType] = {}
-
-
-def py_register(name: str, src: str | CodeType) -> CodeType:
-  """Register a named template. Re-registering a name replaces it."""
-  code = src if isinstance(src, CodeType) else _py_compile(src)
-  _py_templates[name] = code
-  return code
-
-
-def py_template(name: str) -> Optional[CodeType]:
-  """The compiled code registered under `name`, or None."""
-  return _py_templates.get(name)
-
-
-def _py_run(src: str | CodeType, data: dict, _seen: Tuple[str, ...] = ()) -> Any:
-  """Internal: compile (if needed) and run `_gen()`, returning its value. A `src`
-  string that is a registered template name runs that template. Names the code
-  references resolve, in order: `data` (wins) -> registered templates (each evaluated
-  with this same `data`; cycles raise ValueError) -> `_EXPR_BUILTINS`. Real
-  `__builtins__` removed. Evaluators / generators passed in `data` are callable as
-  helpers."""
-  if isinstance(src, CodeType): code = src
-  elif (named := _py_templates.get(src.strip())) is not None:
-    _seen += (src.strip(),)
-    code = named
-  else: code = _py_compile(src)
-
-  gen = next((c for c in code.co_consts if isinstance(c, CodeType)), None)
-  if gen is not None:   # resolve referenced template names against the same values
-    for n in gen.co_names:
-      if n in data or n in _EXPR_BUILTINS or n not in _py_templates: continue
-      if n in _seen: raise ValueError(f"Template cycle: {' -> '.join(_seen + (n,))}")
-      data = {**data, n: _py_run(_py_templates[n], data, _seen + (n,))}
-
-  ns: Dict[str, Any] = {'__builtins__': {}, **_EXPR_BUILTINS, **data}
-  exec(code, ns)
-  return ns['_gen']()
-
-
-def py_evaluate(expr: str | CodeType, **data) -> Any:
-  """The Evaluator: run a one-line `{{ expr }}`, a registered template name, or
-  pre-compiled code against `data`, returning its value. Useful for state
-  calculation."""
-  return _py_run(expr, data)
-
-
-def py_generate(body: str | CodeType, **data) -> Any:
-  """The Generator: run a function body (statements + `return`), a registered
-  template name, or pre-compiled code against `data`, returning the object it
-  builds — e.g. the .data dict an object is created / inited / started from."""
-  return _py_run(body, data)
-
-
-def _py_idents(d: dict) -> dict:
-  """Subset of d usable as expression names."""
-  return {k: v for k, v in d.items() if isinstance(k, str) and k.isidentifier()}
-
-
-def _py_inline(inline: Dict[str, str | CodeType], base: dict, helpers: Optional[Callable[[dict], dict]] = None) -> dict:
-  """Run the inline templates (key -> expression generating that key's value), in
-  order, against `base`. Returns ONLY the generated values. A value generates as
-  soon as everything it references exists and never overrides one present in
-  `base` — except an expression referencing its own key (self-merge, e.g. flags),
-  which regenerates from it. An expression whose references are absent is skipped."""
-  gen: Dict[str, Any] = {}
-  for key, src in inline.items():
-    code = src if isinstance(src, CodeType) else _py_compile(src)
-    fn = next((c for c in code.co_consts if isinstance(c, CodeType)), None)
-    ctx = {**base, **gen}
-    if key in ctx and not (fn is not None and key in fn.co_names): continue
-    try: gen[key] = _py_run(code, _py_idents(ctx) | (helpers(ctx) if helpers else {}))
-    except Exception: continue
-  return gen
-
-
-def py_construct(template: dict, row: dict = {}, inline: Optional[Dict[str, str | CodeType]] = None,
-                 helpers: Optional[Callable[[dict], dict]] = None, **values) -> dict:
-  """Build an object's .data from a `template` entry — a plain dict whose optional
-  'generator' names a registered Generator, every other key being data — and the
-  `row` that referenced it. `values` is the outer context (a parent's values),
-  visible to expressions but not part of the result. `helpers`, when given, is a
-  factory called with the current context before each evaluation, returning extra
-  callables for the expressions (e.g. a topic() bound to the values known so far).
-
-  Merge order, rightmost wins:
-      inline-generated | generator(values) | template data | row
-  The inline templates run before the generator (name-derived values usable inside
-  it) and again after (values needing generator/template results)."""
-  template = dict(template)
-  gname = template.pop('generator', None)
-  inline = inline or {}
-  explicit = template | dict(row)
-  pre = _py_inline(inline, {**values, **explicit}, helpers)
-  gen = {}
-  if gname:
-    ctx = {**values, **pre, **explicit}
-    gen = py_generate(gname, **_py_idents(ctx) | (helpers(ctx) if helpers else {}))
-    if not isinstance(gen, dict): raise ValueError(f"Generator {gname!r} returned {type(gen).__name__}, not dict")
-  data = pre | gen | explicit
-  data |= _py_inline(inline, {**values, **data}, helpers)
-  return data
+def jinja_template(template: str, /, **data) -> Any:
+  """Render Jinja to a string, scalar, list or mapping; missing inputs raise."""
+  value = _jinja_compile(template).render(**data)
+  if isinstance(value, StrictUndefined): str(value)
+  return value
 # endregion
 
 
@@ -925,19 +735,37 @@ def _colorize(text: str, colorcode:str, fmt=None):
 
 
 
-def _fmt(*a, severity: str = 'Debug', **kw) -> str:
-  if severity.upper() == 'DEBUG': result = dpcp(*a, rules=TRACE_RULES or {}, conditional=True, **kw)
-  else: result = dpcp(*a, conditional=False, severity=severity, **kw)
-  return result if result else ''
+_ANSI = re.compile(r'\x1b\[[0-9;]*m')
+
+
+def _traced(record: logging.LogRecord) -> bool:
+  if record.levelno != logging.DEBUG: return True
+  function = _remove_prefixes(record.funcName or '', _SHORTEN_BY_PREFIX)
+  names = [function, record.module, f'{record.module}.{function}']
+  if class_name := getattr(record, 'gppu_class', ''):
+    names += [class_name, f'{class_name}.{function}']
+  return all(TRACE_RULES[name] if name in TRACE_RULES else TRACE_RULES.get('all', False) for name in names)
+
+
+def _fmt(record: logging.LogRecord, *, no_prefix: bool = False) -> str:
+  args = list(record.gppu_args) if hasattr(record, 'gppu_args') else [record.getMessage()]
+  if not no_prefix:
+    function = _remove_prefixes(record.funcName or '', _SHORTEN_BY_PREFIX)
+    class_name = getattr(record, 'gppu_class', '')
+    caller = f'{class_name}.{function}' if class_name else function
+    severity = 'Warn' if record.levelno == logging.WARNING else record.levelname.title()
+    color = _SEVERITY_COLORS.get(severity, _SEVERITY_COLORS[None])
+    args = [color, severity, 'GRAY1', caller, 'NONE'] + args
+  text = pcp(*args)
+  if record.exc_info:
+    text += '\n' + logging.Formatter().formatException(record.exc_info)
+  if record.stack_info: text += '\n' + record.stack_info
+  return text
 
 
 class _LogColorizer(logging.Formatter):
   def format(self, record: logging.LogRecord) -> str:
-    args = [record.msg]
-    if record.args is not None: 
-      args.extend(record.args)
-    result = _fmt(*args, severity=record.levelname)
-    return result
+    return _fmt(record)
 # endregion
 
 
@@ -945,24 +773,17 @@ class _LogColorizer(logging.Formatter):
 # ^~            Logger                                            
 TRACE_RULES: dict = {}
 
-_logger = logging.getLogger('gppu')
-_logger.setLevel(logging.DEBUG)  # Ensure logger level is set to DEBUG
+_log_root = logging.getLogger('gppu')
+_log_root.setLevel(logging.DEBUG)
+_logger = _log_root
 
 
 class _EmptyMessageFilter(logging.Filter):
-  """Filter that removes records that would produce empty output"""
   def filter(self, record: logging.LogRecord) -> bool:
-    # We need to temporarily format to check if output would be empty
-    formatter = _LogColorizer()
-    result = formatter.format(record)
-    # Strip whitespace and ANSI color codes to check if truly empty
-    # Remove all ANSI escape sequences
-    cleaned = re.sub(r'\x1b\[[0-9;]*m', '', result)
-    # Only log if we have actual content after stripping ANSI codes and whitespace
-    return bool(cleaned.strip())
+    return _traced(record) and bool(record.getMessage().strip() or record.exc_info)
 
 
-_sh = logging.StreamHandler()
+_sh = logging.StreamHandler(sys.stderr)
 _sh.setLevel(logging.DEBUG)
 _sh.setFormatter(_LogColorizer())
 _sh.addFilter(_EmptyMessageFilter())
@@ -970,29 +791,11 @@ _logger.addHandler(_sh)
 
 
 class _PlainFormatter(logging.Formatter):
-  """File formatter — same colorized *content* as the console, but with the
-  call-site prefix (``no_prefix``) and ANSI escapes stripped, so the log file
-  stays grep/diff-friendly. (Y2 ``adev_stdout.log`` parity.)
-
-  Mirrors ``_fmt``/``_LogColorizer`` so gppu's multi-arg log convention
-  (``Info('INFO', 'Module', 'COLOR', 'msg')``) formats identically to console.
-  """
-  _ANSI = re.compile(r'\x1b\[[0-9;]*m')
-
   def format(self, record: logging.LogRecord) -> str:
-    args = [record.msg]
-    if record.args is not None:
-      args.extend(record.args)
-    sev = record.levelname
-    if sev.upper() == 'DEBUG':
-      text = dpcp(*args, rules=TRACE_RULES or {}, conditional=True, no_prefix=True)
-    else:
-      text = dpcp(*args, conditional=False, severity=sev, no_prefix=True)
-    return self._ANSI.sub('', text or '')
+    return _ANSI.sub('', _fmt(record, no_prefix=True))
 
 
-# File handlers attached to the gppu logger, keyed by resolved log path. Kept in
-# a registry so _init_logger_base() can re-apply them after swapping the logger.
+# File handlers live on the shared parent so pre-existing mixins receive them.
 _file_handlers: dict[str, logging.Handler] = {}
 
 
@@ -1045,7 +848,7 @@ def enable_file_logging(name: str | None = None, log_dir: str | Path | None = No
   fh.setLevel(level)
   fh.setFormatter(_PlainFormatter())
   fh.addFilter(_EmptyMessageFilter())
-  _logger.addHandler(fh)
+  _log_root.addHandler(fh)
   _file_handlers[key] = fh
   return path
 
@@ -1059,7 +862,9 @@ def file_log(msg: str, *args, level: int = logging.INFO) -> None:
   """
   if not _file_handlers:
     return
-  record = _logger.makeRecord(_logger.name, level, '(app)', 0, msg, args, None)
+  record = _logger.makeRecord(_logger.name, level, '(app)', 0,
+                              _ANSI.sub('', pcp(msg, *args)), (), None,
+                              func='file_log', extra={'gppu_args': (msg, *args)})
   for h in _file_handlers.values():
     if record.levelno >= h.level:
       h.handle(record)
@@ -1077,21 +882,27 @@ def _init_logger_base(name: str = 'gppu', trace_rules: dict | None = None) -> No
   if trace_rules is not None:
     TRACE_RULES.clear()
     TRACE_RULES.update(trace_rules)
-  new_logger = logging.getLogger(name)
-  new_logger.setLevel(logging.DEBUG)
-  new_logger.handlers = []
-  new_logger.addHandler(_sh)
-  for fh in _file_handlers.values():  # preserve file logging across logger swap
-    new_logger.addHandler(fh)
-  _logger = new_logger
+  _logger = _log_root if name == 'gppu' else _log_root.getChild(name)
 
 init_logger = _init_logger_base
 
 
-def Debug(*a, logger=None, **kw): (logger or _logger).debug(*a, **kw)
-def Info(*a, logger=None, **kw): (logger or _logger).info(*a, **kw)
-def Warn(*a, logger=None, **kw): (logger or _logger).warning(*a, **kw)
-def Error(*a, logger=None, **kw): (logger or _logger).error(*a, **kw)
+def _log(level: int, args: tuple, logger, options: dict) -> None:
+  target = _logger if logger is None else logger
+  if not target.isEnabledFor(level): return
+  frame = inspect.currentframe().f_back.f_back
+  extra = dict(options.pop('extra')) if 'extra' in options else {}
+  extra['gppu_args'] = args
+  extra['gppu_class'] = type(frame.f_locals['self']).__name__ if 'self' in frame.f_locals else ''
+  del frame
+  stacklevel = options.pop('stacklevel') if 'stacklevel' in options else 1
+  target.log(level, _ANSI.sub('', pcp(*args)), extra=extra, stacklevel=stacklevel + 2, **options)
+
+
+def Debug(*a, logger=None, **kw): _log(logging.DEBUG, a, logger, kw)
+def Info(*a, logger=None, **kw): _log(logging.INFO, a, logger, kw)
+def Warn(*a, logger=None, **kw): _log(logging.WARNING, a, logger, kw)
+def Error(*a, logger=None, **kw): _log(logging.ERROR, a, logger, kw)
 @sync
 async def Dump(filename: str, data={}, **kw) -> None:
   """ Saves data object to yml file in trace folder """
@@ -1389,14 +1200,10 @@ class Logger:
   trace_folder: str = '.'
   trace_rules: dict = TRACE_RULES
 
-  @staticmethod
-  def Debug(*a, **kw): Debug(*a, **kw)
-  @staticmethod
-  def Info(*a, **kw): Info(*a, **kw)
-  @staticmethod
-  def Warn(*a, **kw): Warn(*a, **kw)
-  @staticmethod
-  def Error(*a, **kw): Error(*a, **kw)
+  Debug = staticmethod(Debug)
+  Info = staticmethod(Info)
+  Warn = staticmethod(Warn)
+  Error = staticmethod(Error)
   @staticmethod
   def Dump(*a, **kw): Dump(*a, **kw)
 
