@@ -5,8 +5,7 @@ Typed, caller-composed handlers for large file hierarchies.
 
 A domain handler receives one `pathlib.Path` and returns `(stats,
 typed_object)`. Statistics are derived from the complete typed object. Users
-select behavior with normal multiple inheritance; this module constructs no
-handler objects:
+select behavior with normal multiple inheritance:
 
     class MyFiles(
         FileHandler,
@@ -19,6 +18,9 @@ handler objects:
         pass
 
     files = MyFiles(metadata={"source": "local"})
+
+`GppuFileSystem(location)` composes the implemented parsers behind fsspec
+`ls` and `info`, with SQLite metadata indexes beside the source folders.
 
 Every handler copies the optional metadata mapping supplied by its caller.
 `Probe.metadata` combines that mapping with metadata detected by the typed

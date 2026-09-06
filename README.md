@@ -40,10 +40,11 @@
 
 ## Handler listing
 
-[`examples/handler_ls.py`](examples/handler_ls.py) recursively lists the current directory from `FileHandler` records, including file and folder metadata, aggregate statistics, spans, locations, matching handlers, session information, and files and folders inside ZIP and RAR archives.
+[`examples/handler_ls.py`](examples/handler_ls.py) prints complete metadata from `GppuFileSystem.info()` and `ls(recurse=True)`. [`examples/handler_browser.py`](examples/handler_browser.py) browses the same listings and displays all metadata. Both use `location: .` in [`examples/handlers.yaml`](examples/handlers.yaml); gppufs owns the colocated SQLite indexes. See [browsing and index behavior](docs/handler-browser.md).
 
 ```powershell
 python examples/handler_ls.py
+python -m examples.handler_browser
 ```
 
 ## Environment
