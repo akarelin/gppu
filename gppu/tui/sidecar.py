@@ -230,7 +230,6 @@ def run_sidecar(
     environment = dict(os.environ)
     environment['PYTHONUTF8'] = '1'
     environment['PYTHONIOENCODING'] = 'utf-8'
-    environment['GPPU_APP_NAME'] = script.stem
     try:
         return subprocess.run(
             [*sidecar_command(injected or script), *extra_args],

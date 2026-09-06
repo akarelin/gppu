@@ -5,7 +5,7 @@ import io
 
 import pytest
 from gppu import TRACE_RULES
-from gppu import Logger, init_logger, mixin_Logger
+from gppu import Env, Logger, init_logger, mixin_Logger
 
 
 @pytest.fixture
@@ -149,3 +149,94 @@ class TestMixinLogger:
         obj = MyComponent()
         assert callable(obj.Debug)
         assert callable(obj.Info)
+
+
+@pytest.fixture
+def configured_output():
+  core = importlib.import_module('gppu.gppu')
+  previous_rules = dict(TRACE_RULES)
+  Env.reset()
+  TRACE_RULES.clear()
+  console = io.StringIO()
+  original = core._sh.setStream(console)
+  yield core, console
+  Env.reset()
+  core._sh.setStream(original)
+  TRACE_RULES.clear()
+  TRACE_RULES.update(previous_rules)
+
+
+def test_env_defaults_to_console_without_legacy_environment_paths(configured_output, tmp_path, monkeypatch):
+  core, console = configured_output
+  monkeypatch.setenv('GPPU_APP_NAME', 'invented')
+  monkeypatch.setenv('GPPU_LOG_DIR', str(tmp_path / 'invented'))
+  (tmp_path / 'config.yaml').write_text('{}')
+  Env.from_env(name='console-only', app_path=tmp_path)
+  core.Info('console message')
+  core.Debug('hidden trace')
+  assert 'console message' in console.getvalue()
+  assert 'hidden trace' not in console.getvalue()
+  assert not core._file_handlers
+  assert not (tmp_path / 'invented').exists()
+
+
+def test_one_line_yaml_enables_console_and_file(configured_output, tmp_path):
+  core, console = configured_output
+  path = tmp_path / 'declared.log'
+  (tmp_path / 'config.yaml').write_text(f'log_file: {path.as_posix()}\n')
+  Env.from_env(name='configured-app', app_path=tmp_path)
+  core.Info('both destinations')
+  assert 'both destinations' in console.getvalue()
+  assert path.read_text().strip() == 'both destinations'
+  assert core.enable_file_logging() == path
+  core.Info('once')
+  assert path.read_text().count('once') == 1
+
+
+def test_one_line_trace_yaml_keeps_the_mapping(configured_output, tmp_path):
+  core, console = configured_output
+  (tmp_path / 'config.yaml').write_text('trace_rules: {all: true, Component: false}\n')
+  Env.from_env(name='traced-app', app_path=tmp_path)
+
+  class Component:
+    def publish(self): core.Debug('excluded trace')
+
+  Component().publish()
+  core.Debug('included trace')
+  assert 'excluded trace' not in console.getvalue()
+  assert 'included trace' in console.getvalue()
+  assert Logger.trace_rules == {'all': True, 'Component': False}
+  init_logger(trace_rules=Logger.trace_rules)
+  assert Logger.trace_rules == {'all': True, 'Component': False}
+
+
+def test_reloading_env_closes_previous_file(configured_output, tmp_path):
+  core, _ = configured_output
+  first, second = tmp_path / 'first.log', tmp_path / 'second.log'
+  Env.from_dict({'log_file': str(first)})
+  core.Info('first message')
+  Env.from_dict({'log_file': str(second)})
+  core.Info('second message')
+  Env.from_dict({})
+  core.Info('console only')
+  assert first.read_text().strip() == 'first message'
+  assert second.read_text().strip() == 'second message'
+  assert not core._file_handlers
+
+
+@pytest.mark.parametrize('value', [None, '', True])
+def test_file_logging_requires_a_real_path(configured_output, value):
+  with pytest.raises(ValueError, match='explicit log_file'):
+    Env.from_dict({'log_file': value})
+
+
+def test_file_creation_failure_is_reported(configured_output, tmp_path):
+  parent = tmp_path / 'file'
+  parent.write_text('not a directory')
+  with pytest.raises(OSError):
+    Env.from_dict({'log_file': str(parent / 'app.log')})
+
+
+def test_boolean_does_not_replace_rich_trace_rules(configured_output):
+  with pytest.raises(TypeError, match='mapping'):
+    Env.from_dict({'trace_rules': True})

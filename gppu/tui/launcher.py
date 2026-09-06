@@ -31,7 +31,8 @@ import sys
 import webbrowser
 from pathlib import Path
 
-from gppu import Env, App, mixin_Config, dict_from_yml, enable_file_logging
+from gppu import Env, App, mixin_Config, dict_from_yml
+from gppu.gppu import _log_root, _sh, _EmptyMessageFilter
 from gppu.gppu import OSType
 from textual.app import App as TextualApp, ComposeResult
 from textual.binding import Binding
@@ -209,14 +210,10 @@ def _child_env(app_def: dict | None = None) -> dict[str, str]:
     dies with ``UnicodeEncodeError``. Enabling Python UTF-8 mode in the
     child makes its stdout/stderr UTF-8 regardless of the console code page.
 
-    Also stamps ``GPPU_APP_NAME`` (from the script stem) so the sub-app's
-    gppu logger writes to its own ``<app>.log`` file from the very first line.
     """
     env = dict(os.environ)
     env['PYTHONUTF8'] = '1'
     env['PYTHONIOENCODING'] = 'utf-8'
-    if app_def is not None:
-        env['GPPU_APP_NAME'] = Path(_script_for_os(app_def)).stem
     return env
 
 
@@ -573,16 +570,24 @@ class TUIApp(mixin_Config, TextualApp):
 
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
-    # Y2-style file+console logging — covers TUI apps launched directly that
-    # never call Env.from_env (e.g. rewrite_commits). Idempotent if already on.
-    enable_file_logging()
     self._debug_lines: list[str] = []
     self._log_handler = _DebugLogHandler(self._debug_lines)
     self._log_handler.setLevel(logging.DEBUG)
+    self._log_handler.addFilter(_EmptyMessageFilter())
     self._log_handler.setFormatter(
       logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s', '%H:%M:%S'),
     )
     logging.getLogger().addHandler(self._log_handler)
+
+  async def _process_messages(self, *args, **kwargs):
+    # The debug panel is the console while Textual owns the terminal.
+    console_attached = _sh in _log_root.handlers
+    if console_attached: _log_root.removeHandler(_sh)
+    try:
+      return await super()._process_messages(*args, **kwargs)
+    finally:
+      logging.getLogger().removeHandler(self._log_handler)
+      if console_attached: _log_root.addHandler(_sh)
 
   def debug(self, msg: str) -> None:
     """Append a line to the debug buffer (visible via Ctrl-O)."""
@@ -628,10 +633,7 @@ class TUIApp(mixin_Config, TextualApp):
 
   def done(self, result=None) -> None:
     """Finish this app. Works in both standalone and embedded mode."""
-    try:
-      logging.getLogger().removeHandler(self._log_handler)
-    except Exception:
-      pass
+    logging.getLogger().removeHandler(self._log_handler)
     if self._screen_wrapper is not None:
       self._screen_wrapper.dismiss(result=result)
     else:
