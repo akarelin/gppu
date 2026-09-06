@@ -10,22 +10,24 @@ The examples construct `GppuFileSystem` and use only `ls` and `info`. `handler_l
 Both examples load `examples/handlers.yaml` through `Env`:
 
 ```yaml
-location: .
+location: D:\Downloads
 ```
 
-`location` is the only required setting: a directory path or fsspec URI. `.` means the process's current directory. Index paths are derived from the location and folder names. The config has no index storage override.
+`location` is the only required setting: the path of one Location on this host, or an fsspec URI. It is never relative. Index paths are derived from the location and folder names. The config has no index storage override.
 
 With the repository virtual environment active, `python examples/handler_ls.py` prints the recursive listing and `python -m examples.handler_browser` opens the TUI. Enter opens a folder or archive; Backspace returns to its parent within the configured location; `r` refreshes the current listing from the source; `q` exits. The TUI performs filesystem calls in background threads and displays failures. It has no rename action.
 
 ```python
 from gppu.handlers import GppuFileSystem
 
-gppufs = GppuFileSystem(location='.')
+gppufs = GppuFileSystem(location=r'D:\Downloads')
 root = gppufs.info()
 children = gppufs.ls()
 descendants = gppufs.ls(recurse=True)
 fresh_children = gppufs.ls(refresh=True)
 ```
+
+`ls` reads the folder live. Every entry it has not seen is identified: native attributes, the handlers that match, and for a file its byte count and name span. Nothing is parsed. A folder's file, folder and byte totals and span are null until that folder is refreshed, and `gppu.probed` is false. `ls(refresh=True)` probes the folder and everything below it; `info(file)` probes that one file the first time its details are asked for. Entries already in the index keep their indexed metadata until a refresh. An entry that is gone from the folder is dropped from the listing; its row is removed by the next refresh of that folder. Entering an archive still reads and probes its members.
 
 `ls` follows fsspec's detailed-listing shape: a list of dictionaries. `detail=False` returns names. `info` returns one dictionary, with the same metadata as its listing entry. Names are addressable URIs. ZIP and TAR.GZ members use fsspec chained URLs; RAR uses a registered `gppu-rar` archive adapter over the existing `ArchiveHandler` and installed RARLAB command. Recursion also descends into supported archives.
 
@@ -39,15 +41,16 @@ fresh_children = gppufs.ls(refresh=True)
 | --- | --- | --- |
 | `path`, `name`, `parent` | Required; `parent` is null at the location root | Current URI, display filename, and navigable parent URI. |
 | `type`, `size`, `modified_at`, `handlers` | Required; `modified_at` can be null | Existing `Record` properties; `type` is `file` or `folder`. |
-| `files`, `folders`, `bytes`, `span` | Required; `span` can be null | Existing hierarchy statistics. Physical archives count as files in their containing folder; their member listings have their own aggregates. |
-| `stats` | Required mapping | Each matched handler's statistics, keyed by handler name. |
+| `files`, `folders`, `bytes`, `span` | Required; null for a folder that has not been probed, `span` can be null | Existing hierarchy statistics. Physical archives count as files in their containing folder; their member listings have their own aggregates. |
+| `probed` | Required boolean | False for an entry the listing identified but nothing has parsed yet. |
+| `stats` | Required mapping | Each matched handler's statistics, keyed by handler name. Empty until probed. |
 | Named handler metadata, e.g. `markdown`, `session`, `git` | When supplied by that handler | All parsed metadata. Markdown frontmatter stays verbatim in `gppu.markdown`; session metadata includes identity, topic, models, span, and turn count. |
 | `is_container` | Required boolean | Folder or supported archive, subject to ignored/no-descent rules. |
 | `errors` | Only on parser errors | Existing handler, operation, error type, and message. |
 
 Both live and cached results pass through the same JSON representation: dates and datetimes are strings, sequences are lists, and absent known values remain null. Handler statistics are stored separately from parsed metadata so a frontmatter field called `stats` is preserved.
 
-The first uncached read parses the requested hierarchy and stores its metadata. Later reads reuse the index. `refresh=True` rereads source metadata and replaces the requested subtree, including additions and removals, even when file sizes and timestamps have not changed. Cached ancestors receive updated file, folder, byte, and span aggregates using the refreshed subtree and cached siblings. Other indexed subtrees remain cached snapshots. Index files and SQLite journal companions are excluded from listings and aggregate sizes.
+The first read of a folder identifies it and its entries and stores that. Probing fills the metadata: `refresh=True` on a folder, or a file's first `info`. `refresh=True` rereads source metadata and replaces the requested subtree, including additions and removals, even when file sizes and timestamps have not changed. Cached ancestors receive updated file, folder, byte, and span aggregates using the refreshed subtree and cached siblings. Other indexed subtrees remain cached snapshots. Index files and SQLite journal companions are excluded from listings and aggregate sizes.
 
 The default database is `{location}/.{location-name}.gppufs.sqlite`. An existing `{location}/folder/.{folder-name}.gppufs.sqlite` owns that folder's subtree. A folder can become a shard by browsing it as the location of another `GppuFileSystem` instance. Shards can occur at any depth, and the deepest enclosing shard owns an entry. The parent index retains the child listing reference. `gppu.data` is not involved.
 

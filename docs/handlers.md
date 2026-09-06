@@ -940,11 +940,19 @@ and aggregates. The example applications do no parsing or persistence.
 
 ### `GppuFileSystem.info(self, path: 'str | Path | None' = None, refresh: 'bool' = False, **kwargs) -> 'dict'`
 
-Return one native entry with its complete cached or live handler metadata.
+Return one native entry with its handler metadata.
+
+A physical entry the index has not seen is identified, not probed. A file
+whose details are asked for is probed once; `refresh=True` probes again.
+A folder's totals come from the last refresh of that folder.
 
 ### `GppuFileSystem.ls(self, path: 'str | Path | None' = None, detail: 'bool' = True, recurse: 'bool' = False, refresh: 'bool' = False, **kwargs) -> 'list'`
 
-List enriched entries, optionally descending, using colocated SQLite indexes.
+List entries, optionally descending, from the live folder and the colocated SQLite index.
+
+Every entry the listing finds is identified. Entries already indexed keep
+their indexed metadata. `refresh=True` probes the folder and everything
+below it. Archives are read through their members' filesystem.
 
 ## `valid_time(value: 'datetime | None') -> 'datetime | None'`
 
