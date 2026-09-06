@@ -11,7 +11,7 @@ from gppu.handlers import GppuFileSystem
 
 
 def listing(gppufs: GppuFileSystem) -> str:
-  return json.dumps([gppufs.info(), *gppufs.ls(recurse=True)], indent=2, ensure_ascii=False)
+  return json.dumps([gppufs.info(), *gppufs.ls(recurse=True)], indent=2)
 
 
 def main() -> None:
