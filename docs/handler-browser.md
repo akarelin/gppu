@@ -2,7 +2,7 @@
 fileClass: Document
 created: 2026-09-05
 updated: 2026-09-05
-generated: { by: Codex/GPT-6, at: '2026-09-05 2310' }
+generated: { by: Codex/GPT-6, at: '2026-09-05 2248' }
 ---
 
 `examples/handler_browser.py` demonstrates async handlers, persistent local indexes, and the shared `gppu.tui.TreeTable`.

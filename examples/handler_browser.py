@@ -113,7 +113,7 @@ class HandlerBrowser(TUIApp):
     self.pending: set[str] = set()
 
   def root(self) -> TreeEntry:
-    return TreeEntry(str(self.folder), str(self.folder), is_container=True)
+    return TreeEntry(str(self.folder), self.folder.name or str(self.folder), is_container=True)
 
   def children(self, node: TreeEntry) -> list[TreeEntry]:
     if node.id not in self.rows:
@@ -142,7 +142,7 @@ class HandlerBrowser(TUIApp):
       source = snapshot['source']
       self.rows[key] = [entry(folder / row['name'], row, source) for row in snapshot['children']]
       self.query_one(TreeTable).refresh_entry(key, entry=entry(folder, snapshot['root'], source))
-      status.update(f'{folder} · {source} · i creates / refreshes this folder’s index')
+      status.update(f'{folder} · {source} · one level')
     except Exception as error:
       Error(f'{folder}: {error}')
       status.update(f'Error: {folder}: {error}')
