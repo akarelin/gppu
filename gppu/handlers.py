@@ -4963,7 +4963,7 @@ class GppuFileSystem(AbstractFileSystem):
     return Record(PurePosixPath(value['path'].split('::', 1)[0]), value['type'] == 'folder',
       value['size'], datetime.fromisoformat(value['modified_at']) if value['modified_at'] else None,
       tuple(value['handlers']), probes=tuple(probes),
-      stats=FileStats(value['files'], value['folders'], value['bytes'],
+      stats=None if value.get('files') is None else FileStats(value['files'], value['folders'], value['bytes'],
         tuple(datetime.fromisoformat(bound) for bound in value['span']) if value['span'] else None))
 
   def _save(self, rows: dict[str, tuple[dict, list[str] | None]], scope: str) -> None:
@@ -4987,8 +4987,10 @@ class GppuFileSystem(AbstractFileSystem):
         metadata, members = cached
         children = list(dict.fromkeys([*(item['path'] for item in members), child]))
         children.sort(key=lambda item: (metadata_for(item)['type'] != 'directory', item.casefold()))
-        stats = FileHandler._folder_stats(self._record_from_metadata(metadata),
-          [self._record_from_metadata(metadata_for(item)) for item in children])
+        child_records = [self._record_from_metadata(metadata_for(item)) for item in children]
+        stats = FileHandler._folder_stats(self._record_from_metadata(metadata), child_records)
+        if any(item.stats is None for item in child_records):
+          stats = FileStats(None, None, None, None)  # A child listed but not probed leaves the total unknown.
         metadata['gppu'].update(json.loads(json.dumps(vars(stats), default=str)))
         del metadata['gppu']['name'], metadata['gppu']['parent']
         self._metadata_paths(metadata['gppu'], lambda item:
@@ -5195,6 +5197,7 @@ class GppuFileSystem(AbstractFileSystem):
       self._metadata_paths(extra, reference)
       address = addresses[path]
       extra['is_container'] = (record.is_folder or 'archive' in record.handlers) and 'ignored' not in record.handlers
+      extra['probed'] = True
       metadata = {**attributes[path], 'name': self._uri(address), 'gppu': extra}
       members = [addresses[child] for child in children[path]] if record.is_folder else None
       rows[address] = metadata, members
@@ -5210,8 +5213,80 @@ class GppuFileSystem(AbstractFileSystem):
       return 'gppu-rar://::' + key
     raise ValueError(f'{key}: unsupported archive')
 
+  def _identifiable(self, key: str) -> bool:
+    """Physical local entries are listed and identified live; archives and remote stores are read through ``_live``."""
+    return '::' not in key and isinstance(self.fs, LocalFileSystem)
+
+  def _identified_row(self, key: str, item: dict, record: Record) -> tuple[dict, list | None]:
+    """One entry as a listing sees it: native attributes and the handlers that matched, nothing probed.
+
+    A file's count, bytes and name span are known from the listing. A folder's totals
+    are unknown until it is probed, so they are null and ``probed`` is false.
+    """
+    record = replace(record, modified_at=self._modified(item), size=0 if record.is_folder else record.size)
+    extra = json.loads(json.dumps(record.metadata, default=str))
+    if record.is_folder:
+      extra.update(files=None, folders=None, bytes=None, span=None)
+    else:
+      extra.update(json.loads(json.dumps(vars(FileHandler._file_stats(record)), default=str)))
+    extra['stats'] = {}
+    extra['is_container'] = (record.is_folder or 'archive' in record.handlers) and 'ignored' not in record.handlers
+    extra['probed'] = False
+    return {**item, 'name': self._uri(key), 'gppu': extra}, None
+
+  def _store(self, key: str, rows: dict[str, tuple[dict, list | None]], listing: list[dict] | None) -> None:
+    """Add identified rows the index does not hold yet and record the folder's live child listing."""
+    grouped: dict[str, list[tuple]] = {}
+    for child_key, (metadata, members) in rows.items():
+      owner = self._owner(child_key)
+      value = json.loads(json.dumps(metadata, default=str))
+      value['name'] = self._relative(child_key, owner)
+      value['gppu']['path'] = value['name']
+      grouped.setdefault(owner, []).append((value['name'], json.dumps(value, default=str),
+        None if members is None else json.dumps(members)))
+    for owner, values in grouped.items():
+      with self._database(owner, write=True) as database:
+        database.executemany('INSERT INTO gppufs_entries VALUES (?, ?, ?) ON CONFLICT(path) DO NOTHING', values)
+    if listing is None:
+      return
+    owner = self._owner(key)
+    with self._database(owner, write=True) as database:
+      database.execute('UPDATE gppufs_entries SET children=? WHERE path=?', (json.dumps([
+        {**entry, 'path': self._relative(entry['path'], owner)} for entry in listing]), self._relative(key, owner)))
+
+  def _identify_entry(self, key: str) -> None:
+    """Index one physical entry from its native attributes and matching handlers, without probing."""
+    path = self._path(key)
+    self._store(key, {key: self._identified_row(key, self.fs.info(path), self._handlers.record(Path(path)))}, None)
+
+  def _reconcile(self, key: str, children: list[dict]) -> list[dict]:
+    """List the folder live: identify entries the index has not seen, drop entries that are gone."""
+    known = {child['path']: child for child in children}
+    rows: dict[str, tuple[dict, list | None]] = {}
+    listing: list[dict] = []
+    for entry in self.fs.ls(self._path(key), detail=True):
+      name = entry['name'].rstrip('/')
+      if self._index_name.fullmatch(PurePosixPath(name).name):
+        continue
+      child_key = self._key(name)
+      if child_key in known:
+        listing.append(known[child_key])
+        continue
+      item = self.fs.info(name)  # A directory scan reports no inode on Windows; rename recovery needs it.
+      rows[child_key] = self._identified_row(child_key, item, self._handlers.record(Path(self._path(child_key))))
+      listing.append({'path': child_key, 'type': item['type'], 'ino': item.get('ino')})
+    listing.sort(key=lambda entry: (entry['type'] != 'directory', entry['path'].casefold()))
+    if rows or listing != children:
+      self._store(key, rows, listing)
+    return listing
+
   def info(self, path: str | Path | None = None, refresh: bool = False, **kwargs) -> dict:
-    """Return one native entry with its complete cached or live handler metadata."""
+    """Return one native entry with its handler metadata.
+
+    A physical entry the index has not seen is identified, not probed. A file
+    whose details are asked for is probed once; ``refresh=True`` probes again.
+    A folder's totals come from the last refresh of that folder.
+    """
     with self._lock:
       key = self._key(path)
       cached = None if refresh else self._cached(key)
@@ -5224,16 +5299,28 @@ class GppuFileSystem(AbstractFileSystem):
             self._folder_renames(parent_key, listing[1])
         if not refresh:
           cached = self._cached(key)
+      if cached is None and not refresh and self._identifiable(key):
+        self._identify_entry(key)
+        cached = self._cached(key)
       if cached is None:
         self._live(key)
         cached = self._cached(key)
       if cached is None:
         raise FileNotFoundError(self._uri(key))
-      return cached[0]
+      metadata = cached[0]
+      if metadata['type'] != 'directory' and not metadata['gppu'].get('probed', True) and self._identifiable(key):
+        self._live(key)
+        metadata = self._cached(key)[0]
+      return metadata
 
   def ls(self, path: str | Path | None = None, detail: bool = True,
          recurse: bool = False, refresh: bool = False, **kwargs) -> list:
-    """List enriched entries, optionally descending, using colocated SQLite indexes."""
+    """List entries, optionally descending, from the live folder and the colocated SQLite index.
+
+    Every entry the listing finds is identified. Entries already indexed keep
+    their indexed metadata. ``refresh=True`` probes the folder and everything
+    below it. Archives are read through their members' filesystem.
+    """
     with self._lock:
       key = self._key(path)
       metadata = self.info(path, refresh=refresh)
@@ -5246,18 +5333,28 @@ class GppuFileSystem(AbstractFileSystem):
       if cached is None:
         raise FileNotFoundError(self._uri(key))
       current, children = cached
-      if children is None:
-        if current['type'] == 'directory':
-          self._live(key)
+      if current['type'] != 'directory':
+        return [current] if detail else [current['name']]
+      if self._identifiable(key):
+        if children is not None and self._folder_renames(key, children):
           current, children = self._cached(key)
-        else:
-          return [current] if detail else [current['name']]
-      result = []
-      if self._folder_renames(key, children):
+        children = self._reconcile(key, children or [])
+      elif children is None:
+        self._live(key)
         current, children = self._cached(key)
+      elif self._folder_renames(key, children):
+        current, children = self._cached(key)
+      result = []
       for child in children:
-        row = self.info(self._uri(child['path']))
-        result.append(row)
+        cached = self._cached(child['path'])
+        if cached is None:
+          continue
+        row = cached[0]
         if recurse and row['gppu']['is_container']:
-          result.extend(self.ls(row['name'], recurse=True))
+          below = self.ls(row['name'], recurse=True)
+          row = self._cached(child['path'])[0]  # Entering an archive probes it; report the probed row.
+          result.append(row)
+          result.extend(below)
+        else:
+          result.append(row)
       return result if detail else [row['name'] for row in result]

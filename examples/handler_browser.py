@@ -56,8 +56,9 @@ class HandlerBrowser(TUIApp):
       for row in rows:
         meta = row['gppu']
         span = ' – '.join(moment[:10] for moment in meta['span']) if meta['span'] else ''
+        blank = lambda value, show=str: '' if value is None else show(value)  # unknown until the folder is refreshed
         table.add_row(meta['name'], row['type'], ', '.join(meta['handlers']),
-          str(meta['files']), str(meta['folders']), format_size(meta['bytes']), span, key=row['name'])
+          blank(meta['files']), blank(meta['folders']), blank(meta['bytes'], format_size), span, key=row['name'])
       self.show_metadata(current)
       status.update(current['name'])
     except Exception as error:

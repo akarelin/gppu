@@ -43,7 +43,7 @@ def test_live_and_sqlite_return_all_metadata(tmp_path, monkeypatch):
   (folder / 'note.md').write_text('---\ntitle: Handlers\nstats: user metadata\ncreated: 2026-09-01\n---\nText', encoding='utf-8')
   session(folder / 'session.jsonl')
   fs = GppuFileSystem(tmp_path)
-  live = fs.ls(recurse=True)
+  live = fs.ls(recurse=True, refresh=True)
   root = fs.info()
   assert root['gppu']['files'] == 2
   assert root['gppu']['folders'] == 1
@@ -67,14 +67,46 @@ def test_live_and_sqlite_return_all_metadata(tmp_path, monkeypatch):
   assert cached.ls(detail=False) == [row['name'] for row in cached.ls()]
 
 
-def test_refresh_replaces_snapshot_and_excludes_indexes(tmp_path):
+def test_ls_identifies_without_probing_and_refresh_probes(tmp_path, monkeypatch):
+  folder = tmp_path / 'notes'
+  folder.mkdir()
+  (folder / 'note.md').write_text('---\ntitle: Handlers\n---\nText', encoding='utf-8')
+  fs = GppuFileSystem(tmp_path)
+  root = fs.info()
+  assert root['gppu']['probed'] is False
+  assert root['gppu']['files'] is None
+  assert index(tmp_path).is_file()
+  listed = fs.ls(recurse=True)
+  assert [row['gppu']['name'] for row in listed] == ['notes', 'note.md']
+  assert all(row['gppu']['probed'] is False for row in listed)
+  note = listed[1]
+  assert note['gppu']['handlers'] == ['markdown']
+  assert note['gppu']['bytes'] == note['size']
+  assert 'markdown' not in note['gppu']
+  assert listed[0]['gppu']['files'] is None
+  (tmp_path / 'added.txt').write_text('added')
+  assert [row['gppu']['name'] for row in fs.ls()] == ['notes', 'added.txt']
+  detail = fs.info(note['name'])
+  assert detail['gppu']['probed'] is True
+  assert detail['gppu']['markdown']['title'] == 'Handlers'
+  monkeypatch.setattr(GppuFileSystem, '_live', no_live)
+  assert fs.info(note['name']) == detail
+  monkeypatch.undo()
+  fs.ls(refresh=True, recurse=True)
+  assert fs.info()['gppu']['files'] == 2
+  assert fs.info('notes')['gppu']['probed'] is True
+
+
+def test_ls_lists_removed_and_added_entries_and_refresh_forgets_removed(tmp_path):
   source = tmp_path / 'old.txt'
   source.write_text('old')
   fs = GppuFileSystem(tmp_path)
-  before = fs.ls()
+  fs.ls()
   source.unlink()
   (tmp_path / 'new.txt').write_text('new content')
-  assert fs.ls() == before
+  listed = fs.ls()
+  assert [row['gppu']['name'] for row in listed] == ['new.txt']
+  assert listed[0]['gppu']['probed'] is False
   fresh = fs.ls(refresh=True)
   assert [row['gppu']['name'] for row in fresh] == ['new.txt']
   assert fs.info()['gppu']['bytes'] == len('new content')
@@ -104,7 +136,7 @@ def test_child_refresh_updates_ancestor_totals_from_cached_siblings(tmp_path, mo
   if shard:
     GppuFileSystem(child).ls()
   fs = GppuFileSystem(tmp_path)
-  fs.ls(recurse=True)
+  fs.ls(recurse=True, refresh=True)
   sibling_before = fs.info('sibling.txt')
   sibling.write_text('changed but not refreshed')
   (child / 'old-2020-01-01.txt').unlink()
@@ -140,7 +172,8 @@ def test_caching_a_new_child_updates_its_cached_parent_listing(tmp_path):
   fs.ls()
   (tmp_path / 'added.txt').write_text('added')
   added = fs.info('added.txt')
-  assert fs.ls() == [added, fs.info('before.txt')]
+  assert added['gppu']['probed'] is True
+  assert [row['gppu']['name'] for row in fs.ls()] == ['added.txt', 'before.txt']
   assert fs.info()['gppu']['files'] == 2
   assert fs.info()['gppu']['bytes'] == 11
 
@@ -169,7 +202,7 @@ def test_folder_rename_preserves_rows(tmp_path, monkeypatch, shard, method):
   if shard:
     GppuFileSystem(old).ls()
   fs = GppuFileSystem(tmp_path)
-  fs.ls(recurse=True)
+  fs.ls(recurse=True, refresh=True)
   before = fs.info('outer/old/session.jsonl')
   new = outer / 'renamed'
   rename(old, new, tmp_path)
@@ -201,7 +234,7 @@ def test_location_rename_renames_database_without_reindexing(tmp_path, monkeypat
   old = tmp_path / 'original'
   old.mkdir()
   session(old / 'session.jsonl')
-  GppuFileSystem(old).ls()
+  GppuFileSystem(old).ls(refresh=True)
   contents = index(old).read_bytes()
   new = tmp_path / 'renamed'
   rename(old, new, tmp_path)
@@ -365,7 +398,7 @@ def test_exported_session_member_paths_remain_relative_after_rename(tmp_path, mo
   with zipfile.ZipFile(old / 'export.zip', 'w') as archive:
     archive.writestr('conversations.json', json.dumps([{'uuid': 'exported-session', 'chat_messages': []}]))
   fs = GppuFileSystem(tmp_path)
-  fs.ls()
+  fs.ls(refresh=True)
   new = tmp_path / 'new'
   rename(old, new, tmp_path)
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
