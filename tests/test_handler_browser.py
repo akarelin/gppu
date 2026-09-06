@@ -1,167 +1,89 @@
-"""Exercise the example with real local indexes and Textual keyboard input."""
+from __future__ import annotations
 
 import asyncio
-import shutil
+import json
 import threading
-from pathlib import Path
+import zipfile
 
-from gppu.data import Persistence
-from gppu.tui import TreeTable
-from textual.widgets import DataTable, Static
+from textual.widgets import DataTable, Static, TextArea
 
-from examples import handler_browser as browser
-
-
-def test_index_first_refresh_and_unindexed_child(tmp_path, monkeypatch):
-  async def exercise():
-    note = tmp_path / 'note.md'
-    note.write_text('---\ndate: 2026-09-05\n---\nA note.\n')
-    child = tmp_path / 'child'
-    child.mkdir()
-    (child / 'new.txt').write_text('Unindexed child')
-    live = await browser.read_folder(tmp_path)
-    assert live['source'] == 'Filesystem'
-    assert not (tmp_path / browser.INDEX_FILE).exists()
-
-    indexed = await browser.read_folder(tmp_path, refresh=True)
-    assert indexed['source'] == 'Index'
-    assert 'markdown' in next(row for row in indexed['children'] if row['name'] == note.name)['handlers']
-    assert indexed['root']['files'] == 1
-    assert indexed['root']['folders'] == 1
-    assert indexed['root']['span'] is not None
-    note.unlink()
-    (tmp_path / 'added.txt').write_text('Added after indexing')
-
-    with monkeypatch.context() as patch:
-      def unexpected_handler(*args, **kwargs):
-        raise AssertionError('Indexed browsing must not invoke filesystem handlers')
-      patch.setattr(browser, 'ListingHandler', unexpected_handler)
-      assert await browser.read_folder(tmp_path) == indexed
-    assert (await browser.read_folder(child))['source'] == 'Filesystem'
-
-    refreshed = await browser.read_folder(tmp_path, refresh=True)
-    names = {row['name'] for row in refreshed['children']}
-    assert names == {'child', 'added.txt'}
-    assert refreshed['root']['size'] == len('Added after indexing')
-    assert await browser.read_folder(tmp_path) == refreshed
-
-  asyncio.run(exercise())
+from examples.handler_browser import HandlerBrowser
+from gppu.handlers import GppuFileSystem
 
 
-def test_indexes_are_portable_and_preserve_other_namespaces(tmp_path):
-  async def exercise():
-    original = tmp_path / 'original'
-    original.mkdir()
-    (original / 'hello.txt').write_text('hello')
-    with Persistence(str(original), backend='sqlite') as index:
-      index.upsert('OtherConsumer', 'key', {'value': 42})
-    assert (await browser.read_folder(original))['source'] == 'Filesystem'
-    await browser.read_folder(original, refresh=True)
-    with Persistence(str(original), backend='sqlite') as index:
-      assert index.load('OtherConsumer', 'key') == {'value': 42}
-    copied = tmp_path / 'copied'
-    shutil.copytree(original, copied)
-    snapshot = await browser.read_folder(copied)
-    assert snapshot['children'][0]['path'] == 'hello.txt'
-    node = browser.entry(copied, snapshot['root'], snapshot['source'])
-    assert node.id == str(copied)
-    assert node.label == 'copied'
-
-  asyncio.run(exercise())
+async def settled(app, pilot):
+  await app.workers.wait_for_complete()
+  await pilot.pause()
+  await app.workers.wait_for_complete()
 
 
-def test_failed_refresh_preserves_previous_index(tmp_path, monkeypatch):
-  async def exercise():
-    (tmp_path / 'hello.txt').write_text('hello')
-    previous = await browser.read_folder(tmp_path, refresh=True)
-    (tmp_path / 'later.txt').write_text('later')
-
-    def denied(*args, **kwargs):
-      raise PermissionError('Index is read-only')
-
-    with monkeypatch.context() as patch:
-      patch.setattr(Persistence, 'upsert', denied)
-      try:
-        await browser.read_folder(tmp_path, refresh=True)
-      except PermissionError as error:
-        assert str(error) == 'Index is read-only'
-      else:
-        raise AssertionError('Write failure was hidden')
-    assert await browser.read_folder(tmp_path) == previous
-
-  asyncio.run(exercise())
-
-
-def test_async_index_read_does_not_block_event_loop(tmp_path, monkeypatch):
-  async def exercise():
-    entered = threading.Event()
-    release = threading.Event()
-    original = browser.load_index
-
-    def slow_read(folder):
-      entered.set()
-      assert release.wait(5), 'Event loop blocked on SQLite read'
-      return original(folder)
-
-    monkeypatch.setattr(browser, 'load_index', slow_read)
-    task = asyncio.create_task(browser.read_folder(tmp_path))
-    try:
-      assert await asyncio.to_thread(entered.wait, 5)
-      assert not task.done()
-    finally:
-      release.set()
-    assert (await task)['source'] == 'Filesystem'
-
-  asyncio.run(exercise())
-
-
-def test_tui_expansion_index_refresh_and_error(tmp_path, monkeypatch):
+def test_tui_navigation_metadata_refresh_and_errors(tmp_path, monkeypatch):
   async def exercise():
     child = tmp_path / 'child'
     child.mkdir()
-    (child / 'nested.txt').write_text('nested')
-    (tmp_path / 'empty.txt').touch()
-    app = browser.HandlerBrowser(tmp_path)
-    async with app.run_test(size=(130, 30)) as pilot:
-      await app.workers.wait_for_complete()
-      await pilot.pause()
-      tree = app.query_one(TreeTable)
+    (child / 'note.md').write_text('---\ntitle: Metadata in the TUI\n---\nText')
+    with zipfile.ZipFile(tmp_path / 'bundle.zip', 'w') as archive:
+      archive.writestr('inside.txt', 'inside')
+    fs = GppuFileSystem(tmp_path)
+    app = HandlerBrowser(fs)
+    async with app.run_test(size=(130, 35)) as pilot:
+      await settled(app, pilot)
       table = app.query_one(DataTable)
-      assert table.row_count == 3
-      assert table.get_row(str(tmp_path / 'empty.txt'))[-2] == ''
-      table.focus()
-      tree.select(str(child))
-      await pilot.pause()
-      assert tree.selected_entry.id == str(child)
-      assert tree.selected_entry.is_container
-      assert app.focused is table
-      await pilot.press('right')
-      await app.workers.wait_for_complete()
-      await pilot.pause()
-      assert table.row_count == 4
-      expanded = tree.expanded_ids
-      await pilot.press('i')
-      await app.workers.wait_for_complete()
-      await pilot.pause()
-      assert tree.selected_entry.id == str(child)
-      assert expanded == tree.expanded_ids
-      assert tree.selected_entry.meta['source'] == 'Index'
-      assert (child / browser.INDEX_FILE).exists()
+      assert table.row_count == 2
+      child_row = next(i for i, value in enumerate(app.rows.values()) if value['gppu']['name'] == 'child')
+      table.move_cursor(row=child_row)
+      await pilot.press('enter')
+      await settled(app, pilot)
+      assert app.current['gppu']['name'] == 'child'
+      assert table.row_count == 1
+      detail = json.loads(app.query_one(TextArea).text)
+      assert detail['gppu']['markdown']['title'] == 'Metadata in the TUI'
       (child / 'added.txt').write_text('added')
-      await pilot.press('i')
-      await app.workers.wait_for_complete()
-      await pilot.pause()
-      assert table.row_count == 5
-      assert tree.selected_entry.id == str(child)
+      await pilot.press('r')
+      await settled(app, pilot)
+      assert table.row_count == 2
+      await pilot.press('backspace')
+      await settled(app, pilot)
+      assert app.current['name'] == fs.info()['name']
+      archive_row = next(i for i, value in enumerate(app.rows.values()) if value['gppu']['name'] == 'bundle.zip')
+      table.move_cursor(row=archive_row)
+      await pilot.press('enter')
+      await settled(app, pilot)
+      assert table.row_count == 1
+      assert next(iter(app.rows.values()))['gppu']['name'] == 'inside.txt'
+      await pilot.press('backspace')
+      await settled(app, pilot)
+      assert app.current['name'] == fs.info()['name']
+      def denied(*args, **kwargs):
+        raise PermissionError('source unavailable')
+      monkeypatch.setattr(fs, 'ls', denied)
+      await pilot.press('r')
+      await settled(app, pilot)
+      assert 'source unavailable' in str(app.query_one('#status', Static).content)
+      assert table.row_count == 2
+  asyncio.run(exercise())
 
-      def denied(*args):
-        raise PermissionError('Cannot write index')
-      monkeypatch.setattr(browser, 'save_index', denied)
-      await pilot.press('i')
-      await app.workers.wait_for_complete()
-      await pilot.pause()
-      assert 'Cannot write index' in str(app.query_one('#status', Static).content)
-      assert tree.selected_entry.meta['source'] == 'Index'
-      assert not app.pending
 
+def test_tui_io_runs_outside_event_loop(tmp_path):
+  async def exercise():
+    (tmp_path / 'note.txt').write_text('content')
+    delegate = GppuFileSystem(tmp_path)
+    entered, release = threading.Event(), threading.Event()
+    class Filesystem:
+      def ls(self, *args, **kwargs):
+        entered.set()
+        assert release.wait(5), 'Filesystem I/O blocked the UI event loop'
+        return delegate.ls(*args, **kwargs)
+      def info(self, *args, **kwargs):
+        return delegate.info(*args, **kwargs)
+    app = HandlerBrowser(Filesystem())
+    async with app.run_test(size=(130, 35)) as pilot:
+      try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        await pilot.pause()
+        assert app.query_one(DataTable).row_count == 0
+      finally:
+        release.set()
+      await settled(app, pilot)
+      assert app.query_one(DataTable).row_count == 1
   asyncio.run(exercise())

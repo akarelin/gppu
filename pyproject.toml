@@ -10,6 +10,7 @@ requires-python = ">=3.11"
 dependencies = [
     "tzdata; platform_system == 'Windows'",
     "PyYAML",
+    "fsspec",
     "Jinja2",
 ]
 
