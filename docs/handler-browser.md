@@ -2,7 +2,7 @@
 fileClass: Document
 created: 2026-09-05
 updated: 2026-09-06
-generated: { by: Codex/GPT-6, at: '2026-09-06 02:15 -07:00' }
+generated: { by: Codex/GPT-6, at: '2026-09-06 03:33 -07:00' }
 ---
 
 The examples construct `GppuFileSystem` and use only `ls` and `info`. `handler_ls.py` prints complete JSON metadata; `handler_browser.py` displays a directory table and the selected entry's complete metadata. `handler_tui.py` launches the same browser. Parsing, aggregates, SQLite storage, shard routing, and external rename recovery belong to `gppu.handlers`.
@@ -47,7 +47,7 @@ fresh_children = gppufs.ls(refresh=True)
 
 Both live and cached results pass through the same JSON representation: dates and datetimes are strings, sequences are lists, and absent known values remain null. Handler statistics are stored separately from parsed metadata so a frontmatter field called `stats` is preserved.
 
-The first uncached read parses the requested hierarchy and stores its metadata. Later reads reuse the index. `refresh=True` replaces the requested subtree with a live snapshot, including additions and removals. Other indexed subtrees remain cached snapshots. Index files and SQLite journal companions are excluded from listings and aggregate sizes.
+The first uncached read parses the requested hierarchy and stores its metadata. Later reads reuse the index. `refresh=True` rereads source metadata and replaces the requested subtree, including additions and removals, even when file sizes and timestamps have not changed. Cached ancestors receive updated file, folder, byte, and span aggregates using the refreshed subtree and cached siblings. Other indexed subtrees remain cached snapshots. Index files and SQLite journal companions are excluded from listings and aggregate sizes.
 
 The default database is `{location}/.{location-name}.gppufs.sqlite`. An existing `{location}/folder/.{folder-name}.gppufs.sqlite` owns that folder's subtree. A folder can become a shard by browsing it as the location of another `GppuFileSystem` instance. Shards can occur at any depth, and the deepest enclosing shard owns an entry. The parent index retains the child listing reference. `gppu.data` is not involved.
 

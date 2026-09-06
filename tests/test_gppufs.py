@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sqlite3
 import subprocess
 import tarfile
@@ -91,6 +92,69 @@ def test_failed_refresh_does_not_destroy_snapshot(tmp_path, monkeypatch):
   with pytest.raises(PermissionError, match='source unavailable'):
     fs.ls(refresh=True)
   assert fs.ls() == before
+
+
+@pytest.mark.parametrize('shard', [False, True])
+def test_child_refresh_updates_ancestor_totals_from_cached_siblings(tmp_path, monkeypatch, shard):
+  child = tmp_path / 'outer' / 'child'
+  child.mkdir(parents=True)
+  (child / 'old-2020-01-01.txt').write_text('old')
+  sibling = tmp_path / 'sibling.txt'
+  sibling.write_text('cached sibling')
+  if shard:
+    GppuFileSystem(child).ls()
+  fs = GppuFileSystem(tmp_path)
+  fs.ls(recurse=True)
+  sibling_before = fs.info('sibling.txt')
+  sibling.write_text('changed but not refreshed')
+  (child / 'old-2020-01-01.txt').unlink()
+  nested = child / 'nested'
+  nested.mkdir()
+  (nested / 'new-2026-01-01.txt').write_text('new content')
+  (child / 'second.txt').write_text('second')
+  calls = []
+  live = fs._live
+  def scoped_live(key):
+    calls.append(key)
+    assert key == 'outer/child', 'Refresh reparsed outside the requested subtree'
+    live(key)
+  monkeypatch.setattr(fs, '_live', scoped_live)
+  fs.ls('outer/child', refresh=True)
+  assert calls == ['outer/child']
+  assert fs.info('sibling.txt') == sibling_before
+  for path, expected in (
+    ('outer/child', (2, 1, 17)),
+    ('outer', (2, 2, 17)),
+    (None, (3, 3, 31)),
+  ):
+    metadata = fs.info(path)['gppu']
+    assert tuple(metadata[field] for field in ('files', 'folders', 'bytes')) == expected
+    assert metadata['span'][0].startswith('2026-01-01')
+  monkeypatch.setattr(GppuFileSystem, '_live', no_live)
+  assert GppuFileSystem(tmp_path).info() == fs.info()
+
+
+def test_caching_a_new_child_updates_its_cached_parent_listing(tmp_path):
+  (tmp_path / 'before.txt').write_text('before')
+  fs = GppuFileSystem(tmp_path)
+  fs.ls()
+  (tmp_path / 'added.txt').write_text('added')
+  added = fs.info('added.txt')
+  assert fs.ls() == [added, fs.info('before.txt')]
+  assert fs.info()['gppu']['files'] == 2
+  assert fs.info()['gppu']['bytes'] == 11
+
+
+def test_refresh_rereads_metadata_when_size_and_mtime_are_unchanged(tmp_path):
+  note = tmp_path / 'note.md'
+  note.write_text('---\ntitle: Before\n---\nText', encoding='utf-8')
+  fs = GppuFileSystem(tmp_path)
+  before, = fs.ls()
+  status = note.stat()
+  note.write_text('---\ntitle: After!\n---\nText', encoding='utf-8')
+  os.utime(note, ns=(status.st_atime_ns, status.st_mtime_ns))
+  assert fs.ls() == [before]
+  assert fs.info('note.md', refresh=True)['gppu']['markdown']['title'] == 'After!'
 
 
 @pytest.mark.parametrize('shard', [False, True])
