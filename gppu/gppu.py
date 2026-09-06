@@ -799,52 +799,27 @@ class _PlainFormatter(logging.Formatter):
 _file_handlers: dict[str, logging.Handler] = {}
 
 
-def _default_log_dir() -> Path:
-  d = os.environ.get('GPPU_LOG_DIR')
-  return Path(d) if d else Path.home() / '.cache' / 'gppu' / 'logs'
-
-
-def _resolve_log_name(name: str | None = None) -> str:
-  """App name for the log filename: explicit → $GPPU_APP_NAME → Env.name → gppu."""
-  if name:
-    return name
-  env = os.environ.get('GPPU_APP_NAME')
-  if env:
-    return env
-  E = globals().get('Env')  # Env is defined later in this module; late lookup.
-  n = getattr(E, 'name', None) if E is not None and getattr(E, 'initialized', False) else None
-  return n or 'gppu'
-
-
 def enable_file_logging(name: str | None = None, log_dir: str | Path | None = None,
-                        level: int = logging.DEBUG) -> Path | None:
-  """Mirror the gppu logger to a plain-text file, in addition to the console.
+                        level: int = logging.DEBUG) -> Path:
+  """Mirror logs to Env's explicit `log_file`, or an explicit name + log_dir.
 
-  Y2-style file+console logging: the console keeps its colorized output while
-  the file gets the identical messages with ANSI codes stripped. Idempotent per
-  resolved path, so repeated calls (import hook, Env.from_env, TUIApp) are safe.
-
-  Name resolution: *name* → ``$GPPU_APP_NAME`` → ``Env.name`` → ``gppu``.
-  Directory: *log_dir* → ``$GPPU_LOG_DIR`` → ``~/.cache/gppu/logs``.
-  Returns the log file path, or ``None`` if it could not be created.
+  Env enables this automatically when YAML declares `log_file`. No directory
+  or filename is inferred. Creation errors propagate to the caller.
   """
-  resolved = _resolve_log_name(name)
-  base = Path(log_dir) if log_dir else _default_log_dir()
-  try:
-    base.mkdir(parents=True, exist_ok=True)
-    path = (base / f'{resolved}.log').resolve()
-  except OSError:
-    return None
+  if log_dir is not None:
+    if not name: raise ValueError('File logging with log_dir requires a name')
+    path = full_path(Path(log_dir) / f'{name}.log')
+  else:
+    value = Env.glob('log_file')
+    if not isinstance(value, str) or not value.strip():
+      raise ValueError('File logging requires an explicit log_file in configuration')
+    path = full_path(value)
+  path.parent.mkdir(parents=True, exist_ok=True)
   key = str(path)
   if key in _file_handlers:
     return path
-  try:
-    from logging.handlers import RotatingFileHandler
-    fh = RotatingFileHandler(
-      path, maxBytes=4_000_000, backupCount=5, encoding='utf-8',
-    )
-  except OSError:
-    return None
+  from logging.handlers import RotatingFileHandler
+  fh = RotatingFileHandler(path, maxBytes=4_000_000, backupCount=5, encoding='utf-8')
   fh.setLevel(level)
   fh.setFormatter(_PlainFormatter())
   fh.addFilter(_EmptyMessageFilter())
@@ -870,16 +845,11 @@ def file_log(msg: str, *args, level: int = logging.INFO) -> None:
       h.handle(record)
 
 
-# Sub-apps spawned by the TUI launcher inherit $GPPU_APP_NAME; turn on file
-# logging immediately so output is captured before any app code runs.
-if os.environ.get('GPPU_APP_NAME'):
-  enable_file_logging()
-
-
 def _init_logger_base(name: str = 'gppu', trace_rules: dict | None = None) -> None:
   """Initialize global logger with a specific name and optional trace rules."""
   global _logger
   if trace_rules is not None:
+    trace_rules = dict(trace_rules)
     TRACE_RULES.clear()
     TRACE_RULES.update(trace_rules)
   _logger = _log_root if name == 'gppu' else _log_root.getChild(name)
@@ -935,9 +905,21 @@ class Env:
     s = json.dumps(d)
     Env.data = json.loads(Template(s).safe_substitute())
     Env.initialized = True
+    if 'trace_rules' in Env.data:
+      rules = Env.glob('trace_rules')
+      if not isinstance(rules, dict): raise TypeError('trace_rules must be a mapping')
+      TRACE_RULES.clear()
+      TRACE_RULES.update(rules)
+    if 'log_file' in Env.data: enable_file_logging()
 
   @staticmethod
-  def reset() -> None: Env.data = {}; Env.initialized = False
+  def reset() -> None:
+    for handler in tuple(_file_handlers.values()):
+      _log_root.removeHandler(handler)
+      handler.close()
+    _file_handlers.clear()
+    Env.data = {}
+    Env.initialized = False
 
   @staticmethod
   def glob(path, default=None) -> Any: return deepget(path, Env.data, default=default)
@@ -984,7 +966,6 @@ class Env:
     Env.app_path = Env._resolve_app_path(app_path)
     Env.config_file = Env._config_file()
 
-    enable_file_logging(Env.name)  # Y2-style file+console logging for this app
     Env._logger = _logger.getChild(Env.name)
     for attr_name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)):
       setattr(Env, attr_name, staticmethod(partial(fn, logger=Env._logger)))
