@@ -34,7 +34,7 @@ def _signature(value: Any) -> str:
 
     try:
         return str(inspect.signature(value))
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return ""
 
 
