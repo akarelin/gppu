@@ -935,6 +935,7 @@ so moving a folder with its database preserves its listings.
 `ls` and `info` return the same metadata dictionaries from SQLite or
 live parsing. `refresh=True` requests live data. An absent cached row
 is populated by a live read; a failed read never substitutes stale data.
+Every time in the metadata is written in this host's local zone.
 Index files and SQLite journal companions are excluded from listings
 and aggregates. The example applications do no parsing or persistence.
 

@@ -4710,6 +4710,13 @@ def typed(text: str) -> str:
     return text
 
 
+def _metadata_text(value: Any) -> str:
+    """JSON text for a value the index carries: a time in this host's local zone, anything else as written."""
+    if isinstance(value, datetime):
+        return str(value.astimezone())
+    return str(value)
+
+
 class _MetadataHandlers(
     FileHandler, IgnoredHandler, ChatGPTHandler, AnthropicHandler,
     MarkdownHandler, CSVHandler, LogHandler, EmailHandler, BrowserHandler,
@@ -4769,6 +4776,7 @@ class GppuFileSystem(AbstractFileSystem):
   ``ls`` and ``info`` return the same metadata dictionaries from SQLite or
   live parsing. ``refresh=True`` requests live data. An absent cached row
   is populated by a live read; a failed read never substitutes stale data.
+  Every time in the metadata is written in this host's local zone.
   Index files and SQLite journal companions are excluded from listings
   and aggregates. The example applications do no parsing or persistence.
   """
@@ -4997,7 +5005,7 @@ class GppuFileSystem(AbstractFileSystem):
         stats = FileHandler._folder_stats(self._record_from_metadata(metadata), child_records)
         if any(item.stats is None for item in child_records):
           stats = FileStats(None, None, None, None)  # A child listed but not probed leaves the total unknown.
-        metadata['gppu'].update(json.loads(json.dumps(vars(stats), default=str)))
+        metadata['gppu'].update(json.loads(json.dumps(vars(stats), default=_metadata_text)))
         del metadata['gppu']['name'], metadata['gppu']['parent']
         self._metadata_paths(metadata['gppu'], lambda item:
           self._key(item) if item.rsplit('::', 1)[-1] == self.location or
@@ -5010,12 +5018,12 @@ class GppuFileSystem(AbstractFileSystem):
       owner = self._owner(key)
       if owner not in grouped:
         grouped[owner] = []
-      value = json.loads(json.dumps(metadata, default=str))
+      value = json.loads(json.dumps(metadata, default=_metadata_text))
       value['name'] = self._relative(key, owner)
       value['gppu']['path'] = value['name']
       self._metadata_paths(value['gppu'], lambda item:
         item if '://' in item.rsplit('::', 1)[-1] else self._relative(item, owner))
-      grouped[owner].append((self._relative(key, owner), json.dumps(value, default=str),
+      grouped[owner].append((self._relative(key, owner), json.dumps(value, default=_metadata_text),
         None if children is None else json.dumps([
           {'path': self._relative(child, owner), 'type': (item := metadata_for(child))['type'], 'ino': item.get('ino')}
           for child in children])))
@@ -5240,7 +5248,7 @@ class GppuFileSystem(AbstractFileSystem):
       extra = record.metadata
       extra['stats'] = {probe.handler: vars(probe.stats)
         for probe in record.probes if probe.stats is not None}
-      extra = json.loads(json.dumps(extra, default=str))
+      extra = json.loads(json.dumps(extra, default=_metadata_text))
       self._metadata_paths(extra, reference)
       address = addresses[path]
       extra['is_container'] = (record.is_folder or 'archive' in record.handlers) and 'ignored' not in record.handlers
@@ -5271,11 +5279,11 @@ class GppuFileSystem(AbstractFileSystem):
     are unknown until it is probed, so they are null and ``probed`` is false.
     """
     record = replace(record, modified_at=self._modified(item), size=0 if record.is_folder else record.size)
-    extra = json.loads(json.dumps(record.metadata, default=str))
+    extra = json.loads(json.dumps(record.metadata, default=_metadata_text))
     if record.is_folder:
       extra.update(files=None, folders=None, bytes=None, span=None)
     else:
-      extra.update(json.loads(json.dumps(vars(FileHandler._file_stats(record)), default=str)))
+      extra.update(json.loads(json.dumps(vars(FileHandler._file_stats(record)), default=_metadata_text)))
     extra['stats'] = {}
     extra['is_container'] = (record.is_folder or 'archive' in record.handlers) and 'ignored' not in record.handlers
     extra['probed'] = False
@@ -5286,10 +5294,10 @@ class GppuFileSystem(AbstractFileSystem):
     grouped: dict[str, list[tuple]] = {}
     for child_key, (metadata, members) in rows.items():
       owner = self._owner(child_key)
-      value = json.loads(json.dumps(metadata, default=str))
+      value = json.loads(json.dumps(metadata, default=_metadata_text))
       value['name'] = self._relative(child_key, owner)
       value['gppu']['path'] = value['name']
-      grouped.setdefault(owner, []).append((value['name'], json.dumps(value, default=str),
+      grouped.setdefault(owner, []).append((value['name'], json.dumps(value, default=_metadata_text),
         None if members is None else json.dumps([
           {**entry, 'path': self._relative(entry['path'], owner)} for entry in members])))
     for owner, values in grouped.items():

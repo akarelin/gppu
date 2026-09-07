@@ -40,7 +40,7 @@ fresh_children = gppufs.ls(refresh=True)
 | `gppu` property | Presence | Source |
 | --- | --- | --- |
 | `path`, `name`, `parent` | Required; `parent` is null at the location root | Current URI, display filename, and navigable parent URI. |
-| `type`, `size`, `modified_at`, `handlers` | Required; `modified_at` can be null | Existing `Record` properties; `type` is `file` or `folder`. |
+| `type`, `size`, `modified_at`, `handlers` | Required; `modified_at` can be null | Existing `Record` properties; `type` is `file` or `folder`. Every time, here and in spans, is in the host's local zone. |
 | `files`, `folders`, `bytes`, `span` | Required; null for a folder that has not been probed, `span` can be null | Existing hierarchy statistics. Physical archives count as files in their containing folder; their member listings have their own aggregates. |
 | `probed` | Required boolean | False for an entry the listing identified but nothing has parsed yet. |
 | `stats` | Required mapping | Each matched handler's statistics, keyed by handler name. Empty until probed. |
