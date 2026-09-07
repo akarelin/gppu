@@ -958,6 +958,30 @@ their indexed metadata. `refresh=True` probes the folder and everything
 below it. Entering an archive lists its members identified, like a folder;
 refreshing the archive probes them.
 
+## `GppuCatalog(*args, **kwargs)`
+
+The Locations gppufs works with, read from a catalog folder.
+
+`catalog` is an absolute folder holding `locations.json`: one row per
+Location as the Locations table has it, plus `index`, where that Location
+keeps its gppufs index. The catalog root lists the Locations without touching
+them. Every address at or below a Location is served by that Location's
+`GppuFileSystem`; the deepest Location whose root contains the address
+owns it. A Location root's parent is its parent Location when the catalog
+names one, otherwise the catalog root, so a browser walks the Locations tree.
+
+### `GppuCatalog.info(self, path: 'str | Path | None' = None, refresh: 'bool' = False, **kwargs) -> 'dict'`
+
+The catalog itself, or one entry served by its Location.
+
+### `GppuCatalog.ls(self, path: 'str | Path | None' = None, detail: 'bool' = True, recurse: 'bool' = False, refresh: 'bool' = False, **kwargs) -> 'list'`
+
+The Locations at the catalog root, otherwise the listing the owning Location gives.
+
+`refresh=True` at the root rereads `locations.json`. Recursion from the
+root descends the Locations that have no parent Location; their subtrees
+hold the rest.
+
 ## `valid_time(value: 'datetime | None') -> 'datetime | None'`
 
 A recorded time, or None. Placeholders that tools write instead of a time, anything at or before DOS zero, and future times are not times.

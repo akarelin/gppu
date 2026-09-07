@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from fsspec.implementations.memory import MemoryFileSystem
 
-from gppu.handlers import ArchiveHandler, GppuFileSystem
+from gppu.handlers import ArchiveHandler, GppuCatalog, GppuFileSystem
 
 
 def index(folder: Path) -> Path:
@@ -420,6 +420,23 @@ def test_relative_location_is_refused_and_creates_nothing(tmp_path, monkeypatch,
   assert list(tmp_path.iterdir()) == []
 
 
+def test_a_folder_the_account_cannot_list_is_still_listed_by_its_parent(tmp_path, monkeypatch):
+  locked = tmp_path / 'System Volume Information'
+  locked.mkdir()
+  (tmp_path / 'open.txt').write_text('open')
+  from fsspec.implementations.local import LocalFileSystem
+  original = LocalFileSystem.ls
+  def denied(self, path, detail=True, **kwargs):
+    if Path(path).resolve() == locked.resolve():
+      raise PermissionError(5, 'Access is denied', str(path))
+    return original(self, path, detail=detail, **kwargs)
+  monkeypatch.setattr(LocalFileSystem, 'ls', denied)
+  rows = GppuFileSystem(tmp_path).ls()
+  assert [row['gppu']['name'] for row in rows] == ['System Volume Information', 'open.txt']
+  with pytest.raises(PermissionError):
+    GppuFileSystem(tmp_path).ls('System Volume Information')
+
+
 def test_parent_traversal_cannot_escape_location(tmp_path):
   fs = GppuFileSystem(tmp_path)
   for path in ('../outside', fs.location + '/../outside'):
@@ -441,3 +458,63 @@ def test_exported_session_member_paths_remain_relative_after_rename(tmp_path, mo
   exported, = metadata['gppu']['claude']['sessions']
   assert exported['location'] == metadata['name']
   assert exported['path'] == 'conversations.json'
+
+
+def catalog_of(tmp_path: Path, rows: list[dict]) -> Path:
+  folder = tmp_path / '.catalog'
+  folder.mkdir(exist_ok=True)
+  (folder / 'locations.json').write_text(json.dumps(rows), encoding='utf-8')
+  return folder
+
+
+def location_row(number: int, root: Path, parent: int | None = None) -> dict:
+  return {'id': number, 'path': root.name, 'parent_file_location_id': parent, 'root_path': str(root),
+    'index': str(root / f'.{root.name}.gppufs.sqlite')}
+
+
+def test_catalog_lists_locations_and_serves_each_through_its_own_index(tmp_path):
+  outer = tmp_path / 'outer'
+  inner = outer / 'inner'
+  inner.mkdir(parents=True)
+  (outer / 'a.txt').write_text('a')
+  (inner / 'b.md').write_text('---\ntitle: B\n---\nText')
+  catalog = GppuCatalog(catalog_of(tmp_path, [location_row(1, outer), location_row(2, inner, 1)]))
+  root = catalog.info()
+  assert root['gppu']['parent'] is None
+  assert root['gppu']['locations'] == 2
+  rows = catalog.ls()
+  assert [row['gppu']['name'] for row in rows] == ['outer', 'inner']
+  assert [row['gppu']['location']['id'] for row in rows] == [1, 2]
+  assert [row['gppu']['parent'] for row in rows] == [root['name'], rows[0]['name']]
+  assert all(row['gppu']['indexed'] is False for row in rows)
+  assert not index(outer).exists()
+  detail = catalog.info(rows[0]['name'])
+  assert detail['gppu']['probed'] is False
+  assert detail['gppu']['parent'] == root['name']
+  assert detail['gppu']['location']['id'] == 1
+  assert index(outer).is_file()
+  assert [row['gppu']['name'] for row in catalog.ls(rows[0]['name'])] == ['inner', 'a.txt']
+  assert catalog.info(rows[1]['name'])['gppu']['parent'] == rows[0]['name']
+  assert catalog.ls(rows[1]['name'])[0]['gppu']['handlers'] == ['markdown']
+  assert index(inner).is_file()
+  assert catalog.ls()[1]['gppu']['indexed'] is True
+  assert [row['gppu']['name'] for row in catalog.ls(recurse=True)] == ['outer', 'inner', 'b.md', 'a.txt']
+  assert catalog.ls(detail=False) == [row['name'] for row in rows]
+  with pytest.raises(FileNotFoundError, match='not inside'):
+    catalog.info(str(tmp_path / 'elsewhere'))
+  with pytest.raises(ValueError, match='absolute'):
+    catalog.info('relative/name')
+  third = tmp_path / 'third'
+  third.mkdir()
+  catalog_of(tmp_path, [location_row(1, outer), location_row(2, inner, 1), location_row(3, third)])
+  assert len(catalog.ls()) == 2
+  assert len(catalog.ls(refresh=True)) == 3
+
+
+def test_catalog_refuses_an_index_that_is_not_where_gppufs_keeps_it(tmp_path):
+  outer = tmp_path / 'outer'
+  outer.mkdir()
+  row = {**location_row(1, outer), 'index': str(tmp_path / 'elsewhere.sqlite')}
+  with pytest.raises(ValueError, match='catalog index'):
+    GppuCatalog(catalog_of(tmp_path, [row]))
+
