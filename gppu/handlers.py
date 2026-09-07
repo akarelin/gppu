@@ -4768,7 +4768,8 @@ register_implementation('gppu-rar', _RarFileSystem)
 class GppuFileSystem(AbstractFileSystem):
   """fsspec listings enriched by handlers and stored beside their location.
 
-  ``location`` is the only required setting. Its index is
+  ``location`` is the only required setting: an absolute path or a URL, never
+  the folder the caller happens to be in. Its index is
   ``location/.<location-name>.gppufs.sqlite``. An existing index named for
   a descendant folder owns that subtree. Index rows use relative addresses
   so moving a folder with its database preserves its listings.
@@ -4788,6 +4789,8 @@ class GppuFileSystem(AbstractFileSystem):
   def __init__(self, location: str | Path, **storage_options: Any) -> None:
     if location is None:
       raise ValueError('location is required')
+    if '://' not in str(location) and not Path(location).is_absolute():
+      raise ValueError(f'{location}: a location is an absolute path or a URL, never a relative one')
     super().__init__()
     self.fs, self.root = url_to_fs(str(location), **storage_options)
     if not re.fullmatch(r'[A-Za-z]:/', self.root):

@@ -412,6 +412,14 @@ def test_session_paths_inside_archives_are_source_uris(tmp_path):
   assert fs.info('zip://::sessions.zip')['gppu']['files'] == 1
 
 
+@pytest.mark.parametrize('location', ['.', 'folder'])
+def test_relative_location_is_refused_and_creates_nothing(tmp_path, monkeypatch, location):
+  monkeypatch.chdir(tmp_path)
+  with pytest.raises(ValueError, match='absolute'):
+    GppuFileSystem(location)
+  assert list(tmp_path.iterdir()) == []
+
+
 def test_parent_traversal_cannot_escape_location(tmp_path):
   fs = GppuFileSystem(tmp_path)
   for path in ('../outside', fs.location + '/../outside'):

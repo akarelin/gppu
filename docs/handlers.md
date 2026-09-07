@@ -927,7 +927,8 @@ Discard all cached sessions or entries at and beneath `path`.
 
 fsspec listings enriched by handlers and stored beside their location.
 
-`location` is the only required setting. Its index is
+`location` is the only required setting: an absolute path or a URL, never
+the folder the caller happens to be in. Its index is
 `location/.<location-name>.gppufs.sqlite`. An existing index named for
 a descendant folder owns that subtree. Index rows use relative addresses
 so moving a folder with its database preserves its listings.

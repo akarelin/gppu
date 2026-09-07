@@ -52,7 +52,7 @@ Both live and cached results pass through the same JSON representation: dates an
 
 The first read of a folder identifies it and its entries and stores that. Probing fills the metadata: `refresh=True` on a folder, or a file's first `info`. `refresh=True` rereads source metadata and replaces the requested subtree, including additions and removals, even when file sizes and timestamps have not changed. Cached ancestors receive updated file, folder, byte, and span aggregates using the refreshed subtree and cached siblings. Other indexed subtrees remain cached snapshots. Index files and SQLite journal companions are excluded from listings and aggregate sizes.
 
-The default database is `{location}/.{location-name}.gppufs.sqlite`. An existing `{location}/folder/.{folder-name}.gppufs.sqlite` owns that folder's subtree. A folder can become a shard by browsing it as the location of another `GppuFileSystem` instance. Shards can occur at any depth, and the deepest enclosing shard owns an entry. The parent index retains the child listing reference. `gppu.data` is not involved.
+The location is an absolute path or a URL; a relative location is refused, so the folder an example is started in never becomes one. The database is `{location}/.{location-name}.gppufs.sqlite`, created at the first listing and nowhere else. An existing `{location}/folder/.{folder-name}.gppufs.sqlite` is a shard: it owns that folder's subtree, at any depth, and the deepest enclosing shard owns an entry. The parent index retains the child listing reference. `gppu.data` is not involved.
 
 | SQLite table | Columns | Meaning |
 | --- | --- | --- |
