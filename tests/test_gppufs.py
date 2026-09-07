@@ -7,6 +7,7 @@ import sqlite3
 import subprocess
 import tarfile
 import zipfile
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -82,6 +83,8 @@ def test_ls_identifies_without_probing_and_refresh_probes(tmp_path, monkeypatch)
   note = listed[1]
   assert note['gppu']['handlers'] == ['markdown']
   assert note['gppu']['bytes'] == note['size']
+  assert note['gppu']['modified_at'] == str(datetime.fromtimestamp((folder / 'note.md').stat().st_mtime).astimezone())
+  assert note['gppu']['span'] == [note['gppu']['modified_at']] * 2
   assert 'markdown' not in note['gppu']
   assert listed[0]['gppu']['files'] is None
   (tmp_path / 'added.txt').write_text('added')
