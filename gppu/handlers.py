@@ -72,6 +72,7 @@ from fsspec import open as open_uri, register_implementation
 from fsspec.archive import AbstractArchiveFileSystem
 from fsspec.core import url_to_fs
 from fsspec.implementations.local import LocalFileSystem
+from fsspec.implementations.tar import TarFileSystem
 from fsspec.spec import AbstractFileSystem
 
 from .gppu import OSType, detect_os, full_path, sync
@@ -3487,7 +3488,10 @@ class _LLMExportHandler(Handler):
 
     @staticmethod
     def _source_names(path: Path) -> frozenset[str]:
-        """Return direct folder filenames or ZIP member filenames."""
+        """Return direct folder filenames or ZIP member filenames.
+
+        A file not named ``.zip`` is not an export and is not opened.
+        """
 
         if path.is_dir() and not path.is_symlink():
             try:
@@ -3496,6 +3500,8 @@ class _LLMExportHandler(Handler):
                 )
             except OSError:
                 return frozenset()
+        if path.suffix.casefold() != ".zip":
+            return frozenset()
         try:
             with zipfile.ZipFile(path) as archive:
                 return frozenset(
@@ -5119,21 +5125,76 @@ class GppuFileSystem(AbstractFileSystem):
         self._parse(key, Path(source), native, source, self._handlers)
       else:
         with tempfile.TemporaryDirectory(prefix='gppufs-') as scratch:
-          base = Path(scratch) / (PurePosixPath(source).name or 'archive')
-          for path, item in native.items():
-            relative = PurePosixPath(path).relative_to(PurePosixPath(source))
-            if '..' in relative.parts:
-              raise ValueError(f'{uri}: unsafe member {path}')
-            target = base / relative
-            if item['type'] == 'directory':
-              target.mkdir(parents=True, exist_ok=True)
-            else:
-              target.parent.mkdir(parents=True, exist_ok=True)
-              fs.get_file(path, str(target))
+          base = self._extract(uri, fs, source, native, Path(scratch))
           self._parse(key, base, native, source, _MetadataHandlers())
     finally:
       if virtual:
         fs.close()
+
+  def _extract(self, uri: str, fs: AbstractFileSystem, source: str, native: dict[str, dict], scratch: Path) -> Path:
+    """Write the inventoried entries below ``source`` under ``scratch`` and return their base folder.
+
+    A tar is read in archive order: its compressed stream cannot seek back, so
+    members fetched out of order decompress the archive again from the start.
+    """
+    base = scratch / (PurePosixPath(source).name or 'archive')
+    items = list(native.items())
+    if isinstance(fs, TarFileSystem):
+      items.sort(key=lambda item: fs.index[item[0]][1] if item[0] in fs.index else -1)
+    for path, item in items:
+      relative = PurePosixPath(path).relative_to(PurePosixPath(source))
+      if '..' in relative.parts:
+        raise ValueError(f'{uri}: unsafe member {path}')
+      target = base / relative
+      if item['type'] == 'directory':
+        target.mkdir(parents=True, exist_ok=True)
+      else:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fs.get_file(path, str(target))
+    return base
+
+  @staticmethod
+  def _member_address(key: str, relative: str) -> str:
+    """The address of ``relative`` below ``key``; inside an archive the member path grows and the source stays."""
+    if relative == '.':
+      return key
+    if '::' in key:
+      head, tail = key.split('::', 1)
+      protocol, member = head.split('://', 1)
+      return protocol + '://' + str(PurePosixPath(member) / relative) + '::' + tail
+    return str(PurePosixPath(key) / relative)
+
+  def _identify_members(self, key: str) -> None:
+    """Index an archive's members as a listing sees them: identified, none probed.
+
+    The archive is read once and its members are written to a scratch folder so
+    the handlers can recognize them. Every folder inside the archive keeps its
+    child listing, so entering one later reads the index.
+    """
+    uri = self._uri(key)
+    fs, source = url_to_fs(uri, skip_instance_cache=True)
+    try:
+      native = self._inventory(fs, source)
+      with tempfile.TemporaryDirectory(prefix='gppufs-') as scratch:
+        base = full_path(self._extract(uri, fs, source, native, Path(scratch)))
+        rows: dict[str, tuple[dict, list | None]] = {}
+        members: dict[str, list[dict]] = {}
+        for record in _MetadataHandlers().identify_sync(base):
+          relative = Path(record.path).relative_to(base).as_posix()
+          path = source if relative == '.' else str(PurePosixPath(source) / relative)
+          if path not in native or self._index_name.fullmatch(record.name):
+            continue
+          address = self._member_address(key, relative)
+          rows[address] = self._identified_row(address, native[path], record), [] if record.is_folder else None
+          if relative != '.':
+            parent = self._member_address(key, PurePosixPath(relative).parent.as_posix())
+            members.setdefault(parent, []).append({'path': address, 'type': native[path]['type'], 'ino': None})
+        for address, listing in members.items():
+          listing.sort(key=lambda entry: (entry['type'] != 'directory', entry['path'].casefold()))
+          rows[address] = rows[address][0], listing
+        self._store(key, rows, None)
+    finally:
+      fs.close()
 
   def _parse(self, key: str, local: Path, native: dict[str, dict], source: str,
              handlers: FileHandler) -> None:
@@ -5151,14 +5212,7 @@ class GppuFileSystem(AbstractFileSystem):
       if path not in native or self._index_name.fullmatch(record.name):
         continue
       item = native[path]
-      if relative == Path('.'):
-        address = key
-      elif '::' in key:
-        head, tail = key.split('::', 1)
-        protocol, member = head.split('://', 1)
-        address = protocol + '://' + str(PurePosixPath(member) / relative.as_posix()) + '::' + tail
-      else:
-        address = str(PurePosixPath(key) / PurePosixPath(relative.as_posix()))
+      address = self._member_address(key, relative.as_posix())
       records[Path(record.path)] = replace(record,
         modified_at=self._modified(item),
         size=0 if record.is_folder else record.size)
@@ -5174,14 +5228,7 @@ class GppuFileSystem(AbstractFileSystem):
       if not candidate.is_absolute():
         return value  # Exported session members are relative to their location.
       if candidate.is_relative_to(local):
-        relative = candidate.relative_to(local).as_posix()
-        if relative == '.':
-          return key
-        if '::' in key:
-          head, tail = key.split('::', 1)
-          protocol, member = head.split('://', 1)
-          return protocol + '://' + str(PurePosixPath(member) / relative) + '::' + tail
-        return str(PurePosixPath(key) / relative)
+        return self._member_address(key, candidate.relative_to(local).as_posix())
       if isinstance(self.fs, LocalFileSystem) and candidate.is_relative_to(full_path(self.root)):
         return candidate.relative_to(full_path(self.root)).as_posix()
       return candidate.as_uri()
@@ -5214,10 +5261,10 @@ class GppuFileSystem(AbstractFileSystem):
     raise ValueError(f'{key}: unsupported archive')
 
   def _identifiable(self, key: str) -> bool:
-    """Physical local entries are listed and identified live; archives and remote stores are read through ``_live``."""
+    """Physical local entries are listed and identified live; remote stores are read through ``_live`` and archive members through ``_identify_members``."""
     return '::' not in key and isinstance(self.fs, LocalFileSystem)
 
-  def _identified_row(self, key: str, item: dict, record: Record) -> tuple[dict, list | None]:
+  def _identified_row(self, key: str, item: dict, record: Record) -> dict:
     """One entry as a listing sees it: native attributes and the handlers that matched, nothing probed.
 
     A file's count, bytes and name span are known from the listing. A folder's totals
@@ -5232,7 +5279,7 @@ class GppuFileSystem(AbstractFileSystem):
     extra['stats'] = {}
     extra['is_container'] = (record.is_folder or 'archive' in record.handlers) and 'ignored' not in record.handlers
     extra['probed'] = False
-    return {**item, 'name': self._uri(key), 'gppu': extra}, None
+    return {**item, 'name': self._uri(key), 'gppu': extra}
 
   def _store(self, key: str, rows: dict[str, tuple[dict, list | None]], listing: list[dict] | None) -> None:
     """Add identified rows the index does not hold yet and record the folder's live child listing."""
@@ -5243,7 +5290,8 @@ class GppuFileSystem(AbstractFileSystem):
       value['name'] = self._relative(child_key, owner)
       value['gppu']['path'] = value['name']
       grouped.setdefault(owner, []).append((value['name'], json.dumps(value, default=str),
-        None if members is None else json.dumps(members)))
+        None if members is None else json.dumps([
+          {**entry, 'path': self._relative(entry['path'], owner)} for entry in members])))
     for owner, values in grouped.items():
       with self._database(owner, write=True) as database:
         database.executemany('INSERT INTO gppufs_entries VALUES (?, ?, ?) ON CONFLICT(path) DO NOTHING', values)
@@ -5257,7 +5305,7 @@ class GppuFileSystem(AbstractFileSystem):
   def _identify_entry(self, key: str) -> None:
     """Index one physical entry from its native attributes and matching handlers, without probing."""
     path = self._path(key)
-    self._store(key, {key: self._identified_row(key, self.fs.info(path), self._handlers.record(Path(path)))}, None)
+    self._store(key, {key: (self._identified_row(key, self.fs.info(path), self._handlers.record(Path(path))), None)}, None)
 
   def _reconcile(self, key: str, children: list[dict]) -> list[dict]:
     """List the folder live: identify entries the index has not seen, drop entries that are gone."""
@@ -5273,7 +5321,7 @@ class GppuFileSystem(AbstractFileSystem):
         listing.append(known[child_key])
         continue
       item = self.fs.info(name)  # A directory scan reports no inode on Windows; rename recovery needs it.
-      rows[child_key] = self._identified_row(child_key, item, self._handlers.record(Path(self._path(child_key))))
+      rows[child_key] = self._identified_row(child_key, item, self._handlers.record(Path(self._path(child_key)))), None
       listing.append({'path': child_key, 'type': item['type'], 'ino': item.get('ino')})
     listing.sort(key=lambda entry: (entry['type'] != 'directory', entry['path'].casefold()))
     if rows or listing != children:
@@ -5284,8 +5332,9 @@ class GppuFileSystem(AbstractFileSystem):
     """Return one native entry with its handler metadata.
 
     A physical entry the index has not seen is identified, not probed. A file
-    whose details are asked for is probed once; ``refresh=True`` probes again.
-    A folder's totals come from the last refresh of that folder.
+    whose details are asked for is probed once, inside an archive as well;
+    ``refresh=True`` probes again. A folder's totals come from the last
+    refresh of that folder.
     """
     with self._lock:
       key = self._key(path)
@@ -5308,7 +5357,7 @@ class GppuFileSystem(AbstractFileSystem):
       if cached is None:
         raise FileNotFoundError(self._uri(key))
       metadata = cached[0]
-      if metadata['type'] != 'directory' and not metadata['gppu'].get('probed', True) and self._identifiable(key):
+      if metadata['type'] != 'directory' and not metadata['gppu'].get('probed', True):
         self._live(key)
         metadata = self._cached(key)[0]
       return metadata
@@ -5319,16 +5368,18 @@ class GppuFileSystem(AbstractFileSystem):
 
     Every entry the listing finds is identified. Entries already indexed keep
     their indexed metadata. ``refresh=True`` probes the folder and everything
-    below it. Archives are read through their members' filesystem.
+    below it. Entering an archive lists its members identified, like a folder;
+    refreshing the archive probes them.
     """
     with self._lock:
       key = self._key(path)
       metadata = self.info(path, refresh=refresh)
       if 'archive' in metadata['gppu']['handlers']:
         key = self._archive_key(key)
-        cached = None if refresh else self._cached(key)
-        if cached is None:
+        if refresh:
           self._live(key)
+        elif self._cached(key) is None:
+          self._identify_members(key)
       cached = self._cached(key)
       if cached is None:
         raise FileNotFoundError(self._uri(key))
