@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 from gppu import Env, Error, format_size
-from gppu.handlers import GppuFileSystem
+from gppu.handlers import GppuCatalog, GppuFileSystem
 from gppu.tui import TUIApp
 from textual import work
 from textual.app import ComposeResult
@@ -24,7 +24,7 @@ class HandlerBrowser(TUIApp):
     Binding('q', 'tuiapp_done', 'Quit'),
   ]
 
-  def __init__(self, gppufs: GppuFileSystem) -> None:
+  def __init__(self, gppufs: GppuCatalog | GppuFileSystem) -> None:
     super().__init__()
     self.gppufs = gppufs
     self.current: dict | None = None
@@ -94,7 +94,7 @@ class HandlerBrowser(TUIApp):
 
 def main() -> None:
   Env.from_env(name='handlers', app_path=Path(__file__).parent)
-  HandlerBrowser(GppuFileSystem(location=Env.glob('location'))).run()
+  HandlerBrowser(GppuCatalog(Env.glob('catalog'))).run()
 
 
 if __name__ == '__main__':

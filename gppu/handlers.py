@@ -4816,7 +4816,11 @@ class GppuFileSystem(AbstractFileSystem):
       return expected
     if not self.fs.isdir(folder):
       return None
-    candidates = [item['name'] for item in self.fs.ls(folder, detail=True)
+    try:
+      entries = self.fs.ls(folder, detail=True)
+    except PermissionError:
+      return None  # A folder this account cannot list holds no index it could read.
+    candidates = [item['name'] for item in entries
       if item['type'] == 'file' and item['name'].endswith('.gppufs.sqlite')
       and self._index_name.fullmatch(PurePosixPath(item['name']).name)]
     if not candidates:
@@ -5420,3 +5424,125 @@ class GppuFileSystem(AbstractFileSystem):
         else:
           result.append(row)
       return result if detail else [row['name'] for row in result]
+
+
+class GppuCatalog(AbstractFileSystem):
+  """The Locations gppufs works with, read from a catalog folder.
+
+  ``catalog`` is an absolute folder holding ``locations.json``: one row per
+  Location as the Locations table has it, plus ``index``, where that Location
+  keeps its gppufs index. The catalog root lists the Locations without touching
+  them. Every address at or below a Location is served by that Location's
+  :class:`GppuFileSystem`; the deepest Location whose root contains the address
+  owns it. A Location root's parent is its parent Location when the catalog
+  names one, otherwise the catalog root, so a browser walks the Locations tree.
+  """
+
+  protocol = 'gppu-catalog'
+  cachable = False
+
+  def __init__(self, catalog: str | Path) -> None:
+    if catalog is None:
+      raise ValueError('catalog is required')
+    if not Path(catalog).is_absolute():
+      raise ValueError(f'{catalog}: the catalog is an absolute folder path')
+    super().__init__()
+    self.catalog = Path(catalog)
+    self.root = f'gppu-catalog://{self.catalog.as_posix()}'
+    self._lock = RLock()
+    self._filesystems: dict[str, GppuFileSystem] = {}
+    self._load()
+
+  def _load(self) -> None:
+    """Read ``locations.json``; a Location whose ``index`` is not where gppufs keeps it is an error, not a redirect."""
+    rows = json.loads((self.catalog / 'locations.json').read_text(encoding='utf-8'))
+    locations: dict[str, dict] = {}
+    for row in rows:
+      fs = self._filesystems.get(row['root_path']) or GppuFileSystem(row['root_path'])
+      if Path(row['index']) != Path(fs._database_path(fs.root)):
+        raise ValueError(f"{row['root_path']}: catalog index {row['index']} is not {fs._database_path(fs.root)}")
+      self._filesystems[row['root_path']] = fs
+      locations[row['root_path']] = row
+    self.locations = locations
+    by_id = {row['id']: row['root_path'] for row in rows}
+    self._parents = {row['root_path']: by_id.get(row['parent_file_location_id']) for row in rows}
+
+  def _location(self, path: str | Path) -> GppuFileSystem:
+    """The Location serving an absolute address: the deepest one whose root contains it."""
+    physical = str(path).replace('\\', '/').rsplit('::', 1)[-1]
+    if '://' not in physical and not Path(physical).is_absolute():
+      raise ValueError(f'{path}: catalog addresses are absolute paths or URLs')
+    owners = []
+    for fs in self._filesystems.values():
+      try:
+        fs._key(path)
+      except ValueError:
+        continue
+      owners.append(fs)
+    if not owners:
+      raise FileNotFoundError(f'{path}: not inside a catalog Location')
+    return max(owners, key=lambda fs: len(fs.root))
+
+  def _parent(self, fs: GppuFileSystem) -> str:
+    parent = self._parents[self._path_of(fs)]
+    return self.root if parent is None else self._filesystems[parent].location
+
+  def _path_of(self, fs: GppuFileSystem) -> str:
+    return next(path for path, item in self._filesystems.items() if item is fs)
+
+  def _catalog_row(self) -> dict:
+    return {'name': self.root, 'type': 'directory', 'size': 0, 'gppu': {
+      'name': self.catalog.name, 'path': self.root, 'parent': None, 'type': 'folder', 'modified_at': None,
+      'handlers': [], 'files': None, 'folders': None, 'bytes': None, 'span': None, 'stats': {},
+      'probed': False, 'is_container': True, 'locations': len(self.locations)}}
+
+  def _location_row(self, fs: GppuFileSystem) -> dict:
+    """A Location as the catalog knows it, before its folder is looked at."""
+    row = self.locations[self._path_of(fs)]
+    return {'name': fs.location, 'type': 'directory', 'size': 0, 'gppu': {
+      'name': PurePosixPath(fs.root).name or fs.root.rstrip('/'), 'path': fs.location, 'parent': self._parent(fs),
+      'type': 'folder', 'modified_at': None, 'handlers': [], 'files': None, 'folders': None, 'bytes': None,
+      'span': None, 'stats': {}, 'probed': False, 'is_container': True,
+      'indexed': fs.fs.isfile(fs._database_path(fs.root)), 'location': row}}
+
+  def _served(self, fs: GppuFileSystem, row: dict) -> dict:
+    """A row from a Location's filesystem; its root carries the catalog's parent and Location."""
+    if row['name'] != fs.location:
+      return row
+    return {**row, 'gppu': {**row['gppu'], 'parent': self._parent(fs), 'location': self.locations[self._path_of(fs)]}}
+
+  def info(self, path: str | Path | None = None, refresh: bool = False, **kwargs) -> dict:
+    """The catalog itself, or one entry served by its Location."""
+    with self._lock:
+      if path is None or path == self.root:
+        if refresh:
+          self._load()
+        return self._catalog_row()
+      fs = self._location(path)
+      return self._served(fs, fs.info(path, refresh=refresh))
+
+  def ls(self, path: str | Path | None = None, detail: bool = True,
+         recurse: bool = False, refresh: bool = False, **kwargs) -> list:
+    """The Locations at the catalog root, otherwise the listing the owning Location gives.
+
+    ``refresh=True`` at the root rereads ``locations.json``. Recursion from the
+    root descends the Locations that have no parent Location; their subtrees
+    hold the rest.
+    """
+    with self._lock:
+      if path is None or path == self.root:
+        if refresh:
+          self._load()
+        result = []
+        for location in sorted(self._filesystems, key=str.casefold):
+          fs = self._filesystems[location]
+          if recurse and self._parents[location] is not None:
+            continue
+          result.append(self._location_row(fs))
+          if recurse:
+            result.extend(fs.ls(None, recurse=True))
+      else:
+        fs = self._location(path)
+        result = [self._served(fs, row) for row in fs.ls(path, recurse=recurse, refresh=refresh)]
+      return result if detail else [row['name'] for row in result]
+

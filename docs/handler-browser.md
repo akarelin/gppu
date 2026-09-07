@@ -5,17 +5,17 @@ updated: 2026-09-06
 generated: { by: Codex/GPT-6, at: '2026-09-06 03:33 -07:00' }
 ---
 
-The examples construct `GppuFileSystem` and use only `ls` and `info`. `handler_ls.py` prints complete JSON metadata; `handler_browser.py` displays a directory table and the selected entry's complete metadata. `handler_tui.py` launches the same browser. Parsing, aggregates, SQLite storage, shard routing, and external rename recovery belong to `gppu.handlers`.
+The examples construct `GppuCatalog` and use only `ls` and `info`. `handler_ls.py` prints complete JSON metadata; `handler_browser.py` displays a directory table and the selected entry's complete metadata. `handler_tui.py` launches the same browser. Parsing, aggregates, SQLite storage, shard routing, and external rename recovery belong to `gppu.handlers`.
 
 Both examples load `examples/handlers.yaml` through `Env`:
 
 ```yaml
-location: D:\Downloads
+catalog: D:\TextLake\.catalog
 ```
 
-`location` is the only required setting: the path of one Location on this host, or an fsspec URI. It is never relative. Index paths are derived from the location and folder names. The config has no index storage override.
+`catalog` is the only setting: an absolute folder holding `locations.json`, one row per Location as the Locations table in the files database has it, plus `root_path`, the absolute path of the Location on this host, and `index`, where gppufs keeps that Location's index. gppufs derives the same index path from the Location and refuses a row that says otherwise, so the catalog cannot move an index. The examples start at the catalog: its root lists the Locations without touching them, entering one lists that Location, and Backspace walks up the Locations tree back to the catalog. A `GppuFileSystem` can still be built on one Location directly.
 
-With the repository virtual environment active, `python examples/handler_ls.py` prints the recursive listing and `python -m examples.handler_browser` opens the TUI. Enter opens a folder or archive; Backspace returns to its parent within the configured location; `r` refreshes the current listing from the source; `q` exits. The TUI performs filesystem calls in background threads and displays failures. It has no rename action.
+With the repository virtual environment active, `python examples/handler_ls.py` prints the catalog's Locations; with a Location path as its argument it prints that Location and everything below it. `python -m examples.handler_browser` opens the TUI. Enter opens a Location, folder or archive; Backspace returns to its parent, up to the catalog; `r` refreshes the current listing from the source; `q` exits. The TUI performs filesystem calls in background threads and displays failures. It has no rename action.
 
 ```python
 from gppu.handlers import GppuFileSystem
