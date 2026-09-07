@@ -943,8 +943,9 @@ and aggregates. The example applications do no parsing or persistence.
 Return one native entry with its handler metadata.
 
 A physical entry the index has not seen is identified, not probed. A file
-whose details are asked for is probed once; `refresh=True` probes again.
-A folder's totals come from the last refresh of that folder.
+whose details are asked for is probed once, inside an archive as well;
+`refresh=True` probes again. A folder's totals come from the last
+refresh of that folder.
 
 ### `GppuFileSystem.ls(self, path: 'str | Path | None' = None, detail: 'bool' = True, recurse: 'bool' = False, refresh: 'bool' = False, **kwargs) -> 'list'`
 
@@ -952,7 +953,8 @@ List entries, optionally descending, from the live folder and the colocated SQLi
 
 Every entry the listing finds is identified. Entries already indexed keep
 their indexed metadata. `refresh=True` probes the folder and everything
-below it. Archives are read through their members' filesystem.
+below it. Entering an archive lists its members identified, like a folder;
+refreshing the archive probes them.
 
 ## `valid_time(value: 'datetime | None') -> 'datetime | None'`
 

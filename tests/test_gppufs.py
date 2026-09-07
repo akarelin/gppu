@@ -288,7 +288,7 @@ def test_case_only_folder_rename_updates_index_filename(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize('extension', ['zip', 'tar.gz'])
-def test_archives_are_listable_with_cached_member_metadata(tmp_path, monkeypatch, extension):
+def test_entering_an_archive_identifies_members_and_refresh_probes_them(tmp_path, monkeypatch, extension):
   path = tmp_path / ('bundle.' + extension)
   content = b'---\ntitle: Inside archive\n---\nText'
   if extension == 'zip':
@@ -301,14 +301,29 @@ def test_archives_are_listable_with_cached_member_metadata(tmp_path, monkeypatch
       archive.addfile(member, io.BytesIO(content))
   fs = GppuFileSystem(tmp_path)
   rows = fs.ls(path.name, recurse=True)
-  assert len(rows) == 2
-  note = next(row for row in rows if row['name'].split('::')[0].endswith('note.md'))
-  assert note['gppu']['markdown']['title'] == 'Inside archive'
-  assert fs.info(note['name']) == note
+  assert [row['gppu']['name'] for row in rows] == ['inside', 'note.md']
+  folder, note = rows
+  assert all(row['gppu']['probed'] is False for row in rows)
+  assert folder['gppu']['files'] is None
+  assert note['gppu']['handlers'] == ['markdown']
+  assert note['gppu']['bytes'] == len(content)
+  assert 'markdown' not in note['gppu']
   assert fs.info(path.name)['gppu']['is_container']
   assert fs.info(note['gppu']['parent'])['type'] == 'directory'
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
   assert GppuFileSystem(tmp_path).ls(path.name, recurse=True) == rows
+  assert fs.ls(folder['name']) == [note]
+  monkeypatch.undo()
+  detail = fs.info(note['name'])
+  assert detail['gppu']['probed'] is True
+  assert detail['gppu']['markdown']['title'] == 'Inside archive'
+  assert fs.info(folder['name'])['gppu']['files'] is None
+  probed = fs.ls(path.name, recurse=True, refresh=True)
+  assert all(row['gppu']['probed'] is True for row in probed)
+  assert probed[0]['gppu']['files'] == 1
+  assert probed[1]['gppu']['markdown']['title'] == 'Inside archive'
+  monkeypatch.setattr(GppuFileSystem, '_live', no_live)
+  assert GppuFileSystem(tmp_path).ls(path.name, recurse=True) == probed
 
 
 def test_nonlocal_fsspec_location_keeps_sqlite_beside_source(tmp_path, monkeypatch):
@@ -346,14 +361,16 @@ def test_nested_archives_retain_addresses_after_folder_rename(tmp_path, monkeypa
     archive.writestr('inner.zip', nested.getvalue())
   fs = GppuFileSystem(tmp_path)
   before = fs.ls(recurse=True)
-  assert len(before) == 4
+  assert [row['gppu']['name'] for row in before] == ['old', 'outer.zip', 'inner.zip', 'note.md']
+  assert before[-1]['gppu']['handlers'] == ['markdown']
   new = tmp_path / 'new'
   rename(old, new, tmp_path)
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
   after = fs.ls(recurse=True)
   assert all('/old/' not in row['name'] for row in after)
-  assert after[-1]['gppu']['markdown']['title'] == 'Nested'
-  assert fs.info(after[-1]['name']) == after[-1]
+  assert [row['gppu']['name'] for row in after] == ['new', 'outer.zip', 'inner.zip', 'note.md']
+  monkeypatch.undo()
+  assert fs.info(after[-1]['name'])['gppu']['markdown']['title'] == 'Nested'
 
 
 def test_rar_members_use_existing_handler(tmp_path, monkeypatch):
@@ -367,11 +384,14 @@ def test_rar_members_use_existing_handler(tmp_path, monkeypatch):
   subprocess.run([str(executable), 'a', '-idq', 'bundle.rar', 'inside'], cwd=tmp_path,
     check=True, capture_output=True)
   fs = GppuFileSystem(tmp_path)
-  before = fs.ls('bundle.rar', recurse=True)
-  note = next(row for row in before if row['gppu']['name'] == 'note.md')
-  assert note['gppu']['markdown']['title'] == 'RAR metadata'
+  listed = fs.ls('bundle.rar', recurse=True)
+  note = next(row for row in listed if row['gppu']['name'] == 'note.md')
+  assert note['gppu']['handlers'] == ['markdown']
+  assert note['gppu']['probed'] is False
+  assert fs.info(note['name'])['gppu']['markdown']['title'] == 'RAR metadata'
+  after = fs.ls('bundle.rar', recurse=True)
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
-  assert GppuFileSystem(tmp_path).ls('bundle.rar', recurse=True) == before
+  assert GppuFileSystem(tmp_path).ls('bundle.rar', recurse=True) == after
 
 
 def test_session_paths_inside_archives_are_source_uris(tmp_path):
@@ -381,7 +401,11 @@ def test_session_paths_inside_archives_are_source_uris(tmp_path):
     archive.writestr('session.jsonl', path.read_bytes())
   fs = GppuFileSystem(tmp_path)
   row, = fs.ls('sessions.zip')
-  assert row['gppu']['session']['path'] == row['name']
+  assert row['gppu']['handlers'] == ['session']
+  detail = fs.info(row['name'])
+  assert detail['gppu']['session']['path'] == detail['name']
+  assert fs.info('zip://::sessions.zip')['gppu']['files'] is None
+  fs.ls('sessions.zip', refresh=True)
   assert fs.info('zip://::sessions.zip')['gppu']['files'] == 1
 
 
