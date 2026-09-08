@@ -1,99 +1,204 @@
 #!/usr/bin/env python3
-"""Browse handler metadata using only gppufs.ls and gppufs.info."""
+"""Browse Locations, folders, archives and files as one tree, using only gppufs.ls and gppufs.info."""
 
 from __future__ import annotations
 
-import asyncio
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 from gppu import Env, Error, format_size
-from gppu.handlers import GppuFileSystem
-from gppu.tui import TUIApp
+from gppu.handlers import GppuCatalog, GppuFileSystem
+from gppu.tui import TreeEntry, TreeTable, TreeTableColumn, TUIApp
+from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.widgets import DataTable, Footer, Static, TextArea
+from textual.containers import Horizontal
+from textual.widgets import Checkbox, DataTable, Footer, Static, TextArea
+
+ROOT = ''  # the tree root stands for gppufs.ls(None) and gppufs.info(None)
+LOADING = '\x00loading'
+FAILED = '\x00failed'
+COLUMNS = (TreeTableColumn('handlers', 'Handlers', 22), TreeTableColumn('files', 'Files', 9),
+  TreeTableColumn('folders', 'Folders', 9), TreeTableColumn('bytes', 'Bytes', 12),
+  TreeTableColumn('span', 'Span', 25), TreeTableColumn('indexed', 'Indexed', 17), TreeTableColumn('source', 'Source', 26))
+FILTERS = {'show-files': 'file', 'show-ignored': 'ignored'}  # checkbox -> the kind of entry it shows
+
+
+class Listing:
+  """gppufs as a tree: children come from ls, asked for once and awaited; Locations the catalog names stay in the tree."""
+
+  def __init__(self, request: Callable[[TreeEntry], None]) -> None:
+    self._request = request
+    self._children: dict[str, list[TreeEntry]] = {}
+    self._pending: set[str] = set()
+    self._locations: dict[str, list[TreeEntry]] = {}  # parent address -> Locations the catalog places beneath it
+    self._root = TreeEntry(id=ROOT, label=Text('…'), is_container=True)
+    self.location_addresses: set[str] = set()
+    self.show = {'file': True, 'ignored': True}
+
+  def root(self) -> TreeEntry:
+    return self._root
+
+  def children(self, entry: TreeEntry) -> list[TreeEntry]:
+    loaded = self._children.get(entry.id)
+    if loaded is not None:
+      return [item for item in loaded if self.show.get(item.meta.get('kind'), True)]
+    if entry.id not in self._pending:
+      self._pending.add(entry.id)
+      self._request(entry)
+    return [*self._locations.get(entry.id, ()), TreeEntry(entry.id + LOADING, Text('loading…', style='dim'), meta={'placeholder': True})]
+
+  def entry(self, row: dict, entry_id: str | None = None) -> TreeEntry:
+    """One gppufs row as a tree row: a Location in bold, unknown totals blank, the last probe as the Indexed column."""
+    meta = row['gppu']
+    blank = lambda value, show=str: '' if value is None else show(value)
+    label = Text(meta['name'], style='bold' if row['name'] in self.location_addresses else '')
+    kind = 'ignored' if 'ignored' in meta['handlers'] else 'folder' if meta['is_container'] else 'file'
+    return TreeEntry(row['name'] if entry_id is None else entry_id, label, meta['is_container'], {
+      'kind': kind, 'handlers': ', '.join(meta['handlers']), 'files': blank(meta['files']),
+      'folders': blank(meta['folders']), 'bytes': blank(meta['bytes'], format_size),
+      'span': ' – '.join(moment[:10] for moment in meta['span']) if meta['span'] else '',
+      'indexed': blank(meta.get('probed_at'), lambda moment: moment[:16]),
+      'source': f"{meta['source']['service']} {meta['source']['location']}" if meta.get('source') else ''})
+
+  def store(self, entry_id: str, current: dict, rows: list[dict]) -> TreeEntry:
+    """Keep a listing and return the listed entry itself.
+
+    A catalog root lists every Location with its parent; each goes under its
+    parent Location, so the Locations tree shows before any folder is read.
+    """
+    self._pending.discard(entry_id)
+    if entry_id == ROOT and any('location' in row['gppu'] for row in rows):
+      self.location_addresses = {row['name'] for row in rows}
+      self._locations = {}
+      for row in rows:
+        parent = ROOT if row['gppu']['parent'] == current['name'] else row['gppu']['parent']
+        self._locations.setdefault(parent, []).append(self.entry(row))
+      rows = [row for row in rows if row['gppu']['parent'] == current['name']]
+    listed = [self.entry(row) for row in rows]
+    shown = {item.id for item in listed}
+    listed.extend(item for item in self._locations.get(entry_id, ()) if item.id not in shown)
+    self._children[entry_id] = listed
+    updated = self.entry(current, entry_id)
+    if entry_id == ROOT:
+      self._root = updated
+    return updated
+
+  def failed(self, entry_id: str, error: Exception) -> bool:
+    """A listing that could not be read keeps what was shown before, or says why nothing is; True when that row is new."""
+    self._pending.discard(entry_id)
+    if entry_id in self._children:
+      return False
+    self._children[entry_id] = [TreeEntry(entry_id + FAILED, Text(f'error: {error}', style='red'), meta={'placeholder': True})]
+    return True
+
 
 class HandlerBrowser(TUIApp):
-  TITLE = 'gppufs · handler metadata'
-  CSS = '#files { height: 1fr; } #metadata { height: 1fr; } #status { height: auto; }'
+  TITLE = 'gppufs'
+  CSS = '''
+  #filters { height: 1; padding: 0 1; }
+  #filters Checkbox { width: auto; height: 1; margin: 0 2 0 0; border: none; }
+  #tree { height: 2fr; } #metadata { height: 1fr; } #status { height: auto; }
+  '''
   BINDINGS = [
+    Binding('f', 'toggle_filter("show-files")', 'Files'),
+    Binding('i', 'toggle_filter("show-ignored")', 'Ignored'),
     Binding('r', 'refresh_source', 'Refresh from source'),
-    Binding('backspace', 'parent', 'Parent'),
     Binding('q', 'tuiapp_done', 'Quit'),
   ]
 
-  def __init__(self, gppufs: GppuFileSystem) -> None:
+  def __init__(self, gppufs: GppuCatalog | GppuFileSystem) -> None:
     super().__init__()
     self.gppufs = gppufs
+    self.listing = Listing(self.load)
     self.current: dict | None = None
-    self.rows: dict[str, dict] = {}
 
   def compose(self) -> ComposeResult:
     yield Static('Loading…', id='status', markup=False)
-    yield DataTable(id='files', cursor_type='row')
+    with Horizontal(id='filters'):
+      yield Checkbox('Files', True, compact=True, id='show-files')
+      yield Checkbox('Ignored', True, compact=True, id='show-ignored')
+    yield TreeTable(self.listing, columns=COLUMNS, id='tree')
     yield TextArea(read_only=True, id='metadata')
     yield Footer()
 
   def on_mount(self) -> None:
-    table = self.query_one(DataTable)
-    table.add_columns('Name', 'Type', 'Handlers', 'Files', 'Folders', 'Bytes', 'Span')
-    table.focus()
-    self.load()
+    self.query_one(TreeTable).query_one(DataTable).focus()
 
-  @work(exclusive=True, group='listing')
-  async def load(self, path: str | None = None, *, refresh: bool = False) -> None:
+  @staticmethod
+  def address(entry: TreeEntry) -> str | None:
+    return None if entry.id == ROOT else entry.id
+
+  @work(exclusive=False, group='listing')
+  async def load(self, entry: TreeEntry, *, refresh: bool = False) -> None:
     status = self.query_one('#status', Static)
-    status.update(f'Loading {path or "location"}…')
+    status.update(f'Loading {self.address(entry) or "catalog"}…')
+    tree = self.query_one(TreeTable)
     try:
-      rows = await asyncio.to_thread(self.gppufs.ls, path, refresh=refresh)
-      current = await asyncio.to_thread(self.gppufs.info, path)
-      self.current = current
-      self.rows = {row['name']: row for row in rows}
-      table = self.query_one(DataTable)
-      table.clear()
-      for row in rows:
-        meta = row['gppu']
-        span = ' – '.join(moment[:10] for moment in meta['span']) if meta['span'] else ''
-        table.add_row(meta['name'], row['type'], ', '.join(meta['handlers']),
-          str(meta['files']), str(meta['folders']), format_size(meta['bytes']), span, key=row['name'])
-      self.show_metadata(current)
+      address = self.address(entry)
+      if entry.is_container:
+        rows = await self.gppufs.ls(address, refresh=refresh)
+        current = await self.gppufs.info(address)
+        updated = self.listing.store(entry.id, current, rows)
+      else:
+        current = await self.gppufs.info(address, refresh=refresh)
+        updated = self.listing.entry(current)
+      tree.refresh_entry(entry.id, entry=updated, reload_children=entry.is_container)
+      if tree.selected_entry is not None and tree.selected_entry.id == entry.id:
+        self.show_metadata(current)
       status.update(current['name'])
     except Exception as error:
       Error(error)
+      if self.listing.failed(entry.id, error):
+        tree.refresh_entry(entry.id, reload_children=True)
       status.update(f'Error: {error}')
 
   def show_metadata(self, metadata: dict) -> None:
+    self.current = metadata
     self.query_one(TextArea).load_text(json.dumps({'gppu': metadata['gppu'], **metadata}, indent=2, ensure_ascii=False))
 
   @work(exclusive=True, group='info')
-  async def show_info(self, path: str) -> None:
+  async def show_info(self, entry: TreeEntry) -> None:
     try:
-      self.show_metadata(await asyncio.to_thread(self.gppufs.info, path))
+      self.show_metadata(await self.gppufs.info(self.address(entry)))
+      self.query_one('#status', Static).update(self.current['name'])
     except Exception as error:
       Error(error)
       self.query_one('#status', Static).update(f'Error: {error}')
 
-  def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-    self.show_info(str(event.row_key.value))
+  def on_tree_table_entry_highlighted(self, event: TreeTable.EntryHighlighted) -> None:
+    if not event.entry.meta.get('placeholder'):
+      self.show_info(event.entry)
 
-  def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-    row = self.rows[str(event.row_key.value)]
-    if row['gppu']['is_container']:
-      self.load(row['name'])
+  def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+    self.listing.show[FILTERS[event.checkbox.id]] = event.value
+    self.apply_filters()
 
-  def action_parent(self) -> None:
-    if self.current is not None and self.current['gppu']['parent'] is not None:
-      self.load(self.current['gppu']['parent'])
+  def apply_filters(self) -> None:
+    """Rebuild the tree from what is loaded, keeping what was expanded and highlighted."""
+    tree = self.query_one(TreeTable)
+    expanded, selected = tree.expanded_ids, tree.selected_entry
+    tree.reset()
+    for entry_id in sorted(expanded, key=len):
+      tree.expand(entry_id)
+    if selected is not None:
+      tree.select(selected.id)
+
+  def action_toggle_filter(self, checkbox_id: str) -> None:
+    self.query_one(f'#{checkbox_id}', Checkbox).toggle()
 
   def action_refresh_source(self) -> None:
-    self.load(None if self.current is None else self.current['name'], refresh=True)
+    entry = self.query_one(TreeTable).selected_entry
+    if entry is None or entry.meta.get('placeholder'):
+      return
+    self.load(entry, refresh=True)
 
 
 def main() -> None:
   Env.from_env(name='handlers', app_path=Path(__file__).parent)
-  HandlerBrowser(GppuFileSystem(location=Env.glob('location'))).run()
+  HandlerBrowser(GppuCatalog(Env.glob('catalog'))).run()
 
 
 if __name__ == '__main__':
