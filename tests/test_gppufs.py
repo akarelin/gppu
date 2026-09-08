@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+import yaml
 from fsspec.implementations.memory import MemoryFileSystem
 
 from gppu.handlers import ArchiveHandler, GppuCatalog, GppuFileSystem
@@ -465,11 +466,11 @@ def test_exported_session_member_paths_remain_relative_after_rename(tmp_path, mo
 def catalog_of(tmp_path: Path, rows: list[dict], sources: dict[str, dict] | None = None, replicas: dict[str, list[dict]] | None = None) -> Path:
   folder = tmp_path / '.catalog'
   (folder / 'test-host').mkdir(parents=True, exist_ok=True)
-  (folder / 'test-host' / 'locations.json').write_text(json.dumps(rows), encoding='utf-8')
+  (folder / 'test-host' / 'locations.yaml').write_text(yaml.safe_dump(rows, allow_unicode=True), encoding='utf-8')
   for name, source in (sources or {}).items():
-    (folder / f'{name}.json').write_text(json.dumps(source), encoding='utf-8')
+    (folder / f'{name}.yaml').write_text(yaml.safe_dump(source, allow_unicode=True), encoding='utf-8')
   if replicas is not None:
-    (folder / 'test-host' / 'replicas.json').write_text(json.dumps(replicas), encoding='utf-8')
+    (folder / 'test-host' / 'replicas.yaml').write_text(yaml.safe_dump(replicas, allow_unicode=True), encoding='utf-8')
   return folder
 
 
@@ -594,5 +595,5 @@ def test_a_replica_of_an_unlisted_location_is_refused(tmp_path):
   drive.mkdir()
   sources = {'dropbox': {'locations': [{'name': 'Dropbox'}]}}
   replicas = {'dropbox': [{'location': 'Elsewhere', 'path': str(drive), 'checked_at': None}]}
-  with pytest.raises(ValueError, match='dropbox.json does not list'):
+  with pytest.raises(ValueError, match='dropbox.yaml does not list'):
     GppuCatalog(catalog_of(tmp_path, [location_row(1, drive)], sources, replicas), host='test-host')

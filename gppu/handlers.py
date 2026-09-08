@@ -5449,15 +5449,15 @@ class GppuCatalog(AbstractFileSystem):
   """The Locations gppufs works with on this host, read from a catalog folder.
 
   ``catalog`` is an absolute folder with one subfolder per host or server, named
-  as the Locations table names it, holding that host's ``locations.json``: one
+  as the Locations table names it, holding that host's ``locations.yaml``: one
   row per Location as the table has it, plus ``root_path`` and ``index``, where
   that Location keeps its gppufs index. The host's folder is chosen by the
   machine name unless ``host`` says otherwise. The JSON files beside the host
   folders are the global catalog, one per service, the file name being the
-  service: ``sharepoint.json``, ``onedrive.json``, ``synology-drive.json`` and
+  service: ``sharepoint.yaml``, ``synology-drive.yaml``, ``git.yaml`` and
   so on. Each holds the canonical ``locations`` of that service, nested, a
   location carrying its children in its own ``locations``, servers at the top.
-  The host folder's ``replicas.json`` says, per service, where this host holds
+  The host folder's ``replicas.yaml`` says, per service, where this host holds
   a copy of a location, named by its path of names in that tree, and when that
   was last checked. A folder that is a replica carries a ``source`` block: the
   service, the location's path of names, its server, what the catalog says of
@@ -5483,8 +5483,8 @@ class GppuCatalog(AbstractFileSystem):
     if self.host.casefold() not in folders:
       raise ValueError(f'{catalog}: no folder for host {self.host}')
     self.folder = folders[self.host.casefold()]
-    self.sources: dict[str, dict] = {file.stem: json.loads(file.read_text(encoding='utf-8'))
-      for file in sorted(self.catalog.glob('*.json'))}
+    self.sources: dict[str, dict] = {file.stem: yaml.safe_load(file.read_text(encoding='utf-8'))
+      for file in sorted(self.catalog.glob('*.yaml'))}
     canonical: dict[tuple[str, str], dict] = {}
     def walk(service: str, entries: list[dict], above: tuple[str, ...]) -> None:
       for location in entries:  # a location carries its children in its own ``locations``; the top level is a server
@@ -5495,14 +5495,14 @@ class GppuCatalog(AbstractFileSystem):
         walk(service, location.get('locations', []), names)
     for service, source in self.sources.items():
       walk(service, source['locations'], ())
-    replicas = self.folder / 'replicas.json'
+    replicas = self.folder / 'replicas.yaml'
     self._replicas: dict[str, dict] = {}
-    listed = json.loads(replicas.read_text(encoding='utf-8')) if replicas.is_file() else {}
+    listed = yaml.safe_load(replicas.read_text(encoding='utf-8')) or {} if replicas.is_file() else {}
     for service, entries in listed.items():
       for replica in entries:
         location = canonical.get((service, replica['location']))
         if location is None:
-          raise ValueError(f"{replicas}: {replica['path']} is a replica of {service} {replica['location']}, which {service}.json does not list")
+          raise ValueError(f"{replicas}: {replica['path']} is a replica of {service} {replica['location']}, which {service}.yaml does not list")
         self._replicas[os.path.normcase(os.path.normpath(replica['path']))] = {**location, 'checked_at': replica['checked_at']}
     self.root = f'gppu-catalog://{self.catalog.as_posix()}'
     self._lock = RLock()
@@ -5510,8 +5510,8 @@ class GppuCatalog(AbstractFileSystem):
     self._load()
 
   def _load(self) -> None:
-    """Read the host's ``locations.json``; a Location whose ``index`` is not where gppufs keeps it is an error, not a redirect."""
-    rows = json.loads((self.folder / 'locations.json').read_text(encoding='utf-8'))
+    """Read the host's ``locations.yaml``; a Location whose ``index`` is not where gppufs keeps it is an error, not a redirect."""
+    rows = yaml.safe_load((self.folder / 'locations.yaml').read_text(encoding='utf-8')) or []
     locations: dict[str, dict] = {}
     for row in rows:
       fs = self._filesystems.get(row['root_path']) or GppuFileSystem(row['root_path'])
@@ -5621,7 +5621,7 @@ class GppuCatalog(AbstractFileSystem):
     """The Locations at the catalog root, otherwise the listing the owning Location gives.
 
     Awaited inside an event loop, called plainly outside one. ``refresh=True``
-    at the root rereads ``locations.json``. Recursion from the root descends
+    at the root rereads ``locations.yaml``. Recursion from the root descends
     the Locations that have no parent Location; their subtrees hold the rest.
     """
     return await asyncio.to_thread(self.ls_sync, path, detail, recurse, refresh)
