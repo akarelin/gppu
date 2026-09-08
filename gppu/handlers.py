@@ -5453,13 +5453,15 @@ class GppuCatalog(AbstractFileSystem):
   row per Location as the table has it, plus ``root_path`` and ``index``, where
   that Location keeps its gppufs index. The host's folder is chosen by the
   machine name unless ``host`` says otherwise. The JSON files beside the host
-  folders are the global catalog, one per service: ``sharepoint.json``,
-  ``onedrive.json``, ``synology-drive.json`` and so on, each naming its
-  ``service`` and the canonical ``locations`` of that service, nested, with
-  server, origin, site and library where known. The host folder's ``replicas.json``
-  says where this host holds a copy of a canonical location and when that was
-  last checked. A folder that is a replica carries a ``source`` block: the
-  service, what the catalog knows of the canonical location, and ``checked_at``. The catalog root lists the Locations without touching
+  folders are the global catalog, one per service, the file name being the
+  service: ``sharepoint.json``, ``onedrive.json``, ``synology-drive.json`` and
+  so on. Each holds the canonical ``locations`` of that service, nested, a
+  location carrying its children in its own ``locations``, servers at the top.
+  The host folder's ``replicas.json`` says, per service, where this host holds
+  a copy of a location, named by its path of names in that tree, and when that
+  was last checked. A folder that is a replica carries a ``source`` block: the
+  service, the location's path of names, its server, what the catalog says of
+  it, and ``checked_at``. The catalog root lists the Locations without touching
   them. Every address at or below a Location is served by that Location's
   :class:`GppuFileSystem`; the deepest Location whose root contains the address
   owns it. A Location root's parent is its parent Location when the catalog
@@ -5484,20 +5486,24 @@ class GppuCatalog(AbstractFileSystem):
     self.sources: dict[str, dict] = {file.stem: json.loads(file.read_text(encoding='utf-8'))
       for file in sorted(self.catalog.glob('*.json'))}
     canonical: dict[tuple[str, str], dict] = {}
-    def walk(service: str, entries: list[dict]) -> None:
-      for location in entries:  # a location carries its children in its own ``locations``
-        canonical[service, location['name']] = {'service': service,
-          **{field: value for field, value in location.items() if field not in ('locations', 'generated', 'verified')}}
-        walk(service, location.get('locations', []))
-    for source in self.sources.values():
-      walk(source['service'], source['locations'])
+    def walk(service: str, entries: list[dict], above: tuple[str, ...]) -> None:
+      for location in entries:  # a location carries its children in its own ``locations``; the top level is a server
+        names = (*above, location['name'])
+        canonical[service, '/'.join(names)] = {'service': service, 'location': '/'.join(names),
+          **({'server': names[0]} if len(names) > 1 else {}),
+          **{field: value for field, value in location.items() if field != 'locations'}}
+        walk(service, location.get('locations', []), names)
+    for service, source in self.sources.items():
+      walk(service, source['locations'], ())
     replicas = self.folder / 'replicas.json'
     self._replicas: dict[str, dict] = {}
-    for replica in json.loads(replicas.read_text(encoding='utf-8')) if replicas.is_file() else ():
-      location = canonical.get((replica['service'], replica['location']))
-      if location is None:
-        raise ValueError(f"{replicas}: {replica['path']} is a replica of {replica['service']} {replica['location']}, which no service file lists")
-      self._replicas[os.path.normcase(os.path.normpath(replica['path']))] = {**location, 'checked_at': replica['checked_at']}
+    listed = json.loads(replicas.read_text(encoding='utf-8')) if replicas.is_file() else {}
+    for service, entries in listed.items():
+      for replica in entries:
+        location = canonical.get((service, replica['location']))
+        if location is None:
+          raise ValueError(f"{replicas}: {replica['path']} is a replica of {service} {replica['location']}, which {service}.json does not list")
+        self._replicas[os.path.normcase(os.path.normpath(replica['path']))] = {**location, 'checked_at': replica['checked_at']}
     self.root = f'gppu-catalog://{self.catalog.as_posix()}'
     self._lock = RLock()
     self._filesystems: dict[str, GppuFileSystem] = {}
