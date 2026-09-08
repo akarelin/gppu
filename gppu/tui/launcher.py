@@ -536,10 +536,16 @@ class _DebugScreen(Screen):
     log = self.query_one('#debug-output', RichLog)
     if not self._lines:
       log.write('(no debug messages)')
-    else:
-      for line in self._lines:
-        log.write(line)
+    self._shown = 0
+    self._refresh_log()
+    self.set_interval(0.25, self._refresh_log)
     log.scroll_end(animate=False)
+
+  def _refresh_log(self) -> None:
+    log = self.query_one('#debug-output', RichLog)
+    for line in self._lines[self._shown:]:
+      log.write(line)
+    self._shown = len(self._lines)
 
 
 class TUIApp(mixin_Config, TextualApp):
@@ -555,6 +561,7 @@ class TUIApp(mixin_Config, TextualApp):
   Built-in bindings (inherited by all subclasses):
     q       — quit (calls done())
     Ctrl-O  — toggle debug log overlay (shows captured logging output)
+    Ctrl-G  — show configuration
 
   Async helper:
     ``with self.loading('#widget-id'): ...`` — overlay Textual's animated
@@ -563,7 +570,8 @@ class TUIApp(mixin_Config, TextualApp):
 
   BINDINGS = [
     Binding('q', 'tuiapp_done', 'Quit', show=False),
-    Binding('ctrl+o', 'tuiapp_toggle_debug', 'Debug', show=False),
+    Binding('ctrl+o', 'tuiapp_toggle_debug', 'Logs'),
+    Binding('ctrl+g', 'show_info', 'Config'),
   ]
 
   _screen_wrapper: Screen | None = None
@@ -601,6 +609,18 @@ class TUIApp(mixin_Config, TextualApp):
       self.pop_screen()
     else:
       self.push_screen(_DebugScreen(self._debug_lines))
+
+  def action_show_info(self) -> None:
+    """Show the shared configuration screen from any TUI app."""
+    import pprint
+    sections: list[tuple[str, str]] = [
+      ('Env', f'initialized={Env.initialized}'),
+    ]
+    for key, val in Env.data.items():
+      sections.append((key, pprint.pformat(val)))
+    if self._my:
+      sections.append(('Instance config', pprint.pformat(self._my)))
+    self.push_screen(InfoScreen(sections))
 
   def loading(self, selector: str | None = None):
     """Context manager — overlay Textual's loading indicator while running.
@@ -1090,19 +1110,6 @@ class TUILauncher(TUIApp):
         elif self._processes:
             proc_id = self._active_log or max(self._processes)
             self.show_process_logs(proc_id)
-
-    def action_show_info(self) -> None:
-        """Show Env config and app state in a modal screen."""
-        import pprint
-        sections: list[tuple[str, str]] = [
-            ('Env', f'name={Env.name}  initialized={Env.initialized}\n'
-                    f'app_path={Env.app_path}'),
-        ]
-        for key, val in Env.data.items():
-            sections.append((key, pprint.pformat(val)))
-        if self._my:
-            sections.append(('Instance config', pprint.pformat(self._my)))
-        self.push_screen(InfoScreen(sections))
 
     def _open_config_editor(self) -> None:
         """Open the config editor as an AppScreen."""

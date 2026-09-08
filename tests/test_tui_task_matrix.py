@@ -50,3 +50,11 @@ async def test_task_matrix_selects_toggles_and_marks_cells() -> None:
     matrix.mark('trix', 'LLM logs', 'fail')
     assert table.get_cell('trix', 'LLM logs') == '✗'
     await pilot.pause()
+
+    selected = matrix.selected
+    matrix.mark_host('trix', 'ok')
+    assert matrix.selected == selected
+    assert 'trix' in table.get_cell('trix', '__host__')
+    matrix.locked = True
+    matrix.toggle_host('alex-pc')
+    assert matrix.selected == selected

@@ -43,3 +43,21 @@ async def test_tui_preserves_file_and_trace_rules_without_writing_to_terminal(tm
     Env.reset()
     TRACE_RULES.clear()
     TRACE_RULES.update(previous_rules)
+
+
+@pytest.mark.asyncio
+async def test_shared_log_and_config_screens_update_while_app_runs():
+  Env.reset()
+  Env.from_dict({'screen_test': 'configured'})
+  app = TUIApp()
+  async with app.run_test() as pilot:
+    await pilot.press('ctrl+o')
+    log = app.screen.query_one('#debug-output')
+    before = len(log.lines)
+    app.debug('arrived after the log screen opened')
+    await pilot.pause(0.3)
+    assert len(log.lines) > before
+    await pilot.press('escape', 'ctrl+g')
+    assert app.screen.query_one('#info-panel').display
+    await pilot.press('escape')
+  Env.reset()
