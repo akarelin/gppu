@@ -980,12 +980,13 @@ as the Locations table names it, holding that host's `locations.json`: one
 row per Location as the table has it, plus `root_path` and `index`, where
 that Location keeps its gppufs index. The host's folder is chosen by the
 machine name unless `host` says otherwise. The JSON files beside the host
-folders are the global catalog, one per source: `sharepoint.json`,
+folders are the global catalog, one per service: `sharepoint.json`,
 `onedrive.json`, `synology-drive.json` and so on, each naming its
-`service` and the `locations` of that service, every location with its
-`replicas` on hosts. A folder that is a replica on this host carries a
-`source` block: the service and what the catalog knows of the location,
-its server, origin, site and library. The catalog root lists the Locations without touching
+`service` and the canonical `locations` of that service, nested, with
+server, origin, site and library where known. The host folder's `replicas.json`
+says where this host holds a copy of a canonical location and when that was
+last checked. A folder that is a replica carries a `source` block: the
+service, what the catalog knows of the canonical location, and `checked_at`. The catalog root lists the Locations without touching
 them. Every address at or below a Location is served by that Location's
 `GppuFileSystem`; the deepest Location whose root contains the address
 owns it. A Location root's parent is its parent Location when the catalog
