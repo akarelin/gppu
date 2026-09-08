@@ -61,7 +61,7 @@ class Listing:
       'folders': blank(meta['folders']), 'bytes': blank(meta['bytes'], format_size),
       'span': ' – '.join(moment[:10] for moment in meta['span']) if meta['span'] else '',
       'indexed': blank(meta.get('probed_at'), lambda moment: moment[:16]),
-      'source': ' '.join(str(meta['source'][field]) for field in ('service', 'server') if field in meta['source']) if meta.get('source') else ''})
+      'source': f"{meta['source']['service']} {meta['source']['location']}" if meta.get('source') else ''})
 
   def store(self, entry_id: str, current: dict, rows: list[dict]) -> TreeEntry:
     """Keep a listing and return the listed entry itself.

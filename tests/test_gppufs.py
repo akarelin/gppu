@@ -462,7 +462,7 @@ def test_exported_session_member_paths_remain_relative_after_rename(tmp_path, mo
   assert exported['path'] == 'conversations.json'
 
 
-def catalog_of(tmp_path: Path, rows: list[dict], sources: dict[str, dict] | None = None, replicas: list[dict] | None = None) -> Path:
+def catalog_of(tmp_path: Path, rows: list[dict], sources: dict[str, dict] | None = None, replicas: dict[str, list[dict]] | None = None) -> Path:
   folder = tmp_path / '.catalog'
   (folder / 'test-host').mkdir(parents=True, exist_ok=True)
   (folder / 'test-host' / 'locations.json').write_text(json.dumps(rows), encoding='utf-8')
@@ -547,35 +547,32 @@ def test_global_catalog_tells_what_a_folder_is(tmp_path):
     (drive / name).mkdir(parents=True)
   finance = 'https://karelin.sharepoint.com/teams/Alex/Finance/'
   sources = {
-    'sharepoint': {'service': 'SharePoint', 'locations': [
-      {'id': None, 'name': 'Karelin', 'server': 'm365-karelin', 'locations': [
-        {'id': None, 'name': 'Karelin\\Suntrust - Documents', 'server': 'm365-karelin', 'site': 'sites/Suntrust', 'library': 'Shared Documents',
-          'origin': 'https://karelin.sharepoint.com/sites/Suntrust/Shared Documents/'},
-        {'id': 36, 'name': 'Karelin\\Finance', 'server': 'm365-karelin', 'site': 'teams/Alex', 'library': 'Finance', 'origin': finance,
-          'generated': {'at': '2026-09-08', 'by': 'test'}}]}]},
-    'onedrive': {'service': 'OneDrive', 'locations': [
-      {'id': 23, 'name': 'Karelin', 'server': 'm365-karelin', 'origin': 'https://karelin-my.sharepoint.com/personal/alex_karelin_com/Documents/'}]},
-    'synology-drive': {'service': 'Synology Drive', 'locations': [
-      {'id': 15, 'name': 'Downloads', 'server': 's1', 'origin': 'smb://s1/Downloads'}]},
+    'sharepoint': {'locations': [{'name': 'm365-karelin', 'history': '', 'locations': [
+      {'name': 'Suntrust - Documents', 'site': 'sites/Suntrust', 'library': 'Shared Documents',
+        'origin': 'https://karelin.sharepoint.com/sites/Suntrust/Shared Documents/', 'history': ''},
+      {'name': 'Finance', 'site': 'teams/Alex', 'library': 'Finance', 'origin': finance, 'history': 'Household finance since 2019.'},
+      {'name': 'OneDrive', 'origin': 'https://karelin-my.sharepoint.com/personal/alex_karelin_com/Documents/', 'locations': [{'name': 'Desktop'}]}]}]},
+    'synology-drive': {'locations': [{'name': 's1', 'smb': 'smb://s1', 'locations': [
+      {'name': 'Downloads', 'sd': 'sd://s1/Downloads', 'smb': 'smb://s1/Downloads', 'history': ''}]}]},
   }
-  replica = lambda service, location, path, checked='2026-09-08 03:00:00-07:00': {
-    'service': service, 'location': location, 'path': str(path), 'server_type': 'local', 'uri': None, 'checked_at': checked}
-  replicas = [
-    replica('SharePoint', 'Karelin', drive / 'Karelin'),
-    replica('SharePoint', 'Karelin\\Suntrust - Documents', drive / 'Karelin' / 'Suntrust - Documents'),
-    replica('SharePoint', 'Karelin\\Finance', drive / 'OneDrive - Karelin' / 'Finance'),
-    replica('OneDrive', 'Karelin', drive / 'OneDrive - Karelin', None),
-    replica('Synology Drive', 'Downloads', drive / 'Downloads'),
-  ]
+  seen = '2026-09-08 03:00:00-07:00'
+  replicas = {
+    'sharepoint': [
+      {'location': 'm365-karelin', 'path': str(drive / 'Karelin'), 'checked_at': seen},
+      {'location': 'm365-karelin/Suntrust - Documents', 'path': str(drive / 'Karelin' / 'Suntrust - Documents'), 'checked_at': seen},
+      {'location': 'm365-karelin/Finance', 'path': str(drive / 'OneDrive - Karelin' / 'Finance'), 'checked_at': seen},
+      {'location': 'm365-karelin/OneDrive', 'path': str(drive / 'OneDrive - Karelin'), 'checked_at': None}],
+    'synology-drive': [{'location': 's1/Downloads', 'path': str(drive / 'Downloads'), 'checked_at': seen}],
+  }
   rows = [location_row(1, drive), location_row(2, drive / 'Downloads', 1)]
   catalog = GppuCatalog(catalog_of(tmp_path, rows, sources, replicas), host='TEST-HOST')
-  assert set(catalog.sources) == {'onedrive', 'sharepoint', 'synology-drive'}
+  assert set(catalog.sources) == {'sharepoint', 'synology-drive'}
   listed = {row['gppu']['name']: row['gppu'].get('source') for row in catalog.ls(str(drive))}
   assert listed == {
-    'Downloads': {'service': 'Synology Drive', 'id': 15, 'name': 'Downloads', 'server': 's1', 'origin': 'smb://s1/Downloads',
-      'checked_at': '2026-09-08 03:00:00-07:00'},
-    'Karelin': {'service': 'SharePoint', 'id': None, 'name': 'Karelin', 'server': 'm365-karelin', 'checked_at': '2026-09-08 03:00:00-07:00'},
-    'OneDrive - Karelin': {'service': 'OneDrive', 'id': 23, 'name': 'Karelin', 'server': 'm365-karelin',
+    'Downloads': {'service': 'synology-drive', 'location': 's1/Downloads', 'server': 's1', 'name': 'Downloads',
+      'sd': 'sd://s1/Downloads', 'smb': 'smb://s1/Downloads', 'history': '', 'checked_at': seen},
+    'Karelin': {'service': 'sharepoint', 'location': 'm365-karelin', 'name': 'm365-karelin', 'history': '', 'checked_at': seen},
+    'OneDrive - Karelin': {'service': 'sharepoint', 'location': 'm365-karelin/OneDrive', 'server': 'm365-karelin', 'name': 'OneDrive',
       'origin': 'https://karelin-my.sharepoint.com/personal/alex_karelin_com/Documents/', 'checked_at': None},
     'Plain': None,
   }
@@ -584,18 +581,18 @@ def test_global_catalog_tells_what_a_folder_is(tmp_path):
   assert libraries['Suntrust - Documents']['library'] == 'Shared Documents'
   onedrive = {row['gppu']['name']: row['gppu'].get('source') for row in catalog.ls(str(drive / 'OneDrive - Karelin'))}
   assert onedrive['Desktop'] is None
-  assert onedrive['Finance'] == {'service': 'SharePoint', 'id': 36, 'name': 'Karelin\\Finance', 'server': 'm365-karelin',
-    'site': 'teams/Alex', 'library': 'Finance', 'origin': finance, 'checked_at': '2026-09-08 03:00:00-07:00'}
+  assert onedrive['Finance'] == {'service': 'sharepoint', 'location': 'm365-karelin/Finance', 'server': 'm365-karelin', 'name': 'Finance',
+    'site': 'teams/Alex', 'library': 'Finance', 'origin': finance, 'history': 'Household finance since 2019.', 'checked_at': seen}
   assert catalog.info(str(drive / 'OneDrive - Karelin' / 'Finance'))['gppu']['source']['origin'] == finance
   downloads = next(row for row in catalog.ls() if row['gppu']['name'] == 'Downloads')
-  assert downloads['gppu']['source']['service'] == 'Synology Drive'
+  assert downloads['gppu']['source']['sd'] == 'sd://s1/Downloads'
   assert catalog.info(downloads['name'])['gppu']['source']['server'] == 's1'
 
 
 def test_a_replica_of_an_unlisted_location_is_refused(tmp_path):
   drive = tmp_path / 'drive'
   drive.mkdir()
-  sources = {'dropbox': {'service': 'Dropbox', 'locations': [{'id': 21, 'name': 'Dropbox'}]}}
-  replicas = [{'service': 'Dropbox', 'location': 'Elsewhere', 'path': str(drive), 'server_type': 'local', 'uri': None, 'checked_at': None}]
-  with pytest.raises(ValueError, match='no service file lists'):
+  sources = {'dropbox': {'locations': [{'name': 'Dropbox'}]}}
+  replicas = {'dropbox': [{'location': 'Elsewhere', 'path': str(drive), 'checked_at': None}]}
+  with pytest.raises(ValueError, match='dropbox.json does not list'):
     GppuCatalog(catalog_of(tmp_path, [location_row(1, drive)], sources, replicas), host='test-host')
