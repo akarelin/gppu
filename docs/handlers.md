@@ -979,14 +979,13 @@ The Locations gppufs works with on this host, read from a catalog folder.
 as the Locations table names it, holding that host's `locations.json`: one
 row per Location as the table has it, plus `root_path` and `index`, where
 that Location keeps its gppufs index. The host's folder is chosen by the
-machine name unless `host` says otherwise. `rules.json` beside the host
-folders tells a host what a folder it encounters is: a rule matches a folder
-by a `marker` entry inside it or by its `name`, and names the `service`
-and `server` it belongs to, with `origin` and `replica` when the folder
-is a local copy of something kept elsewhere. A rule's `libraries` recognizes
-the folders below it: those listed in `names`, each with its site, library
-and origin, or those matching `pattern`, a template such as
-`{site} - {library}`. Recognized rows carry a `service` block. The catalog root lists the Locations without touching
+machine name unless `host` says otherwise. The JSON files beside the host
+folders are the global catalog, one per source: `sharepoint.json`,
+`onedrive.json`, `synology-drive.json` and so on, each naming its
+`service` and the `locations` of that service, every location with its
+`replicas` on hosts. A folder that is a replica on this host carries a
+`source` block: the service and what the catalog knows of the location,
+its server, origin, site and library. The catalog root lists the Locations without touching
 them. Every address at or below a Location is served by that Location's
 `GppuFileSystem`; the deepest Location whose root contains the address
 owns it. A Location root's parent is its parent Location when the catalog
