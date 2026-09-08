@@ -5262,6 +5262,7 @@ class GppuFileSystem(AbstractFileSystem):
       address = addresses[path]
       extra['is_container'] = (record.is_folder or 'archive' in record.handlers) and 'ignored' not in record.handlers
       extra['probed'] = True
+      extra['probed_at'] = datetime.now().astimezone()
       metadata = {**attributes[path], 'name': self._uri(address), 'gppu': extra}
       members = [addresses[child] for child in children[path]] if record.is_folder else None
       rows[address] = metadata, members
@@ -5285,7 +5286,8 @@ class GppuFileSystem(AbstractFileSystem):
     """One entry as a listing sees it: native attributes and the handlers that matched, nothing probed.
 
     A file's count, bytes and name span are known from the listing. A folder's totals
-    are unknown until it is probed, so they are null and ``probed`` is false.
+    are unknown until it is probed, so they are null and ``probed`` is false; ``probed_at``
+    is null too, where a probed row carries the local time of its last probe.
     """
     record = replace(record, modified_at=self._modified(item), size=0 if record.is_folder else record.size)
     extra = json.loads(json.dumps(record.metadata, default=_metadata_text))
@@ -5296,6 +5298,7 @@ class GppuFileSystem(AbstractFileSystem):
     extra['stats'] = {}
     extra['is_container'] = (record.is_folder or 'archive' in record.handlers) and 'ignored' not in record.handlers
     extra['probed'] = False
+    extra['probed_at'] = None
     return {**item, 'name': self._uri(key), 'gppu': extra}
 
   def _store(self, key: str, rows: dict[str, tuple[dict, list | None]], listing: list[dict] | None) -> None:
@@ -5505,20 +5508,43 @@ class GppuCatalog(AbstractFileSystem):
   def _path_of(self, fs: GppuFileSystem) -> str:
     return next(path for path, item in self._filesystems.items() if item is fs)
 
+  def _ancestors(self, path: str) -> Iterator[str]:
+    parent = self._parents.get(path)
+    while parent is not None:
+      yield parent
+      parent = self._parents.get(parent)
+
   def _catalog_row(self) -> dict:
+    """The catalog: its Locations, how many have an index, and the totals and latest refresh their indexes hold.
+
+    A Location below a Location whose totals are known is already inside them
+    and is not counted again.
+    """
+    rows = {path: self._location_row(fs)['gppu'] for path, fs in self._filesystems.items()}
+    counted = [row for path, row in rows.items() if row['files'] is not None
+      and not any(rows[parent]['files'] is not None for parent in self._ancestors(path))]
+    spans = [tuple(datetime.fromisoformat(bound) for bound in row['span']) for row in counted if row['span']]
+    refreshed = [datetime.fromisoformat(row['probed_at']) for row in rows.values() if row['probed_at']]
     return {'name': self.root, 'type': 'directory', 'size': 0, 'gppu': {
       'name': self.catalog.name, 'path': self.root, 'parent': None, 'type': 'folder', 'modified_at': None,
-      'handlers': [], 'files': None, 'folders': None, 'bytes': None, 'span': None, 'stats': {},
-      'probed': False, 'is_container': True, 'locations': len(self.locations)}}
+      'handlers': [], 'files': sum(row['files'] for row in counted) if counted else None,
+      'folders': sum(row['folders'] for row in counted) if counted else None,
+      'bytes': sum(row['bytes'] for row in counted) if counted else None,
+      'span': [str(min(span[0] for span in spans)), str(max(span[1] for span in spans))] if spans else None,
+      'stats': {}, 'probed': False, 'probed_at': str(max(refreshed)) if refreshed else None, 'is_container': True,
+      'locations': len(self.locations), 'indexed': sum(row['indexed'] for row in rows.values())}}
 
   def _location_row(self, fs: GppuFileSystem) -> dict:
-    """A Location as the catalog knows it, before its folder is looked at."""
+    """A Location as the catalog knows it: the catalog's row, with the totals and last refresh its own index holds."""
     row = self.locations[self._path_of(fs)]
+    cached = fs._cached('.')
+    known = cached[0]['gppu'] if cached is not None else {}
     return {'name': fs.location, 'type': 'directory', 'size': 0, 'gppu': {
       'name': PurePosixPath(fs.root).name or fs.root.rstrip('/'), 'path': fs.location, 'parent': self._parent(fs),
-      'type': 'folder', 'modified_at': None, 'handlers': [], 'files': None, 'folders': None, 'bytes': None,
-      'span': None, 'stats': {}, 'probed': False, 'is_container': True,
-      'indexed': fs.fs.isfile(fs._database_path(fs.root)), 'location': row}}
+      'type': 'folder', 'modified_at': known.get('modified_at'), 'handlers': known.get('handlers', []),
+      'files': known.get('files'), 'folders': known.get('folders'), 'bytes': known.get('bytes'),
+      'span': known.get('span'), 'stats': known.get('stats', {}), 'probed': known.get('probed', False),
+      'probed_at': known.get('probed_at'), 'is_container': True, 'indexed': cached is not None, 'location': row}}
 
   def _served(self, fs: GppuFileSystem, row: dict) -> dict:
     """A row from a Location's filesystem; its root carries the catalog's parent and Location."""

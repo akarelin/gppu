@@ -89,9 +89,11 @@ def test_ls_identifies_without_probing_and_refresh_probes(tmp_path, monkeypatch)
   assert listed[0]['gppu']['files'] is None
   (tmp_path / 'added.txt').write_text('added')
   assert [row['gppu']['name'] for row in fs.ls()] == ['notes', 'added.txt']
+  assert note['gppu']['probed_at'] is None
   detail = fs.info(note['name'])
   assert detail['gppu']['probed'] is True
   assert detail['gppu']['markdown']['title'] == 'Handlers'
+  assert datetime.fromisoformat(detail['gppu']['probed_at']).utcoffset() == datetime.now().astimezone().utcoffset()
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
   assert fs.info(note['name']) == detail
   monkeypatch.undo()
@@ -498,6 +500,16 @@ def test_catalog_lists_locations_and_serves_each_through_its_own_index(tmp_path)
   assert catalog.ls(rows[1]['name'])[0]['gppu']['handlers'] == ['markdown']
   assert index(inner).is_file()
   assert catalog.ls()[1]['gppu']['indexed'] is True
+  assert catalog.info()['gppu']['files'] is None
+  assert catalog.info()['gppu']['indexed'] == 2
+  catalog.ls(rows[0]['name'], refresh=True)
+  outer_row, inner_row = catalog.ls()
+  assert (outer_row['gppu']['files'], outer_row['gppu']['folders'], outer_row['gppu']['probed']) == (2, 1, True)
+  assert (inner_row['gppu']['files'], inner_row['gppu']['probed']) == (1, True)
+  summary = catalog.info()['gppu']
+  assert (summary['files'], summary['folders'], summary['bytes']) == (2, 1, outer_row['gppu']['bytes'])
+  assert summary['probed_at'] == max(outer_row['gppu']['probed_at'], inner_row['gppu']['probed_at'])
+  assert summary['span'] == outer_row['gppu']['span']
   assert [row['gppu']['name'] for row in catalog.ls(recurse=True)] == ['outer', 'inner', 'b.md', 'a.txt']
   assert catalog.ls(detail=False) == [row['name'] for row in rows]
   with pytest.raises(FileNotFoundError, match='not inside'):
