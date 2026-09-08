@@ -45,5 +45,8 @@ git_describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--mat
 where = ["."]
 include = ["gppu*", "statusline*", "w11*"]
 
+[tool.setuptools.package-data]
+gppu = ["*.j2"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

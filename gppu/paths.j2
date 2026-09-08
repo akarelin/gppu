@@ -1,0 +1,23 @@
+{#- Path grammar: the facts every path is built from, and the macros that build them.
+    `{% import 'paths.j2' as p %}`; each macro returns one path and no newline. -#}
+{% set user = 'alex' %}
+{% set home = {'windows': 'C:\\Users\\Alex', 'wsl': '/home/alex', 'debian': '/home/alex', 'macos': '/Users/alex'} %}
+{% set drive = 'D:' %}
+{% set nas_root = '/mnt' %}
+{% set wsl_distro = 'Debian' %}
+{#- Under the Windows profile, or on the data drive; sep='/' gives the form harness.py substitutes into JSON. -#}
+{% macro win(sub, sep='\\') %}{{ (home.windows ~ '\\' ~ sub) | replace('/', sep) | replace('\\', sep) | trim(sep) if sub else home.windows | replace('\\', sep) }}{% endmacro %}
+{% macro d(sub, sep='\\') %}{{ (drive ~ '\\' ~ sub) | replace('/', sep) | replace('\\', sep) }}{% endmacro %}
+{#- The same Windows path as WSL sees it. -#}
+{% macro wsl(path) %}{{ ('/mnt/' ~ (path[0] | lower) ~ (path[2:] | replace('\\', '/'))).rstrip('/') }}{% endmacro %}
+{#- The WSL home as Windows reaches it. -#}
+{% macro wsl_unc(sub) %}{{ ('\\\\wsl$\\' ~ wsl_distro ~ ((home.wsl ~ '/' ~ sub) | replace('/', '\\'))).rstrip('\\') }}{% endmacro %}
+{#- Under the home directory of a POSIX platform, absolute or as the remote shell expands it. -#}
+{% macro posix(platform, sub) %}{{ home[platform] }}/{{ sub }}{% endmacro %}
+{% macro tilde(sub) %}~/{{ sub }}{% endmacro %}
+{#- Where a Linux host mounts a NAS share: the mount point the share declares, else /mnt/<NAS>/<share>. -#}
+{% macro mount(shares, nas, share) %}{% set row = shares[nas].shares | selectattr('name', 'equalto', share) | first %}{{ row.mount if row.mount is defined else nas_root ~ '/' ~ (nas | upper) ~ '/' ~ share }}{% endmacro %}
+{#- A share on the NAS itself, for scp and rsync. -#}
+{% macro volume(share) %}/volume1/{{ share }}{% endmacro %}
+{#- One fstab-style mount line: source, target and any options beyond globals.cifs_options. -#}
+{% macro fstab(shares, row) %}{{ '//' ~ shares[row.nas].hostname ~ '/' ~ (row.share | replace(' ', '\\040')) ~ ' ' ~ (posix('debian', row.share) if row.at is defined and row.at == 'home' else mount(shares, row.nas, row.share)) ~ ((' ' ~ row.options) if row.options is defined else '') }}{% endmacro %}
