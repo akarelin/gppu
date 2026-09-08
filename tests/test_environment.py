@@ -24,19 +24,25 @@ def test_path_grammar():
 
 def test_jinja_config_loads_lists_and_grows_env(tmp_path: Path):
   (tmp_path / 'lists').mkdir()
-  (tmp_path / 'lists' / 'hosts.yaml').write_text('Servers:\n  seven: {fqdn: 7.c.karel.in}\n  trix: {fqdn: 6.c.karel.in}\n', encoding='utf-8')
+  (tmp_path / 'lists' / 'hosts.yaml').write_text('Servers:\n  seven: {fqdn: 7.c.karel.in, repos: [gppu]}\n  trix: {fqdn: 6.c.karel.in, repos: [RAN]}\n', encoding='utf-8')
   (tmp_path / 'hosts.yaml.j2').write_text(
     "{% import 'paths.j2' as p %}\n{% set rows = load('lists/hosts.yaml') %}\n"
     "{% for group, members in rows.items() %}\n{{ group }}:\n{% for name, host in members.items() %}\n"
-    "  {{ name }}:\n    hostname: {{ host.fqdn }}\n    ssh_host: {{ name }}\n    home: {{ p.posix('debian', '') | yaml }}\n"
+    "  {{ name }}:\n    hostname: {{ host.fqdn }}\n    ssh_host: {{ name }}\n    platform: debian\n    shell: bash\n    repos: {{ host.repos | yaml }}\n"
+    "    memory: {{ p.mount(load('shares.yaml'), 's1', 'SD') }}/memory\n    export_root: {{ p.posix('debian', 'inbox') }}\n"
     "{% endfor %}\n{% endfor %}\n", encoding='utf-8')
-  (tmp_path / 'root.yaml').write_text("globals: {ssh_user: alex, ssh_connect_timeout: 5}\nhosts: !include hosts.yaml.j2\nshares: {s1: {hostname: s1.karel.in, shares: [{name: SD}, {name: Public, mount: /mnt/Public}]}}\n"
+  (tmp_path / 'shares.yaml').write_text('s1: {hostname: s1.karel.in, shares: [{name: SD}, {name: Public, mount: /mnt/Public}]}\n', encoding='utf-8')
+  (tmp_path / 'root.yaml').write_text("globals: {ssh_user: alex, ssh_connect_timeout: 5}\nhosts: !include hosts.yaml.j2\n"
+    "platforms: {debian: {home: '~', python: python3}}\nshares: !include shares.yaml\n"
     "locations:\n  sd:\n    name: SD\n    local/seven: {linux: /mnt/S1/SD}\n    smb/s1: {smb: SD}\n", encoding='utf-8')
   data = dict_from_yml(tmp_path / 'root.yaml')
-  assert data['hosts']['Servers']['trix'] == {'hostname': '6.c.karel.in', 'ssh_host': 'trix', 'home': '/home/alex/'}
+  assert data['hosts']['Servers']['trix']['memory'] == '/mnt/S1/SD/memory'
 
   Environment.fleet(tmp_path / 'root.yaml')
   assert Environment.ssh('trix') == ['ssh', '-o', 'ConnectTimeout=5', '-o', 'BatchMode=yes', 'alex@trix']
+  assert [t.label for t in Environment.targets('Servers', repo='gppu')] == ['seven']
+  seven = Environment.target('seven')
+  assert (seven.platform, seven.home, seven.python, seven.export_root, seven.local) == ('debian', '~', 'python3', '/home/alex/inbox', False)
   assert Environment.mount('s1', 'SD') == '/mnt/S1/SD'
   assert Environment.mount('s1', 'Public') == '/mnt/Public'
   assert Environment.local('sd', host='seven', platform='debian') == '/mnt/S1/SD'
