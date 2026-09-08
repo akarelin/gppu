@@ -101,24 +101,24 @@ jobs:
           fetch-tags: true
           fetch-depth: 0
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.14'
+      - uses: astral-sh/setup-uv@v6
 
       - name: Setup and test (Linux)
         if: matrix.os == 'linux'
         run: |
-          python3.14 -m venv "$HOME/.venv"
-          "$HOME/.venv/bin/pip" install Jinja2 PyYAML pytest setuptools-scm
-          "$HOME/.venv/bin/pip" install -e ".${{ matrix.extras }}"
+          uv venv --python 3.14 --allow-existing "$HOME/.venv"
+          source "$HOME/.venv/bin/activate"
+          uv pip install Jinja2 PyYAML pytest setuptools-scm
+          uv pip install -e ".${{ matrix.extras }}"
           "$HOME/.venv/bin/python" -m pytest ${{ matrix.test_path }} -v
 
       - name: Setup and test (Windows)
         if: matrix.os == 'windows'
         run: |
-          python -m venv "$HOME/.venv"
-          & "$HOME/.venv/Scripts/pip" install Jinja2 PyYAML pytest setuptools-scm
-          & "$HOME/.venv/Scripts/pip" install -e ".${{ matrix.extras }}"
+          uv venv --python 3.14 --allow-existing "$HOME/.venv"
+          . "$HOME/.venv/Scripts/Activate.ps1"
+          uv pip install Jinja2 PyYAML pytest setuptools-scm
+          uv pip install -e ".${{ matrix.extras }}"
           & "$HOME/.venv/Scripts/python" -m pytest ${{ matrix.test_path }} -v
 
   release:
@@ -196,14 +196,13 @@ jobs:
         if: env.TAG_EXISTS == 'true'
         run: git checkout "${TAG}"
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.14'
+      - uses: astral-sh/setup-uv@v6
 
       - name: Build and release
         run: |
-          python3.14 -m venv "$HOME/.venv"
-          "$HOME/.venv/bin/pip" install build setuptools-scm
+          uv venv --python 3.14 --allow-existing "$HOME/.venv"
+          source "$HOME/.venv/bin/activate"
+          uv pip install build setuptools-scm
           "$HOME/.venv/bin/python" -m build
 
       - name: Compute release name
