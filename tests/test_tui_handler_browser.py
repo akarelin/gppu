@@ -4,6 +4,7 @@ import asyncio
 import json
 import zipfile
 
+import yaml
 from textual.widgets import DataTable, Static, TextArea
 
 from examples.handler_browser import HandlerBrowser
@@ -111,7 +112,7 @@ def test_tui_shows_the_catalog_as_a_tree_of_locations(tmp_path):
         'index': str(outer / '.outer.gppufs.sqlite')},
       {'id': 2, 'path': 'inner', 'parent_file_location_id': 1, 'root_path': str(inner),
         'index': str(inner / '.inner.gppufs.sqlite')}]
-    (folder / 'test-host' / 'locations.json').write_text(json.dumps(rows), encoding='utf-8')
+    (folder / 'test-host' / 'locations.yaml').write_text(yaml.safe_dump(rows), encoding='utf-8')
     catalog = GppuCatalog(folder, host='test-host')
     app = HandlerBrowser(catalog)
     async with app.run_test(size=(130, 40)) as pilot:

@@ -976,15 +976,15 @@ members identified, like a folder; refreshing the archive probes them.
 The Locations gppufs works with on this host, read from a catalog folder.
 
 `catalog` is an absolute folder with one subfolder per host or server, named
-as the Locations table names it, holding that host's `locations.json`: one
+as the Locations table names it, holding that host's `locations.yaml`: one
 row per Location as the table has it, plus `root_path` and `index`, where
 that Location keeps its gppufs index. The host's folder is chosen by the
 machine name unless `host` says otherwise. The JSON files beside the host
 folders are the global catalog, one per service, the file name being the
-service: `sharepoint.json`, `onedrive.json`, `synology-drive.json` and
+service: `sharepoint.yaml`, `synology-drive.yaml`, `git.yaml` and
 so on. Each holds the canonical `locations` of that service, nested, a
 location carrying its children in its own `locations`, servers at the top.
-The host folder's `replicas.json` says, per service, where this host holds
+The host folder's `replicas.yaml` says, per service, where this host holds
 a copy of a location, named by its path of names in that tree, and when that
 was last checked. A folder that is a replica carries a `source` block: the
 service, the location's path of names, its server, what the catalog says of
@@ -1007,7 +1007,7 @@ The catalog itself, or one entry served by its Location; awaited in a loop, call
 The Locations at the catalog root, otherwise the listing the owning Location gives.
 
 Awaited inside an event loop, called plainly outside one. `refresh=True`
-at the root rereads `locations.json`. Recursion from the root descends
+at the root rereads `locations.yaml`. Recursion from the root descends
 the Locations that have no parent Location; their subtrees hold the rest.
 
 ### `GppuCatalog.ls_sync(self, path: 'str | Path | None' = None, detail: 'bool' = True, recurse: 'bool' = False, refresh: 'bool' = False) -> 'list'`
