@@ -5455,9 +5455,11 @@ class GppuCatalog(AbstractFileSystem):
   machine name unless ``host`` says otherwise. ``rules.json`` beside the host
   folders tells a host what a folder it encounters is: a rule matches a folder
   by a ``marker`` entry inside it or by its ``name``, and names the ``service``
-  and ``server`` it belongs to; a rule with ``libraries`` recognizes the
-  folders below it as libraries named by that template. Recognized rows carry
-  a ``service`` block. The catalog root lists the Locations without touching
+  and ``server`` it belongs to, with ``origin`` and ``replica`` when the folder
+  is a local copy of something kept elsewhere. A rule's ``libraries`` recognizes
+  the folders below it: those listed in ``names``, each with its site, library
+  and origin, or those matching ``pattern``, a template such as
+  ``{site} - {library}``. Recognized rows carry a ``service`` block. The catalog root lists the Locations without touching
   them. Every address at or below a Location is served by that Location's
   :class:`GppuFileSystem`; the deepest Location whose root contains the address
   owns it. A Location root's parent is its parent Location when the catalog
@@ -5562,12 +5564,17 @@ class GppuCatalog(AbstractFileSystem):
       'probed_at': known.get('probed_at'), 'is_container': True, 'indexed': cached is not None, 'location': row,
       **({'service': service} if (service := self._service(fs, '.')) is not None else {})}}
 
+  @staticmethod
+  def _block(rule: Mapping[str, Any], **found: Any) -> dict:
+    """The service block a rule gives a folder: the service's name, its server, origin and replica, and what was found."""
+    return {'name': rule['service'], **{field: rule[field] for field in ('server', 'replica', 'origin') if field in rule}, **found}
+
   def _service(self, fs: GppuFileSystem, key: str) -> dict | None:
     """What a folder is by the rules: a library under a recognized folder, else its name, else a marker inside it.
 
     Names and markers are tried for a Location root and the folders one level
     below it, where sync clients put their roots. A library is recognized one
-    level deeper, by its parent's rule.
+    level deeper, by its parent's rule: listed by name, or matching the pattern.
     """
     if '::' in key:
       return None
@@ -5577,15 +5584,21 @@ class GppuCatalog(AbstractFileSystem):
     path = PurePosixPath(fs._path(key))
     name, parent = path.name, path.parent.name
     for rule in self.rules:
-      if 'libraries' in rule and rule.get('name') == parent:
-        pattern = re.escape(rule['libraries']).replace(r'\{site\}', '(?P<site>.+?)').replace(r'\{library\}', '(?P<library>.+)')
-        match = re.fullmatch(pattern, name)
-        return {'name': rule['service'], **({'server': rule['server']} if 'server' in rule else {}), **(match.groupdict() if match else {})}
+      libraries = rule.get('libraries')
+      if libraries and rule.get('name') == parent:
+        listed = libraries.get('names', {}).get(name)
+        if listed is not None:
+          return self._block(libraries, **listed)
+        if 'pattern' in libraries:
+          pattern = re.escape(libraries['pattern']).replace(r'\{site\}', '(?P<site>.+?)').replace(r'\{library\}', '(?P<library>.+)')
+          if match := re.fullmatch(pattern, name):
+            return self._block(libraries, **match.groupdict())
+        return None
     if len(parts) > 1:
       return None
     for rule in self.rules:
       if rule.get('name') == name or ('marker' in rule and fs.fs.isdir(posixpath.join(str(path), rule['marker']))):
-        return {'name': rule['service'], **({'server': rule['server']} if 'server' in rule else {})}
+        return self._block(rule)
     return None
 
   def _served(self, fs: GppuFileSystem, row: dict) -> dict:
