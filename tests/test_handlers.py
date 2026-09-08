@@ -1708,3 +1708,10 @@ def test_browser_handler_leaves_anything_that_is_not_a_profile_unrecognized(tmp_
   assert not handler.identify_sync(tmp_path / 'notes')
   with pytest.raises(ValueError, match='not a browser profile'):
     handler.call_sync(tmp_path / 'notes')
+
+
+def test_a_filesystem_root_is_never_ignored(tmp_path: Path) -> None:
+  root = Path(tmp_path.anchor)
+  assert IgnoredHandler.reason(root) is None
+  assert IgnoredHandler().identify_sync(root) is False
+

@@ -5,7 +5,7 @@ updated: 2026-09-06
 generated: { by: Codex/GPT-6, at: '2026-09-06 03:33 -07:00' }
 ---
 
-The examples construct `GppuCatalog` and use only `ls` and `info`. `handler_ls.py` prints complete JSON metadata; `handler_browser.py` displays a directory table and the selected entry's complete metadata. `handler_tui.py` launches the same browser. Parsing, aggregates, SQLite storage, shard routing, and external rename recovery belong to `gppu.handlers`.
+The examples construct `GppuCatalog` and use only `ls` and `info`. `handler_ls.py` prints complete JSON metadata; `handler_browser.py` displays one tree of Locations, folders, archives and files with the highlighted entry's complete metadata. `handler_tui.py` launches the same browser. Parsing, aggregates, SQLite storage, shard routing, and external rename recovery belong to `gppu.handlers`.
 
 Both examples load `examples/handlers.yaml` through `Env`:
 
@@ -15,7 +15,7 @@ catalog: D:\TextLake\.catalog
 
 `catalog` is the only setting: an absolute folder holding `locations.json`, one row per Location as the Locations table in the files database has it, plus `root_path`, the absolute path of the Location on this host, and `index`, where gppufs keeps that Location's index. gppufs derives the same index path from the Location and refuses a row that says otherwise, so the catalog cannot move an index. The examples start at the catalog: its root lists the Locations without touching them, entering one lists that Location, and Backspace walks up the Locations tree back to the catalog. A `GppuFileSystem` can still be built on one Location directly.
 
-With the repository virtual environment active, `python examples/handler_ls.py` prints the catalog's Locations; with a Location path as its argument it prints that Location and everything below it. `python -m examples.handler_browser` opens the TUI. Enter opens a Location, folder or archive; Backspace returns to its parent, up to the catalog; `r` refreshes the current listing from the source; `q` exits. The TUI performs filesystem calls in background threads and displays failures. It has no rename action.
+With the repository virtual environment active, `python examples/handler_ls.py` prints the catalog's Locations; with a Location path as its argument it prints that Location and everything below it. `python examples/handler_browser.py` opens the TUI: the catalog's Locations as a tree, Locations in bold, before any folder is read. Enter or Right expands a Location, folder or archive and lists it; Left collapses, or moves to the parent; highlighting a row shows its `info`, which probes a file once; `r` refreshes the highlighted row from the source, its whole listing when it is a container; `q` exits. The TUI awaits `gppufs.ls` and `gppufs.info`, whose reading runs off the event loop, and displays failures. It has no rename action.
 
 ```python
 from gppu.handlers import GppuFileSystem
@@ -26,6 +26,8 @@ children = gppufs.ls()
 descendants = gppufs.ls(recurse=True)
 fresh_children = gppufs.ls(refresh=True)
 ```
+
+Inside a running event loop the same calls are awaited: `await gppufs.ls()`. The reading runs in a worker thread either way.
 
 `ls` reads the folder live. Every entry it has not seen is identified: native attributes, the handlers that match, and for a file its byte count and name span. Nothing is parsed. A folder's file, folder and byte totals and span are null until that folder is refreshed, and `gppu.probed` is false. `ls(refresh=True)` probes the folder and everything below it; `info(file)` probes that one file the first time its details are asked for. Entries already in the index keep their indexed metadata until a refresh. An entry that is gone from the folder is dropped from the listing; its row is removed by the next refresh of that folder. Entering an archive lists its members the same way: identified from their names and bytes, none probed, folder totals null. A member is probed when its details are asked for; refreshing the archive probes all of them.
 

@@ -142,7 +142,9 @@ These case-sensitive folder patterns are visible but never descended:
 `System Volume Information`, `OneDriveTemp`, `Cache`, and
 `.cache`. Any other dot-prefixed folder and any
 Windows folder carrying `FILE_ATTRIBUTE_HIDDEN` or
-`FILE_ATTRIBUTE_SYSTEM` is also an ignored no-descent boundary.
+`FILE_ATTRIBUTE_SYSTEM` is also an ignored no-descent boundary. A
+filesystem root is never ignored: it has no name to match, and a Windows
+drive root carries the hidden and system attributes of the volume itself.
 
 Matching entries remain `Record` objects. This differs from a path
 exclusion, which would remove the entry from the hierarchy entirely.
@@ -945,19 +947,29 @@ and aggregates. The example applications do no parsing or persistence.
 
 Return one native entry with its handler metadata.
 
-A physical entry the index has not seen is identified, not probed. A file
-whose details are asked for is probed once, inside an archive as well;
-`refresh=True` probes again. A folder's totals come from the last
-refresh of that folder.
+Awaited inside an event loop, called plainly outside one; the reading runs
+in a worker thread either way. A physical entry the index has not seen is
+identified, not probed. A file whose details are asked for is probed once,
+inside an archive as well; `refresh=True` probes again. A folder's totals
+come from the last refresh of that folder.
+
+### `GppuFileSystem.info_sync(self, path: 'str | Path | None' = None, refresh: 'bool' = False) -> 'dict'`
+
+`info` on the calling thread.
 
 ### `GppuFileSystem.ls(self, path: 'str | Path | None' = None, detail: 'bool' = True, recurse: 'bool' = False, refresh: 'bool' = False, **kwargs) -> 'list'`
 
 List entries, optionally descending, from the live folder and the colocated SQLite index.
 
-Every entry the listing finds is identified. Entries already indexed keep
-their indexed metadata. `refresh=True` probes the folder and everything
-below it. Entering an archive lists its members identified, like a folder;
-refreshing the archive probes them.
+Awaited inside an event loop, called plainly outside one; the listing runs
+in a worker thread either way. Every entry the listing finds is identified.
+Entries already indexed keep their indexed metadata. `refresh=True`
+probes the folder and everything below it. Entering an archive lists its
+members identified, like a folder; refreshing the archive probes them.
+
+### `GppuFileSystem.ls_sync(self, path: 'str | Path | None' = None, detail: 'bool' = True, recurse: 'bool' = False, refresh: 'bool' = False) -> 'list'`
+
+`ls` on the calling thread.
 
 ## `GppuCatalog(*args, **kwargs)`
 
@@ -973,15 +985,23 @@ names one, otherwise the catalog root, so a browser walks the Locations tree.
 
 ### `GppuCatalog.info(self, path: 'str | Path | None' = None, refresh: 'bool' = False, **kwargs) -> 'dict'`
 
-The catalog itself, or one entry served by its Location.
+The catalog itself, or one entry served by its Location; awaited in a loop, called plainly outside one.
+
+### `GppuCatalog.info_sync(self, path: 'str | Path | None' = None, refresh: 'bool' = False) -> 'dict'`
+
+`info` on the calling thread.
 
 ### `GppuCatalog.ls(self, path: 'str | Path | None' = None, detail: 'bool' = True, recurse: 'bool' = False, refresh: 'bool' = False, **kwargs) -> 'list'`
 
 The Locations at the catalog root, otherwise the listing the owning Location gives.
 
-`refresh=True` at the root rereads `locations.json`. Recursion from the
-root descends the Locations that have no parent Location; their subtrees
-hold the rest.
+Awaited inside an event loop, called plainly outside one. `refresh=True`
+at the root rereads `locations.json`. Recursion from the root descends
+the Locations that have no parent Location; their subtrees hold the rest.
+
+### `GppuCatalog.ls_sync(self, path: 'str | Path | None' = None, detail: 'bool' = True, recurse: 'bool' = False, refresh: 'bool' = False) -> 'list'`
+
+`ls` on the calling thread.
 
 ## `valid_time(value: 'datetime | None') -> 'datetime | None'`
 
