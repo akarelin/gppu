@@ -106,13 +106,13 @@ def test_tui_shows_the_catalog_as_a_tree_of_locations(tmp_path):
     (outer / 'a.txt').write_text('a')
     (inner / 'b.md').write_text('---\ntitle: B\n---\nText')
     folder = tmp_path / '.catalog'
-    folder.mkdir()
+    (folder / 'test-host').mkdir(parents=True)
     rows = [{'id': 1, 'path': 'outer', 'parent_file_location_id': None, 'root_path': str(outer),
         'index': str(outer / '.outer.gppufs.sqlite')},
       {'id': 2, 'path': 'inner', 'parent_file_location_id': 1, 'root_path': str(inner),
         'index': str(inner / '.inner.gppufs.sqlite')}]
-    (folder / 'locations.json').write_text(json.dumps(rows), encoding='utf-8')
-    catalog = GppuCatalog(folder)
+    (folder / 'test-host' / 'locations.json').write_text(json.dumps(rows), encoding='utf-8')
+    catalog = GppuCatalog(folder, host='test-host')
     app = HandlerBrowser(catalog)
     async with app.run_test(size=(130, 40)) as pilot:
       await settled(app, pilot)

@@ -22,7 +22,7 @@ LOADING = '\x00loading'
 FAILED = '\x00failed'
 COLUMNS = (TreeTableColumn('handlers', 'Handlers', 22), TreeTableColumn('files', 'Files', 9),
   TreeTableColumn('folders', 'Folders', 9), TreeTableColumn('bytes', 'Bytes', 12),
-  TreeTableColumn('span', 'Span', 25), TreeTableColumn('indexed', 'Indexed', 17))
+  TreeTableColumn('span', 'Span', 25), TreeTableColumn('indexed', 'Indexed', 17), TreeTableColumn('service', 'Service', 26))
 FILTERS = {'show-files': 'file', 'show-ignored': 'ignored'}  # checkbox -> the kind of entry it shows
 
 
@@ -60,7 +60,8 @@ class Listing:
       'kind': kind, 'handlers': ', '.join(meta['handlers']), 'files': blank(meta['files']),
       'folders': blank(meta['folders']), 'bytes': blank(meta['bytes'], format_size),
       'span': ' – '.join(moment[:10] for moment in meta['span']) if meta['span'] else '',
-      'indexed': blank(meta.get('probed_at'), lambda moment: moment[:16])})
+      'indexed': blank(meta.get('probed_at'), lambda moment: moment[:16]),
+      'service': ' '.join(str(meta['service'][field]) for field in ('name', 'server') if field in meta['service']) if meta.get('service') else ''})
 
   def store(self, entry_id: str, current: dict, rows: list[dict]) -> TreeEntry:
     """Keep a listing and return the listed entry itself.
