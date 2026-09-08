@@ -102,7 +102,6 @@ jobs:
           fetch-depth: 0
 
       - uses: actions/setup-python@v6
-        if: matrix.os == 'windows'
         with:
           python-version: '3.14'
 
@@ -196,6 +195,10 @@ jobs:
       - name: Checkout tag
         if: env.TAG_EXISTS == 'true'
         run: git checkout "${TAG}"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
 
       - name: Build and release
         run: |
