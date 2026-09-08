@@ -162,7 +162,7 @@ class Environment:
     else: local_home = Path(home).expanduser()
     return Target(
       host=name, env=env, label=f'{name}.{entry["label"]}' if env else name, platform=platform, shell=entry['shell'],
-      address=entry['ssh_host'], user=entry['ssh_user'] if 'ssh_user' in entry else Environment.glob('globals/ssh_user'),
+      address=row['hostname'], user=entry['ssh_user'] if 'ssh_user' in entry else Environment.glob('globals/ssh_user'),
       port=int(entry['port']) if 'port' in entry else SSH_PORT, home=home.replace('\\', '/'), local_home=local_home,
       python=facts['python'], memory=entry['memory'], export_root=entry['export_root'], repos=tuple(row['repos']))
 

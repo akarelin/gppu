@@ -24,11 +24,11 @@ def test_path_grammar():
 
 def test_jinja_config_loads_lists_and_grows_env(tmp_path: Path):
   (tmp_path / 'lists').mkdir()
-  (tmp_path / 'lists' / 'hosts.yaml').write_text('Servers:\n  seven: {fqdn: 7.c.karel.in, repos: [gppu]}\n  trix: {fqdn: 6.c.karel.in, repos: [RAN]}\n', encoding='utf-8')
+  (tmp_path / 'lists' / 'hosts.yaml').write_text('Servers:\n  seven: {repos: [gppu]}\n  trix: {repos: [RAN]}\n', encoding='utf-8')
   (tmp_path / 'hosts.yaml.j2').write_text(
     "{% import 'paths.j2' as p %}\n{% set rows = load('lists/hosts.yaml') %}\n"
     "{% for group, members in rows.items() %}\n{{ group }}:\n{% for name, host in members.items() %}\n"
-    "  {{ name }}:\n    hostname: {{ host.fqdn }}\n    ssh_host: {{ name }}\n    platform: debian\n    shell: bash\n    repos: {{ host.repos | yaml }}\n"
+    "  {{ name }}:\n    hostname: {{ name }}\n    platform: debian\n    shell: bash\n    repos: {{ host.repos | yaml }}\n"
     "    memory: {{ p.mount(load('shares.yaml'), 's1', 'SD') }}/memory\n    export_root: {{ p.posix('debian', 'inbox') }}\n"
     "{% endfor %}\n{% endfor %}\n", encoding='utf-8')
   (tmp_path / 'shares.yaml').write_text('s1: {hostname: s1.karel.in, shares: [{name: SD}, {name: Public, mount: /mnt/Public}]}\n', encoding='utf-8')
