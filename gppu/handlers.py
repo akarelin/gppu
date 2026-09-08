@@ -5452,14 +5452,13 @@ class GppuCatalog(AbstractFileSystem):
   as the Locations table names it, holding that host's ``locations.json``: one
   row per Location as the table has it, plus ``root_path`` and ``index``, where
   that Location keeps its gppufs index. The host's folder is chosen by the
-  machine name unless ``host`` says otherwise. ``rules.json`` beside the host
-  folders tells a host what a folder it encounters is: a rule matches a folder
-  by a ``marker`` entry inside it or by its ``name``, and names the ``service``
-  and ``server`` it belongs to, with ``origin`` and ``replica`` when the folder
-  is a local copy of something kept elsewhere. A rule's ``libraries`` recognizes
-  the folders below it: those listed in ``names``, each with its site, library
-  and origin, or those matching ``pattern``, a template such as
-  ``{site} - {library}``. Recognized rows carry a ``service`` block. The catalog root lists the Locations without touching
+  machine name unless ``host`` says otherwise. The JSON files beside the host
+  folders are the global catalog, one per source: ``sharepoint.json``,
+  ``onedrive.json``, ``synology-drive.json`` and so on, each naming its
+  ``service`` and the ``locations`` of that service, every location with its
+  ``replicas`` on hosts. A folder that is a replica on this host carries a
+  ``source`` block: the service and what the catalog knows of the location,
+  its server, origin, site and library. The catalog root lists the Locations without touching
   them. Every address at or below a Location is served by that Location's
   :class:`GppuFileSystem`; the deepest Location whose root contains the address
   owns it. A Location root's parent is its parent Location when the catalog
@@ -5481,8 +5480,15 @@ class GppuCatalog(AbstractFileSystem):
     if self.host.casefold() not in folders:
       raise ValueError(f'{catalog}: no folder for host {self.host}')
     self.folder = folders[self.host.casefold()]
-    rules = self.catalog / 'rules.json'
-    self.rules: list[dict] = json.loads(rules.read_text(encoding='utf-8')) if rules.is_file() else []
+    self.sources: dict[str, dict] = {file.stem: json.loads(file.read_text(encoding='utf-8'))
+      for file in sorted(self.catalog.glob('*.json'))}
+    self._replicas: dict[str, dict] = {}
+    for source in self.sources.values():
+      for location in source['locations']:
+        for replica in location['replicas']:
+          if replica['host'].casefold() == self.host.casefold():
+            self._replicas[os.path.normcase(os.path.normpath(replica['path']))] = {'service': source['service'],
+              **{field: value for field, value in location.items() if field not in ('replicas', 'generated', 'verified')}}
     self.root = f'gppu-catalog://{self.catalog.as_posix()}'
     self._lock = RLock()
     self._filesystems: dict[str, GppuFileSystem] = {}
@@ -5562,52 +5568,21 @@ class GppuCatalog(AbstractFileSystem):
       'files': known.get('files'), 'folders': known.get('folders'), 'bytes': known.get('bytes'),
       'span': known.get('span'), 'stats': known.get('stats', {}), 'probed': known.get('probed', False),
       'probed_at': known.get('probed_at'), 'is_container': True, 'indexed': cached is not None, 'location': row,
-      **({'service': service} if (service := self._service(fs, '.')) is not None else {})}}
+      **({'source': source} if (source := self._source(fs, '.')) is not None else {})}}
 
-  @staticmethod
-  def _block(rule: Mapping[str, Any], **found: Any) -> dict:
-    """The service block a rule gives a folder: the service's name, its server, origin and replica, and what was found."""
-    return {'name': rule['service'], **{field: rule[field] for field in ('server', 'replica', 'origin') if field in rule}, **found}
-
-  def _service(self, fs: GppuFileSystem, key: str) -> dict | None:
-    """What a folder is by the rules: a library under a recognized folder, else its name, else a marker inside it.
-
-    Names and markers are tried for a Location root and the folders one level
-    below it, where sync clients put their roots. A library is recognized one
-    level deeper, by its parent's rule: listed by name, or matching the pattern.
-    """
+  def _source(self, fs: GppuFileSystem, key: str) -> dict | None:
+    """What a folder is by the global catalog: the source whose replica on this host it is, or None."""
     if '::' in key:
       return None
-    parts = () if key == '.' else PurePosixPath(key).parts
-    if len(parts) > 2:
-      return None
-    path = PurePosixPath(fs._path(key))
-    name, parent = path.name, path.parent.name
-    for rule in self.rules:
-      libraries = rule.get('libraries')
-      if libraries and rule.get('name') == parent:
-        listed = libraries.get('names', {}).get(name)
-        if listed is not None:
-          return self._block(libraries, **listed)
-        if 'pattern' in libraries:
-          pattern = re.escape(libraries['pattern']).replace(r'\{site\}', '(?P<site>.+?)').replace(r'\{library\}', '(?P<library>.+)')
-          if match := re.fullmatch(pattern, name):
-            return self._block(libraries, **match.groupdict())
-        return None
-    if len(parts) > 1:
-      return None
-    for rule in self.rules:
-      if rule.get('name') == name or ('marker' in rule and fs.fs.isdir(posixpath.join(str(path), rule['marker']))):
-        return self._block(rule)
-    return None
+    return self._replicas.get(os.path.normcase(os.path.normpath(fs._path(key))))
 
   def _served(self, fs: GppuFileSystem, row: dict) -> dict:
-    """A row from a Location's filesystem: its root carries the catalog's parent and Location, a recognized folder its service."""
+    """A row from a Location's filesystem: its root carries the catalog's parent and Location, a replica its source."""
     extra = {}
     if row['name'] == fs.location:
       extra.update(parent=self._parent(fs), location=self.locations[self._path_of(fs)])
-    if row['type'] == 'directory' and (service := self._service(fs, fs._key(row['name']))) is not None:
-      extra['service'] = service
+    if row['type'] == 'directory' and (source := self._source(fs, fs._key(row['name']))) is not None:
+      extra['source'] = source
     return {**row, 'gppu': {**row['gppu'], **extra}} if extra else row
 
   @sync
