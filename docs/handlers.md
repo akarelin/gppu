@@ -982,9 +982,11 @@ that Location keeps its gppufs index. The host's folder is chosen by the
 machine name unless `host` says otherwise. `rules.json` beside the host
 folders tells a host what a folder it encounters is: a rule matches a folder
 by a `marker` entry inside it or by its `name`, and names the `service`
-and `server` it belongs to; a rule with `libraries` recognizes the
-folders below it as libraries named by that template. Recognized rows carry
-a `service` block. The catalog root lists the Locations without touching
+and `server` it belongs to, with `origin` and `replica` when the folder
+is a local copy of something kept elsewhere. A rule's `libraries` recognizes
+the folders below it: those listed in `names`, each with its site, library
+and origin, or those matching `pattern`, a template such as
+`{site} - {library}`. Recognized rows carry a `service` block. The catalog root lists the Locations without touching
 them. Every address at or below a Location is served by that Location's
 `GppuFileSystem`; the deepest Location whose root contains the address
 owns it. A Location root's parent is its parent Location when the catalog
