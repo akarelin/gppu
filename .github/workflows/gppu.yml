@@ -104,23 +104,23 @@ jobs:
       - uses: actions/setup-python@v6
         if: matrix.os == 'windows'
         with:
-          python-version: '3.13'
+          python-version: '3.14'
 
       - name: Setup and test (Linux)
         if: matrix.os == 'linux'
         run: |
-          python3 -m venv .venv
-          .venv/bin/pip install Jinja2 PyYAML pytest setuptools-scm
-          .venv/bin/pip install -e ".${{ matrix.extras }}"
-          .venv/bin/python -m pytest ${{ matrix.test_path }} -v
+          python3.14 -m venv "$HOME/.venv"
+          "$HOME/.venv/bin/pip" install Jinja2 PyYAML pytest setuptools-scm
+          "$HOME/.venv/bin/pip" install -e ".${{ matrix.extras }}"
+          "$HOME/.venv/bin/python" -m pytest ${{ matrix.test_path }} -v
 
       - name: Setup and test (Windows)
         if: matrix.os == 'windows'
         run: |
-          python -m venv .venv
-          .venv\Scripts\pip install Jinja2 PyYAML pytest setuptools-scm
-          .venv\Scripts\pip install -e ".${{ matrix.extras }}"
-          .venv\Scripts\python -m pytest ${{ matrix.test_path }} -v
+          python -m venv "$HOME/.venv"
+          & "$HOME/.venv/Scripts/pip" install Jinja2 PyYAML pytest setuptools-scm
+          & "$HOME/.venv/Scripts/pip" install -e ".${{ matrix.extras }}"
+          & "$HOME/.venv/Scripts/python" -m pytest ${{ matrix.test_path }} -v
 
   release:
     needs: [matrix, test]
@@ -199,9 +199,9 @@ jobs:
 
       - name: Build and release
         run: |
-          python3 -m venv .venv
-          .venv/bin/pip install build setuptools-scm
-          .venv/bin/python -m build
+          python3.14 -m venv "$HOME/.venv"
+          "$HOME/.venv/bin/pip" install build setuptools-scm
+          "$HOME/.venv/bin/python" -m build
 
       - name: Compute release name
         run: |
