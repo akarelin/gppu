@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 
-from textual import events
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.widget import Widget
 from textual.widgets import DataTable
+from .icons import glyph_rich
 
 
 HOST_COLUMN = '__host__'
@@ -30,6 +31,8 @@ class TaskMatrix(Widget):
   }
   """
 
+  BINDINGS = [Binding('space', 'toggle_cursor', 'Toggle', show=False)]
+
   def __init__(
     self,
     hosts: Sequence[str],
@@ -49,6 +52,7 @@ class TaskMatrix(Widget):
       raise ValueError(f'unknown host/task cells: {sorted(unknown)}')
     self._selected = set(self.applicable)
     self._states = {cell: 'pending' for cell in self.applicable}
+    self._host_status = {}
     self.locked = False
 
   def compose(self) -> ComposeResult:
@@ -99,8 +103,20 @@ class TaskMatrix(Widget):
     else:
       self.toggle(host, task)
 
+  def action_toggle_cursor(self) -> None:
+    self.toggle_cursor()
+
+  def mark_host(self, host: str, state: str) -> None:
+    """Update an asynchronously loaded host status without changing selection."""
+    if host not in self.hosts:
+      raise KeyError(host)
+    self._host_status[host] = glyph_rich(state)
+    self._refresh_host(host)
+
   def toggle_host(self, host: str) -> None:
     """Select or clear every applicable pending task in one host row."""
+    if self.locked:
+      return
     cells = tuple(
       (host, task)
       for task in self.tasks
@@ -116,6 +132,8 @@ class TaskMatrix(Widget):
 
   def toggle(self, host: str, task: str) -> None:
     """Toggle one applicable pending task cell."""
+    if self.locked:
+      return
     cell = (host, task)
     if cell not in self.applicable or self._states[cell] != 'pending':
       return
@@ -134,7 +152,8 @@ class TaskMatrix(Widget):
     cells = tuple((host, task) for task in self.tasks if (host, task) in self.applicable)
     selected = sum(cell in self._selected for cell in cells)
     mark = '☐' if selected == 0 else '☑' if selected == len(cells) else '◪'
-    return f'{mark} {host}'
+    status = f'{self._host_status[host]} ' if host in self._host_status else ''
+    return f'{status}{mark} {host}'
 
   def _task_cell(self, host: str, task: str) -> str:
     cell = (host, task)
@@ -149,10 +168,6 @@ class TaskMatrix(Widget):
       return '✗'
     return '☑' if cell in self._selected else '☐'
 
-  async def on_key(self, event: events.Key) -> None:
-    if event.key in ('space', 'enter'):
-      self.toggle_cursor()
-      event.stop()
-
   def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
+    event.stop()
     self.toggle_cursor()

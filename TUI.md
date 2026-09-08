@@ -37,6 +37,10 @@ MyApp.main()
 - **`done(result)`** — finish the app. Works in both standalone mode (`exit()`) and embedded mode (when pushed as a screen inside a `TUILauncher`, calls `dismiss()`)
 - **`cli()`** — override for non-interactive fallback. Called automatically by `main()` when no TTY or Textual is unavailable
 - **`main()`** — class method entry point. Detects environment and runs TUI or CLI
+- **`Ctrl+O`** — shared console log; incoming output continues appearing while the screen is open.
+- **`Ctrl+G`** — shared configuration screen, available to every `TUIApp` as well as launchers.
+
+`TaskMatrix` starts with all applicable host/task cells selected. Space toggles the focused cell or host row; Enter and mouse selection toggle once. `mark_host(host, state)` updates an asynchronously loaded host indicator without changing selected tasks. `WorkerPool` supplies per-host state, details, and aggregate progress.
 
 ## TUILauncher
 
