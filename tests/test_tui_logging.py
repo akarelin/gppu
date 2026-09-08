@@ -46,6 +46,25 @@ async def test_tui_preserves_file_and_trace_rules_without_writing_to_terminal(tm
 
 
 @pytest.mark.asyncio
+async def test_console_retains_severity_and_class_method():
+  core = importlib.import_module('gppu.gppu')
+
+  class Operation:
+    def fail(self):
+      core.Error('operation failed')
+
+  app = TUIApp()
+  async with app.run_test():
+    Operation().fail()
+    message = next(line for line in app._debug_lines if 'operation failed' in line)
+    assert 'Error' in message
+    assert 'Operation.fail' in message
+    assert 'gppu:' not in message
+    app.debug('\x1b[31mError Collector.copy source failed\x1b[0m')
+    assert app._debug_lines[-1] == 'Error Collector.copy source failed'
+
+
+@pytest.mark.asyncio
 async def test_shared_log_and_config_screens_update_while_app_runs():
   Env.reset()
   Env.from_dict({'screen_test': 'configured'})
