@@ -129,19 +129,22 @@ Return the canonical classification and the matched rule.
 
 Identify ignored names and no-descent folder boundaries.
 
-The native rules are ported from the active FileIndexer configuration and
-TextLake traversal. These case-sensitive file-or-folder patterns match:
-`*.tmp`, `*.bak`, `*.swp`, `~$*`, `Thumbs.db`, `.DS_Store`,
-`desktop.ini`, and `monero-gui-*`.
+The native rules are the global ones from the FileIndexer configuration
+and TextLake traversal; exclusions that belong to one host, such as
+Alex-PC's `EL.now` and `monero-gui-*`, are not among them. These
+case-sensitive file-or-folder patterns match: `*.tmp`, `*.bak`,
+`*.swp`, `~$*`, `Thumbs.db`, `.DS_Store`, and `desktop.ini`.
 
 These case-sensitive folder patterns are visible but never descended:
 `.git`, `.svn`, `__pycache__`, `.venv`, `venv`,
 `node_modules`, `.idea`, `.vscode`, `.SynologyWorking Directory`,
 `.SynologyWorkingDirectory`, `$RECYCLE.BIN`, `RECYCLE.BIN`,
-`System Volume Information`, `OneDriveTemp`, `Cache`, `.cache`,
-`EL.now`, and `monero-gui-*`. Any other dot-prefixed folder and any
+`System Volume Information`, `OneDriveTemp`, `Cache`, and
+`.cache`. Any other dot-prefixed folder and any
 Windows folder carrying `FILE_ATTRIBUTE_HIDDEN` or
-`FILE_ATTRIBUTE_SYSTEM` is also an ignored no-descent boundary.
+`FILE_ATTRIBUTE_SYSTEM` is also an ignored no-descent boundary. A
+filesystem root is never ignored: it has no name to match, and a Windows
+drive root carries the hidden and system attributes of the volume itself.
 
 Matching entries remain `Record` objects. This differs from a path
 exclusion, which would remove the entry from the hierarchy entirely.
@@ -927,7 +930,8 @@ Discard all cached sessions or entries at and beneath `path`.
 
 fsspec listings enriched by handlers and stored beside their location.
 
-`location` is the only required setting. Its index is
+`location` is the only required setting: an absolute path or a URL, never
+the folder the caller happens to be in. Its index is
 `location/.<location-name>.gppufs.sqlite`. An existing index named for
 a descendant folder owns that subtree. Index rows use relative addresses
 so moving a folder with its database preserves its listings.
@@ -935,16 +939,80 @@ so moving a folder with its database preserves its listings.
 `ls` and `info` return the same metadata dictionaries from SQLite or
 live parsing. `refresh=True` requests live data. An absent cached row
 is populated by a live read; a failed read never substitutes stale data.
+Every time in the metadata is written in this host's local zone.
 Index files and SQLite journal companions are excluded from listings
 and aggregates. The example applications do no parsing or persistence.
 
 ### `GppuFileSystem.info(self, path: 'str | Path | None' = None, refresh: 'bool' = False, **kwargs) -> 'dict'`
 
-Return one native entry with its complete cached or live handler metadata.
+Return one native entry with its handler metadata.
+
+Awaited inside an event loop, called plainly outside one; the reading runs
+in a worker thread either way. A physical entry the index has not seen is
+identified, not probed. A file whose details are asked for is probed once,
+inside an archive as well; `refresh=True` probes again. A folder's totals
+come from the last refresh of that folder.
+
+### `GppuFileSystem.info_sync(self, path: 'str | Path | None' = None, refresh: 'bool' = False) -> 'dict'`
+
+`info` on the calling thread.
 
 ### `GppuFileSystem.ls(self, path: 'str | Path | None' = None, detail: 'bool' = True, recurse: 'bool' = False, refresh: 'bool' = False, **kwargs) -> 'list'`
 
-List enriched entries, optionally descending, using colocated SQLite indexes.
+List entries, optionally descending, from the live folder and the colocated SQLite index.
+
+Awaited inside an event loop, called plainly outside one; the listing runs
+in a worker thread either way. Every entry the listing finds is identified.
+Entries already indexed keep their indexed metadata. `refresh=True`
+probes the folder and everything below it. Entering an archive lists its
+members identified, like a folder; refreshing the archive probes them.
+
+### `GppuFileSystem.ls_sync(self, path: 'str | Path | None' = None, detail: 'bool' = True, recurse: 'bool' = False, refresh: 'bool' = False) -> 'list'`
+
+`ls` on the calling thread.
+
+## `GppuCatalog(*args, **kwargs)`
+
+The Locations gppufs works with on this host, read from a catalog folder.
+
+`catalog` is an absolute folder with one subfolder per host or server, named
+as the Locations table names it, holding that host's `locations.yaml`: one
+row per Location as the table has it, plus `root_path` and `index`, where
+that Location keeps its gppufs index. The host's folder is chosen by the
+machine name unless `host` says otherwise. The JSON files beside the host
+folders are the global catalog, one per service, the file name being the
+service: `sharepoint.yaml`, `synology-drive.yaml`, `git.yaml` and
+so on. Each holds the canonical `locations` of that service, nested, a
+location carrying its children in its own `locations`, servers at the top.
+The host folder's `replicas.yaml` says, per service, where this host holds
+a copy of a location, named by its path of names in that tree, and when that
+was last checked. A folder that is a replica carries a `source` block: the
+service, the location's path of names, its server, what the catalog says of
+it, and `checked_at`. The catalog root lists the Locations without touching
+them. Every address at or below a Location is served by that Location's
+`GppuFileSystem`; the deepest Location whose root contains the address
+owns it. A Location root's parent is its parent Location when the catalog
+names one, otherwise the catalog root, so a browser walks the Locations tree.
+
+### `GppuCatalog.info(self, path: 'str | Path | None' = None, refresh: 'bool' = False, **kwargs) -> 'dict'`
+
+The catalog itself, or one entry served by its Location; awaited in a loop, called plainly outside one.
+
+### `GppuCatalog.info_sync(self, path: 'str | Path | None' = None, refresh: 'bool' = False) -> 'dict'`
+
+`info` on the calling thread.
+
+### `GppuCatalog.ls(self, path: 'str | Path | None' = None, detail: 'bool' = True, recurse: 'bool' = False, refresh: 'bool' = False, **kwargs) -> 'list'`
+
+The Locations at the catalog root, otherwise the listing the owning Location gives.
+
+Awaited inside an event loop, called plainly outside one. `refresh=True`
+at the root rereads `locations.yaml`. Recursion from the root descends
+the Locations that have no parent Location; their subtrees hold the rest.
+
+### `GppuCatalog.ls_sync(self, path: 'str | Path | None' = None, detail: 'bool' = True, recurse: 'bool' = False, refresh: 'bool' = False) -> 'list'`
+
+`ls` on the calling thread.
 
 ## `valid_time(value: 'datetime | None') -> 'datetime | None'`
 
