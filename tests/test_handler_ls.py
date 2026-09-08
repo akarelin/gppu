@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -13,10 +14,10 @@ from gppu.handlers import GppuCatalog
 
 def catalog_for(tmp_path: Path, *locations: Path) -> Path:
   catalog = tmp_path / '.catalog'
-  catalog.mkdir()
+  (catalog / socket.gethostname()).mkdir(parents=True)
   rows = [{'id': number, 'path': location.name, 'parent_file_location_id': None, 'root_path': str(location),
     'index': str(location / f'.{location.name}.gppufs.sqlite')} for number, location in enumerate(locations, 1)]
-  (catalog / 'locations.json').write_text(json.dumps(rows), encoding='utf-8')
+  (catalog / socket.gethostname() / 'locations.json').write_text(json.dumps(rows), encoding='utf-8')
   return catalog
 
 

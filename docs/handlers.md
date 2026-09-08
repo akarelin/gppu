@@ -973,11 +973,18 @@ members identified, like a folder; refreshing the archive probes them.
 
 ## `GppuCatalog(*args, **kwargs)`
 
-The Locations gppufs works with, read from a catalog folder.
+The Locations gppufs works with on this host, read from a catalog folder.
 
-`catalog` is an absolute folder holding `locations.json`: one row per
-Location as the Locations table has it, plus `index`, where that Location
-keeps its gppufs index. The catalog root lists the Locations without touching
+`catalog` is an absolute folder with one subfolder per host or server, named
+as the Locations table names it, holding that host's `locations.json`: one
+row per Location as the table has it, plus `root_path` and `index`, where
+that Location keeps its gppufs index. The host's folder is chosen by the
+machine name unless `host` says otherwise. `rules.json` beside the host
+folders tells a host what a folder it encounters is: a rule matches a folder
+by a `marker` entry inside it or by its `name`, and names the `service`
+and `server` it belongs to; a rule with `libraries` recognizes the
+folders below it as libraries named by that template. Recognized rows carry
+a `service` block. The catalog root lists the Locations without touching
 them. Every address at or below a Location is served by that Location's
 `GppuFileSystem`; the deepest Location whose root contains the address
 owns it. A Location root's parent is its parent Location when the catalog

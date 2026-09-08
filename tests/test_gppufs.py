@@ -462,10 +462,12 @@ def test_exported_session_member_paths_remain_relative_after_rename(tmp_path, mo
   assert exported['path'] == 'conversations.json'
 
 
-def catalog_of(tmp_path: Path, rows: list[dict]) -> Path:
+def catalog_of(tmp_path: Path, rows: list[dict], rules: list[dict] | None = None) -> Path:
   folder = tmp_path / '.catalog'
-  folder.mkdir(exist_ok=True)
-  (folder / 'locations.json').write_text(json.dumps(rows), encoding='utf-8')
+  (folder / 'test-host').mkdir(parents=True, exist_ok=True)
+  (folder / 'test-host' / 'locations.json').write_text(json.dumps(rows), encoding='utf-8')
+  if rules is not None:
+    (folder / 'rules.json').write_text(json.dumps(rules), encoding='utf-8')
   return folder
 
 
@@ -480,7 +482,7 @@ def test_catalog_lists_locations_and_serves_each_through_its_own_index(tmp_path)
   inner.mkdir(parents=True)
   (outer / 'a.txt').write_text('a')
   (inner / 'b.md').write_text('---\ntitle: B\n---\nText')
-  catalog = GppuCatalog(catalog_of(tmp_path, [location_row(1, outer), location_row(2, inner, 1)]))
+  catalog = GppuCatalog(catalog_of(tmp_path, [location_row(1, outer), location_row(2, inner, 1)]), host='TEST-HOST')
   root = catalog.info()
   assert root['gppu']['parent'] is None
   assert root['gppu']['locations'] == 2
@@ -528,5 +530,42 @@ def test_catalog_refuses_an_index_that_is_not_where_gppufs_keeps_it(tmp_path):
   outer.mkdir()
   row = {**location_row(1, outer), 'index': str(tmp_path / 'elsewhere.sqlite')}
   with pytest.raises(ValueError, match='catalog index'):
-    GppuCatalog(catalog_of(tmp_path, [row]))
+    GppuCatalog(catalog_of(tmp_path, [row]), host='test-host')
+
+
+def test_catalog_needs_a_folder_for_this_host(tmp_path):
+  folder = catalog_of(tmp_path, [])
+  with pytest.raises(ValueError, match='no folder for host other-host'):
+    GppuCatalog(folder, host='other-host')
+
+
+def test_catalog_rules_tell_what_a_folder_is(tmp_path):
+  drive = tmp_path / 'drive'
+  for name in ('Karelin/Suntrust - Documents', 'Karelin/Notes', 'OneDrive - Karelin', 'Downloads/.SynologyWorkingDirectory', 'Plain'):
+    (drive / name).mkdir(parents=True)
+  (drive / 'Karelin' / 'Suntrust - Documents' / 'deep').mkdir()
+  rules = [
+    {'marker': '.SynologyWorkingDirectory', 'service': 'Synology Drive', 'server': 's1'},
+    {'name': 'OneDrive - Karelin', 'service': 'OneDrive', 'server': 'm365-karelin'},
+    {'name': 'Karelin', 'service': 'SharePoint', 'server': 'm365-karelin', 'libraries': '{site} - {library}'},
+  ]
+  rows = [location_row(1, drive), location_row(2, drive / 'Downloads', 1)]
+  catalog = GppuCatalog(catalog_of(tmp_path, rows, rules), host='test-host')
+  listed = {row['gppu']['name']: row['gppu'].get('service') for row in catalog.ls(str(drive))}
+  assert listed == {
+    'Downloads': {'name': 'Synology Drive', 'server': 's1'},
+    'Karelin': {'name': 'SharePoint', 'server': 'm365-karelin'},
+    'OneDrive - Karelin': {'name': 'OneDrive', 'server': 'm365-karelin'},
+    'Plain': None,
+  }
+  libraries = {row['gppu']['name']: row['gppu'].get('service') for row in catalog.ls(str(drive / 'Karelin'))}
+  assert libraries == {
+    'Suntrust - Documents': {'name': 'SharePoint', 'server': 'm365-karelin', 'site': 'Suntrust', 'library': 'Documents'},
+    'Notes': {'name': 'SharePoint', 'server': 'm365-karelin'},
+  }
+  assert 'service' not in catalog.ls(str(drive / 'Karelin' / 'Suntrust - Documents'))[0]['gppu']
+  assert catalog.info(str(drive / 'Karelin' / 'Suntrust - Documents'))['gppu']['service']['library'] == 'Documents'
+  downloads = next(row for row in catalog.ls() if row['gppu']['name'] == 'Downloads')
+  assert downloads['gppu']['service'] == {'name': 'Synology Drive', 'server': 's1'}
+  assert catalog.info(downloads['name'])['gppu']['service'] == {'name': 'Synology Drive', 'server': 's1'}
 

@@ -51,6 +51,7 @@ import os
 import posixpath
 import re
 import shutil
+import socket
 import sqlite3
 import stat as stat_module
 import subprocess
@@ -5445,11 +5446,18 @@ class GppuFileSystem(AbstractFileSystem):
 
 
 class GppuCatalog(AbstractFileSystem):
-  """The Locations gppufs works with, read from a catalog folder.
+  """The Locations gppufs works with on this host, read from a catalog folder.
 
-  ``catalog`` is an absolute folder holding ``locations.json``: one row per
-  Location as the Locations table has it, plus ``index``, where that Location
-  keeps its gppufs index. The catalog root lists the Locations without touching
+  ``catalog`` is an absolute folder with one subfolder per host or server, named
+  as the Locations table names it, holding that host's ``locations.json``: one
+  row per Location as the table has it, plus ``root_path`` and ``index``, where
+  that Location keeps its gppufs index. The host's folder is chosen by the
+  machine name unless ``host`` says otherwise. ``rules.json`` beside the host
+  folders tells a host what a folder it encounters is: a rule matches a folder
+  by a ``marker`` entry inside it or by its ``name``, and names the ``service``
+  and ``server`` it belongs to; a rule with ``libraries`` recognizes the
+  folders below it as libraries named by that template. Recognized rows carry
+  a ``service`` block. The catalog root lists the Locations without touching
   them. Every address at or below a Location is served by that Location's
   :class:`GppuFileSystem`; the deepest Location whose root contains the address
   owns it. A Location root's parent is its parent Location when the catalog
@@ -5459,21 +5467,28 @@ class GppuCatalog(AbstractFileSystem):
   protocol = 'gppu-catalog'
   cachable = False
 
-  def __init__(self, catalog: str | Path) -> None:
+  def __init__(self, catalog: str | Path, host: str | None = None) -> None:
     if catalog is None:
       raise ValueError('catalog is required')
     if not Path(catalog).is_absolute():
       raise ValueError(f'{catalog}: the catalog is an absolute folder path')
     super().__init__()
     self.catalog = Path(catalog)
+    self.host = host or socket.gethostname()
+    folders = {folder.name.casefold(): folder for folder in self.catalog.iterdir() if folder.is_dir()}
+    if self.host.casefold() not in folders:
+      raise ValueError(f'{catalog}: no folder for host {self.host}')
+    self.folder = folders[self.host.casefold()]
+    rules = self.catalog / 'rules.json'
+    self.rules: list[dict] = json.loads(rules.read_text(encoding='utf-8')) if rules.is_file() else []
     self.root = f'gppu-catalog://{self.catalog.as_posix()}'
     self._lock = RLock()
     self._filesystems: dict[str, GppuFileSystem] = {}
     self._load()
 
   def _load(self) -> None:
-    """Read ``locations.json``; a Location whose ``index`` is not where gppufs keeps it is an error, not a redirect."""
-    rows = json.loads((self.catalog / 'locations.json').read_text(encoding='utf-8'))
+    """Read the host's ``locations.json``; a Location whose ``index`` is not where gppufs keeps it is an error, not a redirect."""
+    rows = json.loads((self.folder / 'locations.json').read_text(encoding='utf-8'))
     locations: dict[str, dict] = {}
     for row in rows:
       fs = self._filesystems.get(row['root_path']) or GppuFileSystem(row['root_path'])
@@ -5544,13 +5559,43 @@ class GppuCatalog(AbstractFileSystem):
       'type': 'folder', 'modified_at': known.get('modified_at'), 'handlers': known.get('handlers', []),
       'files': known.get('files'), 'folders': known.get('folders'), 'bytes': known.get('bytes'),
       'span': known.get('span'), 'stats': known.get('stats', {}), 'probed': known.get('probed', False),
-      'probed_at': known.get('probed_at'), 'is_container': True, 'indexed': cached is not None, 'location': row}}
+      'probed_at': known.get('probed_at'), 'is_container': True, 'indexed': cached is not None, 'location': row,
+      **({'service': service} if (service := self._service(fs, '.')) is not None else {})}}
+
+  def _service(self, fs: GppuFileSystem, key: str) -> dict | None:
+    """What a folder is by the rules: a library under a recognized folder, else its name, else a marker inside it.
+
+    Names and markers are tried for a Location root and the folders one level
+    below it, where sync clients put their roots. A library is recognized one
+    level deeper, by its parent's rule.
+    """
+    if '::' in key:
+      return None
+    parts = () if key == '.' else PurePosixPath(key).parts
+    if len(parts) > 2:
+      return None
+    path = PurePosixPath(fs._path(key))
+    name, parent = path.name, path.parent.name
+    for rule in self.rules:
+      if 'libraries' in rule and rule.get('name') == parent:
+        pattern = re.escape(rule['libraries']).replace(r'\{site\}', '(?P<site>.+?)').replace(r'\{library\}', '(?P<library>.+)')
+        match = re.fullmatch(pattern, name)
+        return {'name': rule['service'], **({'server': rule['server']} if 'server' in rule else {}), **(match.groupdict() if match else {})}
+    if len(parts) > 1:
+      return None
+    for rule in self.rules:
+      if rule.get('name') == name or ('marker' in rule and fs.fs.isdir(posixpath.join(str(path), rule['marker']))):
+        return {'name': rule['service'], **({'server': rule['server']} if 'server' in rule else {})}
+    return None
 
   def _served(self, fs: GppuFileSystem, row: dict) -> dict:
-    """A row from a Location's filesystem; its root carries the catalog's parent and Location."""
-    if row['name'] != fs.location:
-      return row
-    return {**row, 'gppu': {**row['gppu'], 'parent': self._parent(fs), 'location': self.locations[self._path_of(fs)]}}
+    """A row from a Location's filesystem: its root carries the catalog's parent and Location, a recognized folder its service."""
+    extra = {}
+    if row['name'] == fs.location:
+      extra.update(parent=self._parent(fs), location=self.locations[self._path_of(fs)])
+    if row['type'] == 'directory' and (service := self._service(fs, fs._key(row['name']))) is not None:
+      extra['service'] = service
+    return {**row, 'gppu': {**row['gppu'], **extra}} if extra else row
 
   @sync
   async def info(self, path: str | Path | None = None, refresh: bool = False, **kwargs) -> dict:
