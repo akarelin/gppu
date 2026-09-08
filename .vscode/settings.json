@@ -1,4 +1,5 @@
 {
+  "python.defaultInterpreterPath": "${userHome}/.venv",
   "python-envs.pythonProjects": [
     {
       "path": ".",

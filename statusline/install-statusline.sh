@@ -2,6 +2,8 @@
 # Install gppu statusline for Claude Code on a Debian/Linux host.
 # Run on the target host; assumes Claude Code is already installed.
 
+. "$HOME/.venv/bin/activate" || exit
+
 mkdir -p ~/.local/bin
 
 url=$(curl -fsSL "https://api.github.com/repos/akarelin/gppu/releases?per_page=100" | grep -oP '"browser_download_url":\s*"\K[^"]*statusline-linux-amd64' | head -1)
