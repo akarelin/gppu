@@ -19,3 +19,10 @@
 -   **NEVER parse config directly.** Use `Env`, not `dict_from_yml('config.yaml')`.
 -   **NEVER use CLI arguments for config.** All settings go in `.yaml`.
 -   **NEVER build paths manually.** `Env` handles OS-specific path resolution.
+
+## Temporary files and virtual environments
+
+- Use `C:\.cache` on Windows or `~/.cache` on POSIX for temporary files, dependency directories, build outputs, and caches.
+- Use `~/.venv` with the latest Python 3.14 patch release. Only a demonstrated compatibility issue permits `{repo}/.venv` at the repository root; venvs in subfolders, submodules, and work folders are prohibited.
+- Never create symlinks or junctions in `D:\Dev`, `D:\Work`, Git repositories, or cloud-synced folders, including SD, OD, and GD.
+- Never modify archived source code.
