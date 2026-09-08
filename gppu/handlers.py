@@ -186,7 +186,6 @@ IGNORED_NAME_PATTERNS = (
     "Thumbs.db",
     ".DS_Store",
     "desktop.ini",
-    "monero-gui-*",
 )
 IGNORED_FOLDER_PATTERNS = (
     ".git",
@@ -205,8 +204,6 @@ IGNORED_FOLDER_PATTERNS = (
     "OneDriveTemp",
     "Cache",
     ".cache",
-    "EL.now",
-    "monero-gui-*",
 )
 WINDOWS_HIDDEN = 2
 WINDOWS_SYSTEM = 4
@@ -538,17 +535,18 @@ class IgnoredPath:
 class IgnoredHandler(Handler):
     """Identify ignored names and no-descent folder boundaries.
 
-    The native rules are ported from the active FileIndexer configuration and
-    TextLake traversal. These case-sensitive file-or-folder patterns match:
-    ``*.tmp``, ``*.bak``, ``*.swp``, ``~$*``, ``Thumbs.db``, ``.DS_Store``,
-    ``desktop.ini``, and ``monero-gui-*``.
+    The native rules are the global ones from the FileIndexer configuration
+    and TextLake traversal; exclusions that belong to one host, such as
+    Alex-PC's ``EL.now`` and ``monero-gui-*``, are not among them. These
+    case-sensitive file-or-folder patterns match: ``*.tmp``, ``*.bak``,
+    ``*.swp``, ``~$*``, ``Thumbs.db``, ``.DS_Store``, and ``desktop.ini``.
 
     These case-sensitive folder patterns are visible but never descended:
     ``.git``, ``.svn``, ``__pycache__``, ``.venv``, ``venv``,
     ``node_modules``, ``.idea``, ``.vscode``, ``.SynologyWorking Directory``,
     ``.SynologyWorkingDirectory``, ``$RECYCLE.BIN``, ``RECYCLE.BIN``,
-    ``System Volume Information``, ``OneDriveTemp``, ``Cache``, ``.cache``,
-    ``EL.now``, and ``monero-gui-*``. Any other dot-prefixed folder and any
+    ``System Volume Information``, ``OneDriveTemp``, ``Cache``, and
+    ``.cache``. Any other dot-prefixed folder and any
     Windows folder carrying ``FILE_ATTRIBUTE_HIDDEN`` or
     ``FILE_ATTRIBUTE_SYSTEM`` is also an ignored no-descent boundary.
 
