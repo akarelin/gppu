@@ -15,6 +15,10 @@
 {#- Under the home directory of a POSIX platform, absolute or as the remote shell expands it. -#}
 {% macro posix(platform, sub) %}{{ home[platform] }}/{{ sub }}{% endmacro %}
 {% macro tilde(sub) %}~/{{ sub }}{% endmacro %}
+{#- A folder a workstation syncs (Synology Drive, OneDrive, Google Drive, Dropbox, Obsidian): the data drive on Windows, the home on the Mac. -#}
+{% macro synced(platform, sub) %}{{ d(sub) if platform == 'windows' else posix(platform, sub) }}{% endmacro %}
+{#- The git checkouts: under the data drive's Dev on Windows, under the home elsewhere. -#}
+{% macro repo(platform, name, sep='\\') %}{{ d('Dev/' ~ name, sep) if platform == 'windows' else posix(platform, name) }}{% endmacro %}
 {#- Where a Linux host mounts a NAS share: the mount point the share declares, else /mnt/<NAS>/<share>. -#}
 {% macro mount(shares, nas, share) %}{% set row = shares[nas].shares | selectattr('name', 'equalto', share) | first %}{{ row.mount if row.mount is defined else nas_root ~ '/' ~ (nas | upper) ~ '/' ~ share }}{% endmacro %}
 {#- A share on the NAS itself, for scp and rsync. -#}
