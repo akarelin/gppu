@@ -14,13 +14,16 @@ from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.widgets import DataTable, Footer, Static, TextArea
+from textual.containers import Horizontal
+from textual.widgets import Checkbox, DataTable, Footer, Static, TextArea
 
 ROOT = ''  # the tree root stands for gppufs.ls(None) and gppufs.info(None)
 LOADING = '\x00loading'
 FAILED = '\x00failed'
-COLUMNS = (TreeTableColumn('handlers', 'Handlers', 24), TreeTableColumn('files', 'Files', 9),
-  TreeTableColumn('folders', 'Folders', 9), TreeTableColumn('bytes', 'Bytes', 12), TreeTableColumn('span', 'Span', 25))
+COLUMNS = (TreeTableColumn('handlers', 'Handlers', 22), TreeTableColumn('files', 'Files', 9),
+  TreeTableColumn('folders', 'Folders', 9), TreeTableColumn('bytes', 'Bytes', 12),
+  TreeTableColumn('span', 'Span', 25), TreeTableColumn('indexed', 'Indexed', 17))
+FILTERS = {'show-files': 'file', 'show-ignored': 'ignored'}  # checkbox -> the kind of entry it shows
 
 
 class Listing:
@@ -31,29 +34,33 @@ class Listing:
     self._children: dict[str, list[TreeEntry]] = {}
     self._pending: set[str] = set()
     self._locations: dict[str, list[TreeEntry]] = {}  # parent address -> Locations the catalog places beneath it
+    self._root = TreeEntry(id=ROOT, label=Text('…'), is_container=True)
     self.location_addresses: set[str] = set()
+    self.show = {'file': True, 'ignored': True}
 
   def root(self) -> TreeEntry:
-    return TreeEntry(id=ROOT, label=Text('…'), is_container=True)
+    return self._root
 
   def children(self, entry: TreeEntry) -> list[TreeEntry]:
     loaded = self._children.get(entry.id)
     if loaded is not None:
-      return loaded
+      return [item for item in loaded if self.show.get(item.meta.get('kind'), True)]
     if entry.id not in self._pending:
       self._pending.add(entry.id)
       self._request(entry)
     return [*self._locations.get(entry.id, ()), TreeEntry(entry.id + LOADING, Text('loading…', style='dim'), meta={'placeholder': True})]
 
   def entry(self, row: dict, entry_id: str | None = None) -> TreeEntry:
-    """One gppufs row as a tree row: a Location in bold, unknown totals blank."""
+    """One gppufs row as a tree row: a Location in bold, unknown totals blank, the last probe as the Indexed column."""
     meta = row['gppu']
     blank = lambda value, show=str: '' if value is None else show(value)
     label = Text(meta['name'], style='bold' if row['name'] in self.location_addresses else '')
+    kind = 'ignored' if 'ignored' in meta['handlers'] else 'folder' if meta['is_container'] else 'file'
     return TreeEntry(row['name'] if entry_id is None else entry_id, label, meta['is_container'], {
-      'handlers': ', '.join(meta['handlers']), 'files': blank(meta['files']), 'folders': blank(meta['folders']),
-      'bytes': blank(meta['bytes'], format_size),
-      'span': ' – '.join(moment[:10] for moment in meta['span']) if meta['span'] else ''})
+      'kind': kind, 'handlers': ', '.join(meta['handlers']), 'files': blank(meta['files']),
+      'folders': blank(meta['folders']), 'bytes': blank(meta['bytes'], format_size),
+      'span': ' – '.join(moment[:10] for moment in meta['span']) if meta['span'] else '',
+      'indexed': blank(meta.get('probed_at'), lambda moment: moment[:16])})
 
   def store(self, entry_id: str, current: dict, rows: list[dict]) -> TreeEntry:
     """Keep a listing and return the listed entry itself.
@@ -73,7 +80,10 @@ class Listing:
     shown = {item.id for item in listed}
     listed.extend(item for item in self._locations.get(entry_id, ()) if item.id not in shown)
     self._children[entry_id] = listed
-    return self.entry(current, entry_id)
+    updated = self.entry(current, entry_id)
+    if entry_id == ROOT:
+      self._root = updated
+    return updated
 
   def failed(self, entry_id: str, error: Exception) -> bool:
     """A listing that could not be read keeps what was shown before, or says why nothing is; True when that row is new."""
@@ -86,8 +96,14 @@ class Listing:
 
 class HandlerBrowser(TUIApp):
   TITLE = 'gppufs'
-  CSS = '#tree { height: 2fr; } #metadata { height: 1fr; } #status { height: auto; }'
+  CSS = '''
+  #filters { height: 1; padding: 0 1; }
+  #filters Checkbox { width: auto; height: 1; margin: 0 2 0 0; border: none; }
+  #tree { height: 2fr; } #metadata { height: 1fr; } #status { height: auto; }
+  '''
   BINDINGS = [
+    Binding('f', 'toggle_filter("show-files")', 'Files'),
+    Binding('i', 'toggle_filter("show-ignored")', 'Ignored'),
     Binding('r', 'refresh_source', 'Refresh from source'),
     Binding('q', 'tuiapp_done', 'Quit'),
   ]
@@ -100,6 +116,9 @@ class HandlerBrowser(TUIApp):
 
   def compose(self) -> ComposeResult:
     yield Static('Loading…', id='status', markup=False)
+    with Horizontal(id='filters'):
+      yield Checkbox('Files', True, compact=True, id='show-files')
+      yield Checkbox('Ignored', True, compact=True, id='show-ignored')
     yield TreeTable(self.listing, columns=COLUMNS, id='tree')
     yield TextArea(read_only=True, id='metadata')
     yield Footer()
@@ -151,6 +170,23 @@ class HandlerBrowser(TUIApp):
   def on_tree_table_entry_highlighted(self, event: TreeTable.EntryHighlighted) -> None:
     if not event.entry.meta.get('placeholder'):
       self.show_info(event.entry)
+
+  def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+    self.listing.show[FILTERS[event.checkbox.id]] = event.value
+    self.apply_filters()
+
+  def apply_filters(self) -> None:
+    """Rebuild the tree from what is loaded, keeping what was expanded and highlighted."""
+    tree = self.query_one(TreeTable)
+    expanded, selected = tree.expanded_ids, tree.selected_entry
+    tree.reset()
+    for entry_id in sorted(expanded, key=len):
+      tree.expand(entry_id)
+    if selected is not None:
+      tree.select(selected.id)
+
+  def action_toggle_filter(self, checkbox_id: str) -> None:
+    self.query_one(f'#{checkbox_id}', Checkbox).toggle()
 
   def action_refresh_source(self) -> None:
     entry = self.query_one(TreeTable).selected_entry
