@@ -2,22 +2,34 @@ from __future__ import annotations
 
 import asyncio
 import json
-import threading
 import zipfile
 
 from textual.widgets import DataTable, Static, TextArea
 
 from examples.handler_browser import HandlerBrowser
-from gppu.handlers import GppuFileSystem
+from gppu.handlers import GppuCatalog, GppuFileSystem
+from gppu.tui import TreeTable
 
 
 async def settled(app, pilot):
   await app.workers.wait_for_complete()
   await pilot.pause()
   await app.workers.wait_for_complete()
+  await pilot.pause()
 
 
-def test_tui_navigation_metadata_refresh_and_errors(tmp_path, monkeypatch):
+def labels(app) -> list[str]:
+  table = app.query_one(TreeTable).query_one(DataTable)
+  return [str(table.get_row_at(index)[0]).strip().lstrip('▶▼ ') for index in range(table.row_count)]
+
+
+async def select(app, pilot, name: str) -> None:
+  tree = app.query_one(TreeTable)
+  tree.select(next(entry_id for entry_id, node in tree._tree_nodes.items() if str(node.entry.label) == name))
+  await settled(app, pilot)
+
+
+def test_tui_tree_expands_folders_and_archives_shows_metadata_and_refreshes(tmp_path, monkeypatch):
   async def exercise():
     child = tmp_path / 'child'
     child.mkdir()
@@ -26,67 +38,101 @@ def test_tui_navigation_metadata_refresh_and_errors(tmp_path, monkeypatch):
       archive.writestr('inside.txt', 'inside')
     fs = GppuFileSystem(tmp_path)
     app = HandlerBrowser(fs)
-    async with app.run_test(size=(130, 35)) as pilot:
+    async with app.run_test(size=(130, 40)) as pilot:
       await settled(app, pilot)
-      table = app.query_one(DataTable)
-      assert table.row_count == 2
-      child_row = next(i for i, value in enumerate(app.rows.values()) if value['gppu']['name'] == 'child')
-      table.move_cursor(row=child_row)
-      await pilot.press('enter')
+      assert labels(app) == [tmp_path.name, 'child', 'bundle.zip']
+      assert app.current['name'] == (await fs.info())['name']
+      await select(app, pilot, 'child')
+      await pilot.press('right')
       await settled(app, pilot)
-      assert app.current['gppu']['name'] == 'child'
-      assert table.row_count == 1
+      assert labels(app) == [tmp_path.name, 'child', 'note.md', 'bundle.zip']
+      await select(app, pilot, 'note.md')
       detail = json.loads(app.query_one(TextArea).text)
       assert detail['gppu']['markdown']['title'] == 'Metadata in the TUI'
       (child / 'added.txt').write_text('added')
+      await select(app, pilot, 'child')
       await pilot.press('r')
       await settled(app, pilot)
-      assert table.row_count == 2
-      await pilot.press('backspace')
+      assert labels(app) == [tmp_path.name, 'child', 'added.txt', 'note.md', 'bundle.zip']
+      await select(app, pilot, tmp_path.name)
+      await pilot.press('r')
       await settled(app, pilot)
-      assert app.current['name'] == fs.info()['name']
       assert app.current['gppu']['files'] == 3
       assert app.current['gppu']['bytes'] == sum(
         path.stat().st_size for path in (child / 'note.md', child / 'added.txt', tmp_path / 'bundle.zip'))
-      archive_row = next(i for i, value in enumerate(app.rows.values()) if value['gppu']['name'] == 'bundle.zip')
-      table.move_cursor(row=archive_row)
+      assert labels(app) == [tmp_path.name, 'child', 'added.txt', 'note.md', 'bundle.zip']
+      await select(app, pilot, 'bundle.zip')
       await pilot.press('enter')
       await settled(app, pilot)
-      assert table.row_count == 1
-      assert next(iter(app.rows.values()))['gppu']['name'] == 'inside.txt'
-      await pilot.press('backspace')
+      assert labels(app) == [tmp_path.name, 'child', 'added.txt', 'note.md', 'bundle.zip', 'inside.txt']
+      await pilot.press('left')
       await settled(app, pilot)
-      assert app.current['name'] == fs.info()['name']
-      def denied(*args, **kwargs):
+      assert labels(app) == [tmp_path.name, 'child', 'added.txt', 'note.md', 'bundle.zip']
+      async def denied(*args, **kwargs):
         raise PermissionError('source unavailable')
       monkeypatch.setattr(fs, 'ls', denied)
+      await select(app, pilot, 'child')
       await pilot.press('r')
       await settled(app, pilot)
       assert 'source unavailable' in str(app.query_one('#status', Static).content)
-      assert table.row_count == 2
+      assert labels(app) == [tmp_path.name, 'child', 'added.txt', 'note.md', 'bundle.zip']
   asyncio.run(exercise())
 
 
-def test_tui_io_runs_outside_event_loop(tmp_path):
+def test_tui_shows_the_catalog_as_a_tree_of_locations(tmp_path):
+  async def exercise():
+    outer = tmp_path / 'outer'
+    inner = outer / 'inner'
+    inner.mkdir(parents=True)
+    (outer / 'a.txt').write_text('a')
+    (inner / 'b.md').write_text('---\ntitle: B\n---\nText')
+    folder = tmp_path / '.catalog'
+    folder.mkdir()
+    rows = [{'id': 1, 'path': 'outer', 'parent_file_location_id': None, 'root_path': str(outer),
+        'index': str(outer / '.outer.gppufs.sqlite')},
+      {'id': 2, 'path': 'inner', 'parent_file_location_id': 1, 'root_path': str(inner),
+        'index': str(inner / '.inner.gppufs.sqlite')}]
+    (folder / 'locations.json').write_text(json.dumps(rows), encoding='utf-8')
+    catalog = GppuCatalog(folder)
+    app = HandlerBrowser(catalog)
+    async with app.run_test(size=(130, 40)) as pilot:
+      await settled(app, pilot)
+      assert labels(app) == ['.catalog', 'outer']
+      assert not (outer / '.outer.gppufs.sqlite').exists()
+      await select(app, pilot, 'outer')
+      assert app.current['gppu']['location']['id'] == 1
+      await pilot.press('right')
+      await settled(app, pilot)
+      assert labels(app) == ['.catalog', 'outer', 'inner', 'a.txt']
+      assert app.listing.location_addresses == {row['name'] for row in await catalog.ls()}
+      await select(app, pilot, 'inner')
+      await pilot.press('right')
+      await settled(app, pilot)
+      assert labels(app) == ['.catalog', 'outer', 'inner', 'b.md', 'a.txt']
+      assert (inner / '.inner.gppufs.sqlite').is_file()
+      await select(app, pilot, 'b.md')
+      assert json.loads(app.query_one(TextArea).text)['gppu']['markdown']['title'] == 'B'
+  asyncio.run(exercise())
+
+
+def test_tui_stays_responsive_while_a_listing_is_awaited(tmp_path):
   async def exercise():
     (tmp_path / 'note.txt').write_text('content')
     delegate = GppuFileSystem(tmp_path)
-    entered, release = threading.Event(), threading.Event()
+    entered, release = asyncio.Event(), asyncio.Event()
     class Filesystem:
-      def ls(self, *args, **kwargs):
+      async def ls(self, *args, **kwargs):
         entered.set()
-        assert release.wait(5), 'Filesystem I/O blocked the UI event loop'
-        return delegate.ls(*args, **kwargs)
-      def info(self, *args, **kwargs):
-        return delegate.info(*args, **kwargs)
+        await release.wait()
+        return await delegate.ls(*args, **kwargs)
+      async def info(self, *args, **kwargs):
+        return await delegate.info(*args, **kwargs)
     app = HandlerBrowser(Filesystem())
-    async with app.run_test(size=(130, 35)) as pilot:
-      try:
-        assert await asyncio.to_thread(entered.wait, 5)
-        await pilot.pause()
-        assert app.query_one(DataTable).row_count == 0
-      finally:
-        release.set()
+    async with app.run_test(size=(130, 40)) as pilot:
+      await asyncio.wait_for(entered.wait(), 5)
+      await pilot.pause()
+      assert labels(app)[1] == 'loading…'
+      release.set()
       await settled(app, pilot)
-      assert app.query_one(DataTable).row_count == 1
+      assert labels(app) == [tmp_path.name, 'note.txt']
   asyncio.run(exercise())

@@ -548,7 +548,9 @@ class IgnoredHandler(Handler):
     ``System Volume Information``, ``OneDriveTemp``, ``Cache``, and
     ``.cache``. Any other dot-prefixed folder and any
     Windows folder carrying ``FILE_ATTRIBUTE_HIDDEN`` or
-    ``FILE_ATTRIBUTE_SYSTEM`` is also an ignored no-descent boundary.
+    ``FILE_ATTRIBUTE_SYSTEM`` is also an ignored no-descent boundary. A
+    filesystem root is never ignored: it has no name to match, and a Windows
+    drive root carries the hidden and system attributes of the volume itself.
 
     Matching entries remain :class:`Record` objects. This differs from a path
     exclusion, which would remove the entry from the hierarchy entirely.
@@ -596,6 +598,8 @@ class IgnoredHandler(Handler):
     def reason(cls, path: Path) -> str | None:
         """Return the first active rule matching a physical path."""
 
+        if not path.name:
+            return None
         is_folder = path.is_dir() and not path.is_symlink()
         if not is_folder and not path.is_file():
             return None
@@ -5341,14 +5345,20 @@ class GppuFileSystem(AbstractFileSystem):
       self._store(key, rows, listing)
     return listing
 
-  def info(self, path: str | Path | None = None, refresh: bool = False, **kwargs) -> dict:
+  @sync
+  async def info(self, path: str | Path | None = None, refresh: bool = False, **kwargs) -> dict:
     """Return one native entry with its handler metadata.
 
-    A physical entry the index has not seen is identified, not probed. A file
-    whose details are asked for is probed once, inside an archive as well;
-    ``refresh=True`` probes again. A folder's totals come from the last
-    refresh of that folder.
+    Awaited inside an event loop, called plainly outside one; the reading runs
+    in a worker thread either way. A physical entry the index has not seen is
+    identified, not probed. A file whose details are asked for is probed once,
+    inside an archive as well; ``refresh=True`` probes again. A folder's totals
+    come from the last refresh of that folder.
     """
+    return await asyncio.to_thread(self.info_sync, path, refresh)
+
+  def info_sync(self, path: str | Path | None = None, refresh: bool = False) -> dict:
+    """``info`` on the calling thread."""
     with self._lock:
       key = self._key(path)
       cached = None if refresh else self._cached(key)
@@ -5375,18 +5385,25 @@ class GppuFileSystem(AbstractFileSystem):
         metadata = self._cached(key)[0]
       return metadata
 
-  def ls(self, path: str | Path | None = None, detail: bool = True,
-         recurse: bool = False, refresh: bool = False, **kwargs) -> list:
+  @sync
+  async def ls(self, path: str | Path | None = None, detail: bool = True,
+               recurse: bool = False, refresh: bool = False, **kwargs) -> list:
     """List entries, optionally descending, from the live folder and the colocated SQLite index.
 
-    Every entry the listing finds is identified. Entries already indexed keep
-    their indexed metadata. ``refresh=True`` probes the folder and everything
-    below it. Entering an archive lists its members identified, like a folder;
-    refreshing the archive probes them.
+    Awaited inside an event loop, called plainly outside one; the listing runs
+    in a worker thread either way. Every entry the listing finds is identified.
+    Entries already indexed keep their indexed metadata. ``refresh=True``
+    probes the folder and everything below it. Entering an archive lists its
+    members identified, like a folder; refreshing the archive probes them.
     """
+    return await asyncio.to_thread(self.ls_sync, path, detail, recurse, refresh)
+
+  def ls_sync(self, path: str | Path | None = None, detail: bool = True,
+              recurse: bool = False, refresh: bool = False) -> list:
+    """``ls`` on the calling thread."""
     with self._lock:
       key = self._key(path)
-      metadata = self.info(path, refresh=refresh)
+      metadata = self.info_sync(path, refresh=refresh)
       if 'archive' in metadata['gppu']['handlers']:
         key = self._archive_key(key)
         if refresh:
@@ -5415,7 +5432,7 @@ class GppuFileSystem(AbstractFileSystem):
           continue
         row = cached[0]
         if recurse and row['gppu']['is_container']:
-          below = self.ls(row['name'], recurse=True)
+          below = self.ls_sync(row['name'], recurse=True)
           row = self._cached(child['path'])[0]  # Entering an archive probes it; report the probed row.
           result.append(row)
           result.extend(below)
@@ -5509,24 +5526,35 @@ class GppuCatalog(AbstractFileSystem):
       return row
     return {**row, 'gppu': {**row['gppu'], 'parent': self._parent(fs), 'location': self.locations[self._path_of(fs)]}}
 
-  def info(self, path: str | Path | None = None, refresh: bool = False, **kwargs) -> dict:
-    """The catalog itself, or one entry served by its Location."""
+  @sync
+  async def info(self, path: str | Path | None = None, refresh: bool = False, **kwargs) -> dict:
+    """The catalog itself, or one entry served by its Location; awaited in a loop, called plainly outside one."""
+    return await asyncio.to_thread(self.info_sync, path, refresh)
+
+  def info_sync(self, path: str | Path | None = None, refresh: bool = False) -> dict:
+    """``info`` on the calling thread."""
     with self._lock:
       if path is None or path == self.root:
         if refresh:
           self._load()
         return self._catalog_row()
       fs = self._location(path)
-      return self._served(fs, fs.info(path, refresh=refresh))
+      return self._served(fs, fs.info_sync(path, refresh=refresh))
 
-  def ls(self, path: str | Path | None = None, detail: bool = True,
-         recurse: bool = False, refresh: bool = False, **kwargs) -> list:
+  @sync
+  async def ls(self, path: str | Path | None = None, detail: bool = True,
+               recurse: bool = False, refresh: bool = False, **kwargs) -> list:
     """The Locations at the catalog root, otherwise the listing the owning Location gives.
 
-    ``refresh=True`` at the root rereads ``locations.json``. Recursion from the
-    root descends the Locations that have no parent Location; their subtrees
-    hold the rest.
+    Awaited inside an event loop, called plainly outside one. ``refresh=True``
+    at the root rereads ``locations.json``. Recursion from the root descends
+    the Locations that have no parent Location; their subtrees hold the rest.
     """
+    return await asyncio.to_thread(self.ls_sync, path, detail, recurse, refresh)
+
+  def ls_sync(self, path: str | Path | None = None, detail: bool = True,
+              recurse: bool = False, refresh: bool = False) -> list:
+    """``ls`` on the calling thread."""
     with self._lock:
       if path is None or path == self.root:
         if refresh:
@@ -5538,9 +5566,9 @@ class GppuCatalog(AbstractFileSystem):
             continue
           result.append(self._location_row(fs))
           if recurse:
-            result.extend(fs.ls(None, recurse=True))
+            result.extend(fs.ls_sync(None, recurse=True))
       else:
         fs = self._location(path)
-        result = [self._served(fs, row) for row in fs.ls(path, recurse=recurse, refresh=refresh)]
+        result = [self._served(fs, row) for row in fs.ls_sync(path, recurse=recurse, refresh=refresh)]
       return result if detail else [row['name'] for row in result]
 
