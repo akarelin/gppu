@@ -183,9 +183,10 @@ class _FakeClient:
 
 
 class _Message:
-  def __init__(self, topic: str, payload: str | bytes):
+  def __init__(self, topic: str, payload: str | bytes, retain: bool = False):
     self.topic = topic
     self.payload = payload
+    self.retain = retain
 
 
 class _Messages:
@@ -235,6 +236,31 @@ class _ReconnectHost(_MqttHost):
 
 
 class MqttMixinTests(unittest.IsolatedAsyncioTestCase):
+  async def test_retained_filter_is_per_listener_and_survives_reconnect(self) -> None:
+    host = _MqttHost()
+    states, commands = [], []
+
+    async def state(topic, payload): states.append((str(topic), payload))
+    async def command(topic, payload): commands.append((str(topic), payload))
+
+    await host.mqtt_listen(state, 'test/#')
+    await host.mqtt_listen(command, 'test/time', payload='Day', ignore_retained=True)
+    for _ in range(2):
+      client = _FakeClient(_Messages([
+        _Message('test/time', b'Day', retain=True),
+        _Message('test/time', b'Day'),
+        _Message('test/time', b'Day'),
+        _Message('test/time', b'Evening'),
+      ]))
+      await host._mqtt_replay(client)
+      await host._mqtt_dispatch(client)
+      if host.tasks: await asyncio.gather(*host.tasks)
+      self.assertEqual(client.subscriptions, [('test/#', 0), ('test/time', 0)])
+
+    self.assertEqual(states, [('test/time', name) for name in ('Day', 'Day', 'Day', 'Evening')] * 2)
+    self.assertEqual(commands, [('test/time', 'Day')] * 4)
+    self.assertEqual(host.warnings, [])
+
   async def test_registration_qos_publish_dispatch_and_wildcards(self) -> None:
     host = _MqttHost()
     host._ensure_mqtt_state()

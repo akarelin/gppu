@@ -50,6 +50,8 @@ Reconnecting aiomqtt client with callback dispatch. A service mixes it in, sets 
 
 Dispatch parses JSON payloads (`{`-prefixed), matches exact topics or `prefix/#` patterns, and runs callbacks serialized under a lock; callback exceptions are logged, never fatal.
 
+The current `mixin_Mqtt.mqtt_listen(callback, topic, payload=None, ignore_retained=False)` supports per-listener retained-message filtering. Command listeners use `ignore_retained=True`: dispatch rejects `message.retain` before calling them, including after reconnect. State listeners keep retained snapshots. Live messages, including repeated identical commands, are delivered normally; callback arguments remain `(topic, payload)`.
+
 ## Transformer
 
 `App + MqttMixin + mixin_Stepper` — a config-driven scalar transform service stage: subscribes to `connection.listen` patterns, applies `rules` (cascading sum/difference maps over topic groups, optional `sign_flip`), and republishes to `dest_prefix/<name>` topics, debounced (`DEBOUNCE` = 10s). Maintains a `status_topic` LWT (`online`/`no-data`/`offline`) with a no-data watchdog (`NODATA_TIMEOUT` = 60s).

@@ -227,7 +227,7 @@ class mixin_Mqtt:
   MQTT_PROTOCOL: Any = None
   _client: Any = None
   _mqtt_task: Any = None
-  _callbacks: dict[y2topic, list[tuple[MqttCallback, object]]]
+  _callbacks: dict[y2topic, list[tuple[MqttCallback, object, bool]]]
   _subscriptions: dict[y2topic, int]
   _mqtt_lock: asyncio.Lock
   _callback_lock: asyncio.Lock
@@ -251,14 +251,14 @@ class mixin_Mqtt:
     self._mqtt_lock = asyncio.Lock()
     self._callback_lock = asyncio.Lock()
 
-  async def mqtt_listen(self, callback: MqttCallback, topic: y2topic | str, payload: object = None, **data: Any) -> None:
+  async def mqtt_listen(self, callback: MqttCallback, topic: y2topic | str, payload: object = None, *, ignore_retained: bool = False, **data: Any) -> None:
     self._ensure_mqtt_state()
     topic = y2topic(topic)
     qos = int(data.get('qos', 0))
 
     async with self._mqtt_lock:
       callbacks = self._callbacks.setdefault(topic, [])
-      entry = (callback, payload)
+      entry = (callback, payload, ignore_retained)
       if entry not in callbacks: callbacks.append(entry)
 
       old_qos = self._subscriptions.get(topic, -1)
@@ -352,8 +352,8 @@ class mixin_Mqtt:
       async with self._mqtt_lock:
         callbacks = [callback for pattern, entries in self._callbacks.items()
                      if self._topic_matches(topic, str(pattern))
-                     for callback, expected in entries
-                     if expected is None or expected == payload]
+                     for callback, expected, ignore_retained in entries
+                     if not (ignore_retained and message.retain) and (expected is None or expected == payload)]
 
       for callback in callbacks: self._spawn(self._mqtt_callback(callback, y2topic(topic), payload))
 
@@ -499,4 +499,3 @@ class JSONHTTPControl(HTTPControl):
     if response is None: return None
     try: return json.loads(response)
     except json.JSONDecodeError: return None
-
