@@ -12,11 +12,6 @@ from gppu.gppu import _DC
 HERE = Path(__file__).resolve().parent               # the classes below are "born here"
 
 
-def rest_command(method):
-  method.rest_command = True
-  return method
-
-
 class _Lamp(_DC):
   name: str
   level: int
@@ -28,12 +23,10 @@ class _Lamp(_DC):
 
   def stats(self) -> dict: return {'level': self.level}
 
-  @rest_command
   def dim(self, level: int, fade: float = 0.0) -> str:
     self.data['level'] = level
     return f'{self.name} -> {level}'
 
-  @rest_command
   async def blink(self, times: int = 1) -> int:
     await asyncio.sleep(0)
     return times
@@ -43,14 +36,11 @@ class _Lamp(_DC):
     return cmd
 
   def refresh(self) -> str: return 'refreshed'
-  def wipe(self, target: str) -> None: pass          # granted names need every parameter defaulted
+  def wipe(self, target: str) -> None: pass
 
 
 class _Host(mixin_Rest):
   name = 'host'
-  rest_read_methods = ('stats',)
-  rest_redact = ('api_key',)
-  rest_commands = {'_Lamp': ['refresh', 'wipe']}
 
   def __init__(self, *lamps): self.lamps = {l.name: l for l in lamps}
   def rest_registries(self): return {'lamp': self.lamps, 'app': {'host': self}}
@@ -67,13 +57,14 @@ class RestSurfaceTests(unittest.IsolatedAsyncioTestCase):
   def tearDown(self) -> None:
     Env.data, Env.initialized, Env.app_path = self._env
 
-  def test_the_walk_exposes_fields_values_and_commands_and_withholds_the_rest(self) -> None:
+  def test_every_public_member_of_the_applications_classes_is_on_the_surface(self) -> None:
+    """Nothing is declared. A field and a property are values; every public method is
+    a command, and one that needs no argument is readable as well."""
     self.assertEqual({n: r['kind'] for n, r in self.rows.items()},
-                     {'name': 'field', 'level': 'field', 'commands': 'field', 'bright': 'value', 'stats': 'value',
-                      'dim': 'command', 'blink': 'command', 'refresh': 'command'})
-    self.assertNotIn('api_key', self.rows)                 # redacted
-    self.assertNotIn('wipe', self.rows)                    # granted, but needs a parameter
-    self.assertNotIn('command', self.rows)                 # neither marked nor granted
+                     {'name': 'field', 'level': 'field', 'commands': 'field', 'api_key': 'field',
+                      'bright': 'value', 'stats': 'command', 'dim': 'command', 'blink': 'command',
+                      'refresh': 'command', 'wipe': 'command', 'command': 'command'})
+    self.assertEqual(sorted(n for n, r in self.rows.items() if r.get('read')), ['blink', 'refresh', 'stats'])
     self.assertNotIn('_Host', self.host.rest_manifest['classes'])   # no members of its own to expose
     self.assertEqual(self.rows['dim']['args'], {'level': {'type': 'int', 'required': True}, 'fade': {'type': 'float', 'required': False}})
 
@@ -85,12 +76,17 @@ class RestSurfaceTests(unittest.IsolatedAsyncioTestCase):
   def test_payload_reads_values_and_links_objects_by_address(self) -> None:
     body, status = self.host.rest_read('lamp', 'desk')
     self.assertEqual(status, 200)
-    self.assertEqual(body['members'], {'name': 'desk', 'level': 70, 'commands': ['turn_on', 'turn_off'], 'bright': True, 'stats': {'level': 70}})
-    self.assertEqual(set(body['commands']), {'dim', 'blink', 'refresh', 'turn_on', 'turn_off'})
+    # A payload reads fields and properties only: calling a method to build one
+    # would run it for anyone who listed the objects.
+    self.assertEqual(body['members'], {'name': 'desk', 'level': 70, 'api_key': 'secret',
+                                       'commands': ['turn_on', 'turn_off'], 'bright': True})
+    self.assertEqual(set(body['commands']), {'dim', 'blink', 'refresh', 'wipe', 'stats', 'command',
+                                             'turn_on', 'turn_off'})
     self.assertEqual(self.host._rest_plain([self.lamp, 1]), ['lamp/desk', 1])
     self.assertEqual(self.host.rest_read('lamp', 'nope'), ({'success': False, 'error': 'no such object'}, 404))
-    self.assertEqual(self.host.rest_read('lamp', 'desk', 'dim')[1], 405)
-    self.assertEqual(self.host.rest_read('lamp', 'desk', 'api_key')[1], 404)
+    self.assertEqual(self.host.rest_read('lamp', 'desk', 'stats'), ({'stats': {'level': 70}}, 200))  # no argument: GET calls it
+    self.assertEqual(self.host.rest_read('lamp', 'desk', 'dim')[1], 405)                             # takes one: POST only
+    self.assertEqual(self.host.rest_read('lamp', 'desk', 'nope')[1], 404)
 
   def test_bind_is_exact(self) -> None:
     row = self.rows['dim']
@@ -108,7 +104,7 @@ class RestSurfaceTests(unittest.IsolatedAsyncioTestCase):
     body, status = await self.host.rest_call('lamp', 'desk', 'blink', {'times': 3})
     self.assertEqual((status, body['result']), (200, 3))                                    # a coroutine is awaited
     body, status = await self.host.rest_call('lamp', 'desk', 'refresh', {})
-    self.assertEqual((status, body['result']), (200, 'refreshed'))                          # granted by class name
+    self.assertEqual((status, body['result']), (200, 'refreshed'))                          # no marker, no grant
     self.assertEqual((await self.host.rest_call('lamp', 'desk', 'level', {}))[1], 405)
     self.assertEqual((await self.host.rest_call('lamp', 'desk', 'dim', {'level': 'x'}))[1], 400)
 
