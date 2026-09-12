@@ -12,6 +12,7 @@ import json
 import re
 import ssl
 import threading
+import yaml
 
 from collections import UserList
 from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping
@@ -31,7 +32,7 @@ try:
 except ImportError:
   aiohttp = None  # type: ignore[assignment]
 from .app import AsyncApp, AsyncSubmission, EventLoopBridge
-from .gppu import _DC, _DC_BASE_TYPE_MAP
+from .gppu import Env, _DC, _DC_BASE_TYPE_MAP
 
 
 # region y2xxx
@@ -385,6 +386,48 @@ class MqttApp(mixin_Mqtt, AsyncApp):
     await super().start()
     await self.subscribe()
     self._start_mqtt()
+
+
+class _MqttConfig(MqttApp):
+  """Configuration subscription using the existing MQTT connection lifecycle."""
+
+  def __init__(self, config: dict, *, watch: bool):
+    connection, topics = config['connection'], config['topics']
+    if not isinstance(connection, dict) or not connection.get('hostname'):
+      raise ValueError('MQTT configuration requires connection.hostname')
+    if not isinstance(topics, dict) or not topics:
+      raise ValueError('MQTT configuration requires a topic to Env path mapping')
+    paths = []
+    for topic, path in topics.items():
+      if not isinstance(topic, str) or not topic or '+' in topic or '#' in topic:
+        raise ValueError('MQTT configuration topics must be exact topic names')
+      if not isinstance(path, str) or (path and any(not part for part in path.split('/'))):
+        raise ValueError('MQTT configuration paths must be slash paths or empty for the root')
+      if any(not path or not other or path == other or path.startswith(other + '/')
+             or other.startswith(path + '/') for other in paths):
+        raise ValueError('MQTT configuration paths must not overlap')
+      paths.append(path)
+    if not Env.initialized: raise RuntimeError('load the MQTT bootstrap with Env.from_env() first')
+    super().__init__(name='config-mqtt', data={'connection': connection})
+    self.topics = dict(topics)
+    self.pending = set(topics)
+    self.watch = watch
+
+  async def subscribe(self) -> None:
+    for topic in self.topics: await self.mqtt_listen(self._receive, topic, qos=1)
+
+  async def _mqtt_callback(self, callback: MqttCallback, topic: y2topic, payload: object) -> None:
+    # A malformed configuration is fatal, unlike a failed device-message callback.
+    async with self._callback_lock:
+      await callback(topic, payload)
+
+  async def _receive(self, topic: y2topic, payload: object) -> None:
+    data = yaml.safe_load(payload) if isinstance(payload, str) else payload
+    if not isinstance(data, dict): raise TypeError(f'MQTT configuration must be a mapping: {topic}')
+    key = str(topic)
+    Env.update_config(data, self.topics[key])
+    self.pending.discard(key)
+    if not self.watch and not self.pending: await self.stop()
 # endregion
 
 
