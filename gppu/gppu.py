@@ -987,14 +987,14 @@ class Env:
     Env._load_dict(updated)
 
   @staticmethod
-  async def from_mqtt(config: dict, *, watch: bool = False) -> None:
+  async def from_mqtt(config: dict) -> None:
     """Load exact topics into their declared Env paths through gppu's MQTT transport.
 
-    config contains connection and topics (MQTT topic -> Env path). Return once
-    all topics arrive, or keep receiving until cancelled when watch=True.
+    config contains connection and topics (MQTT topic -> Env path). Disconnect
+    once all topics arrive. Apps needing updates use their own mqtt_config().
     """
     from .iot import _MqttConfig
-    await _MqttConfig(config, watch=watch).run()
+    await _MqttConfig(config).run()
 
   @staticmethod
   def glob(path, default=None) -> Any: return Env.data if path == '' else deepget(path, Env.data, default=default)

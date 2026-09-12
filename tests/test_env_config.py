@@ -5,8 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from gppu import Env
-from gppu.iot import _MqttConfig
+from gppu import Env, MqttApp, mixin_Mqtt
 
 
 @pytest.fixture(autouse=True)
@@ -96,6 +95,8 @@ class Client:
     self.messages = Messages()
     self.subscriptions = []
     self.closed = False
+    self.connected = asyncio.Event()
+    self.connections = 0
 
   async def subscribe(self, topic, qos):
     self.subscriptions.append((topic, qos))
@@ -110,10 +111,12 @@ def mqtt_source(monkeypatch, retained, topics):
 
   @asynccontextmanager
   async def connect(self):
+    client.connections += 1
+    client.connected.set()
     try: yield client
     finally: client.closed = True
 
-  monkeypatch.setattr(_MqttConfig, '_mqtt_client', connect)
+  monkeypatch.setattr(mixin_Mqtt, '_mqtt_client', connect)
   Env.from_dict({'local': {'keep': True}})
   return client, {'connection': {'hostname': 'test-broker'}, 'topics': topics}
 
@@ -127,10 +130,11 @@ def test_mqtt_startup_loads_all_declared_topics_and_disconnects(monkeypatch):
     assert Env.glob_dict('') == {'local': {'keep': True}, 'dc': {'scene': 'pc'}, 'ov': {'url': 'https://ov'}}
     assert client.subscriptions == [('config/dc', 1), ('config/ov', 1)]
     assert client.closed
+    assert client.connections == 1
   asyncio.run(run())
 
 
-def test_mqtt_watch_routes_changes_ignores_replay_and_stops(monkeypatch):
+def test_mqtt_config_reuses_running_app_connection_and_preserves_device_messages(monkeypatch):
   async def run():
     client, source = mqtt_source(monkeypatch, {'config/dc': b'scene: pc\nstale: true\n'}, {'config/dc': 'dc'})
     seen, other = [], []
@@ -140,20 +144,56 @@ def test_mqtt_watch_routes_changes_ignores_replay_and_stops(monkeypatch):
       ready.set()
     Env.on_change(changed, 'dc')
     Env.on_change(other.append, 'ov')
-    task = asyncio.create_task(Env.from_mqtt(source, watch=True))
+    app = MqttApp(name='consumer', data={'connection': source['connection']})
+    task = asyncio.create_task(app.run())
     try:
+      async with asyncio.timeout(2): await client.connected.wait()
+      transport = app._mqtt_task
+      devices = []
+      await app.mqtt_listen(lambda topic, payload: devices.append(payload), 'devices/state')
+      await app.mqtt_config(source['topics'])
+      await app.mqtt_config(source['topics'])
       async with asyncio.timeout(2): await ready.wait()
       ready.clear()
+      client.send('devices/state', b'on')
       client.send('config/dc', b'scene: pc\nstale: true\n')
       client.send('config/dc', b'{"scene":"laptop"}')
       async with asyncio.timeout(2): await ready.wait()
       assert seen == [frozenset({'dc'}), frozenset({'dc/scene', 'dc/stale'})]
       assert other == []
       assert Env.glob_dict('dc') == {'scene': 'laptop'}
+      assert devices == ['on']
+      assert client.connections == 1
+      assert app._mqtt_task is transport
+      assert not client.closed
     finally:
       task.cancel()
       with pytest.raises(asyncio.CancelledError): await task
     assert client.closed
+  asyncio.run(run())
+
+
+def test_config_registration_does_not_start_a_connection(monkeypatch):
+  async def run():
+    client, source = mqtt_source(monkeypatch, {}, {'config/dc': 'dc'})
+    app = MqttApp(name='consumer', data={'connection': source['connection']})
+    await app.mqtt_config(source['topics'])
+    assert client.connections == 0
+    assert app._mqtt_task is None
+    assert Env.glob_dict('') == {'local': {'keep': True}}
+  asyncio.run(run())
+
+
+def test_bad_config_on_existing_connection_fails_visibly(monkeypatch):
+  async def run():
+    client, source = mqtt_source(monkeypatch, {'config/dc': b'[1,2]'}, {'config/dc': 'dc'})
+    app = MqttApp(name='consumer', data={'connection': source['connection']})
+    await app.mqtt_config(source['topics'])
+    async with asyncio.timeout(2):
+      with pytest.raises(ExceptionGroup): await app.run()
+    assert Env.glob_dict('') == {'local': {'keep': True}}
+    assert client.closed
+    assert client.connections == 1
   asyncio.run(run())
 
 
