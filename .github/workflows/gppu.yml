@@ -142,6 +142,7 @@ jobs:
 
           bump = "${{ inputs.bump }}"
           beta = "${{ inputs.beta }}" == "true"
+          previous = ""
 
           tags = subprocess.check_output(
               ["git", "tag", "-l", "gppu/v*", "--sort=-v:refname"],
@@ -162,6 +163,7 @@ jobs:
                       x, y, z = int(m.group(1)), int(m.group(2)), int(m.group(3))
                       n = int(m.group(4)[1:]) if m.group(4) else None
                       latest = (x, y, z, n)
+                      previous = t
                       break
               if latest is None:
                   new = "gppu/v0.0.1b1" if beta else "gppu/v0.0.1"
@@ -183,6 +185,9 @@ jobs:
                   raise SystemExit("No existing tag to rebuild and bump=none")
               write("TAG", tags[0])
               write("TAG_EXISTS", "true")
+              if len(tags) > 1:
+                  previous = tags[1]
+          write("PREVIOUS_TAG", previous)
 
       - name: Create tag
         if: env.TAG_EXISTS == 'false'
@@ -221,6 +226,8 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
           FLAGS=(--title "gppu v${VERSION}" --generate-notes)
+          # Bound notes to the preceding gppu build instead of GitHub's inferred release.
+          if [[ -n "${PREVIOUS_TAG}" ]]; then FLAGS+=(--notes-start-tag "${PREVIOUS_TAG}"); fi
           if [[ "${IS_PRE}" == "true" ]]; then FLAGS+=(--prerelease); fi
           gh release create "${TAG}" dist/* "${FLAGS[@]}"
 
