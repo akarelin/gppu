@@ -67,6 +67,8 @@ Config file resolution: looks for `<name>.yaml` then `config.yaml` in the app pa
 
 [Configuration from MQTT](docs/mqtt-config.md): startup loading, optional live updates, and `Env.on_change()` notifications for the affected configuration paths.
 
+[The REST surface](docs/rest.md): `mixin_Rest`, on `AsyncApp` — every registered object answers for its own members, walked from the classes born under `Env.app_path`; manifest, read, call.
+
 YAML `!include` support, as the value of a key or on its own line, where the included file's keys merge into the document:
 ```yaml
 !include hosts.yaml

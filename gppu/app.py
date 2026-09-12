@@ -22,6 +22,8 @@ from concurrent.futures import Future
 from typing import Any, final
 
 from .gppu import Env, Logger, _Base, _DC, _mixin
+import typing
+from collections.abc import Mapping
 
 # region YMRO lifecycle
 class _YMRO:
@@ -195,8 +197,204 @@ class EventLoopBridge:
 # endregion
 
 
+# region REST surface
+def _born(cls: type) -> str:
+  """Where a class's source lives; a built-in has none."""
+  try: return inspect.getsourcefile(cls) or ''
+  except TypeError: return ''
+
+
+class mixin_Rest:
+  """The object surface: every object of the application answers for its own
+  members, walked from the classes born under ``Env.app_path`` — a name a gppu
+  base defines is never exposed. A transport binds the four ``rest_*`` calls,
+  each answering ``(payload, status)``: a manifest, the objects, a read, a call.
+
+  A member is a *value* (a ``_DC`` field, a property, or a method named in
+  ``rest_read_methods``) or a *command* (a method marked ``rest_command``,
+  granted in ``rest_commands`` by class name, or listed in the object's own
+  ``commands``, which then dispatches through its ``command()``). Names in
+  ``rest_redact`` and the lifecycle vocabulary are never members. The host sets
+  the three ``rest_*`` settings from its config and names ``rest_registries``,
+  as an app sets ``connection`` for ``mixin_Mqtt``.
+  """
+  rest_read_methods: tuple[str, ...] = ()
+  rest_redact: tuple[str, ...] = ()
+  rest_commands: dict[str, list[str]] = {}
+
+  REST_RESERVED = (*_YMRO.POSSIBLE_STEPS, 'initialize', 'terminate', 'setup', 'run')
+  _REST_FIELD   = '_DC.__init_subclass__.<locals>.getter'   # the getter _DC generates for a field
+  _REST_SCALARS = {str: 'str', int: 'int', float: 'float', bool: 'bool', list: 'list', dict: 'dict'}
+  _REST_CASTS   = {'str': str, 'int': int, 'float': float}
+  _rest_manifest: dict | None = None
+
+  # ~~ the host's part
+  def rest_registries(self) -> dict[str, Mapping]:
+    """name -> roster of live objects (key -> object); the host names its own."""
+    return {'app': {getattr(self, 'name', 'app'): self}}
+
+  # ~~ the classes
+  def _rest_owned(self, cls: type, name: str) -> bool:
+    """The application's own name: every class in the MRO that defines it is born under app_path."""
+    home = str(Env.app_path)
+    owners = [c for c in cls.__mro__ if name in c.__dict__]
+    return bool(owners) and all(_born(c).startswith(home) for c in owners)
+
+  @staticmethod
+  def _rest_hints(obj) -> dict:
+    """Resolved annotations; one the walk cannot resolve (a forward name nothing imports) reads as 'any'."""
+    try: return typing.get_type_hints(obj)
+    except Exception: return dict(getattr(obj, '__annotations__', {}) or {})
+
+  def _rest_type(self, hint) -> str:
+    named = [a for a in typing.get_args(hint) if a is not type(None)]
+    if named and (typing.get_origin(hint) or hint) not in self._REST_SCALARS: hint = named[0]
+    return self._REST_SCALARS.get(typing.get_origin(hint) or hint, 'any')
+
+  def _rest_members(self, cls: type) -> dict[str, dict]:
+    fields, rows = self._rest_hints(cls), {}
+    for name in dir(cls):
+      if name[0] == '_' or name in self.REST_RESERVED or name in self.rest_redact: continue
+      if not self._rest_owned(cls, name): continue
+      member = inspect.getattr_static(cls, name, None)
+      if isinstance(member, property):
+        if member.fget is None: continue
+        generated = member.fget.__qualname__ == self._REST_FIELD
+        hint = fields.get(name) if generated else self._rest_hints(member.fget).get('return')
+        rows[name] = {'kind': 'field' if generated else 'value', 'type': self._rest_type(hint), 'call': False}
+        continue
+      fn = getattr(member, '__func__', member)
+      if not inspect.isfunction(fn): continue
+      sig, hints = inspect.signature(fn), self._rest_hints(fn)
+      params = [p for n, p in sig.parameters.items() if n not in ('self', 'cls')]
+      needed = [p for p in params if p.default is p.empty and p.kind not in (p.VAR_KEYWORD, p.VAR_POSITIONAL)]
+      at = f'{Path(fn.__code__.co_filename).name}:{fn.__code__.co_firstlineno}'
+      if name in self.rest_read_methods and not needed and not any(p.kind is p.VAR_POSITIONAL for p in params):
+        rows[name] = {'kind': 'value', 'type': self._rest_type(hints.get('return')), 'call': True, 'at': at}
+        continue
+      marked  = bool(getattr(fn, 'rest_command', False))
+      granted = any(name in self.rest_commands.get(c.__name__, []) for c in cls.__mro__)
+      if not marked and not granted: continue
+      if granted and (needed or any(p.kind is p.VAR_POSITIONAL for p in params)): continue
+      rows[name] = {'kind': 'command', 'granted': granted, 'at': at, 'doc': (fn.__doc__ or '').split('\n')[0],
+                    'args': {p.name: {'type': self._rest_type(hints.get(p.name)), 'required': p.default is p.empty}
+                             for p in params if p.kind is not p.VAR_KEYWORD},
+                    'free': any(p.kind is p.VAR_KEYWORD for p in params)}
+    return rows
+
+  def _rest_classes(self) -> list[type]:
+    home = str(Env.app_path)
+    seen, stack = set(), [_mixin, _Base, _DC]
+    while stack:
+      cls = stack.pop()
+      if cls in seen: continue
+      seen.add(cls); stack.extend(cls.__subclasses__())
+    return sorted((c for c in seen if _born(c).startswith(home)), key=lambda c: c.__name__)
+
+  @property
+  def rest_manifest(self) -> dict:
+    """The classes and their members, walked once."""
+    if self._rest_manifest is None:
+      home = str(Env.app_path)
+      rows = {c.__name__: {'bases': [b.__name__ for b in c.__mro__[1:] if _born(b).startswith(home)],
+                           'members': self._rest_members(c)} for c in self._rest_classes()}
+      self._rest_manifest = {'registries': list(self.rest_registries()),
+                             'classes': {n: c for n, c in rows.items() if c['members']}}
+    return self._rest_manifest
+
+  # ~~ the objects
+  def _rest_find(self, registry: str, key: str):
+    roster = self.rest_registries().get(registry) or {}
+    return next((o for k, o in roster.items() if str(k) == key), None)
+
+  def _rest_rows(self, obj) -> dict[str, dict]:
+    rows = dict(self.rest_manifest['classes'].get(type(obj).__name__, {}).get('members', {}))
+    for name in getattr(obj, 'commands', ()):                      # the instance declares these
+      rows.setdefault(name, {'kind': 'command', 'granted': False, 'at': 'config', 'args': {}, 'free': True, 'doc': ''})
+    return rows
+
+  def _rest_address(self, obj) -> str:
+    """Where this object answers, so a member that holds one carries a link."""
+    for registry, roster in self.rest_registries().items():
+      for key, other in roster.items():
+        if other is obj: return f'{registry}/{key}'
+    return ''
+
+  def _rest_plain(self, value):
+    """JSON the caller can read: an object of the application becomes its address, never its repr."""
+    if value is None or isinstance(value, (str, int, float, bool)): return value
+    if _born(type(value)).startswith(str(Env.app_path)): return self._rest_address(value) or type(value).__name__
+    if isinstance(value, Mapping): return {str(k): self._rest_plain(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)): return [self._rest_plain(v) for v in value]
+    return str(value)
+
+  def _rest_value(self, obj, name: str, row: dict):
+    member = getattr(obj, name)
+    return self._rest_plain(member() if row['call'] else member)
+
+  def rest_payload(self, obj) -> dict:
+    rows = self._rest_rows(obj)
+    return {'class': type(obj).__name__,
+            'members': {n: self._rest_value(obj, n, r) for n, r in rows.items() if r['kind'] != 'command'},
+            'commands': {n: r['args'] for n, r in rows.items() if r['kind'] == 'command'}}
+
+  def rest_bind(self, row: dict, body: Mapping) -> dict:
+    """The body against a command's signature: exact names, scalar casts, no surprises."""
+    args = row['args']
+    unknown = [k for k in body if k not in args]
+    if unknown and not row['free']: raise ValueError(f'unknown parameter(s) {unknown}; {sorted(args) or "none"} accepted')
+    missing = [n for n, a in args.items() if a['required'] and n not in body]
+    if missing: raise ValueError(f'missing parameter(s) {missing}')
+    bound = {}
+    for key, value in body.items():
+      kind = args.get(key, {}).get('type', 'any')
+      if kind in ('any', 'list', 'dict', 'bool') or key not in args:
+        if kind in ('list', 'dict', 'bool') and not isinstance(value, {'list': list, 'dict': dict, 'bool': bool}[kind]):
+          raise ValueError(f'{key}: expected {kind}, got {value!r}')
+        bound[key] = value
+        continue
+      if isinstance(value, bool): raise ValueError(f'{key}: expected {kind}, got {value!r}')
+      try: bound[key] = self._REST_CASTS[kind](value)
+      except (TypeError, ValueError): raise ValueError(f'{key}: expected {kind}, got {value!r}')
+    return bound
+
+  # ~~ the four calls
+  def rest_objects(self, kind: str | None = None, full: bool = False) -> tuple[dict, int]:
+    out = {}
+    for registry, roster in self.rest_registries().items():
+      for key, obj in roster.items():
+        if kind and type(obj).__name__ != kind: continue
+        out[f'{registry}/{key}'] = self.rest_payload(obj) if full else type(obj).__name__
+    return {'objects': out}, 200
+
+  def rest_read(self, registry: str, key: str, name: str | None = None) -> tuple[dict, int]:
+    obj = self._rest_find(registry, key)
+    if obj is None: return {'success': False, 'error': 'no such object'}, 404
+    if name is None: return self.rest_payload(obj), 200
+    row = self._rest_rows(obj).get(name)
+    if row is None: return {'success': False, 'error': f'{type(obj).__name__} exposes no {name!r}'}, 404
+    if row['kind'] == 'command': return {'success': False, 'error': f'{name} is a command; POST it'}, 405
+    return {name: self._rest_value(obj, name, row)}, 200
+
+  async def rest_call(self, registry: str, key: str, name: str, body: Mapping) -> tuple[dict, int]:
+    obj = self._rest_find(registry, key)
+    if obj is None: return {'success': False, 'error': 'no such object'}, 404
+    row = self._rest_rows(obj).get(name)
+    if row is None or row['kind'] != 'command': return {'success': False, 'error': f'{name} is not a command'}, 405
+    try: args = self.rest_bind(row, dict(body))
+    except ValueError as error: return {'success': False, 'error': str(error)}, 400
+    # The object's own gate where it has one: a name it declares in `commands`
+    # goes through command(); a marked or granted method is called bound.
+    declared = name in getattr(obj, 'commands', ())
+    call = (lambda: obj.command(cmd=name, **args)) if declared else (lambda: getattr(obj, name)(**args))
+    if not declared and inspect.iscoroutinefunction(getattr(obj, name)): result = await call()
+    else: result = await asyncio.get_running_loop().run_in_executor(None, call)
+    return {'success': True, 'result': self._rest_plain(result)}, 200
+# endregion
+
+
 # region async application
-class AsyncApp(App, EventLoopBridge):
+class AsyncApp(mixin_Rest, App, EventLoopBridge):
   """Application base for long-lived asyncio services.
 
   ``setup()`` runs after App/_DC construction. ``run()`` opens the application's
