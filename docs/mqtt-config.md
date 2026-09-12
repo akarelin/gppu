@@ -7,6 +7,8 @@ generated: { by: Codex/GPT-6, at: '2026-09-12' }
 
 # Configuration from MQTT
 
+Available since [gppu 3.6.5](https://github.com/akarelin/gppu/releases/tag/gppu/v3.6.5).
+
 `Env.from_mqtt()` loads compiled YAML or JSON mappings from MQTT and disconnects. Apps that already maintain an MQTT connection can opt into later updates with `mqtt_config()` on their existing `MqttApp` or `mixin_Mqtt` transport. Both use `gppu[mqtt]`. `Env` reports which paths changed; the consuming application decides what to do.
 
 Alex requested MQTT configuration and configuration-specific change handling on 2026-09-11. He clarified that console apps need no reloading, systems may restart to apply changes, and most apps do not maintain an MQTT connection.
