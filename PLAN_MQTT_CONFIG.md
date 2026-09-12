@@ -10,7 +10,7 @@ generated: { by: Codex/GPT-6, at: '2026-09-11' }
 - Complete: Load configuration from MQTT through Env and identify changed configuration paths.
 - Complete: Verify startup loading, subsequent changes, unchanged replays, errors, and ordinary YAML loading; focused tests and an isolated local Mosquitto check passed.
 - Complete: Document usage, publish the gppu changes, and install the updated library in the shared Windows environment; the broker verification exercised the installed package.
-- In progress: Apply Alex's clarification: console apps load once; live updates use an existing app MQTT connection only when requested. Verify connection reuse and startup disconnection, then publish and install.
+- Complete: Apply Alex's clarification: console apps load once; live updates use an existing app MQTT connection only when requested. Connection reuse and startup disconnection passed focused tests and installed-package broker verification; published and installed.
 
 ## Requirements
 
