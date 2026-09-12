@@ -210,17 +210,14 @@ class mixin_Rest:
   base defines is never exposed. A transport binds the four ``rest_*`` calls,
   each answering ``(payload, status)``: a manifest, the objects, a read, a call.
 
-  A member is a *value* (a ``_DC`` field, a property, or a method named in
-  ``rest_read_methods``) or a *command* (a method marked ``rest_command``,
-  granted in ``rest_commands`` by class name, or listed in the object's own
-  ``commands``, which then dispatches through its ``command()``). Names in
-  ``rest_redact`` and the lifecycle vocabulary are never members. The host sets
-  the three ``rest_*`` settings from its config and names ``rest_registries``,
-  as an app sets ``connection`` for ``mixin_Mqtt``.
+  Nothing is declared. A ``_DC`` field and a property are *values*; every public
+  method the application's own classes define is a *command*, and one that needs
+  no argument is also readable, so a GET calls it. A class carries no marker, no
+  route table, no per-class list and no config row: a member that exists is on
+  the surface and a member that goes away goes away. The private names and the
+  lifecycle vocabulary are the whole of the exclusion. The host names
+  ``rest_registries``, as an app sets ``connection`` for ``mixin_Mqtt``.
   """
-  rest_read_methods: tuple[str, ...] = ()
-  rest_redact: tuple[str, ...] = ()
-  rest_commands: dict[str, list[str]] = {}
 
   REST_RESERVED = (*_YMRO.POSSIBLE_STEPS, 'initialize', 'terminate', 'setup', 'run')
   _REST_FIELD   = '_DC.__init_subclass__.<locals>.getter'   # the getter _DC generates for a field
@@ -235,10 +232,12 @@ class mixin_Rest:
 
   # ~~ the classes
   def _rest_owned(self, cls: type, name: str) -> bool:
-    """The application's own name: every class in the MRO that defines it is born under app_path."""
+    """The application's own name: one of the classes defining it is born under
+    app_path. A method the application overrides is the application's, whatever a
+    base also calls it; a name only a base defines — ``dict.get``, ``UserDict.pop`` —
+    is not the application's and is the whole of the exclusion."""
     home = str(Env.app_path)
-    owners = [c for c in cls.__mro__ if name in c.__dict__]
-    return bool(owners) and all(_born(c).startswith(home) for c in owners)
+    return any(_born(c).startswith(home) for c in cls.__mro__ if name in c.__dict__)
 
   @staticmethod
   def _rest_hints(obj) -> dict:
@@ -254,7 +253,7 @@ class mixin_Rest:
   def _rest_members(self, cls: type) -> dict[str, dict]:
     fields, rows = self._rest_hints(cls), {}
     for name in dir(cls):
-      if name[0] == '_' or name in self.REST_RESERVED or name in self.rest_redact: continue
+      if name[0] == '_' or name in self.REST_RESERVED: continue
       if not self._rest_owned(cls, name): continue
       member = inspect.getattr_static(cls, name, None)
       if isinstance(member, property):
@@ -269,14 +268,14 @@ class mixin_Rest:
       params = [p for n, p in sig.parameters.items() if n not in ('self', 'cls')]
       needed = [p for p in params if p.default is p.empty and p.kind not in (p.VAR_KEYWORD, p.VAR_POSITIONAL)]
       at = f'{Path(fn.__code__.co_filename).name}:{fn.__code__.co_firstlineno}'
-      if name in self.rest_read_methods and not needed and not any(p.kind is p.VAR_POSITIONAL for p in params):
-        rows[name] = {'kind': 'value', 'type': self._rest_type(hints.get('return')), 'call': True, 'at': at}
-        continue
-      marked  = bool(getattr(fn, 'rest_command', False))
-      granted = any(name in self.rest_commands.get(c.__name__, []) for c in cls.__mro__)
-      if not marked and not granted: continue
-      if granted and (needed or any(p.kind is p.VAR_POSITIONAL for p in params)): continue
-      rows[name] = {'kind': 'command', 'granted': granted, 'at': at, 'doc': (fn.__doc__ or '').split('\n')[0],
+      # Every public method of the application's own classes. One that needs no
+      # argument answers a GET as well, because calling it is how its value is
+      # read; a positional parameter cannot be bound from a JSON object, so the
+      # surface reports such a method and refuses it rather than hiding it.
+      positional = any(p.kind is p.VAR_POSITIONAL for p in params)
+      rows[name] = {'kind': 'command', 'at': at, 'doc': (fn.__doc__ or '').split('\n')[0],
+                    'type': self._rest_type(hints.get('return')),
+                    'read': not needed and not positional, 'call': True, 'positional': positional,
                     'args': {p.name: {'type': self._rest_type(hints.get(p.name)), 'required': p.default is p.empty}
                              for p in params if p.kind is not p.VAR_KEYWORD},
                     'free': any(p.kind is p.VAR_KEYWORD for p in params)}
@@ -310,7 +309,7 @@ class mixin_Rest:
   def _rest_rows(self, obj) -> dict[str, dict]:
     rows = dict(self.rest_manifest['classes'].get(type(obj).__name__, {}).get('members', {}))
     for name in getattr(obj, 'commands', ()):                      # the instance declares these
-      rows.setdefault(name, {'kind': 'command', 'granted': False, 'at': 'config', 'args': {}, 'free': True, 'doc': ''})
+      rows.setdefault(name, {'kind': 'command', 'at': 'config', 'args': {}, 'free': True, 'positional': False, 'doc': ''})
     return rows
 
   def _rest_address(self, obj) -> str:
@@ -330,9 +329,12 @@ class mixin_Rest:
 
   def _rest_value(self, obj, name: str, row: dict):
     member = getattr(obj, name)
-    return self._rest_plain(member() if row['call'] else member)
+    return self._rest_plain(member() if row.get('call') else member)
 
   def rest_payload(self, obj) -> dict:
+    """What the object holds, plus what it can be asked to do. Only fields and
+    properties are read here: calling a method to build a payload would run it —
+    a poll, a publish — for anyone who listed the objects."""
     rows = self._rest_rows(obj)
     return {'class': type(obj).__name__,
             'members': {n: self._rest_value(obj, n, r) for n, r in rows.items() if r['kind'] != 'command'},
@@ -373,7 +375,8 @@ class mixin_Rest:
     if name is None: return self.rest_payload(obj), 200
     row = self._rest_rows(obj).get(name)
     if row is None: return {'success': False, 'error': f'{type(obj).__name__} exposes no {name!r}'}, 404
-    if row['kind'] == 'command': return {'success': False, 'error': f'{name} is a command; POST it'}, 405
+    if row['kind'] == 'command' and not row.get('read'):
+      return {'success': False, 'error': f'{name} takes arguments; POST it'}, 405
     return {name: self._rest_value(obj, name, row)}, 200
 
   async def rest_call(self, registry: str, key: str, name: str, body: Mapping) -> tuple[dict, int]:
@@ -384,7 +387,7 @@ class mixin_Rest:
     try: args = self.rest_bind(row, dict(body))
     except ValueError as error: return {'success': False, 'error': str(error)}, 400
     # The object's own gate where it has one: a name it declares in `commands`
-    # goes through command(); a marked or granted method is called bound.
+    # goes through command(); any other method is called bound.
     declared = name in getattr(obj, 'commands', ())
     call = (lambda: obj.command(cmd=name, **args)) if declared else (lambda: getattr(obj, name)(**args))
     if not declared and inspect.iscoroutinefunction(getattr(obj, name)): result = await call()
