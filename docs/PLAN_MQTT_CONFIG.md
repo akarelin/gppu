@@ -7,13 +7,13 @@ generated: { by: Codex/GPT-6, at: '2026-09-12' }
 
 # MQTT configuration
 
-Historic implementation plan, closed on 2026-09-12. The gppu code is complete and pushed to master; the shared Windows environment was installed directly from master. No released version contains these changes as of 2026-09-12: gppu/latest still points to gppu/v3.6.4. Release publication remains pending. [Current usage](mqtt-config.md) describes the implemented API.
+The gppu implementation is complete and pushed to master. Release publication is in progress under Alex's instruction of 2026-09-12. The existing release workflow will publish the stable patch release and update gppu/latest, followed by installation and broker verification. [Current usage](mqtt-config.md) describes the implemented API.
 
 - Complete: Load configuration from MQTT through Env and identify changed configuration paths.
 - Complete: Verify startup loading, subsequent changes, unchanged replays, errors, and ordinary YAML loading; focused tests and an isolated local Mosquitto check passed.
 - Complete: Document usage, push the gppu source changes, and install directly from master in the shared Windows environment; the broker verification exercised that installation.
 - Complete: Apply Alex's clarification: console apps load once; live updates use an existing app MQTT connection only when requested. Connection reuse and startup disconnection passed focused tests and installed-package broker verification; source pushed and installed.
-- Pending: Publish a gppu release containing the changes.
+- In progress: Publish the stable gppu release, verify gppu/latest, install the released package, and finalize the closeout.
 
 ## Requirements
 
@@ -23,6 +23,7 @@ Historic implementation plan, closed on 2026-09-12. The gppu code is complete an
 - Alex, conversation of 2026-09-11: "depends on what app needs (console apps do not need reloading) and if app maintains mqtt connection (most do not)"
 - Alex, conversation of 2026-09-12: "Document finalize and close"
 - Alex, conversation of 2026-09-12: "gppu does not have dev builds. You are mistaken"
+- Alex, conversation of 2026-09-12: "Release, document, finalize and close"
 
 ## Delivered behavior
 
