@@ -65,6 +65,8 @@ options = Env.glob_dict('database/options')
 
 Config file resolution: looks for `<name>.yaml` then `config.yaml` in the app path. Relative `app_path` values are resolved by walking up from the calling script's directory until a matching subpath is found.
 
+[Configuration from MQTT](docs/mqtt-config.md): startup loading, optional live updates, and `Env.on_change()` notifications for the affected configuration paths.
+
 YAML `!include` support, as the value of a key or on its own line, where the included file's keys merge into the document:
 ```yaml
 !include hosts.yaml
