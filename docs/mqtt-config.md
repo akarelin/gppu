@@ -1,8 +1,8 @@
 ---
 fileClass: Document
 created: 2026-09-11
-updated: 2026-09-11
-generated: { by: Codex/GPT-6, at: '2026-09-11' }
+updated: 2026-09-12
+generated: { by: Codex/GPT-6, at: '2026-09-12' }
 ---
 
 # Configuration from MQTT
@@ -10,6 +10,12 @@ generated: { by: Codex/GPT-6, at: '2026-09-11' }
 `Env.from_mqtt()` loads compiled YAML or JSON mappings from MQTT and disconnects. Apps that already maintain an MQTT connection can opt into later updates with `mqtt_config()` on their existing `MqttApp` or `mixin_Mqtt` transport. Both use `gppu[mqtt]`. `Env` reports which paths changed; the consuming application decides what to do.
 
 Alex requested MQTT configuration and configuration-specific change handling on 2026-09-11. He clarified that console apps need no reloading, systems may restart to apply changes, and most apps do not maintain an MQTT connection.
+
+| Application need | Loading | Connection lifetime |
+| --- | --- | --- |
+| Console app or app that restarts to apply configuration | `Env.from_mqtt(source)` | Disconnects after startup configuration arrives |
+| App that needs later updates and already maintains MQTT | `app.mqtt_config(topics)` | Uses the app's existing transport |
+| App that needs no later updates | No configuration subscription | No background connection for configuration |
 
 Load the local bootstrap through `Env.from_env()`. Pass a configuration mapping with `connection` and `topics` to `Env.from_mqtt()`. The surrounding bootstrap section name is the application's choice; this example calls it `config_mqtt`.
 
@@ -25,7 +31,7 @@ config_mqtt:
 
 These are example topic names and a local example broker, not built-in defaults. Connection uses the existing MQTT fields: `hostname`, `port`, `username`, `password`, and `identifier`. Live configuration subscriptions use the app's connection and identifier.
 
-Each topic supplies the complete mapping for its `Env` path. For example, `config/dc` containing `{"scene":"pc"}` replaces the `dc` subtree, including removal of keys omitted from the new mapping. Other subtrees remain unchanged. An empty destination path replaces the whole configuration. Source paths cannot overlap, because delivery order must not decide which configuration wins.
+Each topic supplies the complete mapping for its `Env` path. For example, `config/dc` containing `{"scene":"pc"}` replaces the `dc` subtree, including removal of keys omitted from the new mapping. Other subtrees remain unchanged. An empty destination path replaces the whole configuration. Destination paths cannot overlap, because delivery order must not decide which configuration wins.
 
 Publish the compiled payload with retain enabled so it is available to new consumers. Subscriptions use QoS 1. Topics must be exact names, because startup loading waits for every declared topic. MQTT payloads contain resolved YAML/JSON mappings; source-file includes and Jinja compilation belong to the compiler before publication.
 
