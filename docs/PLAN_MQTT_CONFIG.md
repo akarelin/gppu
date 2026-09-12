@@ -7,13 +7,13 @@ generated: { by: Codex/GPT-6, at: '2026-09-12' }
 
 # MQTT configuration
 
-The gppu implementation is complete and pushed to master. Release publication is in progress under Alex's instruction of 2026-09-12. The existing release workflow will publish the stable patch release and update gppu/latest, followed by installation and broker verification. [Current usage](mqtt-config.md) describes the implemented API.
+Historic plan, completed with [gppu 3.6.5](https://github.com/akarelin/gppu/releases/tag/gppu/v3.6.5) on 2026-09-12. The release and gppu/latest contain the changes, and the released package is installed and verified in the shared Windows environment. [Current usage](mqtt-config.md) describes the released API.
 
 - Complete: Load configuration from MQTT through Env and identify changed configuration paths.
 - Complete: Verify startup loading, subsequent changes, unchanged replays, errors, and ordinary YAML loading; focused tests and an isolated local Mosquitto check passed.
-- Complete: Document usage, push the gppu source changes, and install directly from master in the shared Windows environment; the broker verification exercised that installation.
-- Complete: Apply Alex's clarification: console apps load once; live updates use an existing app MQTT connection only when requested. Connection reuse and startup disconnection passed focused tests and installed-package broker verification; source pushed and installed.
-- In progress: Publish the stable gppu release, verify gppu/latest, install the released package, and finalize the closeout.
+- Complete: Document usage and push the gppu source changes.
+- Complete: Apply Alex's clarification: console apps load once; live updates use an existing app MQTT connection only when requested. Connection reuse and startup disconnection passed focused tests and released-package broker verification.
+- Complete: Publish gppu 3.6.5, verify gppu/latest and both wheel downloads, install from gppu/latest, and finalize the closeout.
 
 ## Requirements
 
@@ -37,6 +37,4 @@ The bootstrap uses the existing connection mapping and an exact MQTT topic to En
 
 ## Closeout
 
-The focused tests and installed-package broker verification passed on 2026-09-11. The installed startup and existing-connection APIs were confirmed again on 2026-09-12. [Final state and remaining scope](D:/Work/09/12/host-maintenance/host-maintenance-closeout.codex.md) records the evidence and the unapplied harness and compiler preparation.
-
-Correction: the installed package's setuptools-scm version string described an untagged source checkout. It was not a gppu release version. The earlier closeout established source publication and a local installation, not release publication.
+The release workflow's Linux and TUI checks passed on 2026-09-12. The versioned and latest tags identify the released code, their wheel downloads are identical, and the installed package reports 3.6.5. Broker verification against that released installation confirmed retained startup delivery, selective notifications, connection reuse, normal device messages, and clean disconnection. [Final state and remaining scope](D:/Work/09/12/host-maintenance/host-maintenance-closeout.codex.md) records the evidence and the unapplied harness and compiler preparation.
