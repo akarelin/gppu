@@ -16,7 +16,7 @@ import platform
 import asyncio
 import json
 import getpass
-from jinja2 import StrictUndefined
+from jinja2 import ChoiceLoader, FileSystemLoader, StrictUndefined
 from jinja2.nativetypes import NativeEnvironment
 from jinja2.sandbox import SandboxedEnvironment
 
@@ -275,15 +275,19 @@ def dict_from_yml(filename: str | Path) -> dict:
 
   def yml_load(text: str) -> Any: return yml_merged(yaml.load(yml_keyed(text), Loader=YmlLoader))
 
+  def yml_text(fn: Path) -> str:                                                           # a .j2 config is Jinja first: it
+    if fn.suffix.lower() == '.j2': return jinja_file(fn)                                   # loads its lists and loops them
+    with open(fn, encoding='utf-8') as f: return f.read()                                  # into the YAML parsed next
+
   def yml_include(loader: FullLoader, node: Node) -> Any:
     fn = full_path(loader.construct_scalar(node), dir_stack[-1])
 
     dir_stack.append(fn.parent)
 
     try:
-      with open(fn, "r", encoding='utf-8') as f:
-        if fn.suffix.lower().endswith('.json'): return json.load(f)                        # JSON (tabs/escapes YAML rejects)
-        return yml_load(f.read())
+      if fn.suffix.lower().endswith('.json'):                                              # JSON (tabs/escapes YAML rejects)
+        with open(fn, "r", encoding='utf-8') as f: return json.load(f)
+      return yml_load(yml_text(fn))
     finally: dir_stack.pop()
 
   def yml_secret(loader: FullLoader, node: Node) -> Any: return Vault.get(loader.construct_scalar(node))
@@ -291,7 +295,7 @@ def dict_from_yml(filename: str | Path) -> dict:
   YmlLoader.add_constructor("!include", yml_include)
   YmlLoader.add_constructor("!secret", yml_secret)
 
-  with open(filename, encoding='utf-8') as f: data = yml_load(f.read())
+  data = yml_load(yml_text(filename))
 
   return dict(data or {})
 
@@ -359,18 +363,46 @@ def template_populate(o, data: dict = {}, excludes:list = []) -> Any:
   return __tp(_, data)
 
 
+def _jinja_helpers() -> dict:
+  return {
+    'safe_int': safe_int, 'safe_float': safe_float, 'safe_list': safe_list,
+    'safe_timedelta': safe_timedelta, 'dict_sanitize': dict_sanitize,
+    'pretty_timedelta': pretty_timedelta, 'pfy': pfy, 'slugify': slugify,
+  }
+
+
 class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
   """Jinja templates with native values and gppu's formatting helpers."""
 
   def __init__(self, **options):
     super().__init__(undefined=StrictUndefined, autoescape=False, **options)
-    helpers = {
-      'safe_int': safe_int, 'safe_float': safe_float, 'safe_list': safe_list,
-      'safe_timedelta': safe_timedelta, 'dict_sanitize': dict_sanitize,
-      'pretty_timedelta': pretty_timedelta, 'pfy': pfy, 'slugify': slugify,
-    }
+    helpers = _jinja_helpers()
     self.filters.update(helpers)
     self.globals.update(helpers)
+
+
+class JinjaFileEnvironment(SandboxedEnvironment):
+  """Jinja for a whole config file: text out, strict, `include` and `import` rooted at the file's
+  folder, then at gppu's own, where paths.j2 (the path grammar) lives.
+
+  `load('lists/x.yaml')` reads a YAML list relative to that folder; `| yaml` writes a value
+  as a YAML flow scalar or collection, so paths and lists land in the document intact."""
+
+  def __init__(self, root: Path):
+    loader = ChoiceLoader([FileSystemLoader(str(root)), FileSystemLoader(str(Path(__file__).parent))])
+    super().__init__(loader=loader, undefined=StrictUndefined, autoescape=False,
+                     trim_blocks=True, lstrip_blocks=True, keep_trailing_newline=True)
+    helpers = _jinja_helpers()
+    self.filters.update(helpers)
+    self.filters['yaml'] = lambda o: json.dumps(o, ensure_ascii=False)
+    self.globals.update(helpers)
+    self.globals['load'] = lambda path: dict_from_yml(full_path(path, root))
+
+
+def jinja_file(filename: str | Path) -> str:
+  """Render a .j2 config file to text; `dict_from_yml` parses that text when the file ends in .j2."""
+  filename = full_path(filename)
+  return JinjaFileEnvironment(filename.parent).get_template(filename.name).render()
 
 
 @cache

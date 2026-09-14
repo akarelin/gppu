@@ -63,7 +63,9 @@ from .gppu import (
     template_populate,
     dict_template_populate,
     jinja_template,
+    jinja_file,
     JinjaEnvironment,
+    JinjaFileEnvironment,
 
     # Dictionary utilities
     deepget,
@@ -126,6 +128,7 @@ from .gppu import (
     _Config,
     _Base,
 )
+from .environment import Environment
 
 from .iot import (
     # y2xxx classes
@@ -167,8 +170,8 @@ __all__ = [
 
     # Configuration
     'dict_from_yml', 'dict_to_yml', 'dict_from_json', 'dict_to_json', 'dict_sanitize',
-    'template_populate', 'dict_template_populate', 'jinja_template',
-    'JinjaEnvironment',
+    'template_populate', 'dict_template_populate', 'jinja_template', 'jinja_file',
+    'JinjaEnvironment', 'JinjaFileEnvironment',
 
     # Dictionary utilities
     'deepget', 'deepget_dict', 'deepget_float', 'deepget_int', 'deepget_list',
@@ -201,7 +204,7 @@ __all__ = [
     'format_size', 'format_duration', 'format_since',
 
     # Env
-    'Env',
+    'Env', 'Environment',
 
     # Config access
     'glob', 'glob_int', 'glob_list', 'glob_dict',
