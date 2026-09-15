@@ -1,7 +1,7 @@
 ---
 fileClass: Document
 created: "2026-09-06 0149"
-updated: "2026-09-15 1750"
+updated: "2026-09-15 2125"
 generated: { by: "Codex/GPT-6", at: "2026-09-06T01:49:00-07:00" }
 ---
 
@@ -27,6 +27,28 @@ hosts:
 {% for name, host in facts.hosts.items() %}
 {{ h.entry(name, host) }}
 {% endfor %}
+```
+
+## Resolving rows
+
+`TemplateSet` compiles one configuration's `macros`, `generators` and `templates` once
+and resolves a row against them, which is how a configuration keeps its rows short:
+
+    1. values = template data + row
+    2. data   = generator(values) | template data | row   (rightmost wins)
+    3. data   = data | behavior(data)
+
+A row names the template it is an instance of and carries only what differs. A
+generator computes what follows from the row and returns an object, never text. A
+behavior runs after the merge, so it is the only thing that can rewrite a key the row
+itself carries. A row un-inherits a key its template carries by setting it to null.
+
+`Env.template_set(path)` builds one from a section of the loaded configuration, with
+the rest of the configuration offered to every generator.
+
+```python
+templates = Env.template_set()
+host = templates.resolve({'name': 'seven', **Env.glob_dict('hosts/Servers/seven')})
 ```
 
 The `py_*` evaluator, generator and template registry have been removed. Y2 owns its named template loader and object construction rules; its downstream YAML uses Jinja expressions and statements in the existing template sections.

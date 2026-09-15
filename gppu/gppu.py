@@ -422,6 +422,66 @@ def jinja_document(filename: str | Path, /, **data) -> str:
   """Render a template file to text, with its own directory as the search path."""
   filename = full_path(filename)
   return JinjaDocument(filename.parent).get_template(filename.name).render(**data)
+
+
+class TemplateSet:
+  """The macros, generators and templates of one configuration, compiled once.
+
+  A row names the template it is an instance of and carries only what differs. The
+  template is data; it may name the generator that computes what follows from the
+  row, and the behavior that follows from the finished object. Resolving a row is
+
+      1. values = template data + row
+      2. data   = generator(values) | template data | row
+      3. data   = data | behavior(data)
+
+  rightmost wins in step 2, so an explicit value always beats a computed one. A
+  behavior runs after the merge and so is the only thing that can rewrite a key the
+  row itself carries — what a set name stands for, what a flag implies.
+
+  A generator and a behavior return an object, never text; they compute and do not
+  decide. A row un-inherits a key its template carries by setting it to null.
+  """
+
+  RESERVED = ('template', 'generator', 'behavior')
+
+  def __init__(self, macros: str = '', generators: dict | None = None,
+               templates: dict | None = None, context: dict | None = None, **globals):
+    self.environment = JinjaEnvironment()
+    self.environment.globals.update(context or {})
+    self.environment.globals.update(globals)
+    self.environment.globals.update({name: getattr(builtins, name) for name in
+                                     ('dict', 'list', 'int', 'float', 'str', 'len', 'sorted', 'min', 'max', 'range')})
+    if macros:                                                                             # every macro the block
+      module = self.environment.from_string(macros).make_module()                          # defines, callable by
+      self.environment.globals.update({name: getattr(module, name)                         # name from any generator
+                                       for name in dir(module) if not name.startswith('_')})
+    self.templates = dict(templates or {})
+    self.generators = {name: self.environment.from_string(source)
+                       for name, source in (generators or {}).items()}
+
+  def _computed(self, name: str, values: dict) -> dict:
+    if name not in self.generators: raise KeyError(f'no generator named {name!r}')
+    computed = self.generators[name].render(**values)
+    if not isinstance(computed, dict): raise TypeError(f'generator {name!r} returned {type(computed).__name__}, not an object')
+    return computed
+
+  def values(self, row: dict) -> dict:
+    """The template's data with the row over it: what the generator is given."""
+    return self.templates.get(row.get('template'), {}) | row
+
+  def resolve(self, row: dict) -> dict:
+    values = self.values(row)
+    template = self.templates.get(row.get('template'), {})
+    computed = self._computed(values['generator'], values) if values.get('generator') else {}
+    data = computed | template | row
+    if name := values.get('behavior'): data = data | self._computed(name, data)
+    return {k: v for k, v in data.items() if k not in self.RESERVED and v is not None}
+
+  def resolve_all(self, rows) -> list[dict] | dict:
+    """Every row of a list, or every value of a mapping keyed by name."""
+    if isinstance(rows, dict): return {name: self.resolve(row) for name, row in rows.items()}
+    return [self.resolve(row) for row in rows]
 # endregion
 
 
@@ -1034,6 +1094,16 @@ class Env:
     """
     from .iot import _MqttConfig
     await _MqttConfig(config).run()
+
+  @staticmethod
+  def template_set(path: str = '', **context) -> 'TemplateSet':
+    """The macros, generators and templates of one section of the configuration.
+
+    A section that declares them resolves its own rows; the rest of the configuration
+    is offered to every generator, so one can reach the tables it computes against."""
+    section = Env.glob_dict(path) if path else Env.data
+    return TemplateSet(macros=section.get('macros', ''), generators=section.get('generators'),
+                       templates=section.get('templates'), context=Env.data | context)
 
   @staticmethod
   def glob(path, default=None) -> Any: return Env.data if path == '' else deepget(path, Env.data, default=default)
