@@ -18,8 +18,9 @@ STATES = frozenset({'pending', 'running', 'ok', 'fail'})
 class TaskMatrix(Widget):
   """A host-by-task selector whose cells become progress indicators.
 
-  Every applicable cell starts selected. Space or Enter toggles the current
-  task cell; using either key in the host column toggles that whole row.
+  Applicable cells start selected unless the caller says which ones do; the
+  application's configuration is where that belongs. Space or Enter toggles the
+  current task cell; using either key in the host column toggles that whole row.
   """
 
   DEFAULT_CSS = """
@@ -39,6 +40,7 @@ class TaskMatrix(Widget):
     tasks: Sequence[str],
     applicable: Iterable[tuple[str, str]],
     *,
+    selected: Iterable[tuple[str, str]] | None = None,
     id: str | None = None,
   ) -> None:
     super().__init__(id=id)
@@ -50,7 +52,7 @@ class TaskMatrix(Widget):
     }
     if unknown:
       raise ValueError(f'unknown host/task cells: {sorted(unknown)}')
-    self._selected = set(self.applicable)
+    self._selected = set(self.applicable if selected is None else selected) & self.applicable
     self._states = {cell: 'pending' for cell in self.applicable}
     self._host_status = {}
     self.locked = False
