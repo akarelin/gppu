@@ -14,6 +14,7 @@ import logging
 import sys
 import platform
 import asyncio
+import builtins
 import json
 import getpass
 import socket
@@ -399,6 +400,10 @@ class JinjaDocument(SandboxedEnvironment):
     self.filters['from_yaml'] = lambda name: dict_from_yml(full_path(name, search_path))
     self.filters['to_yaml'] = lambda value: yaml.safe_dump(value, default_flow_style=True).strip()
     self.globals['hostname'] = lambda: socket.gethostname().split('.')[0].casefold()
+    # The builtins a document needs to merge a row onto its template and count what
+    # it loops over; the same set Y2 gives its own templates.
+    self.globals.update({name: getattr(builtins, name) for name in
+                         ('dict', 'list', 'int', 'float', 'str', 'len', 'sorted', 'min', 'max', 'range')})
 
 
 @cache
