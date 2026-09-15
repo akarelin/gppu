@@ -1,7 +1,7 @@
 import pytest
 
 from jinja2 import StrictUndefined, UndefinedError
-from gppu import JinjaEnvironment, dict_from_yml, jinja_template
+from gppu import JinjaEnvironment, TemplateSet, dict_from_yml, jinja_template
 
 
 def test_native_command_keeps_payload_types():
@@ -61,3 +61,56 @@ def test_document_include_resolves_beside_the_template(tmp_path):
 def test_missing_document_input_is_an_error(tmp_path):
   (tmp_path / 'main.yaml.j2').write_text("key: {{ missing }}\n", encoding='utf-8')
   with pytest.raises(UndefinedError): dict_from_yml(tmp_path / 'main.yaml.j2')
+
+
+def template_set():
+  return TemplateSet(
+    macros="{% macro address(name, addr='') %}{{ addr or name }}.c.karel.in{% endmacro %}",
+    generators={'host': "{{ {'hostname': address(name, addr), 'shell': platforms[os].shell} }}"},
+    templates={'server': {'generator': 'host', 'os': 'debian', 'addr': '', 'repos': ['RAN']}},
+    platforms={'debian': {'shell': 'bash'}},
+  )
+
+
+def test_row_takes_its_template_and_what_the_generator_computes():
+  resolved = template_set().resolve({'name': 'seven', 'addr': '7', 'template': 'server'})
+  assert resolved['hostname'] == '7.c.karel.in'   # computed
+  assert resolved['repos'] == ['RAN']             # the template's
+  assert resolved['addr'] == '7'                  # the row's, over the template's
+  assert 'template' not in resolved and 'generator' not in resolved
+
+
+def test_a_row_beats_the_template_and_the_generator():
+  resolved = template_set().resolve({'name': 'five', 'template': 'server', 'repos': ['RAN', 'CRAP'],
+                                     'hostname': 'five.example'})
+  assert resolved['repos'] == ['RAN', 'CRAP']
+  assert resolved['hostname'] == 'five.example'
+
+
+def test_null_un_inherits_a_key_the_template_carries():
+  assert 'repos' not in template_set().resolve({'name': 'bare', 'template': 'server', 'repos': None})
+
+
+def test_resolve_all_takes_a_list_or_a_mapping():
+  rows = [{'name': 'seven', 'template': 'server'}, {'name': 'five', 'template': 'server'}]
+  assert [r['hostname'] for r in template_set().resolve_all(rows)] == ['seven.c.karel.in', 'five.c.karel.in']
+  keyed = {'seven': {'name': 'seven', 'template': 'server'}}
+  assert template_set().resolve_all(keyed)['seven']['hostname'] == 'seven.c.karel.in'
+
+
+def test_a_generator_must_return_an_object():
+  broken = TemplateSet(generators={'text': 'just words'}, templates={'t': {'generator': 'text'}})
+  with pytest.raises(TypeError): broken.resolve({'template': 't'})
+
+
+def test_an_unknown_generator_is_an_error():
+  with pytest.raises(KeyError): TemplateSet(templates={'t': {'generator': 'missing'}}).resolve({'template': 't'})
+
+
+def test_behavior_rewrites_what_the_row_itself_carries():
+  """A generator cannot touch a key the row carries; a behavior runs after the merge."""
+  resolved = TemplateSet(
+    generators={'sets': "{{ {'services': services | map('upper') | list} }}"},
+    templates={'host': {'behavior': 'sets'}},
+  ).resolve({'template': 'host', 'services': ['docker', 'nginx']})
+  assert resolved['services'] == ['DOCKER', 'NGINX']
