@@ -888,3 +888,60 @@ def test_a_folder_read_from_its_index_alone_keeps_what_is_no_longer_there(tmp_pa
 
   # A folder that is still live is still read live, and there the record goes.
   assert [row['gppu']['name'] for row in again.ls('notes')] == ['kept.md']
+
+
+def test_an_index_is_preserved_and_the_location_left_clean(tmp_path):
+  """Alex, 2026-09-17: an index that makes a folder unclean — a repository's working tree, a library
+  that will not sync a database — is preserved as a file in the lake rather than left where it is.
+  The walk still writes one while it works; this is what happens at the end of it."""
+  repo, lake = tmp_path / 'RAN', tmp_path / 'Lake'
+  repo.mkdir()
+  lake.mkdir()
+  (repo / 'note.md').write_bytes(b'---\ntitle: In a repo\n---\nText')
+  fs = GppuFileSystem(repo)
+  fs.ls(recurse=True)
+  assert index(repo).is_file(), 'the walk writes one while it works'
+
+  kept = fs.preserve(lake)
+  assert kept is not None and kept.parent == lake
+  assert kept.name.endswith('RAN.gppufs.sqlite') and kept.name[:6].isdigit()
+  assert sorted(path.name for path in repo.iterdir()) == ['note.md'], 'the location is left clean'
+  assert kept.read_bytes()
+  assert fs.preserve(lake) is None, 'there is nothing left to preserve'
+
+
+def test_a_store_that_lists_enough_is_identified_without_its_bytes(monkeypatch):
+  """A remote entry is identified by its name and its type; its bytes are never fetched to list it."""
+  store = MemoryFileSystem()
+  store.store.clear()
+  store.pseudo_dirs.clear()
+  for name, body in (('/library/notes.md', b'# notes'), ('/library/rows.csv', b'when,what' + b'\n')):
+    store.pipe_file(name, body)
+  store.makedirs('/library/deeper', exist_ok=True)
+  monkeypatch.setattr(MemoryFileSystem, 'listing_is_enough', True, raising=False)
+  def refuse(*_args, **_kwargs):
+    raise AssertionError('listing a store that lists enough read its bytes')
+  monkeypatch.setattr(MemoryFileSystem, 'cat_file', refuse)
+  monkeypatch.setattr(MemoryFileSystem, 'get_file', refuse)
+
+  fs = GppuFileSystem('memory://library')
+  listed = {row['name'].rsplit('/', 1)[-1]: row['gppu'] for row in fs.ls_sync()}
+  assert set(listed) == {'notes.md', 'rows.csv', 'deeper'}
+  assert listed['notes.md']['handlers'] == ['markdown'], 'a name and a type are enough to identify'
+  assert listed['rows.csv']['handlers'] == ['csv']
+  assert listed['deeper']['handlers'] == ['folder']
+  assert listed['notes.md']['probed'] is False, 'nothing is probed by a listing'
+  assert listed['notes.md']['path'].endswith('notes.md'), 'the row names the entry, not a stand-in'
+  assert listed['rows.csv']['size'] == 10, 'the size is the one the store listed'
+
+
+def test_an_m365_address_names_its_tenant_service_site_and_drive():
+  from gppu.handlers import SharePointFileSystem
+  assert SharePointFileSystem._get_kwargs_from_urls('m365://karelin/sharepoint/sites/Suntrust/Statements') == {
+    'tenant': 'karelin', 'service': 'sharepoint', 'site': 'sites/Suntrust', 'drive': 'Statements'}
+  assert SharePointFileSystem._get_kwargs_from_urls('m365://karelin/onedrive/personal/alex_karelin_com/Documents') == {
+    'tenant': 'karelin', 'service': 'onedrive', 'site': 'personal/alex_karelin_com', 'drive': 'Documents'}
+  with pytest.raises(ValueError, match='m365://tenant/service/site/drive'):
+    SharePointFileSystem._get_kwargs_from_urls('m365://karelin/sharepoint')
+  with pytest.raises(ValueError, match='token'):
+    SharePointFileSystem(tenant='karelin', service='sharepoint', site='sites/Suntrust', drive='Statements')

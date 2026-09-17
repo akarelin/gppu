@@ -186,6 +186,44 @@ Return the first case-sensitive FileIndexer pattern matching `name`.
 
 Return the name-only ignored rule for one archive member.
 
+## `SqliteDatabase(path: 'Path', tables: 'tuple[str, ...]', columns: 'dict[str, tuple[str, ...]]') -> None`
+
+What one SQLite file holds, read once and never written.
+
+### `SqliteDatabase.metadata`
+
+The tables this database has, and the columns of each.
+
+## `SqliteHandler(metadata: 'Mapping[str, Any] | None' = None, *, strict: 'bool' = False) -> 'None'`
+
+Identify a SQLite file and read what it holds: its tables and their columns.
+
+Alex's rule for these, from his own index architecture: an old location index is discovered material,
+"read like .rar files, never written" and "read once via handler, never reopened". So an index that
+stands beside files now sealed in an archive is still known — what it was an index of, and what it
+recorded — without opening the archive beside it.
+
+It is opened immutable, which is what keeps SQLite from writing the `-wal` and `-shm` companions
+beside it; those companions churning in a synced folder is a thing he has had to chase before.
+Nothing here writes, and no row is read: the tables and their columns are what a file is, and what
+is in them is the file's content, which is not a handler's business.
+
+### `SqliteHandler.identify(self, path: 'Path') -> 'bool'`
+
+Recognize a SQLite file in either call mode.
+
+### `SqliteHandler.identify_sync(self, path: 'Path') -> 'bool'`
+
+Whether this file opens with SQLite's own header. The name is not asked; the bytes are.
+
+### `SqliteHandler.__call__(self, path: 'Path') -> 'tuple[FileStats | None, SqliteDatabase | HandlerError]'`
+
+Read one SQLite file in either call mode.
+
+### `SqliteHandler.call_sync(self, path: 'Path') -> 'tuple[FileStats, SqliteDatabase]'`
+
+Return the file's statistics and the tables and columns it holds.
+
 ## `FileHandler(metadata: 'Mapping[str, Any] | None' = None, *, strict: 'bool' = False) -> 'None'`
 
 Public base for a caller-selected set of domain handler mixins.
@@ -1106,6 +1144,17 @@ on different filesystems are copied and then removed, because there is no other 
 The file beside each location is a cache and is treated as one: this location forgets what moved,
 and the other identifies what arrived when it next lists. The index is what carries the reading.
 
+### `GppuFileSystem.preserve(self, folder: 'str | Path') -> 'Path | None'`
+
+Put this location's index in `folder` with its provenance in the name, and leave the location clean.
+
+Alex, 2026-09-17: an index that makes a folder unclean or unsynced — a repository's working tree, a
+library that will not sync a database — is preserved as a file in the lake rather than left where it
+is, and there it is a record, indexed as a file, not opened. The walk still writes one while it
+works; this is what happens at the end of the walk.
+
+Where the lake is is the caller's: this library knows what the file is, not where his lake keeps it.
+
 ## `PostgresFileSystem(*args, **kwargs)`
 
 A Postgres database read as folders and entries, so gppufs can index one like any other place.
@@ -1128,6 +1177,34 @@ The schemas of a database, or the tables and views of a schema.
 ### `PostgresFileSystem.info(self, path: 'str' = '', **kwargs: 'Any') -> 'dict'`
 
 What one schema or one entry is.
+
+## `SharePointFileSystem(*args, **kwargs)`
+
+A SharePoint or OneDrive drive read as folders and files, so gppufs can index one like any other place.
+
+The address is Alex's, written down in his FileIndexer inventory: `m365://$tenant/$service/$path`,
+with `sharepoint` and `onedrive` as sibling services of a tenant. The last name of the path is
+the drive and what comes before it is the site, so a document library is a Location the way a
+Synology share is one.
+
+    GppuFileSystem('m365://karelin/sharepoint/teams/Alex/Finance', token=lambda: '...')
+
+`token` is the caller's: which app registration reaches which tenant is his configuration and
+not this library's. Nothing here writes. A drive is read, never written to.
+
+A listing carries each item's SharePoint metadata with it, in the call that lists the folder:
+the content type and every custom column come back with the item, so what a library says about a
+document is in the index without the document being opened. That is also why this store sets
+`listing_is_enough`: its listing gives a name, a type and a size, which is what identification
+asks about, and only a file that is probed is ever fetched.
+
+### `SharePointFileSystem.ls(self, path: 'str' = '', detail: 'bool' = True, **kwargs: 'Any') -> 'list'`
+
+What is directly in one folder of the drive, each entry carrying its SharePoint metadata.
+
+### `SharePointFileSystem.info(self, path: 'str' = '', **kwargs: 'Any') -> 'dict'`
+
+What one item is, with its content type and its custom columns.
 
 ## `GppuCatalog(*args, **kwargs)`
 
