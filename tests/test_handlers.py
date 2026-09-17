@@ -1797,3 +1797,28 @@ def test_a_gemini_cli_chat_is_read_as_itself(tmp_path: Path) -> None:
   assert [len(one.turns) for one in readings] == [1, 1]
   assert readings[0].turns[0].text == 'first'
   assert all(one.span is not None for one in readings)
+
+
+def test_the_session_cache_does_not_grow_without_bound(tmp_path: Path) -> None:
+  """A walk reads each session once, so an unbounded cache holds every transcript of the location.
+  On a folder of 166,040 sessions that is the folder, in memory, and a run of it stops writing."""
+
+  class TreeHandler(FileHandler, SessionHandler):
+    pass
+
+  handler = TreeHandler()
+  handler._session_cache_limit = 8
+  for number in range(20):
+    path = tmp_path / f'{number}.jsonl'
+    path.write_text(json.dumps(
+      {'sessionId': f'session-{number}', 'type': 'user', 'uuid': f'u{number}',
+       'timestamp': '2026-09-17T00:00:00Z', 'message': {'role': 'user', 'content': 'hello'}}),
+      encoding='utf-8')
+    handler.call_sync(path)
+    assert len(handler._session_cache) <= 8
+
+  # What is still cached is what was read last, and a session read again is still read correctly.
+  last = tmp_path / '19.jsonl'
+  assert last in handler._session_cache
+  assert handler.call_sync(last)[1].uid == 'session-19'
+  assert handler.call_sync(tmp_path / '0.jsonl')[1].uid == 'session-0'
