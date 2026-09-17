@@ -5157,6 +5157,7 @@ class GppuFileSystem(AbstractFileSystem):
     self._memory: dict[str, sqlite3.Connection] = {}   # a remote store's index, held for this instance
     self._scratch: tempfile.TemporaryDirectory | None = None   # where a listed remote entry is asked about
     self._indexes: dict[str, str | None] = {}   # folder -> the index it holds, asked of the store once
+    self._standins: dict[str, str] = {}         # folder -> its slot among the listed entries asked about
     self._locations = dict(locations) if locations else {}   # folder -> the location that is there
     self._handlers = _MetadataHandlers({"locations": self._locations})
     self._database_path(self.root)  # Validate the required location name.
@@ -5802,8 +5803,21 @@ class GppuFileSystem(AbstractFileSystem):
     """
     if self._scratch is None:
       self._scratch = tempfile.TemporaryDirectory(prefix='gppufs-listing-')
-    target = Path(self._scratch.name) / (key if key != '.'
-                                         else PurePosixPath(self.root).name or 'location')
+    name = PurePosixPath(key).name if key != '.' else PurePosixPath(self.root).name or 'location'
+    parent = PurePosixPath(key).parent.as_posix()
+    if parent not in self._standins:
+      self._standins[parent] = str(len(self._standins))
+    # A store can hold a name this host cannot spell — a trailing space or dot, a reserved character,
+    # a path longer than this filesystem allows. The stand-in keeps the name as far as the host
+    # permits, because a handler reads a span out of a filename, and each folder gets a slot of its
+    # own so two entries of the same name in different folders do not become one.
+    stem, dot, suffix = name.rpartition('.')
+    spelled = ''.join('_' if letter in UNSAFE else letter for letter in name).rstrip(' .')
+    if not spelled:
+      spelled = 'entry'
+    if len(spelled) > NAME_LIMIT:
+      spelled = spelled[:NAME_LIMIT - len(suffix) - 1] + dot + suffix if dot else spelled[:NAME_LIMIT]
+    target = Path(self._scratch.name) / self._standins[parent] / spelled
     target.parent.mkdir(parents=True, exist_ok=True)
     if item['type'] == 'directory':
       target.mkdir(exist_ok=True)
