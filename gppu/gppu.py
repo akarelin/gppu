@@ -1158,13 +1158,15 @@ class Env:
 
   @staticmethod
   def template_set(path: str = '', **context) -> 'TemplateSet':
-    """The macros, generators and templates of one section of the configuration.
+    """The macros, generators and templates of one table of the configuration.
 
-    A section that declares them resolves its own rows; the rest of the configuration
-    is offered to every generator, so one can reach the tables it computes against."""
-    section = Env.glob_dict(path) if path else Env.data
-    return TemplateSet(macros=section.get('macros', ''), generators=section.get('generators'),
-                       templates=section.get('templates'), context=Env.data | context)
+    A table that declares them resolves its own rows; the root's macros are offered to
+    every table, and the rest of the configuration to every generator, so one can reach
+    the tables it computes against."""
+    table = Env.glob_dict(path) if path else Env.data
+    macros = chr(10).join(block for block in (Env.data.get('macros', '') if path else '', table.get('macros', '')) if block)
+    return TemplateSet(macros=macros, generators=table.get('generators'),
+                       templates=table.get('templates'), context=Env.data | context)
 
   @staticmethod
   def glob(path, default=None) -> Any: return Env.data if path == '' else deepget(path, Env.data, default=default)

@@ -1,5 +1,5 @@
 # An app's own configuration. The first line brings the shared configuration in; the
-# app's own section follows. Nothing else is needed for the app to know every host,
+# app's own key follows. Nothing else is needed for the app to know every host,
 # connection and location at load.
 !include ../_config/_config.yaml
 

@@ -4,13 +4,13 @@ Environment is the basic level, with no configuration file: platform, host, user
 os and the trace rules. Once `Environment.from_env` has loaded the app's configuration —
 and through its `!include` of the shared one, everything the fleet knows — lookups into
 it are strict, and the questions a utility used to answer for itself are rules of the
-configuration — its macros — reached as Environment.<section>.<rule>(...): where a
+configuration — its macros — reached as Environment.<table>.<rule>(...): where a
 location is on a host, what its address is on a connection, which path an address means
 here, how a command runs on a host. gppu knows no rule by name.
 
-State holds what the configuration constructs. Both are single instances, as in Y2. Every section carrying `templates` is a
-table; every other mapping in it is a row keyed by its uid. A row resolves through the
-section's TemplateSet — the template builds the default dict from the uid, the row
+State holds what the configuration constructs. Both are single instances, as in Y2. Every key of the configuration carrying
+`templates` is a table; every other mapping under it is a row keyed by its uid. A row
+resolves through the table's TemplateSet — the template builds the default dict from the uid, the row
 updates it with what differs — is checked against the tables it references, and is
 built by the class its `kind` names — the app that cares registers it, any other app
 gets a plain _DC carrying the kind. A row marked `service` registers in
@@ -28,7 +28,7 @@ from typing import Any
 
 from .gppu import TRACE_RULES, Env, TemplateSet, _DC, deepget, detect_os
 
-SECTION_KEYS = ('macros', 'generators', 'templates')   # what a table section holds beside its rows
+TABLE_KEYS = ('macros', 'generators', 'templates')   # what a table holds beside its rows
 _MISSING = object()
 
 
@@ -75,19 +75,19 @@ class _Environment:
     if not isinstance(result, dict): raise TypeError(f'{path} is not a mapping')
     return result
 
-  # -- rules: Environment.<section>.<rule>(...) is a macro of that table's section ----------
-  def __getattr__(self, section: str):
-    if section in State.templates: return _Rules(section, State.templates[section])
-    raise AttributeError(f'no table named {section!r}')
+  # -- rules: Environment.<table>.<rule>(...) is a macro of that table ---------------------
+  def __getattr__(self, table: str):
+    if table in State.templates: return _Rules(table, State.templates[table])
+    raise AttributeError(f'no table named {table!r}')
 
 
 class _Rules:
-  def __init__(self, section: str, templates: TemplateSet):
-    self._section, self._globals = section, templates.environment.globals
+  def __init__(self, table: str, templates: TemplateSet):
+    self._table, self._globals = table, templates.environment.globals
 
   def __getattr__(self, name: str):
     rule = self._globals.get(name)
-    if not callable(rule): raise AttributeError(f'{self._section} defines no rule {name!r}')
+    if not callable(rule): raise AttributeError(f'{self._table} defines no rule {name!r}')
     return rule
 
 
@@ -103,30 +103,30 @@ class _State:
     self.kinds.update(kinds)
 
   def reset(self) -> None:
-    for section in self.tables: delattr(self, section)
+    for table in self.tables: delattr(self, table)
     self.tables, self.templates, self.services = {}, {}, {}
 
-  def rows(self, section: str) -> dict[str, dict]:
-    """The rows of a table section: every mapping in it that is not macros, generators or templates."""
-    return {uid: row for uid, row in Env.glob_dict(section).items() if uid not in SECTION_KEYS and isinstance(row, dict)}
+  def rows(self, table: str) -> dict[str, dict]:
+    """The rows of a table: every mapping under its key that is not macros, generators or templates."""
+    return {uid: row for uid, row in Env.glob_dict(table).items() if uid not in TABLE_KEYS and isinstance(row, dict)}
 
   def load(self) -> None:
     """Construct every table of the loaded configuration."""
     self.reset()
-    sections = [name for name, content in Env.data.items() if isinstance(content, dict) and 'templates' in content]
-    tables = {name: self.rows(name) for name in sections}   # what a macro sees under a table's name: its rows,
-    for section in sections:                                # resolved once the table is, so a table resolved
-      if hasattr(self, section): raise ValueError(f'{section}: a table cannot be named after a State member')
-      templates = Env.template_set(section, Environment=Environment, State=self, **tables)   # later sees what an
-      resolved = {uid: templates.resolve({'uid': uid, **row}) for uid, row in tables[section].items()}   # earlier one computed
-      tables[section].clear(); tables[section].update(resolved)
+    names = [name for name, content in Env.data.items() if isinstance(content, dict) and 'templates' in content]
+    rows = {name: self.rows(name) for name in names}   # what a macro sees under a table's name: its rows, resolved
+    for name in names:                                  # once the table is, so a table resolved later sees what an
+      if hasattr(self, name): raise ValueError(f'{name}: a table cannot be named after a State member')   # earlier one computed
+      templates = Env.template_set(name, Environment=Environment, State=self, **rows)
+      resolved = {uid: templates.resolve({'uid': uid, **row}) for uid, row in rows[name].items()}
+      rows[name].clear(); rows[name].update(resolved)
       table = {}
       for uid, data in resolved.items():
         obj = self.kinds.get(data.get('kind'), _DC)(data=data)   # the app that cares registers the class
         table[uid] = obj
         if data.get('service'): self.services[uid] = obj
-      self.tables[section], self.templates[section] = table, templates
-      setattr(self, section, table)
+      self.tables[name], self.templates[name] = table, templates
+      setattr(self, name, table)
 
 
 Environment = _Environment()
