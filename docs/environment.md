@@ -22,7 +22,7 @@ browse:
 
 ## Tables and rows
 
-A key of the configuration that carries `templates` is a table. Every other mapping under it is a row keyed by its uid; `macros` and `generators` beside them belong to the table. Tables are constructed in the order the configuration lists them, and a table constructed later sees an earlier one resolved, so a location's rules may read what a connection's template computed.
+A key of the configuration that carries `templates` is a table. Every other mapping under it is a row keyed by its uid; `macros` and `generators` beside them belong to the table, and a `*_templates` block of named templates to the whole configuration. Tables are constructed in the order the configuration lists them, and a table constructed later sees an earlier one resolved, so a location's rules may read what a connection's template computed.
 
 Per row: the templates it names build the default dict from the uid; the row updates it with what differs; the dict is checked against the tables the templates say it references; the object is built by the class the dict's `kind` names — the app that cares registers it with `State.register(Location=Location)`, any other app gets a plain `_DC` carrying the kind; a row marked `service: true` also registers in `State.services`. Construction runs once, at startup.
 

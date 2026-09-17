@@ -51,15 +51,15 @@ macros: |
   {{- hosts[host].mount ~ '/' ~ (location.at if 'at' in location else box.dir ~ '/' ~ served(location, 'smb') | replace(' ', '')) -}}
   {% endmacro %}
 
-  {# A location's address on one scheme, in the grammar resources.yaml declares for it,
-     filled from the serving box's row, the share and the path: smb://s1.karel.in/SD.Lake,
+  {# A location's address on one scheme: the grammar its resource type names, rendered
+     with the serving box's row, the scheme, the share and the path — smb://s1.karel.in/SD.Lake,
      sd://SD.Lake, m365://karelin/alex/onedrive/Documents. Empty when not served so. #}
   {% macro uri(uid, scheme, path='') %}
   {%- set location = locations[uid] -%}
   {%- if served(location, scheme) -%}
   {%- set box = connections[serving(location, scheme)] -%}
-  {%- set stems = dict(box, share=served(location, scheme), path=path) -%}
-  {{- resources[scheme].uri.format(**stems).rstrip('/') -}}
+  {%- set stems = dict(box, scheme=scheme, share=served(location, scheme), path=path) -%}
+  {{- render_template(resources[scheme].uri, **stems) | trim('/') -}}
   {%- endif -%}
   {% endmacro %}
 

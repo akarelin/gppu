@@ -1,59 +1,77 @@
 # Resource types — one row per URI scheme: the resource class an address of that scheme
-# is built from, and the grammar of the address in the stems of
-# CRAP/_config/topology/connections.yaml.
+# is built from, and the grammar it names. A family of schemes is one template, so a row of
+# the family is only its template.
 #
 #   class  the resource class for an address of this scheme
-#   uri    the address grammar; filled from the connection's row, the share and the path
+#   uri    the grammar of the address, by name — rendered by the locations rules with the
+#          serving connection's row, the scheme, the share and the path
 #
-# A family of schemes is one template: its grammar is computed from the row's uid, so a
-# row of the family is only its template. A connection lists the schemes it serves in
-# `services`; a location's place key names the scheme and the connection: sd/s1: SD.Lake
-# is served on sd by s1.
+# A connection lists the schemes it serves in `services`; a location's place key names
+# the scheme and the connection: sd/s1: SD.Lake is served on sd by s1.
+
+# ~~ The grammars, in the stems of CRAP/_config/topology/connections.yaml
+uri_templates:
+  box:       "smb://{{ host }}/{{ share }}/{{ path }}"
+  synced:    "sd://{{ share }}/{{ path }}"
+  volume:    "{{ scheme }}://{{ host }}/volume1/{{ share }}/{{ path }}"
+  home:      "ssh://{{ host }}/homes/{{ username }}/{{ path }}"
+  sftp:      "ssh://{{ host }}/{{ path }}"
+  file:      "file://{{ host }}/{{ path }}"
+  graph:     "m365://{{ tenant }}/{{ alias }}/{{ scheme }}/{{ share }}/{{ path }}"
+  google:    "google://{{ tenant }}/{{ scheme }}/{{ share }}/{{ path }}"
+  atlassian: "atlassian://{{ tenant }}/{{ scheme }}/{{ share }}/{{ path }}"
+  storage:   "gcp://{{ project }}/storage/{{ share }}/{{ path }}"
+  blob:      "azure://{{ account }}/{{ share }}/{{ path }}"
+  account:   "{{ scheme }}://{{ share }}/{{ path }}"
+  workspace: "slack://{{ workspace }}/{{ share }}/{{ path }}"
+  repos:     "github://{{ user }}/{{ share }}/{{ path }}"
+  database:  "{{ scheme }}://{{ host }}/{{ share }}/{{ path }}"
 
 templates:
   resource: &resource
     kind: ResourceType
+    refs: {uri: uri_templates}
 
   # A Microsoft 365 service of a tenant, named by its row: sharepoint, onedrive, teams...
   graph:
     <<: *resource
     class: Graph
-    uri: "{{ 'm365://{tenant}/{alias}/' ~ uid ~ '/{share}/{path}' }}"
+    uri: graph
 
   # A Google service of an account, named by its row: drive, photos, mail.
   google:
     <<: *resource
     class: Google
-    uri: "{{ 'google://{tenant}/' ~ uid ~ '/{share}/{path}' }}"
+    uri: google
 
   # An Atlassian product of a tenant, named by its row: jira, confluence.
   atlassian:
     <<: *resource
     class: Atlassian
-    uri: "{{ 'atlassian://{tenant}/' ~ uid ~ '/{share}/{path}' }}"
+    uri: atlassian
 
   # A share on a Synology volume, reached over the scheme the row names: scp, rsync.
   volume:
     <<: *resource
     class: SynologyVolume
-    uri: "{{ uid ~ '://{host}/volume1/{share}/{path}' }}"
+    uri: volume
 
   # A database on a box, reached over the scheme the row names: pg, neo4j.
   database:
     <<: *resource
     class: Database
-    uri: "{{ uid ~ '://{host}/{share}/{path}' }}"
+    uri: database
 
 # -- Files on a box
 smb:
   template: resource
   class: SmbShare
-  uri: "smb://{host}/{share}/{path}"
+  uri: box
 
 sd:
   template: resource
   class: SynologyDrive
-  uri: "sd://{share}/{path}"
+  uri: synced
 
 scp:
   template: volume
@@ -64,17 +82,17 @@ rsync:
 sftp:
   template: resource
   class: Sftp
-  uri: "ssh://{host}/{path}"
+  uri: sftp
 
 home:
   template: resource
   class: Sftp
-  uri: "ssh://{host}/homes/{username}/{path}"
+  uri: home
 
 file:
   template: resource
   class: LocalFolder
-  uri: "file://{host}/{path}"
+  uri: file
 
 # -- Cloud files and messages
 sharepoint:
@@ -104,37 +122,37 @@ mail:
 storage:
   template: resource
   class: GoogleCloudStorage
-  uri: "gcp://{project}/storage/{share}/{path}"
+  uri: storage
 
 blob_storage:
   template: resource
   class: AzureBlob
-  uri: "azure://{account}/{share}/{path}"
+  uri: blob
 
 files:
   template: resource
   class: Dropbox
-  uri: "dropbox://{share}/{path}"
+  uri: account
 
 channels:
   template: resource
   class: Slack
-  uri: "slack://{workspace}/{share}/{path}"
+  uri: workspace
 
 chats:
   template: resource
   class: Telegram
-  uri: "telegram://{share}/{path}"
+  uri: account
 
 repos:
   template: resource
   class: GitRepository
-  uri: "github://{user}/{share}/{path}"
+  uri: repos
 
 vault:
   template: resource
   class: ObsidianVault
-  uri: "obsidian://{share}/{path}"
+  uri: account
 
 # -- Databases and work
 pg:

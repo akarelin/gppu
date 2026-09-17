@@ -68,6 +68,14 @@ sd-lake:
   sd/s1: SD.Lake
 ```
 
+A `*_templates` block holds named templates that render later, written in the same
+Jinja — the grammar of an address, the payload of a command — and a row names one:
+`uri: graph`. A rule renders it with what it knows then,
+`render_template(resources[scheme].uri, host=..., share=..., path=...)`. It is data until
+rendered, so the strictness of a template value does not apply to it. The blocks belong
+to the configuration as a whole, as Y2's do: a name is unique across it, and a rule of
+one table may render a template another table declares.
+
 A template declares what its rows reference with `refs`, field to table. A field's value
 is a row of the table it names — one, each of a list, or each key of a mapping — and a
 field written with `*` is a key pattern: every key of the row shaped `smb/<name>`

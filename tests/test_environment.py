@@ -67,6 +67,15 @@ def test_refs_check_values_lists_keys_and_key_patterns():
     templates.resolve({'uid': 'bad', 'template': 'host', 'platform': 'plan9'})
 
 
+def test_a_named_template_renders_later_with_what_a_rule_knows():
+  templates = TemplateSet(named={'uri_templates': {'box': 'smb://{{ host }}/{{ share }}/{{ path }}'}},
+                          templates={'resource': {'refs': {'uri': 'uri_templates'}}})
+  assert templates.resolve({'uid': 'smb', 'template': 'resource', 'uri': 'box'})['uri'] == 'box'   # data until rendered
+  assert templates.render_template('box', host='s1.karel.in', share='SD', path='x') == 'smb://s1.karel.in/SD/x'
+  with pytest.raises(KeyError, match="smb: uri names 'nope', which is not in uri_templates"):
+    templates.resolve({'uid': 'smb', 'template': 'resource', 'uri': 'nope'})
+
+
 def test_refs_merge_across_stacked_templates():
   templates = TemplateSet(templates={'a': {'refs': {'x': 'xs'}}, 'b': {'refs': {'y': 'ys'}}}, xs={'1': {}}, ys={'2': {}})
   with pytest.raises(KeyError, match="y names '3'"):
@@ -78,7 +87,7 @@ def test_refs_merge_across_stacked_templates():
 def test_every_table_is_constructed_and_registered(on):
   on('alex-laptop', 'windows')
   assert set(State.tables) == {'resources', 'connections', 'hosts', 'locations'}
-  assert State.resources['smb']['class'] == 'SmbShare'
+  assert State.resources['smb']['class'] == 'SmbShare' and State.resources['smb']['uri'] == 'box'
   assert State.locations is State.tables['locations']
   assert isinstance(State.locations['sd-lake'], _DC)
   assert State.hosts['seven']['hostname'] == '7.c.karel.in' and State.hosts['trix']['hostname'] == 'trix.c.karel.in'
