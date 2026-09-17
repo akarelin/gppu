@@ -365,14 +365,30 @@ def template_populate(o, data: dict = {}, excludes:list = []) -> Any:
   return __tp(_, data)
 
 
-def to_date(o: object) -> date:
-  """A date from what a configuration writes: a date, a datetime, YYYY-MM-DD with or without
+class Date(date):
+  """A date a template reads by name: date.YYYY, date.YY, date.MM, date.DD, date.YYMMDD, date.ISO."""
+  @property
+  def YYYY(self) -> str: return f'{self.year:04d}'
+  @property
+  def YY(self) -> str: return f'{self.year % 100:02d}'
+  @property
+  def MM(self) -> str: return f'{self.month:02d}'
+  @property
+  def DD(self) -> str: return f'{self.day:02d}'
+  @property
+  def YYMMDD(self) -> str: return self.YY + self.MM + self.DD
+  @property
+  def ISO(self) -> str: return self.isoformat()
+
+
+def to_date(o: object) -> Date:
+  """A Date from what a configuration writes: a date, a datetime, YYYY-MM-DD with or without
   a time, or YYMMDD. Anything else is an error, never a guess."""
-  if isinstance(o, datetime): return o.date()
-  if isinstance(o, date): return o
-  s = str(o).strip()
-  if re.fullmatch(r'\d{6}', s): return datetime.strptime(s, '%y%m%d').date()
-  return datetime.fromisoformat(s).date()
+  if isinstance(o, datetime): o = o.date()
+  if not isinstance(o, date):
+    s = str(o).strip()
+    o = datetime.strptime(s, '%y%m%d').date() if re.fullmatch(r'\d{6}', s) else datetime.fromisoformat(s).date()
+  return Date(o.year, o.month, o.day)
 
 
 def jinja_helpers() -> dict:
