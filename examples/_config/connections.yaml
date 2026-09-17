@@ -39,7 +39,7 @@ templates:
   m365:
     <<: *_
     tenant: "{{ uid }}"
-    services: [sharepoint, onedrive, teams, exchange, onenote]
+    services: [sharepoint, onedrive, teams, exchange, onenote, contacts]
     urls:
       sharepoint: "https://{slug}.sharepoint.com"
       onedrive: "https://{slug}-my.sharepoint.com"

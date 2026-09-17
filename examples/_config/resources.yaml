@@ -26,11 +26,22 @@ uri_templates:
   workspace: "slack://{{ workspace }}/{{ share }}/{{ path }}"
   repos:     "github://{{ user }}/{{ share }}/{{ path }}"
   database:  "{{ scheme }}://{{ host }}/{{ share }}/{{ path }}"
+  namespace: "{{ scheme }}://{{ path }}"
 
 templates:
   resource: &resource
     kind: ResourceType
     refs: {uri: uri_templates}
+
+  # A namespace of its own: no box serves it, so its address is the scheme and the path
+  # inside it. The lake is one; where it physically is on a host is its location's place,
+  # and every physical address of a thing in it is a mirror of its lake:// address.
+  # `root` names the location the namespace starts at, when it has one.
+  namespace:
+    <<: *resource
+    refs: {uri: uri_templates, root: locations}
+    uri: namespace
+    logical: true
 
   # A Microsoft 365 service of a tenant, named by its row: sharepoint, onedrive, teams...
   graph:
@@ -101,6 +112,9 @@ sharepoint:
 onedrive:
   template: graph
 
+contacts:
+  template: graph
+
 teams:
   template: graph
 
@@ -163,3 +177,24 @@ jira:
 
 confluence:
   template: atlassian
+
+# -- Namespaces of their own
+# The lake of text: every document the dumpers write. lake://Contacts/aaron-crayford.md is
+# the document wherever the lake is — D:\TextLake here, the share under Dagster.
+lake:
+  template: namespace
+  class: Lake
+  root: lake
+
+# The permalink of someone, minted once and independent of every source they were seen in:
+# person://aaron-crayford. It addresses the man, not a contact card and not a file; a contact
+# in a mailbox is one of the sources that mention him.
+person:
+  template: namespace
+  class: Person
+  provides: entities
+
+company:
+  template: namespace
+  class: Company
+  provides: entities

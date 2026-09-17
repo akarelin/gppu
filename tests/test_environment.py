@@ -86,7 +86,7 @@ def test_refs_merge_across_stacked_templates():
 # region State: tables constructed from the example configuration
 def test_every_table_is_constructed_and_registered(on):
   on('alex-laptop', 'windows')
-  assert set(State.tables) == {'resources', 'connections', 'hosts', 'locations'}
+  assert set(State.tables) == {'resources', 'connections', 'hosts', 'locations', 'entities', 'sources'}
   assert State.resources['smb']['class'] == 'SmbShare' and State.resources['smb']['uri'] == 'box'
   assert State.locations is State.tables['locations']
   assert isinstance(State.locations['sd-lake'], _DC)
@@ -130,7 +130,8 @@ def test_places_follow_the_rules_per_platform(on):
   assert Environment.locations.place('sd-agents', 'seven', 'debian') == '/mnt/S1/SD.agents'
   assert Environment.locations.place('yellow-config', 'seven', 'debian') is None       # seven is not connected to yellow
   assert Environment.locations.place('yellow-config', 'iot', 'debian') == '/mnt/yellow/config'
-  assert list(Environment.locations.on_host('alex-pc')) == ['profile', 'dev', 'sd', 'sd-lake', 'sd-agents', 'onedrive', 'ran', 'obsidian']
+  assert list(Environment.locations.on_host('alex-pc')) == ['profile', 'dev', 'sd', 'sd-lake', 'sd-agents', 'onedrive', 'ran',
+                                                            'obsidian', 'lake', 'karelin-contacts', 'karelin-contact-photos']
 
 
 def test_an_address_resolves_to_a_path_on_this_host(on):
@@ -140,6 +141,53 @@ def test_an_address_resolves_to_a_path_on_this_host(on):
   assert Environment.locations.folder('sd-lake', 'inbox') == 'D:/SD.Lake/inbox'
   assert Environment.locations.local_of('smb://s1.karel.in/Public/x', 'seven', 'debian') == '/mnt/Public/x'
   assert Environment.locations.uri('sd-lake', 'sd') == 'sd://SD.Lake' and Environment.locations.uri('public', 'sd') is None
+
+
+def test_a_namespace_is_its_own_scheme_and_what_is_in_it_follows(on):
+  on('alex-laptop', 'windows')
+  assert State.locations['lake']['canonical'] == 'lake://' and State.locations['lake']['local'] == 'D:/TextLake'
+  assert State.locations['karelin-contacts']['canonical'] == 'm365://karelin/alex/contacts'   # served at the root of the service
+  assert State.locations['karelin-contacts']['mirrors'] == ['lake://M365/karelin/users/alex@karelin.com/contacts']
+  assert State.locations['karelin-contact-photos']['canonical'] == 'm365://karelin/alex/onedrive/Documents/Contact Photos'
+
+
+def test_a_location_inside_another_is_where_that_one_is(on):
+  on('alex-laptop', 'windows')
+  assert State.locations['karelin-contacts']['inside'] == 'lake'
+  assert Environment.locations.place('karelin-contacts') == 'D:/TextLake/M365/karelin/users/alex@karelin.com/contacts'
+  assert Environment.locations.place('karelin-contacts', 'trix', 'debian') == \
+         '/mnt/S1/Lake/text/M365/karelin/users/alex@karelin.com/contacts'
+  assert Environment.locations.place('karelin-contact-photos', 'trix', 'debian') is None    # trix has no OneDrive client
+
+
+def test_the_same_address_is_a_path_on_the_workstation_and_on_the_server(on):
+  on('alex-laptop', 'windows')
+  for address, laptop, trix in (
+    ('lake://Person/aaron-mendes.md', 'D:/TextLake/Person/aaron-mendes.md', '/mnt/S1/Lake/text/Person/aaron-mendes.md'),
+    ('m365://karelin/alex/contacts/default/x.json',
+     'D:/TextLake/M365/karelin/users/alex@karelin.com/contacts/default/x.json',
+     '/mnt/S1/Lake/text/M365/karelin/users/alex@karelin.com/contacts/default/x.json')):
+    assert Environment.locations.local_of(address) == laptop
+    assert Environment.locations.local_of(address, 'trix', 'debian') == trix
+
+
+def test_an_entity_kind_names_the_grammars_of_its_permalink_and_document(on):
+  on('alex-laptop', 'windows')
+  rules, person = Environment.entities, State.entities['person'].data
+  assert rules.render_template(person['permalink'], **person, slug='aaron-mendes') == 'person://aaron-mendes'
+  assert rules.render_template(person['document'], **person, slug='aaron-mendes') == 'lake://Person/aaron-mendes.md'
+  assert rules.kind_of({'companyName': 'A&Z', 'displayName': 'A&Z'}) == 'company'
+  assert rules.kind_of({'givenName': 'Aaron', 'companyName': 'Gameplan'}) == 'person'
+  assert rules.identity_of({'emailAddresses': [{'address': 'A@B.com'}]}) == 'a@b.com'
+  assert rules.slug_for({'displayName': 'A&Z Air Conditioning'}) == 'a-z-air-conditioning'
+
+
+def test_a_source_is_a_location_and_what_is_in_it(on):
+  on('alex-laptop', 'windows')
+  source = State.sources['karelin-contacts']
+  assert source['address'] == 'm365://karelin/alex/contacts' and source['provides'] == 'contacts'
+  assert source['local'] == 'D:/TextLake/M365/karelin/users/alex@karelin.com/contacts'
+  assert State.sources['karelin-contact-photos']['local'] == 'D:/OneDrive - Karelin/Contact Photos'
 
 
 def test_a_command_runs_on_a_host_as_its_platform_says(on):

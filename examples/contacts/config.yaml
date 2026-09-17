@@ -1,0 +1,5 @@
+# The ETL's own configuration is one line: the shared configuration, and with it every
+# source, every location and every grammar the run needs. It says nothing about this
+# machine — no drive, no mount, no sync root — so the same app runs on Alex-Laptop, on
+# Alex-PC and under Dagster, and each one resolves the same addresses for itself.
+!include ../_config/_config.yaml
