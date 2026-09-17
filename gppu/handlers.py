@@ -103,9 +103,11 @@ MODEL_KEYS = ("model", "modelId", "model_slug", "default_model_slug")
 ID_KEYS = ("sessionId", "session_id", "id", "remoteSessionId")
 ROLES = ("user", "assistant")
 SNIFF = 8
-# How many read sessions are kept. A walk reads each file once, so the cache is there for a caller
-# who asks about the same session again, not for the walk; unbounded it holds every transcript of the
-# location in memory, which on a folder of a hundred thousand sessions is the whole folder.
+# How many read things are kept, in the session cache and in the probe cache. A walk reads each file
+# once, so both are there for a caller who asks about the same thing again, not for the walk. A probe
+# holds what the handler made of the file — for a session, every record and turn of it — so unbounded
+# they hold the whole location in memory, which on a folder of a hundred thousand sessions is the
+# folder. Measured: a walk of D:\[RELOG] passed 9 GB with only the session cache bounded.
 SESSION_CACHE = 512
 UNITS = (("d", 86400), ("h", 3600), ("m", 60), ("s", 1))
 UNSAFE = '\\/:*?"<>|\r\n\t'
@@ -1376,8 +1378,11 @@ class FileHandler(Handler):
                 self._handler_probe(selected[name], path) for name in record.handlers
             )
             self._probed[path] = (signature, probes)
+            while len(self._probed) > SESSION_CACHE:
+                self._probed.pop(next(iter(self._probed)), None)    # the least recently probed
         else:
             probes = cached[1]
+            self._probed[path] = self._probed.pop(path)             # keep what is being asked for
         errors = record.errors + tuple(
             probe.error for probe in probes if probe.error is not None
         )
@@ -5015,6 +5020,14 @@ class GppuIndex(Protocol):
   def put(self, entries: Mapping[str, tuple[dict | None, list[dict] | None]]) -> None:
     """Keep what the handlers read, by address. A None stands for a part this call does not change."""
 
+  def moved(self, source: str, destination: str) -> None:
+    """The entry at `source`, and everything under it, is at `destination` now.
+
+    What the index holds of a thing moves with the thing. Alex's reason for a file manager built on
+    this filesystem is that moving a folder between two indexed places keeps the index: the rows are
+    carried over, never thrown away and read again, so what was said about a file survives the move.
+    """
+
 
 class GppuFileSystem(AbstractFileSystem):
   """fsspec listings enriched by handlers and stored beside their location.
@@ -5871,6 +5884,87 @@ class GppuFileSystem(AbstractFileSystem):
         else:
           result.append(row)
       return result if detail else [row['name'] for row in result]
+
+  def cp_file(self, path1: str | Path, path2: str | Path, **kwargs: Any) -> None:
+    """Copy one entry's bytes inside this location. The copy is a new thing and is identified as one."""
+    with self._lock:
+      source, destination = self._key(path1), self._key(path2)
+      self.fs.cp_file(self._path(source), self._path(destination), **kwargs)
+      self._forget(destination)
+
+  def rm_file(self, path: str | Path) -> None:
+    """Remove one entry, and forget what was stored of it."""
+    with self._lock:
+      key = self._key(path)
+      self.fs.rm_file(self._path(key))
+      self._forget(key)
+
+  def mv(self, path1: str | Path, path2: str | Path, recursive: bool = False,
+         maxdepth: int | None = None, **kwargs: Any) -> None:
+    """Move an entry, and move what is held of it with it.
+
+    Alex's reason for a file manager on this filesystem: a folder moved between two indexed places
+    keeps its index. So the bytes are renamed where the base filesystem can rename them — one
+    operation for a folder of a million files, rather than a copy and a delete — and the rows under
+    the old address are rewritten to the new one rather than dropped and read again.
+
+    fsspec's own `mv` is a copy followed by a delete, which for a folder of that size is neither.
+    """
+    with self._lock:
+      source, destination = self._key(path1), self._key(path2)
+      if source == destination:
+        return
+      self.fs.mv(self._path(source), self._path(destination), recursive=recursive,
+                 maxdepth=maxdepth, **kwargs)
+      self._move_rows(source, destination)
+      if self._index is not None:
+        self._index.moved(self._address_of(source), self._address(destination))
+
+  def _address_of(self, key: str) -> str:
+    """The address an entry had, worked out from the location map rather than from the vanished path."""
+    if self._locations and '::' not in key:
+      for folder in sorted(self._locations, key=lambda item: len(item), reverse=True):
+        here = full_path(Path(self._path(key))).as_posix()
+        base = folder.rstrip('/')
+        if here == base or here.startswith(base + '/'):
+          canonical = str(self._locations[folder]['canonical'])
+          rest = '' if here == base else here[len(base) + 1:]
+          return canonical if not rest else (canonical + rest if canonical.endswith('://')
+                                             else canonical.rstrip('/') + '/' + rest)
+    return self._uri(key)
+
+  def _move_rows(self, source: str, destination: str) -> None:
+    """Rewrite every stored row at and under `source` to sit under `destination`."""
+    owner = self._owner(source)
+    if owner != self._owner(destination):
+      self._forget(source)                       # two indexes; the new place identifies what arrived
+      return
+    with self._database(owner, write=True) as database:
+      if database is None:
+        return
+      here, there = self._relative(source, owner), self._relative(destination, owner)
+      for path, metadata, children in database.execute(
+          'SELECT path, metadata, children FROM gppufs_entries').fetchall():
+        if path != here and not path.startswith(here + '/'):
+          continue
+        moved = there + path[len(here):]
+        value = json.loads(metadata)
+        value['name'] = moved
+        value['gppu']['path'] = moved
+        self._metadata_paths(value['gppu'], lambda item:
+          there + item[len(here):] if item == here or item.startswith(here + '/') else item)
+        listing = children if children is None else json.dumps([
+          {**child, 'path': there + child['path'][len(here):]
+           if child['path'] == here or child['path'].startswith(here + '/') else child['path']}
+          for child in json.loads(children)])
+        database.execute('DELETE FROM gppufs_entries WHERE path=?', (path,))
+        database.execute('INSERT INTO gppufs_entries VALUES (?, ?, ?) '
+          'ON CONFLICT(path) DO UPDATE SET metadata=excluded.metadata, children=excluded.children',
+          (moved, json.dumps(value), listing))
+      parent = self._parent_key(destination)
+      if parent is not None:
+        database.execute('UPDATE gppufs_entries SET children=NULL WHERE path=?',
+                         (self._relative(parent, owner),))
 
   def _open(self, path: str | Path | None = None, mode: str = 'rb', **kwargs) -> BinaryIO:
     """The bytes of one entry: a physical file through the base filesystem, a member through its archive.
