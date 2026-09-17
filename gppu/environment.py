@@ -121,6 +121,11 @@ class Environment:
     return Environment.answer('locations', 'local_of', address, host or Environment.host, platform or Environment.platform)
 
 
+  @staticmethod
+  def ssh(host: str, platform: str) -> list[str]:
+    """The command that runs a script, read from stdin, on a host's platform."""
+    return list(Environment.macro('hosts', 'ssh')(host, platform))
+
 class State:
   tables: dict[str, dict[str, Any]] = {}
   templates: dict[str, TemplateSet] = {}

@@ -9,6 +9,14 @@
 #   mount        where this host mounts shares, under the box's folder
 #   tags         what a template or a row says it is; a macro selects on them
 
+# ~~ The rules. How a command runs on a host: ssh to the account and port its platform
+#    answers on, then the platform's run command reading the script from stdin.
+macros: |
+  {% macro ssh(host, platform) %}
+  {%- set p = platforms[platform] -%}
+  {{- ['ssh', '-p', p.ssh.port | string, p.ssh.user ~ '@' ~ hosts[host].hostname] + p.run -}}
+  {% endmacro %}
+
 templates:
   _: &_
     kind: Host

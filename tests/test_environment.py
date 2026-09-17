@@ -130,6 +130,12 @@ def test_an_address_resolves_to_a_path_on_this_host(on):
   assert Environment.uri('sd-lake', 'sd') == 'sd://SD.Lake' and Environment.uri('public', 'sd') == ''
 
 
+def test_a_command_runs_on_a_host_as_its_platform_says(on):
+  on('alex-laptop', 'windows')
+  assert Environment.ssh('seven', 'debian') == ['ssh', '-p', '22', 'alex@7.c.karel.in', 'bash', '-s']
+  assert Environment.ssh('alex-pc', 'windows')[:4] == ['ssh', '-p', '22222', 'administrator@alex-pc.c.karel.in']
+
+
 def test_lookups_are_strict():
   Environment.from_dict({'a': {'b': 1}})
   assert Environment.glob('a/b') == 1
