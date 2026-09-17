@@ -76,6 +76,7 @@ from fsspec.core import url_to_fs
 from fsspec.implementations.local import LocalFileSystem
 from fsspec.implementations.tar import TarFileSystem
 from fsspec.spec import AbstractFileSystem
+from fsspec.utils import stringify_path
 
 from .gppu import OSType, detect_os, full_path, sync
 
@@ -6033,6 +6034,120 @@ class GppuFileSystem(AbstractFileSystem):
       return io.BytesIO(fs.cat_file(source))
     finally:
       fs.close()
+
+
+class PostgresFileSystem(AbstractFileSystem):
+  """A Postgres database read as folders and entries, so gppufs can index one like any other place.
+
+  Alex, 2026-09-17 04:21: an index in Postgres of his other Postgres databases and tables, every
+  database, schema and table written down as a source of data he may or may not trust yet. gppufs and
+  the handlers are how everything reads files, so a database is read the same way rather than by a
+  script of its own: a schema is a folder, a table or view is an entry in it, and what `pg_catalog`
+  knows about each is its metadata.
+
+      GppuFileSystem('pg://pg.karel.in/files', dsn='postgresql://…')
+
+  `dsn` is the caller's, because which databases exist and how one connects to them is his
+  configuration and not this library's. Nothing here writes: a database is read, never indexed into.
+  """
+
+  protocol = 'pg'
+  cachable = False
+  root_marker = ''
+
+  SCHEMAS = ("select nspname from pg_namespace"
+             " where nspname not like 'pg\\_%' and nspname <> 'information_schema' order by nspname")
+  ENTRIES = ("select c.relname as name, c.relkind as kind,"
+             "       pg_total_relation_size(c.oid) as bytes, c.reltuples::bigint as rows,"
+             "       obj_description(c.oid) as comment"
+             "  from pg_class c join pg_namespace n on n.oid = c.relnamespace"
+             " where n.nspname = %s and c.relkind in ('r', 'v', 'm', 'p', 'f') order by c.relname")
+  COLUMNS = ("select a.attname, format_type(a.atttypid, a.atttypmod) as type, a.attnotnull"
+             "  from pg_attribute a join pg_class c on c.oid = a.attrelid"
+             "  join pg_namespace n on n.oid = c.relnamespace"
+             " where n.nspname = %s and c.relname = %s and a.attnum > 0 and not a.attisdropped"
+             " order by a.attnum")
+  KINDS = {'r': 'table', 'v': 'view', 'm': 'materialized view', 'p': 'partitioned table',
+           'f': 'foreign table'}
+
+  def __init__(self, database: str, dsn: str | None = None, **storage_options: Any) -> None:
+    if not dsn:
+      raise ValueError('a Postgres location is read with a dsn; which databases exist is configuration')
+    super().__init__()
+    self.root = self._strip_protocol(database)
+    self.dsn = dsn
+    self.location = f'pg://{self.root}'
+
+  @classmethod
+  def _strip_protocol(cls, path: str) -> str:
+    path = stringify_path(path)
+    for prefix in ('pg://', 'postgresql://', 'postgres://'):
+      if path.startswith(prefix):
+        path = path[len(prefix):]
+    return path.strip('/')
+
+  @contextmanager
+  def _asking(self):
+    import psycopg2                                            # noqa: PLC0415 - the pg extra, asked for here only
+    from psycopg2.extras import RealDictCursor                 # noqa: PLC0415
+    with closing(psycopg2.connect(self.dsn)) as connection:
+      with connection.cursor(cursor_factory=RealDictCursor) as cursor:
+        yield cursor
+
+  def _under(self, path: str) -> str:
+    """What is asked about, below this database: '' for the database, else the schema or schema/entry."""
+    here = self._strip_protocol(path or '')
+    return here[len(self.root):].strip('/') if here.startswith(self.root) else here
+
+  def ls(self, path: str = '', detail: bool = True, **kwargs: Any) -> list:
+    """The schemas of a database, or the tables and views of a schema."""
+    under = self._under(path)
+    with self._asking() as cursor:
+      if not under:
+        cursor.execute(self.SCHEMAS)
+        found = [{'name': f'{self.root}/{row["nspname"]}', 'type': 'directory', 'size': 0}
+                 for row in cursor.fetchall()]
+      else:
+        cursor.execute(self.ENTRIES, (under,))
+        found = [{'name': f'{self.root}/{under}/{row["name"]}', 'type': 'file',
+                  'size': int(row['bytes'] or 0), 'kind': self.KINDS.get(row['kind'], row['kind']),
+                  'rows': int(row['rows'] or 0), 'comment': row['comment']}
+                 for row in cursor.fetchall()]
+    return found if detail else [row['name'] for row in found]
+
+  def info(self, path: str = '', **kwargs: Any) -> dict:
+    """What one schema or one entry is."""
+    under = self._under(path)
+    if not under:
+      return {'name': self.root, 'type': 'directory', 'size': 0}
+    schema, _, name = under.partition('/')
+    if not name:
+      return {'name': f'{self.root}/{schema}', 'type': 'directory', 'size': 0}
+    for row in self.ls(f'{self.root}/{schema}'):
+      if row['name'].rsplit('/', 1)[-1] == name:
+        return row
+    raise FileNotFoundError(f'pg://{self.root}/{under}')
+
+  def _open(self, path: str, mode: str = 'rb', **kwargs: Any) -> BinaryIO:
+    """One entry's columns, as text, so what a table holds can be read and identified like a file."""
+    if 'r' not in mode:
+      raise ValueError(f'pg://{self.root}: a database is read here, never written')
+    schema, _, name = self._under(path).partition('/')
+    with self._asking() as cursor:
+      cursor.execute(self.COLUMNS, (schema, name))
+      columns = cursor.fetchall()
+    text = '\n'.join(f'{row["attname"]} {row["type"]}'
+                      + ('' if not row['attnotnull'] else ' not null') for row in columns)
+    return io.BytesIO(text.encode('utf-8'))
+
+  def created(self, path: str) -> None:
+    return None
+
+  def modified(self, path: str) -> None:
+    return None
+
+
+register_implementation('pg', PostgresFileSystem, clobber=True)
 
 
 class GppuCatalog(AbstractFileSystem):
