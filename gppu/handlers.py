@@ -1650,14 +1650,24 @@ class FileHandler(Handler):
             return tuple(
                 moment
                 for value in values
-                if (
-                    moment := valid_time(
-                        datetime.fromtimestamp(int(value), timezone.utc)
-                    )
-                )
-                is not None
+                if (moment := cls._epoch_time(value)) is not None
             )
         return ()
+
+    @staticmethod
+    def _epoch_time(value: str) -> datetime | None:
+        """Ten digits read as Unix seconds, or None when they are not a time at all.
+
+        The pattern matches any ten digits, so an order number, an account number or a phone
+        number reaches here as readily as a timestamp, and one outside what this host can
+        represent raises instead of returning a date. A number that is not a time is not a
+        time: it is dropped, the way ``valid_time`` drops an implausible one.
+        """
+
+        try:
+            return valid_time(datetime.fromtimestamp(int(value), timezone.utc))
+        except (OSError, OverflowError, ValueError):
+            return None
 
     @classmethod
     def _filename_dates(cls, name: str) -> tuple[datetime, ...]:
