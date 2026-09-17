@@ -1,0 +1,24 @@
+# The shared configuration, in the _creekview.yaml shape: facts about the site, then one
+# file per domain, each carrying its templates beside its rows. An app includes this file
+# at the top of its own config.yaml and has everything at load; nothing here is read by
+# any utility as a file.
+#
+# A section that carries `templates` is a table. Every other mapping in it is a row keyed
+# by its uid; the row names the template it is an instance of — one, or a list applied in
+# order — and carries only what differs. A template value written in Jinja renders
+# against the merged row; a value the row carries is data. `refs` on a template names
+# the tables a row references, and a reference nothing answers fails the load.
+
+site:
+  domain: c.karel.in
+  ssh_user: alex
+
+# ~~ Names → identifiers, for every domain
+macros: |
+  {% macro slug(text) %}{{ re.sub('[ /_.-]+', '_', text | lower).strip('_') }}{% endmacro %}
+  {% macro dashed(text) %}{{ re.sub('[ /_.-]+', '-', text | lower).strip('-') }}{% endmacro %}
+
+platforms:   !include platforms.yaml
+connections: !include connections.yaml
+hosts:       !include hosts.yaml
+locations:   !include locations.yaml

@@ -1,0 +1,185 @@
+# Locations — where the files live, in the shape of CRAP/_config/topology/locations.yaml,
+# and the rules that say where each one is on a host. Hosts.next built these paths in
+# its host rules; they belong here, with the locations.
+#
+#   {uid}:
+#     name: {name}
+#     template: {template, or the templates applied in order}
+#     {interface}/{connection}: {share}    a place: sd/s1: SD.Lake is the share Synology Drive
+#                                          syncs, smb/s1: SD.Lake the share a server mounts
+#     local/{platform}: {path}             where it is on a platform, when no rule gives it
+#     local/{host}: {path}                 where it is on one host, when that host differs
+#     at: {path}                           where it mounts, when not under the box's mount point
+#     folders: {name: {path}}              the named folders inside it
+#
+# The template builds the default object from the uid — its addresses on every
+# interface, its path on this host — and every rule is a macro below, so a utility
+# asks and never computes: Environment.place(uid), Environment.local_of(address).
+
+# ~~ The rules. Each is a Jinja macro; the templates and the utilities call them by name.
+macros: |
+  {# Where a location is on a host, in the order the rules apply: the location's own
+     place for this host, then for its platform; a share Synology Drive syncs, under the
+     platform's Drive root; a share the platform mounts, at its box's mount point; the
+     parent platform's place, translated — WSL sees the Windows drives under /mnt. #}
+  {% macro place(uid, host, platform) %}
+  {%- set p = platforms[platform] -%}
+  {%- set location = locations[uid] -%}
+  {%- if 'local/' ~ host in location -%}{{ location['local/' ~ host] }}
+  {%- elif 'local/' ~ platform in location -%}{{ location['local/' ~ platform] }}
+  {%- elif 'sd_root' in p and served(location, 'sd') -%}{{ p.sd_root }}/{{ served(location, 'sd') }}
+  {%- elif 'mounts' in p and served(location, 'smb') -%}{{ mount_point(uid) }}
+  {%- elif 'from' in p and place(uid, host, p['from']) -%}{{ p.mount }}/{{ place(uid, host, p['from'])[0] | lower }}{{ place(uid, host, p['from'])[2:] }}
+  {%- endif -%}
+  {% endmacro %}
+
+  {# A named folder inside a location, where the location is on a host. #}
+  {% macro folder(uid, inside, host, platform) %}{{ place(uid, host, platform) }}/{{ locations[uid].folders[inside].path }}{% endmacro %}
+
+  {# What a location is served as on one interface, and by which box. #}
+  {% macro served(location, interface) %}{% for key in location if key.startswith(interface ~ '/') %}{{ location[key] }}{% endfor %}{% endmacro %}
+  {% macro serving(location, interface) %}{% for key in location if key.startswith(interface ~ '/') %}{{ key[interface | length + 1:] }}{% endfor %}{% endmacro %}
+
+  {# Where a mounted location lands: its own `at`, else its box's mount point and the share. #}
+  {% macro mount_point(uid) %}
+  {%- set location = locations[uid] -%}
+  {{- location.at if 'at' in location else connections[serving(location, 'smb')].mount ~ '/' ~ served(location, 'smb') | replace(' ', '') -}}
+  {% endmacro %}
+
+  {# A location's address on one interface, in the grammar its box's provider declares:
+     smb://s1.karel.in/SD.Lake, sd://SD.Lake. Empty when it is not served there. #}
+  {% macro uri(uid, interface, path='') %}
+  {%- set location = locations[uid] -%}
+  {%- if served(location, interface) -%}
+  {%- set box = connections[serving(location, interface)] -%}
+  {{- box.uris[interface].format(host=box.host, slug=box.slug | default(''), share=served(location, interface), path=path).rstrip('/') -}}
+  {%- endif -%}
+  {% endmacro %}
+
+  {# Every address of a location, as a list. #}
+  {% macro uris(uid) %}
+  {%- set ns = namespace(out=[]) -%}
+  {%- for interface in ['sd', 'smb', 'scp', 'sharepoint'] if uri(uid, interface) -%}
+  {%- set ns.out = ns.out + [uri(uid, interface)] -%}
+  {%- endfor -%}
+  {{- ns.out -}}
+  {% endmacro %}
+
+  {# The location an address is inside of: sd://SD.Lake/inbox is inside the location served
+     as SD.Lake on sd. Empty when no location is served so. #}
+  {% macro location_of(address) %}
+  {%- set interface, _, rest = address.partition('://') -%}
+  {%- for uid, location in locations.items() if served(location, interface) and (rest == uri(uid, interface).partition('://')[2] or rest.startswith(uri(uid, interface).partition('://')[2] ~ '/')) -%}
+  {{- uid -}}
+  {%- endfor -%}
+  {% endmacro %}
+
+  {# The path on a host of an address: the place of the location it is inside of, then
+     what lies below it. Empty when the host does not reach it. #}
+  {% macro local_of(address, host, platform) %}
+  {%- set uid = location_of(address) -%}
+  {%- if uid and place(uid, host, platform) -%}
+  {%- set interface, _, rest = address.partition('://') -%}
+  {{- place(uid, host, platform) }}{{ rest[uri(uid, interface).partition('://')[2] | length:] -}}
+  {%- endif -%}
+  {% endmacro %}
+
+# ~~ Templates — what a row is an instance of. Data is data; a Jinja value is what the
+#    template computes for the row it is applied to.
+templates:
+  location:
+    kind: Location
+    refs: {'smb/*': connections, 'sd/*': connections, 'sharepoint/*': connections, 'local/*': [platforms, hosts]}
+    tags: []
+    uris: "{{ uris(uid) }}"
+    local: "{{ place(uid, Environment.host, Environment.platform) or none }}"
+
+  # A share Synology Drive syncs onto every workstation, and a server mounts.
+  synced:
+    tags: [synced]
+    sd: "{{ uri(uid, 'sd') }}"
+
+  # A share a server mounts and a workstation does not sync.
+  share:
+    tags: [share]
+    mount: "{{ mount_point(uid) }}"
+
+# ~~ Rows
+profile:
+  name: Profile
+  template: location
+  local/windows: "C:/Users/Alex"
+  local/wsl: "~"
+  local/debian: "~"
+  local/macos: "~"
+  folders:
+    bin:
+      name: User programs
+      path: .local/bin
+
+dev:
+  name: Checkouts
+  template: location
+  local/windows: "D:/Dev"
+  local/wsl: "~"
+  local/debian: "~"
+  local/macos: "~"
+
+sd:
+  name: SD
+  template: [location, synced]
+  smb/s1: SD
+  sd/s1: SD
+
+sd-lake:
+  name: SD.Lake
+  template: [location, synced]
+  smb/s1: SD.Lake
+  sd/s1: SD.Lake
+  folders:
+    inbox:
+      name: Session exports
+      path: inbox
+
+sd-agents:
+  name: SD.agents
+  template: [location, synced]
+  smb/s1: SD.agents
+  sd/s1: SD.agents
+  local/trix: /home/alex/SD.agents
+  folders:
+    memory:
+      name: Native memory
+      path: memory
+
+public:
+  name: Public
+  template: [location, share]
+  smb/s1: Public
+  at: /mnt/Public
+
+everything:
+  name: Everything
+  template: [location, share]
+  smb/s1: Everything
+
+tulaco-m365:
+  name: TulaCo - M365
+  template: [location, share]
+  smb/s9: TulaCo - M365
+
+yellow-config:
+  name: Yellow configuration
+  template: [location, share]
+  smb/yellow: config
+
+obsidian:
+  name: Obsidian
+  template: location
+  local/windows: "D:/_"
+
+onedrive:
+  name: OneDrive - Karelin
+  template: location
+  sharepoint/karelin: personal/alex_karelin_com/Documents
+  local/windows: "D:/OneDrive - Karelin"

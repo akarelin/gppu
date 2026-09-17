@@ -427,31 +427,41 @@ def jinja_document(filename: str | Path, /, **data) -> str:
 class TemplateSet:
   """The macros, generators and templates of one configuration, compiled once.
 
-  A row names the template it is an instance of and carries only what differs. The
-  template is data; it may name the generator that computes what follows from the
-  row, and the behavior that follows from the finished object. Resolving a row is
+  A template generates the dict an object is built from, at startup only. A row names
+  the template it is an instance of — one name, or a list applied in order — and
+  carries only what differs. A template value written in Jinja renders against the
+  merged row, so the template says in one place what it computes; a value the row
+  carries is data and is never rendered. Resolving a row is
 
-      1. values = template data + row
-      2. data   = generator(values) | template data | row
-      3. data   = data | behavior(data)
+      1. template = the named templates, in order          (rightmost wins)
+      2. values   = template | row
+      3. data     = generator(values) | template | row      (rightmost wins)
+      4. each Jinja value of the template renders against data, in template order
+      5. data     = data | behavior(data)
 
-  rightmost wins in step 2, so an explicit value always beats a computed one. A
-  behavior runs after the merge and so is the only thing that can rewrite a key the
-  row itself carries — what a set name stands for, what a flag implies.
+  so an explicit value always beats a computed one. A generator and a behavior are
+  named Jinja templates that return an object, never text; a behavior runs after the
+  merge and so is the only thing that can rewrite a key the row itself carries. A row
+  un-inherits a key its template carries by setting it to null.
 
-  A generator and a behavior return an object, never text; they compute and do not
-  decide. A row un-inherits a key its template carries by setting it to null.
+  A template declares what its rows reference with `refs`, field to table:
+  `{connections: connections}` says the field's value (or each of its values, or each
+  of its keys) is a row of the `connections` table; `{'smb/*': connections}` says every
+  key of the row shaped `smb/<name>` references one. A table is a mapping at a slash
+  path of the context, or a list of such paths. A reference nothing answers fails the
+  resolution naming row, field and value.
   """
 
-  RESERVED = ('template', 'generator', 'behavior')
+  RESERVED = ('template', 'generator', 'behavior', 'refs')
+  BUILTINS = ('dict', 'list', 'int', 'float', 'str', 'bool', 'len', 'round', 'sorted', 'min', 'max', 'range')
 
   def __init__(self, macros: str = '', generators: dict | None = None,
                templates: dict | None = None, context: dict | None = None, **globals):
     self.environment = JinjaEnvironment()
     self.environment.globals.update(context or {})
     self.environment.globals.update(globals)
-    self.environment.globals.update({name: getattr(builtins, name) for name in
-                                     ('dict', 'list', 'int', 'float', 'str', 'len', 'sorted', 'min', 'max', 'range')})
+    self.environment.globals.update({name: getattr(builtins, name) for name in self.BUILTINS})
+    self.environment.globals['re'] = re
     if macros:                                                                             # every macro the block
       module = self.environment.from_string(macros).make_module()                          # defines, callable by
       self.environment.globals.update({name: getattr(module, name)                         # name from any generator
@@ -462,26 +472,77 @@ class TemplateSet:
 
   def _computed(self, name: str, values: dict) -> dict:
     if name not in self.generators: raise KeyError(f'no generator named {name!r}')
-    computed = self.generators[name].render(**values)
+    computed = self.generators[name].render(values)
     if not isinstance(computed, dict): raise TypeError(f'generator {name!r} returned {type(computed).__name__}, not an object')
     return computed
 
+  def layers(self, row: dict) -> list[dict]:
+    """The templates a row names, in the order they apply."""
+    names = row.get('template') or []
+    if isinstance(names, str): names = [names]
+    for name in names:
+      if name not in self.templates: raise KeyError(f'{self._label(row)}: no template named {name!r}')
+    return [self.templates[name] for name in names]
+
+  def template(self, row: dict) -> dict:
+    """The row's templates merged, rightmost winning; `refs` merged across them."""
+    merged, refs = {}, {}
+    for layer in self.layers(row):
+      merged |= layer
+      refs |= layer.get('refs') or {}
+    if refs: merged['refs'] = refs
+    return merged
+
   def values(self, row: dict) -> dict:
     """The template's data with the row over it: what the generator is given."""
-    return self.templates.get(row.get('template'), {}) | row
+    return self.template(row) | row
 
   def resolve(self, row: dict) -> dict:
-    values = self.values(row)
-    template = self.templates.get(row.get('template'), {})
+    template = self.template(row)
+    values = template | row
     computed = self._computed(values['generator'], values) if values.get('generator') else {}
     data = computed | template | row
+    pending = [key for key, value in template.items()                                      # a Jinja value of the template
+               if key not in row and key not in self.RESERVED and self._is_jinja(value)]    # renders against the merged row;
+    while pending:                                                                         # the row's own value is data and
+      key = pending.pop(0)                                                                 # is never rendered. It sees what
+      settled = {k: v for k, v in data.items() if k != key and k not in pending}           # is settled: a value still to be
+      data[key] = self.environment.from_string(template[key]).render(settled)              # rendered is not a name yet
     if name := values.get('behavior'): data = data | self._computed(name, data)
+    self.check(self._label(row), data, template.get('refs') or {})
     return {k: v for k, v in data.items() if k not in self.RESERVED and v is not None}
 
   def resolve_all(self, rows) -> list[dict] | dict:
     """Every row of a list, or every value of a mapping keyed by name."""
     if isinstance(rows, dict): return {name: self.resolve(row) for name, row in rows.items()}
     return [self.resolve(row) for row in rows]
+
+  def check(self, label: str, data: dict, refs: dict) -> None:
+    """Every reference the row makes is a row of the table it names."""
+    for field, tables in refs.items():
+      tables = [tables] if isinstance(tables, str) else list(tables)
+      if '*' in field:
+        prefix, _, suffix = field.partition('*')
+        names = [key[len(prefix):len(key) - len(suffix)] for key in data
+                 if key.startswith(prefix) and key.endswith(suffix) and len(key) > len(prefix) + len(suffix)]
+      else:
+        value = data.get(field)
+        names = [] if value is None else [value] if isinstance(value, str) else list(value)
+      for name in names:
+        if not any(name in self.table(path) for path in tables):
+          raise KeyError(f'{label}: {field} names {name!r}, which is not in {" or ".join(tables)}')
+
+  def table(self, path: str) -> dict:
+    """The mapping at a slash path of the context."""
+    table = deepget(path, self.environment.globals)
+    if not isinstance(table, dict): raise KeyError(f'no table at {path!r}')
+    return table
+
+  @staticmethod
+  def _is_jinja(value) -> bool: return isinstance(value, str) and ('{{' in value or '{%' in value)
+
+  @staticmethod
+  def _label(row: dict) -> str: return str(row.get('uid') or row.get('name') or 'row')
 # endregion
 
 

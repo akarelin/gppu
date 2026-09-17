@@ -1,0 +1,64 @@
+# Connections — the boxes and tenants serving the locations, in the shape of
+# CRAP/_config/topology/connections.yaml, with the providers as templates.
+#
+# A provider is a template: what every connection of its kind offers, and the address
+# grammar of each of its interfaces — `smb://{host}/{share}/{path}` is the smb address
+# of a share `{share}` served by this box. A connection row names its provider and
+# carries what differs: its host, the interfaces it actually offers.
+#
+#   host      what the box is reached at
+#   services  the interfaces it offers
+#   mount     where its shares land on a host that mounts them
+#   uris      the address grammar per interface, `{host}`, `{share}` and `{path}` filled in
+
+templates:
+  synology:
+    kind: Connection
+    username: Alex
+    credentials: /home/alex/.smbcredentials
+    services: [smb, ssh]
+    mount: "{{ '/mnt/' ~ uid | upper }}"
+    uris:
+      smb: "smb://{host}/{share}/{path}"
+      sd: "sd://{share}/{path}"
+      scp: "scp://{host}/volume1/{share}/{path}"
+      rsync: "rsync://{host}/volume1/{share}/{path}"
+
+  hassio:
+    kind: Connection
+    services: [smb]
+    mount: "{{ '/mnt/' ~ uid }}"
+    uris:
+      smb: "smb://{host}/{share}/{path}"
+
+  m365:
+    kind: Connection
+    services: [sharepoint, onedrive, teams, exchange, onenote]
+    uris:
+      sharepoint: "https://{slug}.sharepoint.com/{share}/{path}"
+      onedrive: "https://{slug}-my.sharepoint.com/{share}/{path}"
+
+s1:
+  template: synology
+  host: s1.karel.in
+  services: [smb, ssh, home, sd, scp, rsync]
+
+s9:
+  template: synology
+  host: s9.karel.in
+  services: [smb, ssh, scp]
+
+yellow:
+  template: hassio
+  host: yellow
+  credentials: /etc/samba/credentials_yellow
+
+karelin:
+  template: m365
+  name: Karelin
+  slug: karelin
+
+tulaco:
+  template: m365
+  name: TulaCo
+  slug: tulaco
