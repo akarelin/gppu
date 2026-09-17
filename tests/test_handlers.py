@@ -939,6 +939,26 @@ def test_session_topic_skips_machine_preamble_and_marks_internal_turns(tmp_path:
   assert any(turn.sidechain for turn in session.turns)
 
 
+def test_claude_subagent_is_identified_by_its_agent_id(tmp_path: Path) -> None:
+  # A subagent transcript carries its parent's sessionId on every record and its own agentId,
+  # which is what the file is named after. Without the agent id every subagent in a session
+  # answers with the parent's id and denies being one.
+  subagent = [
+    {**record, 'agentId': 'a067dda7f881a582d', 'isSidechain': True} for record in CLAUDE
+  ]
+  path = _jsonl(tmp_path / 'agent-a067dda7f881a582d.jsonl', subagent)
+
+  _, session = session_handler(path)
+
+  assert isinstance(session, SessionFile)
+  assert (session.uid, session.parent_uid, session.subagent) == (
+    'a067dda7f881a582d', 'claude-one', True
+  )
+
+  _, plain = session_handler(_jsonl(tmp_path / 'claude.jsonl', CLAUDE))
+  assert (plain.uid, plain.parent_uid, plain.subagent) == ('claude-one', None, False)
+
+
 def test_session_folder_supports_nested_codex_logs_and_state_markers(tmp_path: Path) -> None:
   codex = tmp_path / 'codex'
   _jsonl(codex / '2026' / '08' / '20' / 'rollout.jsonl', CODEX)
@@ -1715,3 +1735,65 @@ def test_a_filesystem_root_is_never_ignored(tmp_path: Path) -> None:
   assert IgnoredHandler.reason(root) is None
   assert IgnoredHandler().identify_sync(root) is False
 
+
+
+def test_a_dot_folder_is_walked_and_venv_and_git_are_not(tmp_path: Path) -> None:
+  """Alex, 2026-09-17 03:51: "all files can be potentially indexd., It is critical that secrets are
+  indexed. I have lost lots of secrets because of ignored dot files" and "venv, .git are ignored".
+  So the dot prefix is not a rule and the hidden attribute is not a rule; the named list is."""
+
+  class TreeHandler(FileHandler, IgnoredHandler, FolderHandler):
+    pass
+
+  store = tmp_path / '.claude' / 'projects'
+  store.mkdir(parents=True)
+  (store / 'session.jsonl').write_text('{}', encoding='utf-8')
+  secrets = tmp_path / '.ssh'
+  secrets.mkdir()
+  (secrets / 'id_ed25519').write_text('key', encoding='utf-8')
+  if os.name == 'nt':
+    subprocess.run(['attrib', '+H', str(secrets)], check=True)
+  for name in ('.git', 'venv', '.venv'):
+    folder = tmp_path / name
+    folder.mkdir()
+    (folder / 'inside.txt').write_text('inside', encoding='utf-8')
+
+  found = {record.path: record for record in TreeHandler().probe(tmp_path)}
+
+  assert store / 'session.jsonl' in found
+  assert secrets / 'id_ed25519' in found
+  assert 'ignored' not in found[tmp_path / '.claude'].handlers
+  assert 'ignored' not in found[secrets].handlers
+  for name in ('.git', 'venv', '.venv'):
+    assert found[tmp_path / name].handlers == ('ignored', 'folder')
+    assert tmp_path / name / 'inside.txt' not in found
+
+
+def test_a_gemini_cli_chat_is_read_as_itself(tmp_path: Path) -> None:
+  """Its header carries a sessionId, which is the whole Claude Code test, so without a reader of its
+  own it is read as Claude Code: no turns, and every chat of one service under the service's id."""
+
+  class TreeHandler(FileHandler, SessionHandler):
+    pass
+
+  def chat(name: str, started: str, said: str) -> Path:
+    path = tmp_path / name
+    path.write_text('\n'.join(json.dumps(row) for row in (
+      {'sessionId': 'a2a-server', 'projectHash': 'abc123', 'startTime': started,
+       'lastUpdated': started, 'kind': 'main'},
+      {'$set': {'messages': [{'id': 'm1', 'timestamp': started, 'type': 'user',
+                              'content': [{'text': said}]}]}},
+    )), encoding='utf-8')
+    return path
+
+  first = chat('session-2026-08-24T13-51-a2a-serv.jsonl', '2026-08-24T13:51:09.797Z', 'first')
+  second = chat('session-2026-08-24T13-52-a2a-serv.jsonl', '2026-08-24T13:52:06.188Z', 'second')
+
+  handler = TreeHandler()
+  readings = [handler.call_sync(path)[1] for path in (first, second)]
+  assert [one.harness for one in readings] == ['gemini', 'gemini']
+  assert readings[0].uid != readings[1].uid, 'one service id must not fold two chats into one'
+  assert readings[0].uid == 'a2a-server/2026-08-24T13:51:09.797Z'
+  assert [len(one.turns) for one in readings] == [1, 1]
+  assert readings[0].turns[0].text == 'first'
+  assert all(one.span is not None for one in readings)

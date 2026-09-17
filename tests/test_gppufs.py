@@ -597,3 +597,114 @@ def test_a_replica_of_an_unlisted_location_is_refused(tmp_path):
   replicas = {'dropbox': [{'location': 'Elsewhere', 'path': str(drive), 'checked_at': None}]}
   with pytest.raises(ValueError, match='dropbox.yaml does not list'):
     GppuCatalog(catalog_of(tmp_path, [location_row(1, drive)], sources, replicas), host='test-host')
+
+
+def test_fsspec_initializes_the_instance(tmp_path):
+  """`_cached` is fsspec's own guard attribute, so no method may carry that name.
+
+  `AbstractFileSystem.__init__` returns on a truthy `_cached` and leaves the instance without the
+  three attributes every read and every transaction goes through.
+  """
+  fs = GppuFileSystem(tmp_path)
+  assert fs._intrans is False
+  assert fs._transaction is None
+  assert fs.dircache is not None
+
+
+def test_a_located_file_is_read_and_written_through_the_fsspec_surface(tmp_path):
+  text = b'---\ntitle: Read me\n---\nText'
+  (tmp_path / 'note.md').write_bytes(text)
+  fs = GppuFileSystem(tmp_path)
+  assert fs.info('note.md')['gppu']['markdown']['title'] == 'Read me'
+  assert fs.cat_file('note.md') == text
+  assert fs.head('note.md', 3) == b'---'
+  with fs.open('note.md', 'rb') as handle:
+    assert handle.read() == text
+  fs.pipe_file('written.md', b'---\ntitle: Written\n---\nText')
+  assert (tmp_path / 'written.md').read_bytes() == b'---\ntitle: Written\n---\nText'
+  assert fs.info('written.md')['gppu']['markdown']['title'] == 'Written'
+
+
+def test_an_archive_member_reads_its_bytes_and_refuses_a_write(tmp_path):
+  content = b'---\ntitle: Inside archive\n---\nText'
+  with zipfile.ZipFile(tmp_path / 'bundle.zip', 'w') as archive:
+    archive.writestr('inside/note.md', content)
+  fs = GppuFileSystem(tmp_path)
+  note = fs.ls('bundle.zip', recurse=True)[1]
+  assert fs.cat_file(note['name']) == content
+  with pytest.raises(ValueError, match='read-only'):
+    fs.pipe_file(note['name'], b'no')
+
+
+def test_a_row_the_index_has_dropped_is_not_read_as_unlocated(tmp_path):
+  """`_unlocated` asks the index about one entry; the index can hold nothing for it."""
+  (tmp_path / 'note.md').write_text('Text', encoding='utf-8')
+  fs = GppuFileSystem(tmp_path, locations={tmp_path.as_posix(): {'location': 'work', 'canonical': 'work://'}})
+  assert fs.ls()[0]['gppu']['location']['address'] == 'work://note.md'
+  fs._forget('note.md')
+  assert fs._unlocated('note.md') is False
+
+
+def test_a_location_address_is_an_address_gppufs_answers_to(tmp_path):
+  """The permalink is on every row the location handler identifies, so asking for it back must reach the entry."""
+  (tmp_path / 'notes').mkdir()
+  (tmp_path / 'notes' / 'note.md').write_bytes(b'---\ntitle: Permalink\n---\nText')
+  fs = GppuFileSystem(tmp_path, locations={tmp_path.as_posix(): {'location': 'perma', 'canonical': 'perma://Test'}})
+  assert [row['gppu']['location']['address'] for row in fs.ls(recurse=True)] == \
+         ['perma://Test/notes', 'perma://Test/notes/note.md']
+  assert fs.info('perma://Test/notes/note.md')['gppu']['markdown']['title'] == 'Permalink'
+  assert fs.cat_file('perma://Test/notes/note.md') == b'---\ntitle: Permalink\n---\nText'
+  assert fs.ls('perma://Test/notes') == fs.ls('notes')
+  assert fs.info('perma://Test') == fs.info()
+  with pytest.raises(ValueError, match='outside location'):
+    fs.info('elsewhere://Other/note.md')
+
+
+def test_the_deepest_location_address_names_the_entry(tmp_path):
+  inner = tmp_path / 'inner'
+  inner.mkdir()
+  (inner / 'note.md').write_bytes(b'Text')
+  fs = GppuFileSystem(tmp_path, locations={
+    tmp_path.as_posix(): {'location': 'outer', 'canonical': 'outer://'},
+    inner.as_posix(): {'location': 'inner', 'canonical': 'outer://inner-store'}})
+  assert fs.info('outer://inner-store/note.md') == fs.info('inner/note.md')
+  assert fs.info('outer://inner')['type'] == 'directory'
+
+
+def test_a_store_that_refuses_the_index_is_still_read(tmp_path, monkeypatch):
+  """Alex, 2026-09-17 03:49: "local databases are caches for runtime and original indexes ... Don't count
+  on these being present". GitHub serves read-only, so the file beside the location cannot be
+  written; the listing, the parsing and the reading all still answer."""
+
+  def refuse(*args, **kwargs):
+    raise NotImplementedError
+
+  native = MemoryFileSystem()
+  root = '/' + tmp_path.name + '-readonly'
+  native.makedirs(root)
+  native.pipe_file(root + '/note.md', b'---\ntitle: Read only\n---\nText')
+  monkeypatch.setattr(MemoryFileSystem, 'pipe_file', refuse)
+  fs = GppuFileSystem('memory://' + root)
+  rows = fs.ls()
+  assert [row['gppu']['name'] for row in rows] == ['note.md']
+  assert rows[0]['gppu']['markdown']['title'] == 'Read only'
+  assert fs._cacheless is True
+  assert not native.exists(root + '/.' + tmp_path.name + '-readonly.gppufs.sqlite')
+  monkeypatch.setattr(GppuFileSystem, '_live', no_live)
+  assert fs.ls() == rows
+
+
+def test_a_folder_that_cannot_hold_the_index_is_still_listed(tmp_path):
+  """Alex, 2026-09-17 03:49: "Don't count on these being present". The index beside a location is a
+  cache, so a folder that will not take the file is listed live through the handlers instead of
+  raising `unable to open database file` on every read path."""
+  (tmp_path / 'notes').mkdir()
+  (tmp_path / 'notes' / 'note.md').write_bytes(b'---\ntitle: No cache\n---\nText')
+  index(tmp_path).mkdir()                      # a directory where the database would go
+  fs = GppuFileSystem(tmp_path)
+  rows = fs.ls(recurse=True)
+  assert [row['gppu']['name'] for row in rows] == ['notes', 'note.md']
+  assert fs.info('notes/note.md')['gppu']['markdown']['title'] == 'No cache'
+  assert fs.cat_file('notes/note.md') == b'---\ntitle: No cache\n---\nText'
+  assert fs._cacheless is True
+  assert index(tmp_path).is_dir(), 'nothing may be written where the cache cannot go'
