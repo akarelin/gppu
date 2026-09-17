@@ -1,33 +1,40 @@
-# Hosts — the machines, as rows. The template builds the default object from the uid:
-# its hostname under the site domain, the platforms a session on it runs, the boxes it is
-# connected to. A row carries only what differs from every host of its kind, which is
-# rare; `seven` answers at 7.c.karel.in, so it says so.
+# Hosts — the machines, as rows. The template builds the default object from the uid: its
+# hostname under the domain, the platforms a session on it runs, the boxes it is connected
+# to, where it puts what it syncs and what it mounts. A row carries only what differs from
+# every host of its kind, which is rare; `seven` answers at 7.c.karel.in, so it says so.
 #
 #   platforms    the environments a session on this host runs
 #   connections  the boxes it is connected to
+#   sync         where the Synology Drive client on this host puts a share it syncs
+#   mount        where this host mounts shares, under the box's folder
 #   tags         what a template or a row says it is; a macro selects on them
 
 templates:
   _: &_
     kind: Host
     refs: {connections: connections, platforms: platforms}
-    hostname: "{{ uid ~ '.' ~ site.domain }}"
+    domain: c.karel.in
+    hostname: "{{ uid ~ '.' ~ domain }}"
     connections: []
 
   workstation:
     <<: *_
     platforms: [windows, wsl]
+    sync: "D:"
     tags: [workstation, windows]
 
   server:
     <<: *_
     platforms: [debian]
     connections: [s1]
+    mount: /mnt
     tags: [server, debian]
 
   mac:
     <<: *_
     platforms: [macos]
+    connections: [s1]
+    mount: /Volumes
     tags: [workstation, macos]
 
 alex-pc:

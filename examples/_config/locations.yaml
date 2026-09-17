@@ -1,35 +1,38 @@
 # Locations — where the files live, in the shape of CRAP/_config/topology/locations.yaml,
-# and the rules that say where each one is on a host. Hosts.next built these paths in
-# its host rules; they belong here, with the locations.
+# and the rules that say where each one is on a host.
 #
 #   {uid}:
 #     name: {name}
 #     template: {template, or the templates applied in order}
 #     {scheme}/{connection}: {share}       a place: sd/s1: SD.Lake is the share Synology Drive
-#                                          syncs, smb/s1: SD.Lake the share a server mounts
+#                                          syncs, smb/s1: SD.Lake the share a host mounts
 #     local/{platform}: {path}             where it is on a platform, when no rule gives it
 #     local/{host}: {path}                 where it is on one host, when that host differs
-#     at: {path}                           where it mounts, when not under the box's mount point
+#     at: {folder}                         the folder it mounts at, under the host's mount
+#                                          root, when not under its box's folder
 #     folders: {name: {path}}              the named folders inside it
 #
-# The template builds the default object from the uid — its addresses on every
-# interface, its path on this host — and every rule is a macro below, so a utility
-# asks and never computes: Environment.place(uid), Environment.local_of(address).
+# The logic: this is a file service that provides files and folders; its canonical location
+# and path are here; its mirrors are here. The template builds the default object from the
+# uid — its addresses on every scheme, its canonical one, its mirrors, its path on this host —
+# and every rule is a macro below, so a utility asks and never computes:
+# Environment.place(uid), Environment.local_of(address).
 
 # ~~ The rules. Each is a Jinja macro; the templates and the utilities call them by name.
 macros: |
   {# Where a location is on a host, in the order the rules apply: the location's own
-     place for this host, then for its platform; a share Synology Drive syncs, under the
-     platform's Drive root; a share the platform mounts, at its box's mount point; the
-     parent platform's place, translated — WSL sees the Windows drives under /mnt. #}
+     place for this host, then for its platform; a platform seen from another takes that
+     one's place, translated — WSL sees the Windows drives under /mnt; a share the host
+     syncs, under its sync root; a share the host mounts, at its mount point. #}
   {% macro place(uid, host, platform) %}
   {%- set p = platforms[platform] -%}
+  {%- set h = hosts[host] -%}
   {%- set location = locations[uid] -%}
   {%- if 'local/' ~ host in location -%}{{ location['local/' ~ host] }}
   {%- elif 'local/' ~ platform in location -%}{{ location['local/' ~ platform] }}
-  {%- elif 'sd_root' in p and served(location, 'sd') -%}{{ p.sd_root }}/{{ served(location, 'sd') }}
-  {%- elif 'mounts' in p and served(location, 'smb') -%}{{ mount_point(uid) }}
-  {%- elif 'from' in p and place(uid, host, p['from']) -%}{{ p.mount }}/{{ place(uid, host, p['from'])[0] | lower }}{{ place(uid, host, p['from'])[2:] }}
+  {%- elif 'from' in p -%}{%- if place(uid, host, p['from']) -%}{{ p.mount }}/{{ place(uid, host, p['from'])[0] | lower }}{{ place(uid, host, p['from'])[2:] }}{%- endif -%}
+  {%- elif 'sync' in h and served(location, 'sd') -%}{{ h.sync }}/{{ served(location, 'sd') }}
+  {%- elif 'mount' in h and served(location, 'smb') -%}{{ mount_point(uid, host) }}
   {%- endif -%}
   {% endmacro %}
 
@@ -40,10 +43,12 @@ macros: |
   {% macro served(location, scheme) %}{% for key in location if key.startswith(scheme ~ '/') %}{{ location[key] }}{% endfor %}{% endmacro %}
   {% macro serving(location, scheme) %}{% for key in location if key.startswith(scheme ~ '/') %}{{ key[scheme | length + 1:] }}{% endfor %}{% endmacro %}
 
-  {# Where a mounted location lands: its own `at`, else its box's mount point and the share. #}
-  {% macro mount_point(uid) %}
+  {# Where a mounted location lands on a host: under the host's mount root, in its own
+     folder when it names one, else in its box's folder as the share. #}
+  {% macro mount_point(uid, host) %}
   {%- set location = locations[uid] -%}
-  {{- location.at if 'at' in location else connections[serving(location, 'smb')].mount ~ '/' ~ served(location, 'smb') | replace(' ', '') -}}
+  {%- set box = connections[serving(location, 'smb')] -%}
+  {{- hosts[host].mount ~ '/' ~ (location.at if 'at' in location else box.dir ~ '/' ~ served(location, 'smb') | replace(' ', '')) -}}
   {% endmacro %}
 
   {# A location's address on one scheme, in the grammar resources.yaml declares for it,
@@ -58,7 +63,7 @@ macros: |
   {%- endif -%}
   {% endmacro %}
 
-  {# Every address of a location, as a list. #}
+  {# Every address of a location, as a list, in the order resources.yaml lists the schemes. #}
   {% macro uris(uid) %}
   {%- set ns = namespace(out=[]) -%}
   {%- for scheme in resources if uri(uid, scheme) -%}
@@ -88,10 +93,8 @@ macros: |
   {%- endif -%}
   {% endmacro %}
 
-# ~~ Templates — what a row is an instance of. The logic: this is a file service that
-#    provides files and folders; its canonical location and path are here; its mirrors
-#    are here. A file service is a template naming its scheme; the row computes its
-#    canonical address, its mirrors, and its place on this host. Data is data; a Jinja
+# ~~ Templates — what a row is an instance of. A file service is a template naming its
+#    scheme; the base template computes what every location carries. Data is data; a Jinja
 #    value is what the template computes for the row it is applied to.
 templates:
   location:
@@ -109,11 +112,10 @@ templates:
     service: sd
     tags: [synced]
 
-  # A share a server mounts and a workstation does not sync.
+  # A share a host mounts and a workstation does not sync.
   share:
     service: smb
     tags: [share]
-    mount: "{{ mount_point(uid) }}"
 
   # A library of a tenant, synced onto a workstation by its client.
   library:
@@ -187,7 +189,7 @@ public:
   name: Public
   template: [location, share]
   smb/s1: Public
-  at: /mnt/Public
+  at: Public
 
 everything:
   name: Everything

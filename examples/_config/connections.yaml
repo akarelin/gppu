@@ -1,11 +1,11 @@
 # Connections — every box, tenant and account serving the locations, in the shape of
-# CRAP/_config/topology/connections.yaml, with the providers as templates. A provider
-# is what every connection of its kind offers; a row carries what differs. The address
-# grammar per scheme is in resources.yaml; a connection only says which schemes it serves.
+# CRAP/_config/topology/connections.yaml, with the providers as templates. A provider is
+# what every connection of its kind offers; a row carries what differs. The address grammar
+# per scheme is in resources.yaml; a connection only says which schemes it serves.
 #
 #   host      what the box is reached at
 #   services  the schemes it serves, each a row of resources.yaml
-#   mount     where its shares land on a host that mounts them
+#   dir       the folder its shares are mounted under, on a host that mounts
 
 templates:
   _: &_
@@ -18,21 +18,21 @@ templates:
     username: Alex
     credentials: /home/alex/.smbcredentials
     services: [smb, sftp]
-    mount: "{{ '/mnt/' ~ uid | upper }}"
+    dir: "{{ uid | upper }}"
 
   hassio:
     <<: *_
     services: [smb]
-    mount: "{{ '/mnt/' ~ uid }}"
+    dir: "{{ uid }}"
 
   pg:
     <<: *_
-    services: [database]
+    services: [pg]
     port: 5432
 
   neo4j:
     <<: *_
-    services: [database]
+    services: [neo4j]
     port: 7687
 
   obsidian:
