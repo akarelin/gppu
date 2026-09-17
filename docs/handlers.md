@@ -976,6 +976,32 @@ Return the located path in either call mode.
 
 Return empty statistics and the location and folder this is.
 
+## `GppuIndex(*args, **kwargs)`
+
+Where the metadata of a location's entries is kept when it is kept somewhere other than beside it.
+
+Alex, 2026-09-17 03:45: "handler in my view was a thing that gets metadata for any locations
+(recursively) / If metadata is already in database - handler is not involved". So a filesystem given
+an index asks it first and runs a handler only for what it does not hold, and hands back what the
+handler read so the next lookup does not run it again.
+
+An entry is named by its address — the uri gppufs puts on every row, and the permalink of a
+configured location where there is one. An implementation may accept an entity's uid as well; gppufs
+only ever asks with an address. Nothing here knows what the index is made of: the implementation
+that keeps Alex's index in Postgres lives with the indexer, in CRAP, and gppu imports none of it.
+
+### `GppuIndex.entry(self, address: 'str') -> 'tuple[dict, list[dict] | None] | None'`
+
+One entry's metadata and the listing of what is in it, or None when the index holds neither.
+
+The listing is None for a thing that is not a container, and for a container the index has not
+been told the contents of. Both come back in the same shape gppufs stores: the metadata is the
+row, and each child of the listing carries `path`, `type` and `ino`.
+
+### `GppuIndex.put(self, entries: 'Mapping[str, tuple[dict | None, list[dict] | None]]') -> 'None'`
+
+Keep what the handlers read, by address. A None stands for a part this call does not change.
+
 ## `GppuFileSystem(*args, **kwargs)`
 
 fsspec listings enriched by handlers and stored beside their location.

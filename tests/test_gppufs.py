@@ -708,3 +708,41 @@ def test_a_folder_that_cannot_hold_the_index_is_still_listed(tmp_path):
   assert fs.cat_file('notes/note.md') == b'---\ntitle: No cache\n---\nText'
   assert fs._cacheless is True
   assert index(tmp_path).is_dir(), 'nothing may be written where the cache cannot go'
+
+
+class Remembering:
+  """An index that answers from what it was given, and records every lookup and every write."""
+
+  def __init__(self) -> None:
+    self.held: dict[str, tuple[dict | None, list | None]] = {}
+    self.asked: list[str] = []
+
+  def entry(self, address):
+    self.asked.append(address)
+    return self.held.get(address)
+
+  def put(self, entries):
+    for address, (metadata, children) in entries.items():
+      before = self.held.get(address, (None, None))
+      self.held[address] = (metadata if metadata is not None else before[0],
+                            children if children is not None else before[1])
+
+
+def test_the_index_answers_first_and_the_handler_runs_for_what_it_lacks(tmp_path, monkeypatch):
+  """Alex, 2026-09-17 03:45: "If metadata is already in database - handler is not involved"."""
+  (tmp_path / 'note.md').write_bytes(b'---\ntitle: Indexed\n---\nText')
+  index = Remembering()
+  fs = GppuFileSystem(tmp_path, index=index)
+  rows = fs.ls()
+  assert [row['gppu']['name'] for row in rows] == ['note.md']
+  assert fs.info('note.md')['gppu']['markdown']['title'] == 'Indexed'
+  assert index.asked, 'the index is asked'
+  assert any(address.endswith('/note.md') for address in index.held), 'what the handler read is kept'
+
+  # A second filesystem, handed the same index, must not run a handler for what the index holds.
+  monkeypatch.setattr(GppuFileSystem, '_live', no_live)
+  monkeypatch.setattr(GppuFileSystem, '_identify_entry', no_live)
+  again = GppuFileSystem(tmp_path, index=index)
+  assert [row['gppu']['name'] for row in again.ls()] == ['note.md']
+  assert again.info('note.md')['gppu']['markdown']['title'] == 'Indexed'
+  assert again.info()['gppu']['name'] == tmp_path.name
