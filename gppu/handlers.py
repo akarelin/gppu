@@ -103,6 +103,10 @@ MODEL_KEYS = ("model", "modelId", "model_slug", "default_model_slug")
 ID_KEYS = ("sessionId", "session_id", "id", "remoteSessionId")
 ROLES = ("user", "assistant")
 SNIFF = 8
+# How many read sessions are kept. A walk reads each file once, so the cache is there for a caller
+# who asks about the same session again, not for the walk; unbounded it holds every transcript of the
+# location in memory, which on a folder of a hundred thousand sessions is the whole folder.
+SESSION_CACHE = 512
 UNITS = (("d", 86400), ("h", 3600), ("m", 60), ("s", 1))
 UNSAFE = '\\/:*?"<>|\r\n\t'
 NAME_LIMIT = 254
@@ -3922,6 +3926,7 @@ class SessionHandler(Handler):
 
         super().__init__(metadata, strict=strict)
         self._session_cache: dict[Path, tuple[Signature, SessionObject]] = {}
+        self._session_cache_limit = SESSION_CACHE
         self._recognizers = (
             ("cx", self._is_codex),
             ("gemini", self._is_gemini),
@@ -4041,6 +4046,7 @@ class SessionHandler(Handler):
             and cached[0] == signature
             and isinstance(cached[1], SessionFile)
         ):
+            self._session_cache[path] = self._session_cache.pop(path)
             return cached[1]
         records = self._records(path)
         harness = self._harness(records[:SNIFF])
@@ -4067,6 +4073,8 @@ class SessionHandler(Handler):
             sidechain_only=sidechain and not mainline,
         )
         self._session_cache[path] = (signature, item)
+        while len(self._session_cache) > self._session_cache_limit:
+            self._session_cache.pop(next(iter(self._session_cache)), None)   # the least recently read
         return item
 
     def _sessions(self, path: Path) -> tuple[SessionFile, ...]:
