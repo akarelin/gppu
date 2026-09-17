@@ -868,3 +868,23 @@ def test_a_postgres_location_is_addressed_like_any_other():
   assert fs.info('pg.karel.in/files/lake')['type'] == 'directory'
   with pytest.raises(ValueError, match='never written'):
     fs._open('pg.karel.in/files/lake/entity', 'wb')
+
+
+def test_a_folder_read_from_its_index_alone_keeps_what_is_no_longer_there(tmp_path):
+  """Alex, 2026-09-17 04:47: an archived folder keeps its sqlite, and a folder from a year ago whose
+  files are now inside a large archive is answered from that index without opening the archive;
+  records of deleted files stay. Reading from the index alone is what that is."""
+  (tmp_path / 'notes').mkdir()
+  (tmp_path / 'notes' / 'kept.md').write_bytes(b'---\ntitle: Kept\n---\nText')
+  (tmp_path / 'notes' / 'gone.md').write_bytes(b'---\ntitle: Gone\n---\nText')
+  fs = GppuFileSystem(tmp_path)
+  assert [row['gppu']['name'] for row in fs.ls('notes')] == ['gone.md', 'kept.md']
+  assert fs.info('notes/gone.md')['gppu']['markdown']['title'] == 'Gone'
+
+  (tmp_path / 'notes' / 'gone.md').unlink()        # as far as the folder knows, it is inside an archive now
+  again = GppuFileSystem(tmp_path)
+  assert [row['gppu']['name'] for row in again.ls('notes', live=False)] == ['gone.md', 'kept.md']
+  assert again.info('notes/gone.md')['gppu']['markdown']['title'] == 'Gone'
+
+  # A folder that is still live is still read live, and there the record goes.
+  assert [row['gppu']['name'] for row in again.ls('notes')] == ['kept.md']
