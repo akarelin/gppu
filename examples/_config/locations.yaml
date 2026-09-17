@@ -6,6 +6,9 @@
 #     template: {template, or the templates applied in order}
 #     {scheme}/{connection}: {share}       a place: sd/s1: SD.Lake is the share Synology Drive
 #                                          syncs, smb/s1: SD.Lake the share a host mounts
+#     {location}: {path}                   stored inside that location at that path — where
+#                                          it is, and its address on every scheme, follow
+#                                          from the one it is in
 #     local/{platform}: {path}             where it is on a platform, when no rule gives it
 #     local/{host}: {path}                 where it is on one host, when that host differs
 #     at: {folder}                         the folder it mounts at, under the host's mount
@@ -21,8 +24,9 @@
 # ~~ The rules. Each is a Jinja macro; the templates and the utilities call them by name.
 macros: |
   {# Where a location is on a host, in the order the rules apply: the location's own
-     place for this host, then for its platform; a platform seen from another takes that
-     one's place, translated — WSL sees the Windows drives under /mnt; a share the host
+     place for this host, then for its platform; a location stored inside another is under
+     that one's place, so it needs nothing of the host; a platform seen from another takes
+     that one's place, translated — WSL sees the Windows drives under /mnt; a share the host
      syncs, under its sync root; a share the host mounts, from a box it is connected to,
      at its mount point. #}
   {% macro place(uid, host=Environment.host, platform=Environment.platform) %}
@@ -31,6 +35,7 @@ macros: |
   {%- set location = locations[uid] -%}
   {%- if 'local/' ~ host in location -%}{{ location['local/' ~ host] }}
   {%- elif 'local/' ~ platform in location -%}{{ location['local/' ~ platform] }}
+  {%- elif inside_of(uid) -%}{%- if place(inside_of(uid), host, platform) -%}{{ place(inside_of(uid), host, platform) }}/{{ location[inside_of(uid)] }}{%- endif -%}
   {%- elif 'from' in p -%}{%- if place(uid, host, p['from']) -%}{{ p.mount }}/{{ place(uid, host, p['from'])[0] | lower }}{{ place(uid, host, p['from'])[2:] }}{%- endif -%}
   {%- elif 'sync' in h and served(location, 'sd') -%}{{ h.sync }}/{{ served(location, 'sd') }}
   {%- elif 'mount' in h and served(location, 'smb') and serving(location, 'smb') in h.connections -%}{{ mount_point(uid, host) }}
@@ -50,9 +55,14 @@ macros: |
   {# A named folder inside a location, where the location is on a host. #}
   {% macro folder(uid, inside, host=Environment.host, platform=Environment.platform) %}{{ place(uid, host, platform) }}/{{ locations[uid].folders[inside].path }}{% endmacro %}
 
-  {# What a location is served as on one scheme, and by which box. #}
+  {# What a location is served as on one scheme, and by which box. A service served at its
+     root — a mailbox's contacts — has a place and no share, so presence is its own question. #}
+  {% macro has_place(location, scheme) %}{% for key in location if key.startswith(scheme ~ '/') %}yes{% endfor %}{% endmacro %}
   {% macro served(location, scheme) %}{% for key in location if key.startswith(scheme ~ '/') %}{{ location[key] }}{% endfor %}{% endmacro %}
   {% macro serving(location, scheme) %}{% for key in location if key.startswith(scheme ~ '/') %}{{ key[scheme | length + 1:] }}{% endfor %}{% endmacro %}
+
+  {# The location this one is stored inside of, named by a key that is another location. #}
+  {% macro inside_of(uid) %}{% for key in locations[uid] if key != uid and key in locations %}{{ key }}{% endfor %}{% endmacro %}
 
   {# Where a mounted location lands on a host: under the host's mount root, in its own
      folder when it names one, else in its box's folder as the share. #}
@@ -64,14 +74,29 @@ macros: |
 
   {# A location's address on one scheme: the grammar its resource type names, rendered
      with the serving box's row, the scheme, the share and the path — smb://s1.karel.in/SD.Lake,
-     sd://SD.Lake, m365://karelin/alex/onedrive/Documents. Empty when not served so. #}
+     sd://SD.Lake, m365://karelin/alex/onedrive/Documents. A location stored inside another
+     has the address the one it is in has, continued by its path, so a folder in the lake is
+     lake://Contacts and in OneDrive is m365://karelin/alex/onedrive/Documents/Contact Photos.
+     A namespace of its own is the scheme itself. Empty when the location is not there. #}
   {% macro uri(uid, scheme, path='') %}
   {%- set location = locations[uid] -%}
-  {%- if served(location, scheme) -%}
+  {%- if has_place(location, scheme) -%}
   {%- set box = connections[serving(location, scheme)] -%}
   {%- set stems = dict(box, scheme=scheme, share=served(location, scheme), path=path) -%}
-  {{- render_template(resources[scheme].uri, **stems) | trim('/') -}}
+  {{- address(scheme, stems) -}}
+  {%- elif inside_of(uid) -%}
+  {{- uri(inside_of(uid), scheme, location[inside_of(uid)] ~ ('/' ~ path if path else '')) -}}
+  {%- elif resources[scheme].get('root') == uid -%}
+  {{- address(scheme, {'scheme': scheme, 'path': path}) -}}
   {%- endif -%}
+  {% endmacro %}
+
+  {# The grammar of a scheme, rendered: a stem the location leaves empty leaves no separator
+     behind it, so the service a mailbox serves at its root is m365://karelin/alex/contacts
+     and the lake with nothing under it is lake://. #}
+  {% macro address(scheme, stems) %}
+  {%- set head, sep, rest = render_template(resources[scheme].uri, **stems).partition('://') -%}
+  {{- head ~ sep ~ (rest.split('/') | reject('equalto', '') | join('/')) -}}
   {% endmacro %}
 
   {# Every address of a location, as a list, in the order resources.yaml lists the schemes. #}
@@ -84,13 +109,32 @@ macros: |
   {% endmacro %}
 
   {# The location an address is inside of: sd://SD.Lake/inbox is inside the location served
-     as SD.Lake on sd. Empty when no location is served so. #}
+     as SD.Lake on sd, lake://Contacts/x.md inside the folder in the lake rather than the lake
+     itself — the longest address that fits wins. Empty when no location has it. #}
   {% macro location_of(address) %}
-  {%- for uid, location in locations.items() -%}
-  {%- for scheme in resources if served(location, scheme) and (address == uri(uid, scheme) or address.startswith(uri(uid, scheme) ~ '/')) -%}
-  {{- uid -}}
+  {%- set ns = namespace(uid='', length=0) -%}
+  {%- for uid in locations -%}
+  {%- set base = base_of(uid, address) -%}
+  {%- if base and base | length >= ns.length -%}
+  {%- set ns.uid, ns.length = uid, base | length -%}
+  {%- endif -%}
   {%- endfor -%}
+  {{- ns.uid -}}
+  {% endmacro %}
+
+  {# The address of a location the address is under: its longest one that fits. The scheme an
+     address starts with is not the scheme it is served on — every m365 service is m365:// —
+     so every scheme is tried. Empty when this location does not have it. #}
+  {% macro base_of(uid, address) %}
+  {%- set ns = namespace(base='') -%}
+  {%- for scheme in resources -%}
+  {%- set base = uri(uid, scheme) -%}
+  {%- if base and (address == base or address.startswith(base if base.endswith('://') else base ~ '/'))
+         and base | length > ns.base | length -%}
+  {%- set ns.base = base -%}
+  {%- endif -%}
   {%- endfor -%}
+  {{- ns.base -}}
   {% endmacro %}
 
   {# The path on a host of an address: the place of the location it is inside of, then
@@ -98,9 +142,8 @@ macros: |
   {% macro local_of(address, host=Environment.host, platform=Environment.platform) %}
   {%- set uid = location_of(address) -%}
   {%- if uid and place(uid, host, platform) -%}
-  {%- for scheme in resources if served(locations[uid], scheme) and address.startswith(uri(uid, scheme)) -%}
-  {{- place(uid, host, platform) }}{{ address[uri(uid, scheme) | length:] -}}
-  {%- endfor -%}
+  {%- set base = base_of(uid, address) -%}
+  {{- place(uid, host, platform) }}{{ '/' ~ address[base | length:] | trim('/') if address != base -}}
   {%- endif -%}
   {% endmacro %}
 
@@ -110,9 +153,10 @@ macros: |
 templates:
   location:
     kind: Location
-    refs: {'*/*': [connections, platforms, hosts]}
+    refs: {'*/*': [connections, platforms, hosts], inside: locations}
     provides: files
     tags: []
+    inside: "{{ inside_of(uid) or none }}"
     local: "{{ place(uid) or none }}"
     uris: "{{ uris(uid) }}"
     canonical: "{{ uri(uid, service) }}"
@@ -142,6 +186,23 @@ templates:
   folder:
     service: file
     canonical: "{{ 'file://' ~ Environment.host ~ '/' ~ local if local else none }}"
+
+  # The lake of text: a namespace of its own, addressed as lake://, wherever it is. A host
+  # says where it has it and nothing else — no sync map, no mount, no box.
+  lake:
+    service: lake
+    tags: [lake]
+
+  # What a dumper reads: the contacts of a mailbox, as Graph serves them at the root of the
+  # service. Its place is the copy the dumper wrote into the lake.
+  contacts:
+    service: contacts
+    provides: contacts
+    tags: [source]
+
+  # A folder of a library, named where it is; it needs nothing of the host.
+  library_folder:
+    service: onedrive
 
 # ~~ Rows
 profile:
@@ -231,3 +292,26 @@ obsidian:
   name: Obsidian
   template: [location, folder]
   local/windows: "D:/_"
+
+# ~~ The lake, its sources, and what the contacts ETL writes. Only the lake says where it is
+#    on a machine; everything else is inside something and follows it, here or under Dagster.
+lake:
+  name: TextLake
+  template: [location, lake]
+  local/windows: "D:/TextLake"
+  local/debian: /mnt/S1/Lake/text
+  folders:
+    contacts:
+      name: Contacts
+      path: Contacts
+
+karelin-contacts:
+  name: Karelin contacts
+  template: [location, contacts]
+  contacts/karelin: ''
+  lake: M365/karelin/users/alex@karelin.com/contacts
+
+karelin-contact-photos:
+  name: Karelin contact photos
+  template: [location, library_folder]
+  onedrive: Contact Photos

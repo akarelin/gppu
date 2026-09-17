@@ -1,0 +1,62 @@
+# Entities — the things the lake keeps one document per, whatever source they were seen in.
+# A contact in a mailbox is not one of these: it is a card about a person, and the person is
+# the entity. His permalink is minted once from his name and never changes — person://aaron-
+# crayford stays his address when Outlook renames him, when a second tenant turns out to hold
+# the same man, and when the mailbox the card was in is gone.
+#
+#   scheme      the namespace his permalink is in, and the kind he is
+#   folder      where in the lake his document is kept
+#   fileClass   what the document is, in the vault's vocabulary
+#   permalink   the grammar of the permalink, by name
+#   document    the grammar of the document, by name
+#
+# The rules below say what a source record is about: which kind of entity it is, what makes
+# two records the same one, and the slug a permalink is minted from. They are here and not in
+# the utility, so the utility asks and never decides.
+
+# ~~ The grammars. A rule fills them in with the kind's row and what it knows then.
+address_templates:
+  permalink: "{{ scheme }}://{{ slug }}"
+  document:  "lake://{{ folder }}/{{ slug }}.md"
+
+# ~~ The rules
+macros: |
+  {# A contact card is about a company when it is filed under a company name and no person's. #}
+  {% macro kind_of(record) %}
+  {{- 'company' if record.get('companyName') and not (record.get('givenName') or record.get('surname')) else 'person' -}}
+  {% endmacro %}
+
+  {# What makes two records the same one: the first address it answers at, else the name it is
+     filed under. Two records with one identity are one entity. #}
+  {% macro identity_of(record) %}
+  {%- set emails = (record.get('emailAddresses') or []) | map(attribute='address') | select | list -%}
+  {{- emails[0] | lower if emails else 'name:' ~ (record.get('displayName') or record.get('fileAs') or '') | lower -}}
+  {% endmacro %}
+
+  {# What he is called, and the slug his permalink is minted from — his name, or the address
+     he answers at when the card carries no name. #}
+  {% macro name_of(record) %}{{ record.get('displayName') or record.get('fileAs') or identity_of(record) }}{% endmacro %}
+  {% macro slug_of(name) %}{{ re.sub('[^a-z0-9]+', '-', (name | string).lower()).strip('-') or 'unnamed' }}{% endmacro %}
+  {% macro slug_for(record) %}{{ slug_of(name_of(record)) }}{% endmacro %}
+
+  {# His photo, by the name the photo is filed under. #}
+  {% macro filed_as(record) %}{{ slug_of(record.get('fileAs') or name_of(record)) }}{% endmacro %}
+
+templates:
+  entity:
+    kind: EntityKind
+    refs: {scheme: resources}
+    scheme: "{{ uid }}"
+    folder: "{{ name }}"
+    permalink: permalink
+    document: document
+
+person:
+  name: Person
+  fileClass: Person
+  template: entity
+
+company:
+  name: Company
+  fileClass: Company
+  template: entity

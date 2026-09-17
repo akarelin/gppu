@@ -35,3 +35,5 @@ resources:   !include resources.yaml
 connections: !include connections.yaml
 hosts:       !include hosts.yaml
 locations:   !include locations.yaml
+entities:    !include entities.yaml
+sources:     !include sources.yaml

@@ -1,0 +1,48 @@
+# Sources — what a dumper reads, and what it gives the lake. A source is a location plus the
+# kind of record that is in it; nothing here says where that location is on a machine, so the
+# same source runs on Alex-Laptop, on Alex-PC and under Dagster, and each one resolves it for
+# the host it is on.
+#
+#   location    the location the records are in
+#   provides    what a record there is: contacts, photos
+#   records     where in it the records are
+#   extensions  which files among them are records
+#   exclude     what the dumper wrote there that is not a record
+#   yields      the kinds of entity a record there can be about
+#
+# A source is data for the ETL: it never names a path, a drive or a host.
+
+templates:
+  source:
+    kind: Source
+    refs: {location: locations, yields: entities}
+    tags: []
+    exclude: []
+    address: "{{ locations[location].get('canonical') }}"
+    local: "{{ locations[location].get('local') or none }}"
+
+  # Contacts as Microsoft Graph serves them: one JSON per contact, as the dumper wrote it.
+  m365_contacts:
+    provides: contacts
+    records: "**/*"
+    extensions: [.json]
+    exclude: [_folder.json]   # the dumper's note of the folder, not a contact in it
+    yields: [person, company]
+
+  # The photos of those contacts, as they sit in OneDrive for Business: one image per
+  # contact, named the way Outlook files the contact — "Crayford, Aaron.jpg".
+  m365_contact_photos:
+    provides: photos
+    records: "**/*"
+    extensions: [.jpg, .jpeg, .jfif, .png]
+    yields: [person, company]
+
+karelin-contacts:
+  name: Karelin contacts
+  template: [source, m365_contacts]
+  location: karelin-contacts
+
+karelin-contact-photos:
+  name: Karelin contact photos
+  template: [source, m365_contact_photos]
+  location: karelin-contact-photos
