@@ -25,7 +25,7 @@ class Browse(App):
       print(f'{uid:14} {location.name:22} {location.local or "-":34} {location.canonical:40} {" ".join(location.mirrors)}')
 
     for address in self.my_list('browse/addresses'):
-      uid, local = Environment.location_of(address), Environment.local_of(address)
+      uid, local = Environment.locations.location_of(address), Environment.locations.local_of(address)
       resource = State.resources[address.partition('://')[0]]['class']
       print(f'\n{address}  ->  {resource}  ->  {uid or "no location"}  ->  {local or "not on this host"}')
       if local:

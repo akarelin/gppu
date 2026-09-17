@@ -113,34 +113,34 @@ def test_a_location_knows_its_addresses_and_its_place_here(on):
 def test_places_follow_the_rules_per_platform(on):
   on('seven', 'debian')
   assert State.locations['sd-lake']['local'] == '/mnt/S1/SD.Lake'
-  assert State.locations['public']['local'] == '/mnt/Public' and Environment.place('public', 'alex-mac', 'macos') == '/Volumes/Public'
+  assert State.locations['public']['local'] == '/mnt/Public' and Environment.locations.place('public', 'alex-mac', 'macos') == '/Volumes/Public'
   assert State.locations['yellow-config']['local'] == '/mnt/yellow/config'
   assert 'local' not in State.locations['obsidian']
-  assert Environment.place('sd-lake', 'alex-pc', 'wsl') == '/mnt/d/SD.Lake'
-  assert Environment.place('sd-agents', 'trix', 'debian') == '/home/alex/SD.agents'   # the row's own place for one host
-  assert Environment.place('sd-agents', 'seven', 'debian') == '/mnt/S1/SD.agents'
+  assert Environment.locations.place('sd-lake', 'alex-pc', 'wsl') == '/mnt/d/SD.Lake'
+  assert Environment.locations.place('sd-agents', 'trix', 'debian') == '/home/alex/SD.agents'   # the row's own place for one host
+  assert Environment.locations.place('sd-agents', 'seven', 'debian') == '/mnt/S1/SD.agents'
 
 
 def test_an_address_resolves_to_a_path_on_this_host(on):
   on('alex-laptop', 'windows')
-  assert Environment.local_of('sd://SD.Lake/inbox') == 'D:/SD.Lake/inbox'
-  assert Environment.local_of('smb://s1.karel.in/Public/x') == ''
-  assert Environment.folder('sd-lake', 'inbox') == 'D:/SD.Lake/inbox'
-  assert Environment.local_of('smb://s1.karel.in/Public/x', 'seven', 'debian') == '/mnt/Public/x'
-  assert Environment.uri('sd-lake', 'sd') == 'sd://SD.Lake' and Environment.uri('public', 'sd') == ''
+  assert Environment.locations.local_of('sd://SD.Lake/inbox') == 'D:/SD.Lake/inbox'
+  assert Environment.locations.local_of('smb://s1.karel.in/Public/x') is None
+  assert Environment.locations.folder('sd-lake', 'inbox') == 'D:/SD.Lake/inbox'
+  assert Environment.locations.local_of('smb://s1.karel.in/Public/x', 'seven', 'debian') == '/mnt/Public/x'
+  assert Environment.locations.uri('sd-lake', 'sd') == 'sd://SD.Lake' and Environment.locations.uri('public', 'sd') is None
 
 
 def test_a_command_runs_on_a_host_as_its_platform_says(on):
   on('alex-laptop', 'windows')
-  assert Environment.ssh('seven', 'debian') == ['ssh', '-p', '22', 'alex@7.c.karel.in', 'bash', '-s']
-  assert Environment.ssh('alex-pc', 'windows')[:4] == ['ssh', '-p', '22222', 'administrator@alex-pc.c.karel.in']
+  assert Environment.hosts.ssh('seven', 'debian') == ['ssh', '-p', '22', 'alex@7.c.karel.in', 'bash', '-s']
+  assert Environment.hosts.ssh('alex-pc', 'windows')[:4] == ['ssh', '-p', '22222', 'administrator@alex-pc.c.karel.in']
 
 
 def test_lookups_are_strict():
   Environment.from_dict({'a': {'b': 1}})
   assert Environment.glob('a/b') == 1
   with pytest.raises(KeyError): Environment.glob('a/c')
-  with pytest.raises(KeyError): Environment.macro('locations', 'place')
+  with pytest.raises(AttributeError): Environment.locations
 
 
 def test_a_dangling_reference_fails_the_load(tmp_path):

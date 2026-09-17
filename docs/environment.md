@@ -45,14 +45,12 @@ class Browse(App):
 
 ## The configuration answers
 
-What a utility used to compute for itself is a macro of the configuration, called by name. `Environment.macro(section, name)` returns the macro; `Environment.answer(...)` returns what it says as text. The locations table defines the ones every utility asks:
+What a utility used to compute for itself is a rule of the configuration — a macro of a table section — reached as `Environment.<section>.<rule>(...)`. gppu knows no rule by name; a rule that wants this host and platform says so in its own signature, `{% macro place(uid, host=Environment.host, platform=Environment.platform) %}`. The locations table of the reference configuration defines `place`, `folder`, `uri`, `location_of` and `local_of`; the hosts table defines `ssh(host, platform)`. A rule that says nothing answers `None`.
 
-| Call | Answers |
-| --- | --- |
-| `Environment.place(uid, host=, platform=)` | where a location is on a host; this host and platform unless told otherwise |
-| `Environment.folder(uid, inside, ...)` | a named folder of a location, where the location is |
-| `Environment.uri(uid, interface)` | the location's address on one interface, in the grammar its connection's provider declares |
-| `Environment.location_of(address)` | the uid of the location an address is inside of |
-| `Environment.local_of(address, ...)` | the path on a host of an address; `''` when the host does not reach it |
+```python
+Environment.locations.place('sd-lake')                    # where it is on this host
+Environment.locations.local_of('sd://SD.Lake/inbox')      # the path here of an address
+Environment.hosts.ssh('seven', 'debian')                  # ['ssh', '-p', '22', 'alex@7.c.karel.in', 'bash', '-s']
+```
 
 `examples/config` is the reference: `examples/_config/_config.yaml`, the root in the `_creekview.yaml` shape with the platforms and `resources` (one row per URI scheme: the resource class and the address grammar), `connections` (the boxes and tenants, providers as templates), `hosts` and `locations` beside it, each carrying its templates with its rows. A location's templates carry the logic Alex stated: a file service provides files and folders, the row computes its canonical address, its mirrors and its place on this host. `browse.py` is an `App` that lists every location so and walks the addresses of its own section through gppufs. Run it with no arguments.
