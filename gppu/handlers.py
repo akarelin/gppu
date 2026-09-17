@@ -4981,6 +4981,33 @@ class _RarFileSystem(AbstractArchiveFileSystem):
 register_implementation('gppu-rar', _RarFileSystem)
 
 
+@runtime_checkable
+class GppuIndex(Protocol):
+  """Where the metadata of a location's entries is kept when it is kept somewhere other than beside it.
+
+  Alex, 2026-09-17 03:45: "handler in my view was a thing that gets metadata for any locations
+  (recursively) / If metadata is already in database - handler is not involved". So a filesystem given
+  an index asks it first and runs a handler only for what it does not hold, and hands back what the
+  handler read so the next lookup does not run it again.
+
+  An entry is named by its address — the uri gppufs puts on every row, and the permalink of a
+  configured location where there is one. An implementation may accept an entity's uid as well; gppufs
+  only ever asks with an address. Nothing here knows what the index is made of: the implementation
+  that keeps Alex's index in Postgres lives with the indexer, in CRAP, and gppu imports none of it.
+  """
+
+  def entry(self, address: str) -> tuple[dict, list[dict] | None] | None:
+    """One entry's metadata and the listing of what is in it, or None when the index holds neither.
+
+    The listing is None for a thing that is not a container, and for a container the index has not
+    been told the contents of. Both come back in the same shape gppufs stores: the metadata is the
+    row, and each child of the listing carries `path`, `type` and `ino`.
+    """
+
+  def put(self, entries: Mapping[str, tuple[dict | None, list[dict] | None]]) -> None:
+    """Keep what the handlers read, by address. A None stands for a part this call does not change."""
+
+
 class GppuFileSystem(AbstractFileSystem):
   """fsspec listings enriched by handlers and stored beside their location.
 
@@ -5014,7 +5041,7 @@ class GppuFileSystem(AbstractFileSystem):
   _index_name = re.compile(r'^\..+\.gppufs\.sqlite(?:-(?:journal|wal|shm))?$')
 
   def __init__(self, location: str | Path, locations: Mapping[str, Mapping[str, str]] | None = None,
-               **storage_options: Any) -> None:
+               index: GppuIndex | None = None, **storage_options: Any) -> None:
     if location is None:
       raise ValueError('location is required')
     if '://' not in str(location) and not Path(location).is_absolute():
@@ -5025,6 +5052,7 @@ class GppuFileSystem(AbstractFileSystem):
       self.root = self.root.rstrip('/')
     self.location = self.fs.unstrip_protocol(self.root)
     self._lock = RLock()
+    self._index = index              # the index that answers first; the file beside the location is a cache
     self._cacheless = False          # set when the store refuses the index it would keep beside itself
     self._memory: dict[str, sqlite3.Connection] = {}   # a remote store's index, held for this instance
     self._locations = dict(locations) if locations else {}   # folder -> the location that is there
@@ -5227,10 +5255,19 @@ class GppuFileSystem(AbstractFileSystem):
   def _stored(self, key: str) -> tuple[dict, list[dict] | None] | None:
     """One entry read back from the location's index: its metadata and its listing, or None.
 
+    The index answers first when there is one, and what it holds is the answer — a handler runs only
+    for what it does not hold. The file beside the location is asked after it, and is a cache.
+
     Not `_cached`: `AbstractFileSystem.__init__` returns early on a truthy `_cached`, so a method of
     that name leaves the instance without `_intrans`, `_transaction` and `dircache`, and every read
     through the fsspec surface raises AttributeError.
     """
+    if self._index is not None:
+      held = self._index.entry(self._address(key))
+      if held is not None and held[0] is not None:
+        children = None if held[1] is None else [
+          {**child, 'path': self._key(child['path'])} for child in held[1]]
+        return self._addressed(key, dict(held[0])), children
     owner = self._owner(key)
     with self._database(owner) as database:
       if database is None:
@@ -5240,18 +5277,50 @@ class GppuFileSystem(AbstractFileSystem):
     if row is None:
       return None
     metadata = json.loads(row[0])
+    self._metadata_paths(metadata['gppu'], lambda value:
+      value if '://' in value.rsplit('::', 1)[-1] else self._uri(self._absolute(value, owner)))
+    children = None if row[1] is None else [
+      {**child, 'path': self._absolute(child['path'], owner)} for child in json.loads(row[1])]
+    return self._addressed(key, metadata), children
+
+  def _address(self, key: str) -> str:
+    """How an index names this entry: the permalink a configured location gives it, else its uri.
+
+    An index is shared, and `sd://SD.agents/memory/MEMORY.md` is the one name for that file whichever
+    host holds it and whichever checkout asks. A place no configured location covers has only its own
+    uri to be named by, and an index keyed on that is an index for this host.
+    """
+    if self._locations and '::' not in key:
+      located = self._handlers.located(Path(self._path(key)))
+      if located is not None:
+        return located.address
+    return self._uri(key)
+
+  def _for_index(self, key: str, metadata: dict) -> dict:
+    """One row as an index is given it: addressed, and every path inside it an address too.
+
+    An index is shared — the same entry is looked up from another host and another checkout — so
+    nothing owner-relative and nothing this process only can resolve may go into it.
+    """
+    value = json.loads(json.dumps(metadata, default=_metadata_text))
+    self._metadata_paths(value['gppu'], lambda item:
+      item if '://' in item.rsplit('::', 1)[-1] else self._uri(item))
+    return self._addressed(key, value)
+
+  def _addressed(self, key: str, metadata: dict) -> dict:
+    """One stored row with the addresses this filesystem gives it: its own, its name and its parent.
+
+    How a thing is addressed is gppufs's and not the index's, so a row read from the file beside the
+    location and a row read from an index given to this filesystem are finished the same way.
+    """
     metadata['name'] = self._uri(key)
     metadata['gppu']['path'] = metadata['name']
     head = key.split('::', 1)[0]
     metadata['gppu']['name'] = (PurePosixPath(self.root).name if key == '.' else
       PurePosixPath(head).name if not head.endswith('://') else PurePosixPath(key.rsplit('::', 1)[-1]).name)
-    self._metadata_paths(metadata['gppu'], lambda value:
-      value if '://' in value.rsplit('::', 1)[-1] else self._uri(self._absolute(value, owner)))
     parent = self._parent_key(key)
     metadata['gppu']['parent'] = self._uri(parent) if parent is not None else None
-    children = None if row[1] is None else [
-      {**child, 'path': self._absolute(child['path'], owner)} for child in json.loads(row[1])]
-    return metadata, children
+    return metadata
 
   @staticmethod
   def _metadata_paths(metadata: dict, convert: Callable) -> None:
@@ -5323,19 +5392,30 @@ class GppuFileSystem(AbstractFileSystem):
         child = key
 
     grouped: dict[str, list[tuple]] = {}
+    keep: dict[str, tuple[dict | None, list[dict] | None]] = {}
     for key, (metadata, children) in rows.items():
       owner = self._owner(key)
       if owner not in grouped:
         grouped[owner] = []
+      listing = None if children is None else [
+        {'path': child, 'type': (item := metadata_for(child))['type'], 'ino': item.get('ino')}
+        for child in children]
+      # What the handlers read goes to the index as well, addressed as this filesystem addresses it.
+      # A probe arrives here and not through `_store`, so an index told only by `_store` would answer
+      # with the identified row for ever and the probe would run again on every lookup.
+      if self._index is not None:
+        keep[self._address(key)] = (self._for_index(key, metadata),
+          None if listing is None else [{**child, 'path': self._address(child['path'])} for child in listing])
       value = json.loads(json.dumps(metadata, default=_metadata_text))
       value['name'] = self._relative(key, owner)
       value['gppu']['path'] = value['name']
       self._metadata_paths(value['gppu'], lambda item:
         item if '://' in item.rsplit('::', 1)[-1] else self._relative(item, owner))
       grouped[owner].append((self._relative(key, owner), json.dumps(value, default=_metadata_text),
-        None if children is None else json.dumps([
-          {'path': self._relative(child, owner), 'type': (item := metadata_for(child))['type'], 'ino': item.get('ino')}
-          for child in children])))
+        None if listing is None else json.dumps([
+          {**child, 'path': self._relative(child['path'], owner)} for child in listing])))
+    if keep:
+      self._index.put(keep)
     # Publish descendant databases before the listing which references them.
     for owner in sorted(grouped, key=lambda item: len(PurePosixPath(item).parts), reverse=True):
       with self._database(owner, write=True) as database:
@@ -5602,7 +5682,21 @@ class GppuFileSystem(AbstractFileSystem):
     return {**item, 'name': self._uri(key), 'gppu': extra}
 
   def _store(self, key: str, rows: dict[str, tuple[dict, list | None]], listing: list[dict] | None) -> None:
-    """Add identified rows the index does not hold yet and record the folder's live child listing."""
+    """Add identified rows the index does not hold yet and record the folder's live child listing.
+
+    What a handler read goes to the index first, so the next lookup is answered without running it,
+    and then to the file beside the location, which is the cache.
+    """
+    if self._index is not None:
+      keep: dict[str, tuple[dict | None, list[dict] | None]] = {
+        self._address(child): (self._for_index(child, metadata),
+                               None if members is None else
+                               [{**item, 'path': self._address(item['path'])} for item in members])
+        for child, (metadata, members) in rows.items()}
+      if listing is not None:
+        keep[self._address(key)] = (keep.get(self._address(key), (None, None))[0],
+                                    [{**item, 'path': self._address(item['path'])} for item in listing])
+      self._index.put(keep)
     grouped: dict[str, list[tuple]] = {}
     for child_key, (metadata, members) in rows.items():
       owner = self._owner(child_key)
