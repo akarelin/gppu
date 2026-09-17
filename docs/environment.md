@@ -9,7 +9,7 @@ generated: { by: "Claude/fable-5.1", at: "2026-09-16T20:40:00-07:00" }
 
 Alex, 2026-09-16: "Currently all y2 apps share state and config. I want to do the same for python utils and tuis. Have every app on load already have all it needs. Doing it with heavy templating, full referential integrity, minimize general code in utilities. Move as much as reasonable to configs." On construction: "Build default object dict from uid. Update dict with customization for particular hosts (very rare). build object from dict. register in State object if a service".
 
-`gppu.Environment` is the basic level, with no configuration file: `platform` (`windows`, `wsl`, `debian`, `macos`, the vocabulary of the shared configuration), `host`, `user`, `home`, `os`, and `trace()`. `Environment.from_env(name, app_path)` loads the app's configuration the way `Env.from_env` does and then constructs `State` from it; an `App` does both when it is constructed, so a utility on the app object has everything at load.
+`gppu.Environment` — one instance, as in Y2 — is the basic level, with no configuration file: `platform` (`windows`, `wsl`, `debian`, `macos`, the vocabulary of the shared configuration), `host`, `user`, `home`, `os`, and `trace()`. `Environment.from_env(name, app_path)` loads the app's configuration the way `Env.from_env` does and then constructs `State` from it; an `App` does both when it is constructed, so a utility on the app object has everything at load.
 
 An app's `config.yaml` brings the shared configuration in with one line, and nothing in the app reads it as a file:
 
