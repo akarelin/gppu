@@ -33,7 +33,7 @@ hosts:
 
 Alex, 2026-09-16: "Templates are generating dicts that are used to create objects. Startup/restart only. Templates are used to override class property behavior. Mostly by returning a value using jinja for calculations (regex matching of filenames in handlers). Templates can be stacked and applied in order. Templates have all needed to understand what they do in the same file."
 
-`TemplateSet` compiles one section's `macros`, `generators` and `templates` once and
+`TemplateSet` compiles one table's `macros`, `generators` and `templates` once and
 resolves a row against them. A row names the template it is an instance of — one name,
 or a list applied in order — and carries only what differs:
 
@@ -74,6 +74,6 @@ field written with `*` is a key pattern: every key of the row shaped `smb/<name>
 references a connection. A table is a mapping at a slash path of the context, or a list
 of paths. A reference nothing answers fails the resolution naming row, field and value.
 
-`Env.template_set(path)` builds one from a section of the loaded configuration, with the
+`Env.template_set(path)` builds one from a table of the loaded configuration, with the
 root's macros and the rest of the configuration offered to every generator. `State`
 ([Environment and State](environment.md)) resolves every table this way at startup.

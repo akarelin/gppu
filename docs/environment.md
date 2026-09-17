@@ -22,7 +22,7 @@ browse:
 
 ## Tables and rows
 
-A section that carries `templates` is a table. Every other mapping in it is a row keyed by its uid; `macros` and `generators` beside them belong to the section. Tables are constructed in the order the configuration lists them, and a table constructed later sees an earlier one resolved, so a location's rules may read what a connection's template computed.
+A key of the configuration that carries `templates` is a table. Every other mapping under it is a row keyed by its uid; `macros` and `generators` beside them belong to the table. Tables are constructed in the order the configuration lists them, and a table constructed later sees an earlier one resolved, so a location's rules may read what a connection's template computed.
 
 Per row: the templates it names build the default dict from the uid; the row updates it with what differs; the dict is checked against the tables the templates say it references; the object is built by the class the dict's `kind` names — the app that cares registers it with `State.register(Location=Location)`, any other app gets a plain `_DC` carrying the kind; a row marked `service: true` also registers in `State.services`. Construction runs once, at startup.
 
@@ -45,7 +45,7 @@ class Browse(App):
 
 ## The configuration answers
 
-What a utility used to compute for itself is a rule of the configuration — a macro of a table section — reached as `Environment.<section>.<rule>(...)`. gppu knows no rule by name; a rule that wants this host and platform says so in its own signature, `{% macro place(uid, host=Environment.host, platform=Environment.platform) %}`. The locations table of the reference configuration defines `place`, `folder`, `uri`, `location_of` and `local_of`; the hosts table defines `ssh(host, platform)`. A rule that says nothing answers `None`.
+What a utility used to compute for itself is a rule of the configuration — a macro of a table — reached as `Environment.<table>.<rule>(...)`. gppu knows no rule by name; a rule that wants this host and platform says so in its own signature, `{% macro place(uid, host=Environment.host, platform=Environment.platform) %}`. The locations table of the reference configuration defines `place`, `folder`, `uri`, `location_of` and `local_of`; the hosts table defines `ssh(host, platform)`. A rule that says nothing answers `None`.
 
 ```python
 Environment.locations.place('sd-lake')                    # where it is on this host
@@ -53,4 +53,4 @@ Environment.locations.local_of('sd://SD.Lake/inbox')      # the path here of an 
 Environment.hosts.ssh('seven', 'debian')                  # ['ssh', '-p', '22', 'alex@7.c.karel.in', 'bash', '-s']
 ```
 
-`examples/config` is the reference: `examples/_config/_config.yaml`, the root in the `_creekview.yaml` shape with the platforms and `resources` (one row per URI scheme: the resource class and the address grammar), `connections` (the boxes and tenants, providers as templates), `hosts` and `locations` beside it, each carrying its templates with its rows. A location's templates carry the logic Alex stated: a file service provides files and folders, the row computes its canonical address, its mirrors and its place on this host. `browse.py` is an `App` that lists every location so and walks the addresses of its own section through gppufs. Run it with no arguments.
+`examples/config` is the reference: `examples/_config/_config.yaml`, the root in the `_creekview.yaml` shape with the platforms and `resources` (one row per URI scheme: the resource class and the address grammar), `connections` (the boxes and tenants, providers as templates), `hosts` and `locations` beside it, each carrying its templates with its rows. A location's templates carry the logic Alex stated: a file service provides files and folders, the row computes its canonical address, its mirrors and its place on this host. `browse.py` is an `App` that lists every location so and walks the addresses under its own key through gppufs. Run it with no arguments.
