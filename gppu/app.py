@@ -22,6 +22,7 @@ from concurrent.futures import Future
 from typing import Any, final
 
 from .gppu import Env, Logger, _Base, _DC, _mixin
+from .environment import Environment
 
 # region YMRO lifecycle
 class _YMRO:
@@ -144,7 +145,7 @@ class _App(_Base):
     app_file = Path(inspect.getfile(type(self))).resolve()
     self.name = name or app_file.stem
     if not Env.initialized:
-      Env.from_env(name=self.name, app_path=app_file.parent)
+      Environment.from_env(name=self.name, app_path=app_file.parent)   # the config, and what it constructs
     super().__init__(name=self.name, **kw)
 
 

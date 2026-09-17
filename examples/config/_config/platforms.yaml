@@ -1,0 +1,25 @@
+# Platforms — what a session on each one is like. Where things are is not here: every
+# place is a location, and locations.yaml says where a location is on a platform.
+#
+#   shell    the shell a session on this platform runs
+#   sd_root  where the Synology Drive client syncs a share it is given
+#   mounts   true where shares arrive as mounts rather than through Synology Drive
+#   from     the platform this one is seen from (WSL is Windows from Linux), and
+#   mount    where it reaches the other's drives
+
+windows:
+  shell: pwsh
+  sd_root: "D:"
+
+wsl:
+  shell: bash
+  from: windows
+  mount: /mnt
+
+debian:
+  shell: bash
+  mounts: true
+
+macos:
+  shell: zsh
+  sd_root: /Users/alex

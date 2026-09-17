@@ -130,6 +130,8 @@ from .gppu import (
     _Base,
 )
 
+from .environment import Environment, State
+
 from .iot import (
     # y2xxx classes
     y2list,
@@ -204,7 +206,7 @@ __all__ = [
     'format_size', 'format_duration', 'format_since',
 
     # Env
-    'Env',
+    'Env', 'Environment', 'State',
 
     # Config access
     'glob', 'glob_int', 'glob_list', 'glob_dict',

@@ -32,6 +32,7 @@
 |--------|---------|
 | `gppu` (core)<br> | **Environment**: `Env` config loader with `!include`, typed path access (`glob`, `glob_int`, `glob_list`, `glob_dict`). <br>**Logger**: colored `Info`/`Warn`/`Error`/`Debug`/`Dump`. <br>**Vault**: `Vault.get`/`create`/`update`/`list` with Azure Key Vault and `SECRET_*` env-var backends; `!secret` YAML tag.<br>Plus: type coercion, dict utilities, YAML/JSON I/O, time helpers, OS detection + `full_path` path resolution (env vars, `~`, WSL drive mapping), async helpers, template population |
 | [`gppu.handlers`](docs/handlers.md) | Generated handler API and supported-format reference. |
+| [`gppu.environment`](docs/environment.md) | `Environment`: the basic level with no file (platform, host, user, home, os, trace), strict lookups, the configuration's macros called by name (`place`, `folder`, `uri`, `location_of`, `local_of`).<br>`State`: every table of the loaded configuration resolved through its templates, checked against what it references and built into objects; `services` for the rows marked so |
 | `gppu.ymro` | YMRO lifecycle: multi-inheritance-aware init→load→start steppers (`YInit`/`YLoad`/`YStart`/`mixin_Stepper`).<br>`Tracer` flight recorder: JSONL trace of object snapshots, triggers, callbacks, and periodic state (AppDaemon hooks via `Tracer.install`); `_tracer` before/after/instead method decorators |
 | [`gppu.data`](DATA.md) | `Cache` unified caching (JSON/pickle/sqlite/diskcache/DB backends), <br>database base classes: `_PGBase` (psycopg2) and `_SQABase` (SQLAlchemy),<br>`_PersistentDC` persisted pseudo-dataclasses with `Persistence` multi-backend storage (json/pickle/sqlite/postgres) |
 | [`gppu.iot`](IOT.md) | y2 types: `y2list`, `y2path`, `y2topic`, `y2slug`, `y2eid` (token-list strings for topics/slugs/entity ids).<br>MQTT plumbing for the any2mqtt services: `mqtt_connstring`, `MqttMixin` (reconnecting aiomqtt client with callback dispatch, MQTT5 expiry/user-properties), `Transformer` (config-driven scalar transform stage).<br>Control mixins: `_IORuntime` (thread-hosted asyncio loop, per-key gating), `_HTTPControl` (aiohttp), `_SerialControl` (telnetlib3), `_SerialHTTPControl`. Third-party deps via `mqtt`/`iot` extras |
@@ -66,6 +67,8 @@ options = Env.glob_dict('database/options')
 Config file resolution: looks for `<name>.yaml` then `config.yaml` in the app path. Relative `app_path` values are resolved by walking up from the calling script's directory until a matching subpath is found.
 
 [Configuration from MQTT](docs/mqtt-config.md): startup loading, optional live updates, and `Env.on_change()` notifications for the affected configuration paths.
+
+[Environment and State](docs/environment.md): the shared configuration constructed at startup — tables of rows resolved through their templates, checked against what they reference, built into objects; the questions a utility used to answer for itself are macros of the configuration.
 
 [The REST surface](docs/rest.md): `mixin_Rest`, on `AsyncApp` — every registered object answers for its own members, walked from the classes born under `Env.app_path`; manifest, read, call.
 
