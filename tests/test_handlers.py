@@ -1822,3 +1822,31 @@ def test_the_session_cache_does_not_grow_without_bound(tmp_path: Path) -> None:
   assert last in handler._session_cache
   assert handler.call_sync(last)[1].uid == 'session-19'
   assert handler.call_sync(tmp_path / '0.jsonl')[1].uid == 'session-0'
+
+
+def test_a_sqlite_file_is_read_as_material(tmp_path: Path) -> None:
+  """Alex's rule for an old location index: it is discovered material, read like a .rar file and
+  never written, read once via handler and never reopened. So an index standing beside files now
+  sealed in an archive is still known — what it indexed and what it recorded — without opening it."""
+  import sqlite3
+
+  from gppu.handlers import SqliteHandler
+
+  database = tmp_path / 'old-index.sqlite'
+  with sqlite3.connect(database) as connection:
+    connection.execute('CREATE TABLE records (uid TEXT PRIMARY KEY, path TEXT, size INTEGER)')
+    connection.execute('CREATE TABLE spans (uid TEXT, first TEXT, last TEXT)')
+    connection.execute("INSERT INTO records VALUES ('a', 'x.md', 10)")
+  (tmp_path / 'note.md').write_text('not a database', encoding='utf-8')
+
+  handler = SqliteHandler()
+  assert handler.identify_sync(database) is True
+  assert handler.identify_sync(tmp_path / 'note.md') is False, 'the bytes are asked, not the name'
+
+  stats, read = handler.call_sync(database)
+  assert read.tables == ('records', 'spans')
+  assert read.columns['records'] == ('uid', 'path', 'size')
+  assert read.metadata['tables'] == ['records', 'spans']
+  assert stats.bytes == database.stat().st_size
+  # Opened immutable, so SQLite writes neither companion beside a file in a synced folder.
+  assert sorted(path.name for path in tmp_path.iterdir()) == ['note.md', 'old-index.sqlite']

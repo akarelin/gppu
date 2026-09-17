@@ -66,6 +66,7 @@ from datetime import date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any, BinaryIO, Literal, Protocol, TypeVar, runtime_checkable
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 from threading import RLock
 
@@ -650,6 +651,77 @@ class IgnoredHandler(Handler):
         if not is_folder:
             return None
         return f"folder:{pattern}" if (pattern := cls.match(path.name, cls.folder_patterns)) else None
+
+
+@dataclass(frozen=True)
+class SqliteDatabase:
+  """What one SQLite file holds, read once and never written."""
+
+  path: Path
+  tables: tuple[str, ...]
+  columns: dict[str, tuple[str, ...]]
+
+  @property
+  def metadata(self) -> dict[str, Any]:
+    """The tables this database has, and the columns of each."""
+    return {"tables": list(self.tables), "columns": {name: list(self.columns[name]) for name in self.tables}}
+
+
+class SqliteHandler(Handler):
+  """Identify a SQLite file and read what it holds: its tables and their columns.
+
+  Alex's rule for these, from his own index architecture: an old location index is discovered material,
+  "read like .rar files, never written" and "read once via handler, never reopened". So an index that
+  stands beside files now sealed in an archive is still known — what it was an index of, and what it
+  recorded — without opening the archive beside it.
+
+  It is opened immutable, which is what keeps SQLite from writing the `-wal` and `-shm` companions
+  beside it; those companions churning in a synced folder is a thing he has had to chase before.
+  Nothing here writes, and no row is read: the tables and their columns are what a file is, and what
+  is in them is the file's content, which is not a handler's business.
+  """
+
+  name = "sqlite"
+  extensions = (".sqlite", ".sqlite3", ".db")
+  MAGIC = b"SQLite format 3\x00"
+
+  @sync
+  async def identify(self, path: Path) -> bool:
+    """Recognize a SQLite file in either call mode."""
+
+    return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
+
+  def identify_sync(self, path: Path) -> bool:
+    """Whether this file opens with SQLite's own header. The name is not asked; the bytes are."""
+
+    path = full_path(path)
+    if not path.is_file():
+      return False
+    try:
+      with path.open("rb") as handle:
+        return handle.read(len(self.MAGIC)) == self.MAGIC
+    except OSError:
+      return False
+
+  @sync
+  async def __call__(self, path: Path) -> tuple[FileStats | None, SqliteDatabase | HandlerError]:
+    """Read one SQLite file in either call mode."""
+
+    return await asyncio.to_thread(self._safe_call, path, self.call_sync)
+
+  def call_sync(self, path: Path) -> tuple[FileStats, SqliteDatabase]:
+    """Return the file's statistics and the tables and columns it holds."""
+
+    path = full_path(path)
+    uri = "file:" + path.as_posix().lstrip("/") + "?mode=ro&immutable=1"
+    with closing(sqlite3.connect(uri, uri=True)) as database:
+      names = tuple(str(name) for (name,) in database.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"))
+      columns = {name: tuple(str(row[1]) for row in database.execute(f'PRAGMA table_info("{name}")'))
+                 for name in names}
+    stat = path.stat()
+    return (FileStats(1, 0, stat.st_size, None),
+            SqliteDatabase(path, names, columns))
 
 
 class FileHandler(Handler):
@@ -5080,6 +5152,7 @@ class GppuFileSystem(AbstractFileSystem):
     self._index = index              # the index that answers first; the file beside the location is a cache
     self._cacheless = False          # set when the store refuses the index it would keep beside itself
     self._memory: dict[str, sqlite3.Connection] = {}   # a remote store's index, held for this instance
+    self._scratch: tempfile.TemporaryDirectory | None = None   # where a listed remote entry is asked about
     self._locations = dict(locations) if locations else {}   # folder -> the location that is there
     self._handlers = _MetadataHandlers({"locations": self._locations})
     self._database_path(self.root)  # Validate the required location name.
@@ -5684,8 +5757,41 @@ class GppuFileSystem(AbstractFileSystem):
     raise ValueError(f'{key}: unsupported archive')
 
   def _identifiable(self, key: str) -> bool:
-    """Physical local entries are listed and identified live; remote stores are read through ``_live`` and archive members through ``_identify_members``."""
-    return '::' not in key and isinstance(self.fs, LocalFileSystem)
+    """Physical local entries are listed and identified live, and so is a store whose listing says enough.
+
+    A store that sets ``listing_is_enough`` gives a name, a type and a size for every entry it
+    lists, which is what identification asks about. Without it a remote folder is read through
+    ``_live``, which fetches everything below it before a handler runs; for a SharePoint library
+    that is the whole library fetched in order to list one folder. Archive members are read
+    through ``_identify_members``.
+    """
+    return '::' not in key and (isinstance(self.fs, LocalFileSystem)
+                                or getattr(self.fs, 'listing_is_enough', False))
+
+  def _stand_in(self, key: str, item: dict) -> Path:
+    """The name and type of a remote entry, put where the handlers can be asked about it.
+
+    Identification asks what a name and a type are, and a store that lists enough answers both
+    without its bytes. The question is put to the handlers exactly as it is put for a local path,
+    so what a remote entry is identified as cannot drift from what a local one is, and only a file
+    that is actually probed is ever fetched.
+    """
+    if self._scratch is None:
+      self._scratch = tempfile.TemporaryDirectory(prefix='gppufs-listing-')
+    target = Path(self._scratch.name) / (key if key != '.'
+                                         else PurePosixPath(self.root).name or 'location')
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if item['type'] == 'directory':
+      target.mkdir(exist_ok=True)
+    elif not target.exists():
+      target.touch()
+    return target
+
+  def _listed_record(self, key: str, item: dict) -> Record:
+    """One entry of a store that lists enough, identified from that listing."""
+    record = self._handlers.record(self._stand_in(key, item))
+    return replace(record, path=PurePosixPath(self._path(key)),
+                   size=0 if record.is_folder else int(item.get('size') or 0))
 
   def _identified_row(self, key: str, item: dict, record: Record) -> dict:
     """One entry as a listing sees it: native attributes and the handlers that matched, nothing probed.
@@ -5742,9 +5848,12 @@ class GppuFileSystem(AbstractFileSystem):
         {**entry, 'path': self._relative(entry['path'], owner)} for entry in listing]), self._relative(key, owner)))
 
   def _identify_entry(self, key: str) -> None:
-    """Index one physical entry from its native attributes and matching handlers, without probing."""
+    """Index one entry from its native attributes and matching handlers, without probing."""
     path = self._path(key)
-    self._store(key, {key: (self._identified_row(key, self.fs.info(path), self._handlers.record(Path(path))), None)}, None)
+    item = self.fs.info(path)
+    record = (self._handlers.record(Path(path)) if isinstance(self.fs, LocalFileSystem)
+              else self._listed_record(key, item))
+    self._store(key, {key: (self._identified_row(key, item, record), None)}, None)
 
   def _unlocated(self, key: str) -> bool:
     """Whether the index holds this entry from before a configured location covered it.
@@ -5769,6 +5878,7 @@ class GppuFileSystem(AbstractFileSystem):
     known = {child['path']: child for child in children}
     rows: dict[str, tuple[dict, list | None]] = {}
     listing: list[dict] = []
+    local = isinstance(self.fs, LocalFileSystem)
     for entry in self.fs.ls(self._path(key), detail=True):
       name = entry['name'].rstrip('/')
       if self._index_name.fullmatch(PurePosixPath(name).name):
@@ -5779,8 +5889,13 @@ class GppuFileSystem(AbstractFileSystem):
           listing.append(known[child_key])
           continue
         self._forget(child_key)   # the stored row predates the location; an insert alone would keep it
-      item = self.fs.info(name)  # A directory scan reports no inode on Windows; rename recovery needs it.
-      rows[child_key] = self._identified_row(child_key, item, self._handlers.record(Path(self._path(child_key)))), None
+      if local:
+        item = self.fs.info(name)  # A directory scan reports no inode on Windows; rename recovery needs it.
+        record = self._handlers.record(Path(self._path(child_key)))
+      else:
+        item = entry            # a store that lists enough said it all once; asking again is a call per entry
+        record = self._listed_record(child_key, item)
+      rows[child_key] = self._identified_row(child_key, item, record), None
       listing.append({'path': child_key, 'type': item['type'], 'ino': item.get('ino')})
     listing.sort(key=lambda entry: (entry['type'] != 'directory', entry['path'].casefold()))
     if rows or listing != children:
@@ -5967,6 +6082,32 @@ class GppuFileSystem(AbstractFileSystem):
         database.execute('UPDATE gppufs_entries SET children=NULL WHERE path=?',
                          (self._relative(parent, owner),))
 
+  def preserve(self, folder: str | Path) -> Path | None:
+    """Put this location's index in `folder` with its provenance in the name, and leave the location clean.
+
+    Alex, 2026-09-17: an index that makes a folder unclean or unsynced — a repository's working tree, a
+    library that will not sync a database — is preserved as a file in the lake rather than left where it
+    is, and there it is a record, indexed as a file, not opened. The walk still writes one while it
+    works; this is what happens at the end of the walk.
+
+    Where the lake is is the caller's: this library knows what the file is, not where his lake keeps it.
+    """
+    if not isinstance(self.fs, LocalFileSystem):
+      return None
+    index = self._existing_index(self.root)
+    if index is None:
+      return None
+    here = Path(index)
+    kept = Path(folder) / f'{datetime.now().strftime("%y%m%d")} {socket.gethostname().casefold()} {here.name.lstrip(".")}'
+    kept.parent.mkdir(parents=True, exist_ok=True)
+    kept.write_bytes(here.read_bytes())
+    if kept.read_bytes() != here.read_bytes():                 # compared by content, never by checksum
+      raise OSError(f'{kept}: the preserved copy does not match {here}')
+    here.unlink()
+    with self._lock:
+      self._memory.clear()
+    return kept
+
   def _address_of(self, key: str) -> str:
     """The address an entry had, worked out from the location map rather than from the vanished path."""
     if self._locations and '::' not in key:
@@ -6148,6 +6289,142 @@ class PostgresFileSystem(AbstractFileSystem):
 
 
 register_implementation('pg', PostgresFileSystem, clobber=True)
+
+
+class SharePointFileSystem(AbstractFileSystem):
+  """A SharePoint or OneDrive drive read as folders and files, so gppufs can index one like any other place.
+
+  The address is Alex's, written down in his FileIndexer inventory: ``m365://$tenant/$service/$path``,
+  with ``sharepoint`` and ``onedrive`` as sibling services of a tenant. The last name of the path is
+  the drive and what comes before it is the site, so a document library is a Location the way a
+  Synology share is one.
+
+      GppuFileSystem('m365://karelin/sharepoint/teams/Alex/Finance', token=lambda: '...')
+
+  ``token`` is the caller's: which app registration reaches which tenant is his configuration and
+  not this library's. Nothing here writes. A drive is read, never written to.
+
+  A listing carries each item's SharePoint metadata with it, in the call that lists the folder:
+  the content type and every custom column come back with the item, so what a library says about a
+  document is in the index without the document being opened. That is also why this store sets
+  ``listing_is_enough``: its listing gives a name, a type and a size, which is what identification
+  asks about, and only a file that is probed is ever fetched.
+  """
+
+  protocol = 'm365'
+  cachable = False
+  root_marker = ''
+  listing_is_enough = True
+
+  GRAPH = 'https://graph.microsoft.com/v1.0'
+  # The content type and every custom column arrive with the item; this is the whole of the metadata.
+  EXPAND = 'listItem($expand=fields)'
+  PAGE = 200
+
+  def __init__(self, tenant: str, service: str, site: str, drive: str,
+               token: Callable[[], str] | None = None, **storage_options: Any) -> None:
+    if token is None:
+      raise ValueError('a SharePoint location is read with a token; which app reaches a tenant is configuration')
+    super().__init__()
+    self.tenant, self.service, self.site, self.drive = tenant, service, site, drive
+    self.token = token
+    self.root = '/'.join(part for part in (tenant, service, site, drive) if part)
+    self.location = f'm365://{self.root}'
+    self.host = f'{tenant}-my.sharepoint.com' if service == 'onedrive' else f'{tenant}.sharepoint.com'
+    self._drive_id: str | None = None
+
+  @classmethod
+  def _get_kwargs_from_urls(cls, path: str) -> dict[str, str]:
+    """The tenant, the service, the site and the drive, read out of the address itself."""
+    parts = [part for part in cls._strip_protocol(path).split('/') if part]
+    if len(parts) < 3:
+      raise ValueError(f'{path}: an m365 location is m365://tenant/service/site/drive')
+    return {'tenant': parts[0], 'service': parts[1], 'site': '/'.join(parts[2:-1]), 'drive': parts[-1]}
+
+  @classmethod
+  def _strip_protocol(cls, path: str) -> str:
+    path = stringify_path(path)
+    return (path[len('m365://'):] if path.startswith('m365://') else path).strip('/')
+
+  def _asking(self, url: str, params: dict[str, str] | None = None):
+    import requests                                             # noqa: PLC0415 - the m365 extra, asked for here only
+    response = requests.get(url if url.startswith('https://') else f'{self.GRAPH}/{url.lstrip("/")}',
+                            headers={'Authorization': f'Bearer {self.token()}'}, params=params)
+    if response.status_code == 404:
+      raise FileNotFoundError(url)
+    if response.status_code >= 400:
+      raise OSError(f'{response.status_code} {url}: {response.text[:200]}')
+    return response
+
+  def _identity(self) -> str:
+    """The drive this Location is, resolved once from the site and the drive's own name."""
+    if self._drive_id is None:
+      address = f'sites/{self.host}:/{self.site}:' if self.site else f'sites/{self.host}'
+      site = self._asking(address).json()
+      for found in self._asking(f'sites/{site["id"]}/drives?$select=id,name').json()['value']:
+        if found['name'] == self.drive:
+          self._drive_id = found['id']
+          break
+      else:
+        raise FileNotFoundError(f'{self.location}: the site has no drive named {self.drive}')
+    return self._drive_id
+
+  def _under(self, path: str) -> str:
+    """What is asked about, below this drive: '' for the drive itself, else the item's path in it."""
+    here = self._strip_protocol(path or '')
+    return here[len(self.root):].strip('/') if here.startswith(self.root) else here
+
+  def _address(self, under: str) -> str:
+    return f'drives/{self._identity()}/root' + (f':/{quote(under)}:' if under else '')
+
+  def _entry(self, item: dict, under: str) -> dict:
+    """One item as this store lists it: what it is, and what SharePoint says about it."""
+    listed = item.get('listItem') or {}
+    return {'name': f'{self.root}/{under}'.rstrip('/') if under else self.root,
+            'type': 'directory' if 'folder' in item else 'file',
+            'size': int(item.get('size') or 0),
+            'mtime': item.get('lastModifiedDateTime'),
+            'ino': item.get('id'),
+            'etag': item.get('eTag'),
+            'created_at': item.get('createdDateTime'),
+            'web_url': item.get('webUrl'),
+            'content_type': (listed.get('contentType') or {}).get('name'),
+            'columns': listed.get('fields') or {}}
+
+  def ls(self, path: str = '', detail: bool = True, **kwargs: Any) -> list:
+    """What is directly in one folder of the drive, each entry carrying its SharePoint metadata."""
+    under = self._under(path)
+    url = f'{self.GRAPH}/{self._address(under)}/children'
+    params: dict[str, str] | None = {'$expand': self.EXPAND, '$top': str(self.PAGE)}
+    found = []
+    while url:
+      page = self._asking(url, params).json()
+      params = None                       # the next link carries the query it was made with
+      for item in page.get('value', []):
+        found.append(self._entry(item, f'{under}/{item["name"]}'.lstrip('/')))
+      url = page.get('@odata.nextLink')
+    return found if detail else [row['name'] for row in found]
+
+  def info(self, path: str = '', **kwargs: Any) -> dict:
+    """What one item is, with its content type and its custom columns."""
+    under = self._under(path)
+    item = self._asking(self._address(under), {'$expand': self.EXPAND}).json()
+    return self._entry(item, under)
+
+  def _open(self, path: str, mode: str = 'rb', **kwargs: Any) -> BinaryIO:
+    """One item's bytes, fetched only when something asks to read it."""
+    if 'r' not in mode:
+      raise NotImplementedError(f'{self.location}: a drive is read here, never written')
+    return io.BytesIO(self._asking(f'{self._address(self._under(path))}/content').content)
+
+  def created(self, path: str) -> None:
+    return None
+
+  def modified(self, path: str) -> None:
+    return None
+
+
+register_implementation('m365', SharePointFileSystem, clobber=True)
 
 
 class GppuCatalog(AbstractFileSystem):
