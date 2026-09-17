@@ -82,7 +82,7 @@ def test_every_table_is_constructed_and_registered(on):
   assert State.locations is State.tables['locations']
   assert isinstance(State.locations['sd-lake'], _DC)
   assert State.hosts['seven']['hostname'] == '7.c.karel.in' and State.hosts['trix']['hostname'] == 'trix.c.karel.in'
-  assert State.connections['s1']['mount'] == '/mnt/S1'
+  assert State.connections['s1']['dir'] == 'S1' and State.hosts['seven']['mount'] == '/mnt'
 
 
 def test_a_kind_names_a_registered_class(on):
@@ -113,7 +113,7 @@ def test_a_location_knows_its_addresses_and_its_place_here(on):
 def test_places_follow_the_rules_per_platform(on):
   on('seven', 'debian')
   assert State.locations['sd-lake']['local'] == '/mnt/S1/SD.Lake'
-  assert State.locations['public']['local'] == '/mnt/Public'
+  assert State.locations['public']['local'] == '/mnt/Public' and Environment.place('public', 'alex-mac', 'macos') == '/Volumes/Public'
   assert State.locations['yellow-config']['local'] == '/mnt/yellow/config'
   assert 'local' not in State.locations['obsidian']
   assert Environment.place('sd-lake', 'alex-pc', 'wsl') == '/mnt/d/SD.Lake'

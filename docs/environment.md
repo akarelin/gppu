@@ -14,7 +14,7 @@ Alex, 2026-09-16: "Currently all y2 apps share state and config. I want to do th
 An app's `config.yaml` brings the shared configuration in with one line, and nothing in the app reads it as a file:
 
 ```yaml
-!include ../../_config/_ran.yaml
+!include ../_config/_config.yaml
 
 browse:
   addresses: [sd://SD.Lake/inbox]
@@ -55,4 +55,4 @@ What a utility used to compute for itself is a macro of the configuration, calle
 | `Environment.location_of(address)` | the uid of the location an address is inside of |
 | `Environment.local_of(address, ...)` | the path on a host of an address; `''` when the host does not reach it |
 
-`examples/config` is the reference: `_config/_ran.yaml` in the `_creekview.yaml` shape with `platforms`, `resources` (one row per URI scheme: the resource class and the address grammar), `connections` (the boxes and tenants, providers as templates), `hosts` and `locations` beside it, each carrying its templates with its rows. A location's templates carry the logic Alex stated: a file service provides files and folders, the row computes its canonical address, its mirrors and its place on this host. `browse.py` is an `App` that lists every location so and walks the addresses of its own section through gppufs. Run it with no arguments.
+`examples/config` is the reference: `examples/_config/_config.yaml`, the root in the `_creekview.yaml` shape with the platforms and `resources` (one row per URI scheme: the resource class and the address grammar), `connections` (the boxes and tenants, providers as templates), `hosts` and `locations` beside it, each carrying its templates with its rows. A location's templates carry the logic Alex stated: a file service provides files and folders, the row computes its canonical address, its mirrors and its place on this host. `browse.py` is an `App` that lists every location so and walks the addresses of its own section through gppufs. Run it with no arguments.
