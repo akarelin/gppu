@@ -46,6 +46,7 @@ import asyncio
 import csv
 import fnmatch
 import hashlib
+import io
 import json
 import os
 import posixpath
@@ -94,7 +95,10 @@ Harness = Literal[
     "manus",
 ]
 
-TIME_KEYS = ("timestamp", "ts", "started_at", "session_start", "time", "created_at")
+# A Gemini CLI chat says when it began and when it was last written in its own header, as startTime
+# and lastUpdated; every other key here is some other harness's name for the same record-level time.
+TIME_KEYS = ("timestamp", "ts", "started_at", "session_start", "time", "created_at",
+             "startTime", "lastUpdated")
 MODEL_KEYS = ("model", "modelId", "model_slug", "default_model_slug")
 ID_KEYS = ("sessionId", "session_id", "id", "remoteSessionId")
 ROLES = ("user", "assistant")
@@ -206,7 +210,6 @@ IGNORED_FOLDER_PATTERNS = (
     "Cache",
     ".cache",
 )
-WINDOWS_HIDDEN = 2
 WINDOWS_SYSTEM = 4
 
 HOMES: dict[Harness, tuple[str, ...]] = {
@@ -547,16 +550,23 @@ class IgnoredHandler(Handler):
     ``node_modules``, ``.idea``, ``.vscode``, ``.SynologyWorking Directory``,
     ``.SynologyWorkingDirectory``, ``$RECYCLE.BIN``, ``RECYCLE.BIN``,
     ``System Volume Information``, ``OneDriveTemp``, ``Cache``, and
-    ``.cache``. Any other dot-prefixed folder and any
-    Windows folder carrying ``FILE_ATTRIBUTE_HIDDEN`` or
-    ``FILE_ATTRIBUTE_SYSTEM`` is also an ignored no-descent boundary. A
-    filesystem root is never ignored: it has no name to match, and a Windows
-    drive root carries the hidden and system attributes of the volume itself.
+    ``.cache``. A Windows folder carrying ``FILE_ATTRIBUTE_SYSTEM`` is also an
+    ignored no-descent boundary. A filesystem root is never ignored: it has no
+    name to match, and a Windows drive root carries the system attribute of the
+    volume itself.
+
+    A folder is not ignored for starting with a dot, and not for carrying
+    ``FILE_ATTRIBUTE_HIDDEN``. Alex, 2026-09-17 03:51: "Yes, all files can be
+    potentially indexd., It is critical that secrets are indexed. I have lost
+    lots of secrets because of ignored dot files" and "venv, .git are ignored".
+    Both are named above, so the named list is the whole rule; a harness
+    session store, an ``.ssh`` and a hidden ``.gemini`` are walked like any
+    other folder.
 
     Matching entries remain :class:`Record` objects. This differs from a path
     exclusion, which would remove the entry from the hierarchy entirely.
-    Archive-member folders use the name and dot-prefix rules because archive
-    listings do not expose Windows filesystem attributes.
+    Archive-member folders use the name rules alone because archive listings do
+    not expose Windows filesystem attributes.
     """
 
     name = "ignored"
@@ -610,11 +620,7 @@ class IgnoredHandler(Handler):
             return None
         if pattern := cls.match(path.name, cls.folder_patterns):
             return f"folder:{pattern}"
-        if path.name.startswith("."):
-            return "folder:dot-prefix"
         attributes = getattr(path.stat(follow_symlinks=False), "st_file_attributes", 0)
-        if attributes & WINDOWS_HIDDEN:
-            return "folder:FILE_ATTRIBUTE_HIDDEN"
         if attributes & WINDOWS_SYSTEM:
             return "folder:FILE_ATTRIBUTE_SYSTEM"
         return None
@@ -636,9 +642,7 @@ class IgnoredHandler(Handler):
             return f"name:{pattern}"
         if not is_folder:
             return None
-        if pattern := cls.match(path.name, cls.folder_patterns):
-            return f"folder:{pattern}"
-        return "folder:dot-prefix" if path.name.startswith(".") else None
+        return f"folder:{pattern}" if (pattern := cls.match(path.name, cls.folder_patterns)) else None
 
 
 class FileHandler(Handler):
@@ -815,12 +819,17 @@ class FileHandler(Handler):
         walk_error = self._walk_errors.get(path)
         if walk_error is not None and walk_error not in errors:
             errors += (walk_error,)
+        located = self.located(path) if "location" in names else None
         return Record(
             path=path,
             is_folder=is_folder,
             size=0 if is_folder else stat.st_size,
             modified_at=valid_time(datetime.fromtimestamp(stat.st_mtime, timezone.utc)),
             handlers=names,
+            # which location and folder this is costs a lookup, so a listing already knows it
+            probes=() if located is None else (
+                Probe(handler="location", stats=None, obj=located, metadata=located.metadata),
+            ),
             errors=errors,
         )
 
@@ -3915,6 +3924,7 @@ class SessionHandler(Handler):
         self._session_cache: dict[Path, tuple[Signature, SessionObject]] = {}
         self._recognizers = (
             ("cx", self._is_codex),
+            ("gemini", self._is_gemini),
             ("cc", self._is_claude_code),
             ("openclaw", self._is_openclaw),
             ("agy", self._is_agy),
@@ -3922,13 +3932,21 @@ class SessionHandler(Handler):
         )
         self._uid_readers = {
             "cx": self._codex_uid,
+            "gemini": self._gemini_uid,
             "cc": self._claude_code_uid,
             "openclaw": self._openclaw_uid,
             "agy": self._agy_uid,
             "hermes": self._hermes_uid,
         }
+        # what a file says of the conversation above it: Codex names a parent thread, Claude Code
+        # names the session that spawned the subagent. The other harnesses name none.
+        self._parent_readers = {
+            "cx": self._parent,
+            "cc": self._claude_code_parent,
+        }
         self._native_turn_readers = {
             "cx": self._codex_turns,
+            "gemini": self._gemini_turns,
             "cc": self._claude_code_turns,
             "openclaw": self._openclaw_turns,
             "agy": self._agy_turns,
@@ -4031,7 +4049,8 @@ class SessionHandler(Handler):
         turns = self._native_turn_readers[harness](records)
         timestamps = tuple(self._timestamps(records))
         uid = self._uid_readers[harness](records, path)
-        parent_uid, subagent = self._parent(records)
+        reader = self._parent_readers.get(harness)
+        parent_uid, subagent = reader(records) if reader else (None, False)
         mainline = any(record.get("isSidechain") is False for record in records)
         sidechain = any(record.get("isSidechain") is True for record in records)
         item = SessionFile(
@@ -4108,6 +4127,24 @@ class SessionHandler(Handler):
         )
 
     @staticmethod
+    def _is_gemini(records: Sequence[Mapping[str, Any]]) -> bool:
+        """Recognize a Gemini CLI chat log by the header it opens with.
+
+        Its first record is the chat's own header — a session id, the hash of the project it was
+        opened in, when it started and what kind it is — and its turns arrive as one ``$set`` of
+        messages. Claude Code is recognized by a ``sessionId`` alone, so without this the Gemini CLI
+        is read as Claude Code, its turns are not found and every chat of one service shares that
+        service's id.
+        """
+
+        return any(
+            isinstance(record.get("sessionId"), str)
+            and isinstance(record.get("projectHash"), str)
+            and isinstance(record.get("startTime"), str)
+            for record in records
+        )
+
+    @staticmethod
     def _is_openclaw(records: Sequence[Mapping[str, Any]]) -> bool:
         """Recognize OpenClaw records from their model identifier."""
 
@@ -4164,9 +4201,81 @@ class SessionHandler(Handler):
     def _claude_code_uid(
         cls, records: Sequence[Mapping[str, Any]], path: Path
     ) -> str | None:
-        """Return the first Claude Code session identifier."""
+        """Return the identifier of the conversation this file holds.
 
-        return cls._record_uid(records, ID_KEYS)
+        A subagent transcript carries its parent's ``sessionId`` on every record and its own
+        ``agentId``, which is also what the file is named after. The agent id identifies the
+        conversation in the file; the session id identifies its parent.
+        """
+
+        return cls._record_uid(records, ("agentId",)) or cls._record_uid(records, ID_KEYS)
+
+    @classmethod
+    def _gemini_uid(
+        cls, records: Sequence[Mapping[str, Any]], path: Path
+    ) -> str | None:
+        """Return the identifier of the chat this file holds: its session id and when it started.
+
+        The Gemini CLI reuses one session id for a service it runs — every chat of its a2a server is
+        logged under ``a2a-server`` — so the id alone names the service and not the conversation. The
+        start moment is in the header of every chat and is what tells one from another.
+        """
+
+        header = next(
+            (
+                record
+                for record in records
+                if isinstance(record.get("sessionId"), str)
+                and isinstance(record.get("startTime"), str)
+            ),
+            None,
+        )
+        if header is None:
+            return cls._record_uid(records, ID_KEYS)
+        return f"{header['sessionId']}/{header['startTime']}"
+
+    @classmethod
+    def _gemini_turns(
+        cls, records: Sequence[Mapping[str, Any]]
+    ) -> tuple[SessionTurn, ...]:
+        """Read the messages a Gemini CLI chat sets, in the order it sets them.
+
+        Its content blocks carry the text and no label, where the shared reader wants a block that
+        says it is text, so the text is joined here and handed over as one string.
+        """
+
+        return tuple(
+            item
+            for record in records
+            for changed in [record.get("$set")]
+            if isinstance(changed, Mapping)
+            for message in changed.get("messages") or ()
+            if isinstance(message, Mapping)
+            for item in [
+                cls._turn(
+                    message.get("type"),
+                    cls._gemini_text(message.get("content")),
+                    message.get("timestamp"),
+                )
+            ]
+            if item is not None
+        )
+
+    @staticmethod
+    def _gemini_text(content: Any) -> str:
+        """Join the text of a Gemini CLI message's blocks."""
+
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list):
+            return ""
+        return "\n\n".join(
+            part["text"]
+            for part in content
+            if isinstance(part, Mapping)
+            and isinstance(part.get("text"), str)
+            and part["text"].strip()
+        )
 
     @classmethod
     def _openclaw_uid(
@@ -4422,6 +4531,20 @@ class SessionHandler(Handler):
             for key, value in cls._walk_values(record)
             if key in MODEL_KEYS
         )
+
+    @classmethod
+    def _claude_code_parent(
+        cls, records: Sequence[Mapping[str, Any]]
+    ) -> tuple[str | None, bool]:
+        """Return a Claude Code parent session id and whether the file is a subagent's.
+
+        A file carrying an ``agentId`` is a subagent's transcript, and the ``sessionId`` every
+        record carries is the session that spawned it.
+        """
+
+        if cls._record_uid(records, ("agentId",)) is None:
+            return None, False
+        return cls._record_uid(records, ID_KEYS), True
 
     @staticmethod
     def _parent(records: Sequence[Mapping[str, Any]]) -> tuple[str | None, bool]:
@@ -4720,8 +4843,98 @@ def _metadata_text(value: Any) -> str:
     return str(value)
 
 
+@dataclass(frozen=True)
+class LocatedPath:
+    """A physical path recognized as a configured location, or as a folder inside one."""
+
+    path: Path
+    location: str
+    canonical: str
+    address: str
+    folder: str
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Return which location this is, and which folder of it."""
+
+        return {
+            "location": self.location,
+            "canonical": self.canonical,
+            "address": self.address,
+            "folder": self.folder,
+        }
+
+
+class LocationHandler(Handler):
+    """Identify a physical path as a configured location, or as a folder inside one.
+
+    ``metadata['locations']`` maps a folder on this host to the location that is there:
+    ``{'D:/SD.Lake': {'location': 'sd-lake', 'canonical': 'sd://SD.Lake'}}``. The deepest
+    folder containing the path wins, so a location inside another names the inner one. A
+    folder that is a location answers with its address and no folder; a folder below one
+    answers with that location and the folder it is inside it.
+    Without the mapping the handler never matches, so the default handler set is unchanged.
+    """
+
+    name = "location"
+
+    def folders(self) -> Mapping[str, Mapping[str, str]]:
+        """Return the caller's map of folder to the location that is there."""
+
+        return self.metadata.get("locations") or {}
+
+    def located(self, path: Path) -> LocatedPath | None:
+        """Return what the configuration says this path is, or None when it says nothing."""
+
+        here = full_path(path).as_posix()
+        folders = self.folders()
+        base = max(
+            (folder for folder in folders
+             if here == folder or here.startswith(folder.rstrip("/") + "/")),
+            key=len,
+            default=None,
+        )
+        if base is None:
+            return None
+        row = folders[base]
+        folder = "" if here == base else here[len(base.rstrip("/")) + 1:]
+        canonical = str(row["canonical"])
+        address = (canonical if not folder else
+                   canonical + folder if canonical.endswith("://") else
+                   canonical.rstrip("/") + "/" + folder)
+        return LocatedPath(full_path(path), str(row["location"]), canonical, address, folder)
+
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Return whether a configured location holds this folder, in either call mode."""
+
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Return whether a configured location holds this folder."""
+
+        return self.located(path) is not None
+
+    @sync
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[FileStats | None, LocatedPath | HandlerError]:
+        """Return the located path in either call mode."""
+
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
+
+    def call_sync(self, path: Path) -> tuple[FileStats, LocatedPath]:
+        """Return empty statistics and the location and folder this is."""
+
+        located = self.located(path)
+        if located is None:
+            raise ValueError(f"{path}: no configured location contains this path")
+        return FileStats(0, 0, 0, None), located
+
+
 class _MetadataHandlers(
-    FileHandler, IgnoredHandler, ChatGPTHandler, AnthropicHandler,
+    FileHandler, LocationHandler, IgnoredHandler, ChatGPTHandler, AnthropicHandler,
     MarkdownHandler, CSVHandler, LogHandler, EmailHandler, BrowserHandler,
     SessionHandler, ArchiveHandler, GitHandler, FolderHandler,
 ):
@@ -4783,13 +4996,25 @@ class GppuFileSystem(AbstractFileSystem):
   Every time in the metadata is written in this host's local zone.
   Index files and SQLite journal companions are excluded from listings
   and aggregates. The example applications do no parsing or persistence.
+
+  ``cat_file``, ``open``, ``head``, ``pipe_file`` and the rest of the fsspec
+  surface read and write bytes: a physical file through the base filesystem,
+  a member through its archive, and a write to a member is refused. A write
+  does not touch the index, so what was identified stands until the folder is
+  read again with ``refresh=True``.
+
+  When ``locations`` is given, a location's own address is an address this
+  filesystem answers to, so ``info('sd://SD.agents/memory/MEMORY.md')`` reaches
+  the entry whose rows carry that address. The deepest configured location
+  wins, and an address belonging to a location outside this root is outside it.
   """
 
   protocol = 'gppu'
   cachable = False
   _index_name = re.compile(r'^\..+\.gppufs\.sqlite(?:-(?:journal|wal|shm))?$')
 
-  def __init__(self, location: str | Path, **storage_options: Any) -> None:
+  def __init__(self, location: str | Path, locations: Mapping[str, Mapping[str, str]] | None = None,
+               **storage_options: Any) -> None:
     if location is None:
       raise ValueError('location is required')
     if '://' not in str(location) and not Path(location).is_absolute():
@@ -4800,7 +5025,10 @@ class GppuFileSystem(AbstractFileSystem):
       self.root = self.root.rstrip('/')
     self.location = self.fs.unstrip_protocol(self.root)
     self._lock = RLock()
-    self._handlers = _MetadataHandlers()
+    self._cacheless = False          # set when the store refuses the index it would keep beside itself
+    self._memory: dict[str, sqlite3.Connection] = {}   # a remote store's index, held for this instance
+    self._locations = dict(locations) if locations else {}   # folder -> the location that is there
+    self._handlers = _MetadataHandlers({"locations": self._locations})
     self._database_path(self.root)  # Validate the required location name.
 
   def _database_path(self, folder: str) -> str:
@@ -4843,10 +5071,29 @@ class GppuFileSystem(AbstractFileSystem):
     self.fs.mv(matches[0], expected)
     return expected
 
+  def _located(self, value: str) -> str:
+    """The folder a configured location's own address names, or the value unchanged.
+
+    `LocationHandler` puts `sd://SD.agents/memory/MEMORY.md` on every row it identifies, and that
+    address is what the index, the lake and an annotation carry. A filesystem that emits an address
+    and then refuses it cannot be asked about what it just said, so a permalink is read here as the
+    path it stands for. The deepest configured location wins, the way `located` picks one, and an
+    address belonging to a location outside this root still fails as being outside it.
+    """
+    for folder in sorted(self._locations, key=lambda item: len(str(self._locations[item]['canonical'])), reverse=True):
+      canonical = str(self._locations[folder]['canonical'])
+      if value == canonical or value == canonical.rstrip('/'):
+        return folder
+      rest = (value[len(canonical):] if canonical.endswith('://') and value.startswith(canonical) else
+              value[len(canonical.rstrip('/')) + 1:] if value.startswith(canonical.rstrip('/') + '/') else None)
+      if rest is not None:
+        return posixpath.join(folder, rest)
+    return value
+
   def _key(self, path: str | Path | None) -> str:
     if path is None:
       return '.'
-    value = str(path).replace('\\', '/')
+    value = self._located(str(path).replace('\\', '/'))
     if '::' in value:
       member, source = value.rsplit('::', 1)
       return member + '::' + self._key(source)
@@ -4908,30 +5155,82 @@ class GppuFileSystem(AbstractFileSystem):
       return head + '::' + GppuFileSystem._absolute(source, owner)
     return posixpath.normpath(str(PurePosixPath(owner) / key))
 
+  def _prepare(self, database: sqlite3.Connection, owner: str, exists: bool) -> None:
+    """The two tables an index holds: which folder owns it, and one row per entry."""
+    if not exists:
+      database.execute('CREATE TABLE IF NOT EXISTS gppufs_index (ino INTEGER)')
+      database.execute('INSERT INTO gppufs_index VALUES (?)', (self.fs.info(self._path(owner)).get('ino'),))
+    database.execute('CREATE TABLE IF NOT EXISTS gppufs_entries ('
+      'path TEXT PRIMARY KEY, metadata TEXT NOT NULL, children TEXT)')
+
+  def _held(self, owner: str) -> sqlite3.Connection:
+    """The index held in memory for this instance, read once from the store when the store has one.
+
+    This is the index for a store that is not the local filesystem, and for a folder that will not
+    hold the file. An existing index is still read: a folder can be readable and not writable.
+    """
+    if owner not in self._memory:
+      database = sqlite3.connect(':memory:', check_same_thread=False)
+      if self._existing_index(self._path(owner)) is not None:
+        database.deserialize(self.fs.cat_file(self._database_path(self._path(owner))))
+      self._memory[owner] = database
+    return self._memory[owner]
+
   @contextmanager
   def _database(self, owner: str, *, write: bool = False):
+    """The location's index: beside the location, or in memory when the store will not hold one.
+
+    Alex, 2026-09-17 03:49: "local databases are caches for runtime and original indexes (often only
+    copy because original is a rar file now). / Local dbs are not synced in many cases. Don't count on
+    these being present". So this is a cache and never the answer: the index a lookup asks is the one
+    in Postgres. A place that refuses the file — GitHub serves read-only, and so does a folder on a
+    read-only share — is read through an index this instance keeps in memory instead, and the refusal
+    is remembered so the place is asked once rather than once per folder.
+    """
     path = self._database_path(self._path(owner))
-    exists = self._existing_index(self._path(owner)) is not None
-    if not exists and not write:
-      yield None
-      return
-    local = isinstance(self.fs, LocalFileSystem)
-    with closing(sqlite3.connect(path if local else ':memory:')) as database:
-      if exists and not local:
-        database.deserialize(self.fs.cat_file(path))
-      with database:
-        if write:
-          if not exists:
-            database.execute('CREATE TABLE gppufs_index (ino INTEGER)')
-            database.execute('INSERT INTO gppufs_index VALUES (?)', (self.fs.info(self._path(owner)).get('ino'),))
-          database.execute('CREATE TABLE IF NOT EXISTS gppufs_entries ('
-            'path TEXT PRIMARY KEY, metadata TEXT NOT NULL, children TEXT)')
-        yield database
-      if write and not local:
+    if isinstance(self.fs, LocalFileSystem) and not self._cacheless:
+      exists = self._existing_index(self._path(owner)) is not None
+      if not exists and not write:
+        yield None
+        return
+      try:
+        connection = sqlite3.connect(path)
+      except sqlite3.OperationalError:   # a read-only folder will not hold the file; only the cache is lost
+        self._cacheless = True
+      else:
+        with closing(connection) as database, database:
+          if write:
+            self._prepare(database, owner, exists)
+          yield database
+        return
+    database = self._held(owner)
+    with database:
+      if write:
+        self._prepare(database, owner, self._columns_of(database))
+      elif not self._columns_of(database):
+        yield None
+        return
+      yield database
+    if write and not self._cacheless:
+      try:
         with self.fs.transaction:
           self.fs.pipe_file(path, database.serialize())
+      except (NotImplementedError, OSError):   # the store serves read-only; only the cache file is lost
+        self._cacheless = True
 
-  def _cached(self, key: str) -> tuple[dict, list[dict] | None] | None:
+  @staticmethod
+  def _columns_of(database: sqlite3.Connection) -> bool:
+    """Whether this index has been given its tables yet."""
+    return bool(database.execute(
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='gppufs_entries'").fetchone())
+
+  def _stored(self, key: str) -> tuple[dict, list[dict] | None] | None:
+    """One entry read back from the location's index: its metadata and its listing, or None.
+
+    Not `_cached`: `AbstractFileSystem.__init__` returns early on a truthy `_cached`, so a method of
+    that name leaves the instance without `_intrans`, `_transaction` and `dircache`, and every read
+    through the fsspec surface raises AttributeError.
+    """
     owner = self._owner(key)
     with self._database(owner) as database:
       if database is None:
@@ -4994,7 +5293,7 @@ class GppuFileSystem(AbstractFileSystem):
     def metadata_for(key):
       if key in rows:
         return rows[key][0]
-      cached = self._cached(key)
+      cached = self._stored(key)
       if cached is None:
         raise FileNotFoundError(self._uri(key))
       return cached[0]
@@ -5005,7 +5304,7 @@ class GppuFileSystem(AbstractFileSystem):
       child = scope
       for parent in PurePosixPath(scope).parents:
         key = parent.as_posix()
-        cached = self._cached(key)
+        cached = self._stored(key)
         if cached is None or cached[1] is None:
           break
         metadata, members = cached
@@ -5144,7 +5443,7 @@ class GppuFileSystem(AbstractFileSystem):
       else:
         with tempfile.TemporaryDirectory(prefix='gppufs-') as scratch:
           base = self._extract(uri, fs, source, native, Path(scratch))
-          self._parse(key, base, native, source, _MetadataHandlers())
+          self._parse(key, base, native, source, _MetadataHandlers({"locations": self._locations}))
     finally:
       if virtual:
         fs.close()
@@ -5328,6 +5627,24 @@ class GppuFileSystem(AbstractFileSystem):
     path = self._path(key)
     self._store(key, {key: (self._identified_row(key, self.fs.info(path), self._handlers.record(Path(path))), None)}, None)
 
+  def _unlocated(self, key: str) -> bool:
+    """Whether the index holds this entry from before a configured location covered it.
+
+    The location map is the caller's, not the folder's, so a row identified without it is
+    out of date the moment the configuration names the place. Such a row is identified
+    again; every other stored row is kept.
+    """
+    if not self._locations or not self._handlers.located(Path(self._path(key))):
+      return False
+    stored = self._stored(key)
+    return stored is not None and 'location' not in stored[0]['gppu']
+
+  def _forget(self, key: str) -> None:
+    """Drop one stored entry so it is identified again on this listing."""
+    owner = self._owner(key)
+    with self._database(owner, write=True) as database:
+      database.execute('DELETE FROM gppufs_entries WHERE path=?', (self._relative(key, owner),))
+
   def _reconcile(self, key: str, children: list[dict]) -> list[dict]:
     """List the folder live: identify entries the index has not seen, drop entries that are gone."""
     known = {child['path']: child for child in children}
@@ -5339,8 +5656,10 @@ class GppuFileSystem(AbstractFileSystem):
         continue
       child_key = self._key(name)
       if child_key in known:
-        listing.append(known[child_key])
-        continue
+        if not self._unlocated(child_key):
+          listing.append(known[child_key])
+          continue
+        self._forget(child_key)   # the stored row predates the location; an insert alone would keep it
       item = self.fs.info(name)  # A directory scan reports no inode on Windows; rename recovery needs it.
       rows[child_key] = self._identified_row(child_key, item, self._handlers.record(Path(self._path(child_key)))), None
       listing.append({'path': child_key, 'type': item['type'], 'ino': item.get('ino')})
@@ -5365,33 +5684,33 @@ class GppuFileSystem(AbstractFileSystem):
     """``info`` on the calling thread."""
     with self._lock:
       key = self._key(path)
-      cached = None if refresh else self._cached(key)
+      cached = None if refresh else self._stored(key)
       if cached is None:
         physical = key.rsplit('::', 1)[-1]
         for parent in reversed(PurePosixPath(physical).parents):
           parent_key = parent.as_posix()
-          listing = self._cached(parent_key)
+          listing = self._stored(parent_key)
           if listing is not None and listing[1] is not None and self.fs.isdir(self._path(parent_key)):
             self._folder_renames(parent_key, listing[1])
         if not refresh:
-          cached = self._cached(key)
+          cached = self._stored(key)
       if cached is None and not refresh and self._identifiable(key):
         self._identify_entry(key)
-        cached = self._cached(key)
+        cached = self._stored(key)
       if cached is None:
         self._live(key)
-        cached = self._cached(key)
+        cached = self._stored(key)
       if cached is None:
         raise FileNotFoundError(self._uri(key))
       metadata = cached[0]
       if metadata['type'] != 'directory' and not metadata['gppu'].get('probed', True):
         self._live(key)
-        metadata = self._cached(key)[0]
+        metadata = self._stored(key)[0]
       return metadata
 
   @sync
   async def ls(self, path: str | Path | None = None, detail: bool = True,
-               recurse: bool = False, refresh: bool = False, **kwargs) -> list:
+               recurse: bool = False, refresh: bool = False, live: bool = True, **kwargs) -> list:
     """List entries, optionally descending, from the live folder and the colocated SQLite index.
 
     Awaited inside an event loop, called plainly outside one; the listing runs
@@ -5400,11 +5719,16 @@ class GppuFileSystem(AbstractFileSystem):
     probes the folder and everything below it. Entering an archive lists its
     members identified, like a folder; refreshing the archive probes them.
     """
-    return await asyncio.to_thread(self.ls_sync, path, detail, recurse, refresh)
+    return await asyncio.to_thread(self.ls_sync, path, detail, recurse, refresh, live)
 
   def ls_sync(self, path: str | Path | None = None, detail: bool = True,
-              recurse: bool = False, refresh: bool = False) -> list:
-    """``ls`` on the calling thread."""
+              recurse: bool = False, refresh: bool = False, live: bool = True) -> list:
+    """``ls`` on the calling thread.
+
+    ``live`` reads the folder and reconciles the index with it. ``live=False`` answers from the
+    index alone and touches no filesystem, so what was indexed is listed wherever this runs, and
+    a folder the index has never seen lists nothing.
+    """
     with self._lock:
       key = self._key(path)
       metadata = self.info_sync(path, refresh=refresh)
@@ -5412,37 +5736,61 @@ class GppuFileSystem(AbstractFileSystem):
         key = self._archive_key(key)
         if refresh:
           self._live(key)
-        elif self._cached(key) is None:
+        elif self._stored(key) is None:
           self._identify_members(key)
-      cached = self._cached(key)
+      cached = self._stored(key)
       if cached is None:
         raise FileNotFoundError(self._uri(key))
       current, children = cached
       if current['type'] != 'directory':
         return [current] if detail else [current['name']]
-      if self._identifiable(key):
+      if not live:
+        children = children or []                   # the index alone; the folder is not read
+      elif self._identifiable(key):
         if children is not None and self._folder_renames(key, children):
-          current, children = self._cached(key)
+          current, children = self._stored(key)
         children = self._reconcile(key, children or [])
       elif children is None:
         self._live(key)
-        current, children = self._cached(key)
+        current, children = self._stored(key)
       elif self._folder_renames(key, children):
-        current, children = self._cached(key)
+        current, children = self._stored(key)
       result = []
       for child in children:
-        cached = self._cached(child['path'])
+        cached = self._stored(child['path'])
         if cached is None:
           continue
         row = cached[0]
         if recurse and row['gppu']['is_container']:
-          below = self.ls_sync(row['name'], recurse=True)
-          row = self._cached(child['path'])[0]  # Entering an archive probes it; report the probed row.
+          below = self.ls_sync(row['name'], recurse=True, live=live)
+          row = self._stored(child['path'])[0]  # Entering an archive probes it; report the probed row.
           result.append(row)
           result.extend(below)
         else:
           result.append(row)
       return result if detail else [row['name'] for row in result]
+
+  def _open(self, path: str | Path | None = None, mode: str = 'rb', **kwargs) -> BinaryIO:
+    """The bytes of one entry: a physical file through the base filesystem, a member through its archive.
+
+    fsspec builds `cat_file`, `open`, `head`, `tail`, `get_file`, `pipe_file` and `read_text` on this
+    one call, and its own default reads through `cat_file`, which reads through `_open` — so a
+    filesystem that leaves `_open` alone recurses until the stack ends.
+
+    Bytes are the base filesystem's, and the index is not touched: a write changes the file, and what
+    was identified stands until the folder is read again with `refresh=True`, exactly as it does for a
+    file some other writer changed.
+    """
+    key = self._key(path)
+    if '::' not in key:
+      return self.fs._open(self._path(key), mode, **kwargs)
+    if 'r' not in mode:
+      raise ValueError(f'{self._uri(key)}: a member of an archive is read-only')
+    fs, source = url_to_fs(self._uri(key), skip_instance_cache=True)
+    try:
+      return io.BytesIO(fs.cat_file(source))
+    finally:
+      fs.close()
 
 
 class GppuCatalog(AbstractFileSystem):
@@ -5575,7 +5923,7 @@ class GppuCatalog(AbstractFileSystem):
   def _location_row(self, fs: GppuFileSystem) -> dict:
     """A Location as the catalog knows it: the catalog's row, with the totals and last refresh its own index holds."""
     row = self.locations[self._path_of(fs)]
-    cached = fs._cached('.')
+    cached = fs._stored('.')
     known = cached[0]['gppu'] if cached is not None else {}
     return {'name': fs.location, 'type': 'directory', 'size': 0, 'gppu': {
       'name': PurePosixPath(fs.root).name or fs.root.rstrip('/'), 'path': fs.location, 'parent': self._parent(fs),

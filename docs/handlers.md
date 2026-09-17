@@ -140,16 +140,23 @@ These case-sensitive folder patterns are visible but never descended:
 `node_modules`, `.idea`, `.vscode`, `.SynologyWorking Directory`,
 `.SynologyWorkingDirectory`, `$RECYCLE.BIN`, `RECYCLE.BIN`,
 `System Volume Information`, `OneDriveTemp`, `Cache`, and
-`.cache`. Any other dot-prefixed folder and any
-Windows folder carrying `FILE_ATTRIBUTE_HIDDEN` or
-`FILE_ATTRIBUTE_SYSTEM` is also an ignored no-descent boundary. A
-filesystem root is never ignored: it has no name to match, and a Windows
-drive root carries the hidden and system attributes of the volume itself.
+`.cache`. A Windows folder carrying `FILE_ATTRIBUTE_SYSTEM` is also an
+ignored no-descent boundary. A filesystem root is never ignored: it has no
+name to match, and a Windows drive root carries the system attribute of the
+volume itself.
+
+A folder is not ignored for starting with a dot, and not for carrying
+`FILE_ATTRIBUTE_HIDDEN`. Alex, 2026-09-17 03:51: "Yes, all files can be
+potentially indexd., It is critical that secrets are indexed. I have lost
+lots of secrets because of ignored dot files" and "venv, .git are ignored".
+Both are named above, so the named list is the whole rule; a harness
+session store, an `.ssh` and a hidden `.gemini` are walked like any
+other folder.
 
 Matching entries remain `Record` objects. This differs from a path
 exclusion, which would remove the entry from the hierarchy entirely.
-Archive-member folders use the name and dot-prefix rules because archive
-listings do not expose Windows filesystem attributes.
+Archive-member folders use the name rules alone because archive listings do
+not expose Windows filesystem attributes.
 
 ### `IgnoredHandler.identify(self, path: 'Path') -> 'bool'`
 
@@ -926,6 +933,49 @@ Return the canonical name for one native session file.
 
 Discard all cached sessions or entries at and beneath `path`.
 
+## `LocatedPath(path: 'Path', location: 'str', canonical: 'str', address: 'str', folder: 'str') -> None`
+
+A physical path recognized as a configured location, or as a folder inside one.
+
+### `LocatedPath.metadata`
+
+Return which location this is, and which folder of it.
+
+## `LocationHandler(metadata: 'Mapping[str, Any] | None' = None, *, strict: 'bool' = False) -> 'None'`
+
+Identify a physical path as a configured location, or as a folder inside one.
+
+`metadata['locations']` maps a folder on this host to the location that is there:
+`{'D:/SD.Lake': {'location': 'sd-lake', 'canonical': 'sd://SD.Lake'}}`. The deepest
+folder containing the path wins, so a location inside another names the inner one. A
+folder that is a location answers with its address and no folder; a folder below one
+answers with that location and the folder it is inside it.
+Without the mapping the handler never matches, so the default handler set is unchanged.
+
+### `LocationHandler.folders(self) -> 'Mapping[str, Mapping[str, str]]'`
+
+Return the caller's map of folder to the location that is there.
+
+### `LocationHandler.located(self, path: 'Path') -> 'LocatedPath | None'`
+
+Return what the configuration says this path is, or None when it says nothing.
+
+### `LocationHandler.identify(self, path: 'Path') -> 'bool'`
+
+Return whether a configured location holds this folder, in either call mode.
+
+### `LocationHandler.identify_sync(self, path: 'Path') -> 'bool'`
+
+Return whether a configured location holds this folder.
+
+### `LocationHandler.__call__(self, path: 'Path') -> 'tuple[FileStats | None, LocatedPath | HandlerError]'`
+
+Return the located path in either call mode.
+
+### `LocationHandler.call_sync(self, path: 'Path') -> 'tuple[FileStats, LocatedPath]'`
+
+Return empty statistics and the location and folder this is.
+
 ## `GppuFileSystem(*args, **kwargs)`
 
 fsspec listings enriched by handlers and stored beside their location.
@@ -943,6 +993,17 @@ Every time in the metadata is written in this host's local zone.
 Index files and SQLite journal companions are excluded from listings
 and aggregates. The example applications do no parsing or persistence.
 
+`cat_file`, `open`, `head`, `pipe_file` and the rest of the fsspec
+surface read and write bytes: a physical file through the base filesystem,
+a member through its archive, and a write to a member is refused. A write
+does not touch the index, so what was identified stands until the folder is
+read again with `refresh=True`.
+
+When `locations` is given, a location's own address is an address this
+filesystem answers to, so `info('sd://SD.agents/memory/MEMORY.md')` reaches
+the entry whose rows carry that address. The deepest configured location
+wins, and an address belonging to a location outside this root is outside it.
+
 ### `GppuFileSystem.info(self, path: 'str | Path | None' = None, refresh: 'bool' = False, **kwargs) -> 'dict'`
 
 Return one native entry with its handler metadata.
@@ -957,7 +1018,7 @@ come from the last refresh of that folder.
 
 `info` on the calling thread.
 
-### `GppuFileSystem.ls(self, path: 'str | Path | None' = None, detail: 'bool' = True, recurse: 'bool' = False, refresh: 'bool' = False, **kwargs) -> 'list'`
+### `GppuFileSystem.ls(self, path: 'str | Path | None' = None, detail: 'bool' = True, recurse: 'bool' = False, refresh: 'bool' = False, live: 'bool' = True, **kwargs) -> 'list'`
 
 List entries, optionally descending, from the live folder and the colocated SQLite index.
 
@@ -967,9 +1028,13 @@ Entries already indexed keep their indexed metadata. `refresh=True`
 probes the folder and everything below it. Entering an archive lists its
 members identified, like a folder; refreshing the archive probes them.
 
-### `GppuFileSystem.ls_sync(self, path: 'str | Path | None' = None, detail: 'bool' = True, recurse: 'bool' = False, refresh: 'bool' = False) -> 'list'`
+### `GppuFileSystem.ls_sync(self, path: 'str | Path | None' = None, detail: 'bool' = True, recurse: 'bool' = False, refresh: 'bool' = False, live: 'bool' = True) -> 'list'`
 
 `ls` on the calling thread.
+
+`live` reads the folder and reconciles the index with it. `live=False` answers from the
+index alone and touches no filesystem, so what was indexed is listed wherever this runs, and
+a folder the index has never seen lists nothing.
 
 ## `GppuCatalog(*args, **kwargs)`
 
