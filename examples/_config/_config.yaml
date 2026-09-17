@@ -8,22 +8,28 @@
 # the merged row; a value the row carries is data. `refs` on a template names the tables a
 # row references, and a reference nothing answers fails the load.
 
-# ~~ Platforms — what a session on each one is like. Where things are is not here: a host
-#    says what it syncs and mounts, a location says where it is.
-#    shell  the shell a session on this platform runs
+# ~~ Platforms — how a command runs on one. Where things are is not here: a host says what
+#    it syncs and mounts, a location says where it is.
+#    run    the command a script is fed to on stdin, on the host and over ssh alike
+#    ssh    the account and port the platform answers on; a Windows workstation answers
+#           as administrator on 22222, beside WSL on 22
 #    from   the platform this one is seen from — WSL is Windows from Linux — and
 #    mount  where it then reaches the other's drives
 platforms:
   windows:
-    shell: pwsh
+    run: [pwsh, -NoProfile, -ExecutionPolicy, Bypass, -Command, '-']
+    ssh: {user: administrator, port: 22222}
   wsl:
-    shell: bash
+    run: [bash, -s]
+    ssh: {user: alex, port: 22}
     from: windows
     mount: /mnt
   debian:
-    shell: bash
+    run: [bash, -s]
+    ssh: {user: alex, port: 22}
   macos:
-    shell: zsh
+    run: [zsh, -s]
+    ssh: {user: alex, port: 22}
 
 resources:   !include resources.yaml
 connections: !include connections.yaml
