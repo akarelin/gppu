@@ -1106,6 +1106,29 @@ on different filesystems are copied and then removed, because there is no other 
 The file beside each location is a cache and is treated as one: this location forgets what moved,
 and the other identifies what arrived when it next lists. The index is what carries the reading.
 
+## `PostgresFileSystem(*args, **kwargs)`
+
+A Postgres database read as folders and entries, so gppufs can index one like any other place.
+
+Alex, 2026-09-17 04:21: an index in Postgres of his other Postgres databases and tables, every
+database, schema and table written down as a source of data he may or may not trust yet. gppufs and
+the handlers are how everything reads files, so a database is read the same way rather than by a
+script of its own: a schema is a folder, a table or view is an entry in it, and what `pg_catalog`
+knows about each is its metadata.
+
+    GppuFileSystem('pg://pg.karel.in/files', dsn='postgresql://…')
+
+`dsn` is the caller's, because which databases exist and how one connects to them is his
+configuration and not this library's. Nothing here writes: a database is read, never indexed into.
+
+### `PostgresFileSystem.ls(self, path: 'str' = '', detail: 'bool' = True, **kwargs: 'Any') -> 'list'`
+
+The schemas of a database, or the tables and views of a schema.
+
+### `PostgresFileSystem.info(self, path: 'str' = '', **kwargs: 'Any') -> 'dict'`
+
+What one schema or one entry is.
+
 ## `GppuCatalog(*args, **kwargs)`
 
 The Locations gppufs works with on this host, read from a catalog folder.

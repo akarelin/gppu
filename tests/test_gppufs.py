@@ -848,3 +848,23 @@ def test_a_folder_moved_between_two_locations_keeps_its_index(tmp_path):
   assert carrying.entry('b://work/note.md')[0]['gppu']['markdown']['title'] == 'Carried'
   assert carrying.entry('a://work/note.md') is None
   assert [row['gppu']['name'] for row in destination.ls(recurse=True)] == ['work', 'note.md']
+
+
+def test_a_postgres_location_is_addressed_like_any_other():
+  """Alex, 2026-09-17 04:21: an index of his Postgres databases, schemas and tables. They are read
+  through gppufs like any other place, so a schema is a folder and a table is an entry in it."""
+  from gppu.handlers import PostgresFileSystem
+
+  with pytest.raises(ValueError, match='dsn'):
+    PostgresFileSystem('pg://pg.karel.in/files')
+
+  fs = PostgresFileSystem('pg://pg.karel.in/files', dsn='postgresql://nobody@nowhere/files')
+  assert fs.root == 'pg.karel.in/files'
+  assert fs._strip_protocol('pg://pg.karel.in/files/lake') == 'pg.karel.in/files/lake'
+  assert fs._under('pg.karel.in/files') == ''
+  assert fs._under('pg.karel.in/files/lake') == 'lake'
+  assert fs._under('pg.karel.in/files/lake/entity') == 'lake/entity'
+  assert fs.info('pg.karel.in/files')['type'] == 'directory'
+  assert fs.info('pg.karel.in/files/lake')['type'] == 'directory'
+  with pytest.raises(ValueError, match='never written'):
+    fs._open('pg.karel.in/files/lake/entity', 'wb')
