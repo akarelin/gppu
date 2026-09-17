@@ -1010,6 +1010,9 @@ What the index holds of a thing moves with the thing. Alex's reason for a file m
 this filesystem is that moving a folder between two indexed places keeps the index: the rows are
 carried over, never thrown away and read again, so what was said about a file survives the move.
 
+Every address the index holds of what moved is rewritten, the entries' own and the addresses
+inside them, because an entry that still names where it was is an entry that cannot be read.
+
 ## `GppuFileSystem(*args, **kwargs)`
 
 fsspec listings enriched by handlers and stored beside their location.
@@ -1088,6 +1091,20 @@ operation for a folder of a million files, rather than a copy and a delete — a
 the old address are rewritten to the new one rather than dropped and read again.
 
 fsspec's own `mv` is a copy followed by a delete, which for a folder of that size is neither.
+
+### `GppuFileSystem.move_into(self, other: "'GppuFileSystem'", path: 'str | Path', destination: 'str | Path') -> 'str'`
+
+Move an entry out of this location and into another one, and move what is held of it with it.
+
+This is the move Alex asks a file manager for: a folder carried between two indexed places, where
+what the index says about it goes with it rather than being read again. The entity keeps its uid,
+so every annotation on it survives the move; only where it is changes.
+
+Two folders on one disk are renamed, which is one operation whatever the folder holds. Two places
+on different filesystems are copied and then removed, because there is no other way.
+
+The file beside each location is a cache and is treated as one: this location forgets what moved,
+and the other identifies what arrived when it next lists. The index is what carries the reading.
 
 ## `GppuCatalog(*args, **kwargs)`
 

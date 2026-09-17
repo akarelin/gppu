@@ -5026,6 +5026,9 @@ class GppuIndex(Protocol):
     What the index holds of a thing moves with the thing. Alex's reason for a file manager built on
     this filesystem is that moving a folder between two indexed places keeps the index: the rows are
     carried over, never thrown away and read again, so what was said about a file survives the move.
+
+    Every address the index holds of what moved is rewritten, the entries' own and the addresses
+    inside them, because an entry that still names where it was is an entry that cannot be read.
     """
 
 
@@ -5919,6 +5922,49 @@ class GppuFileSystem(AbstractFileSystem):
       self._move_rows(source, destination)
       if self._index is not None:
         self._index.moved(self._address_of(source), self._address(destination))
+
+  def move_into(self, other: 'GppuFileSystem', path: str | Path, destination: str | Path) -> str:
+    """Move an entry out of this location and into another one, and move what is held of it with it.
+
+    This is the move Alex asks a file manager for: a folder carried between two indexed places, where
+    what the index says about it goes with it rather than being read again. The entity keeps its uid,
+    so every annotation on it survives the move; only where it is changes.
+
+    Two folders on one disk are renamed, which is one operation whatever the folder holds. Two places
+    on different filesystems are copied and then removed, because there is no other way.
+
+    The file beside each location is a cache and is treated as one: this location forgets what moved,
+    and the other identifies what arrived when it next lists. The index is what carries the reading.
+    """
+    source, arriving = self._key(path), other._key(destination)
+    was, now = self._address(source), other._address(arriving)
+    here, there = self._path(source), other._path(arriving)
+    if type(self.fs) is type(other.fs) and isinstance(self.fs, LocalFileSystem):
+      self.fs.mv(here, there, recursive=True)
+    else:
+      other.fs.mkdirs(other._path(other._parent_key(arriving) or '.'), exist_ok=True)
+      self.fs.get(here, there, recursive=True) if self.fs.isdir(here) else other.fs.pipe_file(
+        there, self.fs.cat_file(here))
+      self.fs.rm(here, recursive=True)
+    with self._lock:
+      self._forget_below(source)
+    if self._index is not None:
+      self._index.moved(was, now)
+    return now
+
+  def _forget_below(self, key: str) -> None:
+    """Forget the stored rows at and under one key, and the listing of the folder it was in."""
+    owner = self._owner(key)
+    with self._database(owner, write=True) as database:
+      if database is None:
+        return
+      here = self._relative(key, owner)
+      database.execute('DELETE FROM gppufs_entries WHERE path=? OR substr(path,1,?)=?',
+                       (here, len(here) + 1, here + '/'))
+      parent = self._parent_key(key)
+      if parent is not None:
+        database.execute('UPDATE gppufs_entries SET children=NULL WHERE path=?',
+                         (self._relative(parent, owner),))
 
   def _address_of(self, key: str) -> str:
     """The address an entry had, worked out from the location map rather than from the vanished path."""
