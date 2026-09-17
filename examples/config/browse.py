@@ -10,7 +10,8 @@ from gppu.handlers import GppuFileSystem
 class Location(_DC):
   name: str
   tags: list
-  uris: list
+  canonical: str
+  mirrors: list
   local: str
 
 
@@ -21,11 +22,12 @@ class Browse(App):
   def main(self) -> None:
     print(f'{Environment.host} ({Environment.platform})\n')
     for uid, location in State.locations.items():
-      print(f'{uid:14} {location.name:22} {location.local or "-":34} {" ".join(location.uris)}')
+      print(f'{uid:14} {location.name:22} {location.local or "-":34} {location.canonical:40} {" ".join(location.mirrors)}')
 
     for address in self.my_list('browse/addresses'):
       uid, local = Environment.location_of(address), Environment.local_of(address)
-      print(f'\n{address}  ->  {uid or "no location"}  ->  {local or "not on this host"}')
+      resource = State.resources[address.partition('://')[0]]['class']
+      print(f'\n{address}  ->  {resource}  ->  {uid or "no location"}  ->  {local or "not on this host"}')
       if local:
         for entry in GppuFileSystem(State.locations[uid].local).ls(local, detail=False): print(f'  {entry}')
 

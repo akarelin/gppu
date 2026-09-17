@@ -77,7 +77,8 @@ def test_refs_merge_across_stacked_templates():
 # region State: tables constructed from the example configuration
 def test_every_table_is_constructed_and_registered(on):
   on('alex-laptop', 'windows')
-  assert set(State.tables) == {'connections', 'hosts', 'locations'}
+  assert set(State.tables) == {'resources', 'connections', 'hosts', 'locations'}
+  assert State.resources['smb']['class'] == 'SmbShare'
   assert State.locations is State.tables['locations']
   assert isinstance(State.locations['sd-lake'], _DC)
   assert State.hosts['seven']['hostname'] == '7.c.karel.in' and State.hosts['trix']['hostname'] == 'trix.c.karel.in'
@@ -101,8 +102,10 @@ def test_an_unregistered_kind_is_a_plain_object_carrying_it(on):
 def test_a_location_knows_its_addresses_and_its_place_here(on):
   on('alex-laptop', 'windows')
   lake = State.locations['sd-lake']
-  assert lake['uris'] == ['sd://SD.Lake', 'smb://s1.karel.in/SD.Lake']
+  assert lake['uris'] == ['smb://s1.karel.in/SD.Lake', 'sd://SD.Lake']   # in the order resources.yaml lists the schemes
   assert lake['local'] == 'D:/SD.Lake' and lake['tags'] == ['synced']
+  assert lake['canonical'] == 'sd://SD.Lake' and lake['mirrors'] == ['smb://s1.karel.in/SD.Lake']
+  assert State.locations['dev']['canonical'] == 'file://alex-laptop/D:/Dev'   # the folder template's own canonical, over the base one
   assert 'local' not in State.locations['public']           # a share is not on a workstation
   assert State.locations['obsidian']['local'] == 'D:/_'
 

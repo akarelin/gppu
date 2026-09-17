@@ -1,64 +1,170 @@
-# Connections — the boxes and tenants serving the locations, in the shape of
-# CRAP/_config/topology/connections.yaml, with the providers as templates.
-#
-# A provider is a template: what every connection of its kind offers, and the address
-# grammar of each of its interfaces — `smb://{host}/{share}/{path}` is the smb address
-# of a share `{share}` served by this box. A connection row names its provider and
-# carries what differs: its host, the interfaces it actually offers.
+# Connections — every box, tenant and account serving the locations, in the shape of
+# CRAP/_config/topology/connections.yaml, with the providers as templates. A provider
+# is what every connection of its kind offers; a row carries what differs. The address
+# grammar per scheme is in resources.yaml; a connection only says which schemes it serves.
 #
 #   host      what the box is reached at
-#   services  the interfaces it offers
+#   services  the schemes it serves, each a row of resources.yaml
 #   mount     where its shares land on a host that mounts them
-#   uris      the address grammar per interface, `{host}`, `{share}` and `{path}` filled in
 
 templates:
-  synology:
+  _: &_
     kind: Connection
+    refs: {services: resources}
+
+  # -- Private infrastructure
+  synology:
+    <<: *_
     username: Alex
     credentials: /home/alex/.smbcredentials
-    services: [smb, ssh]
+    services: [smb, sftp]
     mount: "{{ '/mnt/' ~ uid | upper }}"
-    uris:
-      smb: "smb://{host}/{share}/{path}"
-      sd: "sd://{share}/{path}"
-      scp: "scp://{host}/volume1/{share}/{path}"
-      rsync: "rsync://{host}/volume1/{share}/{path}"
 
   hassio:
-    kind: Connection
+    <<: *_
     services: [smb]
     mount: "{{ '/mnt/' ~ uid }}"
-    uris:
-      smb: "smb://{host}/{share}/{path}"
 
+  pg:
+    <<: *_
+    services: [database]
+    port: 5432
+
+  neo4j:
+    <<: *_
+    services: [database]
+    port: 7687
+
+  obsidian:
+    <<: *_
+    services: [vault]
+
+  # -- Cloud, tenant-based
   m365:
-    kind: Connection
+    <<: *_
+    tenant: "{{ uid }}"
     services: [sharepoint, onedrive, teams, exchange, onenote]
-    uris:
-      sharepoint: "https://{slug}.sharepoint.com/{share}/{path}"
-      onedrive: "https://{slug}-my.sharepoint.com/{share}/{path}"
+    urls:
+      sharepoint: "https://{slug}.sharepoint.com"
+      onedrive: "https://{slug}-my.sharepoint.com"
 
+  google:
+    <<: *_
+    tenant: "{{ uid }}"
+    services: [drive, photos, mail]
+
+  gcp:
+    <<: *_
+    services: [storage]
+
+  azure:
+    <<: *_
+    services: [blob_storage]
+
+  atlassian:
+    <<: *_
+    tenant: "{{ uid }}"
+    services: [jira, confluence]
+
+  # -- Cloud, not tenant-based
+  dropbox:
+    <<: *_
+    services: [files]
+
+  slack:
+    <<: *_
+    services: [channels]
+
+  telegram:
+    <<: *_
+    services: [chats]
+
+  github:
+    <<: *_
+    services: [repos]
+
+# -- Private infrastructure
 s1:
   template: synology
   host: s1.karel.in
-  services: [smb, ssh, home, sd, scp, rsync]
+  services: [smb, sftp, home, sd, scp, rsync]
+
+s2:
+  template: synology
+  host: s2.karel.in
+  services: [smb, sftp, scp]
+
+s3:
+  template: synology
+  host: s3.karel.in
+
+s5:
+  template: synology
+  host: s5.karel.in
+  services: [smb, sftp, scp]
 
 s9:
   template: synology
   host: s9.karel.in
-  services: [smb, ssh, scp]
+  services: [smb, sftp, scp]
 
 yellow:
   template: hassio
   host: yellow
   credentials: /etc/samba/credentials_yellow
 
+pg:
+  template: pg
+  host: pg.karel.in
+  databases: [files, airflow, timeline, lake, fh, sessions]
+
+neo4j:
+  template: neo4j
+  host: neo4j.karel.in
+
+vault:
+  template: obsidian
+  vaults: ["_"]
+
+# -- Cloud, tenant-based
 karelin:
   template: m365
   name: Karelin
   slug: karelin
+  alias: alex
+  email: alex@karelin.com
+  tenant_id: 052461ba-115a-49f9-8564-1857461f2161
+  apps:
+    main:
+      client_id: 69c6f244-602a-4189-b9b4-1a3407c49d02
 
 tulaco:
   template: m365
   name: TulaCo
   slug: tulaco
+  alias: alex
+  email: alex@tula.co
+  tenant_id: d1c1aa48-baa8-48e2-966c-e99d65f86f95
+  apps:
+    main:
+      client_id: c662e57a-f168-423a-9f06-243b6c05453b
+
+gmail:
+  template: google
+  name: Google (personal)
+  alias: karelin
+  email: karelin@gmail.com
+
+azure-karelin:
+  template: azure
+  account: karelin
+  subscription: bb78d1ea-7046-437d-a4fe-742a6d09920d
+  containers: [ducklake, timeline, preserved-raw]
+
+# -- Cloud, not tenant-based
+dropbox:
+  template: dropbox
+
+github:
+  template: github
+  user: akarelin

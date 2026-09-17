@@ -5,7 +5,7 @@
 #   {uid}:
 #     name: {name}
 #     template: {template, or the templates applied in order}
-#     {interface}/{connection}: {share}    a place: sd/s1: SD.Lake is the share Synology Drive
+#     {scheme}/{connection}: {share}       a place: sd/s1: SD.Lake is the share Synology Drive
 #                                          syncs, smb/s1: SD.Lake the share a server mounts
 #     local/{platform}: {path}             where it is on a platform, when no rule gives it
 #     local/{host}: {path}                 where it is on one host, when that host differs
@@ -36,9 +36,9 @@ macros: |
   {# A named folder inside a location, where the location is on a host. #}
   {% macro folder(uid, inside, host, platform) %}{{ place(uid, host, platform) }}/{{ locations[uid].folders[inside].path }}{% endmacro %}
 
-  {# What a location is served as on one interface, and by which box. #}
-  {% macro served(location, interface) %}{% for key in location if key.startswith(interface ~ '/') %}{{ location[key] }}{% endfor %}{% endmacro %}
-  {% macro serving(location, interface) %}{% for key in location if key.startswith(interface ~ '/') %}{{ key[interface | length + 1:] }}{% endfor %}{% endmacro %}
+  {# What a location is served as on one scheme, and by which box. #}
+  {% macro served(location, scheme) %}{% for key in location if key.startswith(scheme ~ '/') %}{{ location[key] }}{% endfor %}{% endmacro %}
+  {% macro serving(location, scheme) %}{% for key in location if key.startswith(scheme ~ '/') %}{{ key[scheme | length + 1:] }}{% endfor %}{% endmacro %}
 
   {# Where a mounted location lands: its own `at`, else its box's mount point and the share. #}
   {% macro mount_point(uid) %}
@@ -46,21 +46,23 @@ macros: |
   {{- location.at if 'at' in location else connections[serving(location, 'smb')].mount ~ '/' ~ served(location, 'smb') | replace(' ', '') -}}
   {% endmacro %}
 
-  {# A location's address on one interface, in the grammar its box's provider declares:
-     smb://s1.karel.in/SD.Lake, sd://SD.Lake. Empty when it is not served there. #}
-  {% macro uri(uid, interface, path='') %}
+  {# A location's address on one scheme, in the grammar resources.yaml declares for it,
+     filled from the serving box's row, the share and the path: smb://s1.karel.in/SD.Lake,
+     sd://SD.Lake, m365://karelin/alex/onedrive/Documents. Empty when not served so. #}
+  {% macro uri(uid, scheme, path='') %}
   {%- set location = locations[uid] -%}
-  {%- if served(location, interface) -%}
-  {%- set box = connections[serving(location, interface)] -%}
-  {{- box.uris[interface].format(host=box.host, slug=box.slug | default(''), share=served(location, interface), path=path).rstrip('/') -}}
+  {%- if served(location, scheme) -%}
+  {%- set box = connections[serving(location, scheme)] -%}
+  {%- set stems = dict(box, share=served(location, scheme), path=path) -%}
+  {{- resources[scheme].uri.format(**stems).rstrip('/') -}}
   {%- endif -%}
   {% endmacro %}
 
   {# Every address of a location, as a list. #}
   {% macro uris(uid) %}
   {%- set ns = namespace(out=[]) -%}
-  {%- for interface in ['sd', 'smb', 'scp', 'sharepoint'] if uri(uid, interface) -%}
-  {%- set ns.out = ns.out + [uri(uid, interface)] -%}
+  {%- for scheme in resources if uri(uid, scheme) -%}
+  {%- set ns.out = ns.out + [uri(uid, scheme)] -%}
   {%- endfor -%}
   {{- ns.out -}}
   {% endmacro %}
@@ -68,9 +70,10 @@ macros: |
   {# The location an address is inside of: sd://SD.Lake/inbox is inside the location served
      as SD.Lake on sd. Empty when no location is served so. #}
   {% macro location_of(address) %}
-  {%- set interface, _, rest = address.partition('://') -%}
-  {%- for uid, location in locations.items() if served(location, interface) and (rest == uri(uid, interface).partition('://')[2] or rest.startswith(uri(uid, interface).partition('://')[2] ~ '/')) -%}
+  {%- for uid, location in locations.items() -%}
+  {%- for scheme in resources if served(location, scheme) and (address == uri(uid, scheme) or address.startswith(uri(uid, scheme) ~ '/')) -%}
   {{- uid -}}
+  {%- endfor -%}
   {%- endfor -%}
   {% endmacro %}
 
@@ -79,35 +82,63 @@ macros: |
   {% macro local_of(address, host, platform) %}
   {%- set uid = location_of(address) -%}
   {%- if uid and place(uid, host, platform) -%}
-  {%- set interface, _, rest = address.partition('://') -%}
-  {{- place(uid, host, platform) }}{{ rest[uri(uid, interface).partition('://')[2] | length:] -}}
+  {%- for scheme in resources if served(locations[uid], scheme) and address.startswith(uri(uid, scheme)) -%}
+  {{- place(uid, host, platform) }}{{ address[uri(uid, scheme) | length:] -}}
+  {%- endfor -%}
   {%- endif -%}
   {% endmacro %}
 
-# ~~ Templates — what a row is an instance of. Data is data; a Jinja value is what the
-#    template computes for the row it is applied to.
+# ~~ Templates — what a row is an instance of. The logic: this is a file service that
+#    provides files and folders; its canonical location and path are here; its mirrors
+#    are here. A file service is a template naming its scheme; the row computes its
+#    canonical address, its mirrors, and its place on this host. Data is data; a Jinja
+#    value is what the template computes for the row it is applied to.
 templates:
   location:
     kind: Location
-    refs: {'smb/*': connections, 'sd/*': connections, 'sharepoint/*': connections, 'local/*': [platforms, hosts]}
+    refs: {'*/*': [connections, platforms, hosts]}
+    provides: files
     tags: []
-    uris: "{{ uris(uid) }}"
     local: "{{ place(uid, Environment.host, Environment.platform) or none }}"
+    uris: "{{ uris(uid) }}"
+    canonical: "{{ uri(uid, service) }}"
+    mirrors: "{{ uris | reject('equalto', canonical) | list }}"
 
   # A share Synology Drive syncs onto every workstation, and a server mounts.
   synced:
+    service: sd
     tags: [synced]
-    sd: "{{ uri(uid, 'sd') }}"
 
   # A share a server mounts and a workstation does not sync.
   share:
+    service: smb
     tags: [share]
     mount: "{{ mount_point(uid) }}"
+
+  # A library of a tenant, synced onto a workstation by its client.
+  library:
+    service: onedrive
+    tags: [library]
+
+  # A repository, checked out where the hosts say.
+  repo:
+    service: repos
+    tags: [repo]
+
+  # A vault, synced onto a workstation.
+  vault:
+    service: vault
+    tags: [vault]
+
+  # A folder that exists on a machine only; its canonical place is where it is here.
+  folder:
+    service: file
+    canonical: "{{ 'file://' ~ Environment.host ~ '/' ~ local if local else none }}"
 
 # ~~ Rows
 profile:
   name: Profile
-  template: location
+  template: [location, folder]
   local/windows: "C:/Users/Alex"
   local/wsl: "~"
   local/debian: "~"
@@ -119,7 +150,7 @@ profile:
 
 dev:
   name: Checkouts
-  template: location
+  template: [location, folder]
   local/windows: "D:/Dev"
   local/wsl: "~"
   local/debian: "~"
@@ -173,13 +204,23 @@ yellow-config:
   template: [location, share]
   smb/yellow: config
 
-obsidian:
-  name: Obsidian
-  template: location
-  local/windows: "D:/_"
-
 onedrive:
   name: OneDrive - Karelin
-  template: location
-  sharepoint/karelin: personal/alex_karelin_com/Documents
+  template: [location, library]
+  onedrive/karelin: Documents
   local/windows: "D:/OneDrive - Karelin"
+
+ran:
+  name: RAN
+  template: [location, repo]
+  repos/github: RAN
+  local/windows: "D:/Dev/RAN"
+  local/wsl: "~/RAN"
+  local/debian: "~/RAN"
+  local/macos: "~/RAN"
+
+obsidian:
+  name: Obsidian
+  template: [location, vault]
+  vault/vault: _
+  local/windows: "D:/_"
