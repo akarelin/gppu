@@ -27,7 +27,7 @@ from typing import TypeAlias, ClassVar, Callable, Protocol
 from collections import defaultdict, UserDict, UserList
 from enum import Enum
 from functools import wraps, partial, cache
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from copy import deepcopy
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -365,12 +365,22 @@ def template_populate(o, data: dict = {}, excludes:list = []) -> Any:
   return __tp(_, data)
 
 
+def to_date(o: object) -> date:
+  """A date from what a configuration writes: a date, a datetime, YYYY-MM-DD with or without
+  a time, or YYMMDD. Anything else is an error, never a guess."""
+  if isinstance(o, datetime): return o.date()
+  if isinstance(o, date): return o
+  s = str(o).strip()
+  if re.fullmatch(r'\d{6}', s): return datetime.strptime(s, '%y%m%d').date()
+  return datetime.fromisoformat(s).date()
+
+
 def jinja_helpers() -> dict:
   """gppu's own filters, offered to every Jinja environment it builds."""
   return {
     'safe_int': safe_int, 'safe_float': safe_float, 'safe_list': safe_list,
     'safe_timedelta': safe_timedelta, 'dict_sanitize': dict_sanitize,
-    'pretty_timedelta': pretty_timedelta, 'pfy': pfy, 'slugify': slugify,
+    'pretty_timedelta': pretty_timedelta, 'pfy': pfy, 'slugify': slugify, 'to_date': to_date,
   }
 
 

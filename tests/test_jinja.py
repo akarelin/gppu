@@ -114,3 +114,13 @@ def test_behavior_rewrites_what_the_row_itself_carries():
     templates={'host': {'behavior': 'sets'}},
   ).resolve({'template': 'host', 'services': ['docker', 'nginx']})
   assert resolved['services'] == ['DOCKER', 'NGINX']
+
+
+def test_to_date_reads_both_of_the_configuration_date_formats():
+  from datetime import date
+  from gppu import jinja_template
+  assert jinja_template("{{ (d | to_date).strftime('%m/%d') }}", d='2026-09-16') == '09/16'
+  assert jinja_template("{{ d | to_date }}", d='260916') == date(2026, 9, 16)
+  assert jinja_template("{{ d | to_date }}", d='2026-09-16 1840') == date(2026, 9, 16)
+  with pytest.raises(ValueError):
+    jinja_template("{{ d | to_date }}", d='16.09.2026')
