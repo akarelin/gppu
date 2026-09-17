@@ -746,3 +746,30 @@ def test_the_index_answers_first_and_the_handler_runs_for_what_it_lacks(tmp_path
   assert [row['gppu']['name'] for row in again.ls()] == ['note.md']
   assert again.info('note.md')['gppu']['markdown']['title'] == 'Indexed'
   assert again.info()['gppu']['name'] == tmp_path.name
+
+
+class Empty:
+  """An index that holds nothing, so every lookup falls to what is beside the location."""
+
+  def entry(self, address):
+    return None
+
+  def put(self, entries):
+    pass
+
+
+def test_the_file_beside_a_location_is_kept_and_answers_when_the_index_has_nothing(tmp_path, monkeypatch):
+  """Alex, 2026-09-17 04:47: the index beside a folder is not a throwaway. It is written wherever the
+  place will hold it, and a folder the database has nothing for is answered from it rather than read
+  again — which is how a folder archived a year ago is still known without opening what is in it."""
+  (tmp_path / 'notes').mkdir()
+  (tmp_path / 'notes' / 'note.md').write_bytes(b'---\ntitle: Kept\n---\nText')
+  fs = GppuFileSystem(tmp_path)
+  rows = fs.ls(recurse=True)
+  assert index(tmp_path).is_file(), 'a writable folder keeps its index'
+  assert index(tmp_path).stat().st_size > 0
+
+  monkeypatch.setattr(GppuFileSystem, '_live', no_live)
+  monkeypatch.setattr(GppuFileSystem, '_identify_entry', no_live)
+  again = GppuFileSystem(tmp_path, index=Empty())
+  assert again.ls(recurse=True) == rows
