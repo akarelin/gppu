@@ -18,7 +18,7 @@ import builtins
 import json
 import getpass
 import socket
-from jinja2 import FileSystemLoader, StrictUndefined
+from jinja2 import DictLoader, FileSystemLoader, StrictUndefined
 from jinja2.nativetypes import NativeEnvironment
 from jinja2.sandbox import SandboxedEnvironment
 
@@ -444,6 +444,11 @@ class TemplateSet:
   merge and so is the only thing that can rewrite a key the row itself carries. A row
   un-inherits a key its template carries by setting it to null.
 
+  A `*_templates` block holds named templates that render later — the grammar of an
+  address, the payload of a command — with what a rule knows then:
+  `render_template(name, **values)`. A row names one; it is data until rendered. The
+  blocks are the configuration's, not one table's, so any rule may render any of them.
+
   A template declares what its rows reference with `refs`, field to table:
   `{connections: connections}` says the field's value (or each of its values, or each
   of its keys) is a row of the `connections` table; `{'smb/*': connections}` says every
@@ -455,13 +460,17 @@ class TemplateSet:
   RESERVED = ('template', 'generator', 'behavior', 'refs')
   BUILTINS = ('dict', 'list', 'int', 'float', 'str', 'bool', 'len', 'round', 'sorted', 'min', 'max', 'range')
 
-  def __init__(self, macros: str = '', generators: dict | None = None,
-               templates: dict | None = None, context: dict | None = None, **globals):
+  def __init__(self, macros: str = '', generators: dict | None = None, templates: dict | None = None,
+               context: dict | None = None, named: dict[str, dict] | None = None, **globals):
     self.environment = JinjaEnvironment()
     self.environment.globals.update(context or {})
     self.environment.globals.update(globals)
     self.environment.globals.update({name: getattr(builtins, name) for name in self.BUILTINS})
     self.environment.globals['re'] = re
+    self.named = {name: source for block in (named or {}).values() for name, source in block.items()}   # the table's
+    self.environment.loader = DictLoader(self.named)                                                    # *_templates
+    self.environment.globals.update(named or {})                                                        # blocks, by name
+    self.environment.globals['render_template'] = self.render_template
     if macros:                                                                             # every macro the block
       module = self.environment.from_string(macros).make_module()                          # defines, callable by
       self.environment.globals.update({name: getattr(module, name)                         # name from any generator
@@ -469,6 +478,12 @@ class TemplateSet:
     self.templates = dict(templates or {})
     self.generators = {name: self.environment.from_string(source)
                        for name, source in (generators or {}).items()}
+
+  def render_template(self, name: str, /, **values) -> Any:
+    """A named template of the table, rendered with these values: the grammar a row names,
+    filled in later by a rule with what it knows then."""
+    if name not in self.named: raise KeyError(f'no named template {name!r}')
+    return self.environment.get_template(name).render(values)
 
   def _computed(self, name: str, values: dict) -> dict:
     if name not in self.generators: raise KeyError(f'no generator named {name!r}')
@@ -1165,8 +1180,21 @@ class Env:
     the tables it computes against."""
     table = Env.glob_dict(path) if path else Env.data
     macros = chr(10).join(block for block in (Env.data.get('macros', '') if path else '', table.get('macros', '')) if block)
-    return TemplateSet(macros=macros, generators=table.get('generators'),
-                       templates=table.get('templates'), context=Env.data | context)
+    return TemplateSet(macros=macros, generators=table.get('generators'), templates=table.get('templates'),
+                       named=Env.named_templates(), context=Env.data | context)
+
+  @staticmethod
+  def named_templates() -> dict[str, dict]:
+    """Every `*_templates` block of the configuration, the root's and every table's, by block
+    name: the named templates any rule may render, as in Y2. A name is unique across the
+    configuration."""
+    blocks: dict[str, dict] = {}
+    for holder in (Env.data, *(content for content in Env.data.values() if isinstance(content, dict))):
+      for key, block in holder.items():
+        if not (key.endswith('_templates') and isinstance(block, dict)): continue
+        if clash := set(blocks.get(key, {})) & set(block): raise ValueError(f'{key}: {sorted(clash)} defined twice')
+        blocks.setdefault(key, {}).update(block)
+    return blocks
 
   @staticmethod
   def glob(path, default=None) -> Any: return Env.data if path == '' else deepget(path, Env.data, default=default)

@@ -28,7 +28,8 @@ from typing import Any
 
 from .gppu import TRACE_RULES, Env, TemplateSet, _DC, deepget, detect_os
 
-TABLE_KEYS = ('macros', 'generators', 'templates')   # what a table holds beside its rows
+def is_table_key(name: str) -> bool:   # what a table holds beside its rows: its macros, its generators, its templates and
+  return name in ('macros', 'generators', 'templates') or name.endswith('_templates')   # its named templates
 _MISSING = object()
 
 
@@ -108,7 +109,7 @@ class _State:
 
   def rows(self, table: str) -> dict[str, dict]:
     """The rows of a table: every mapping under its key that is not macros, generators or templates."""
-    return {uid: row for uid, row in Env.glob_dict(table).items() if uid not in TABLE_KEYS and isinstance(row, dict)}
+    return {uid: row for uid, row in Env.glob_dict(table).items() if not is_table_key(uid) and isinstance(row, dict)}
 
   def load(self) -> None:
     """Construct every table of the loaded configuration."""
