@@ -19,6 +19,7 @@ macros: |
   {% macro dashed(text) %}{{ re.sub('[ /_.-]+', '-', text | lower).strip('-') }}{% endmacro %}
 
 platforms:   !include platforms.yaml
+resources:   !include resources.yaml
 connections: !include connections.yaml
 hosts:       !include hosts.yaml
 locations:   !include locations.yaml
