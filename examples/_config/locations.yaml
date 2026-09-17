@@ -16,7 +16,7 @@
 # and path are here; its mirrors are here. The template builds the default object from the
 # uid — its addresses on every scheme, its canonical one, its mirrors, its path on this host —
 # and every rule is a macro below, so a utility asks and never computes:
-# Environment.place(uid), Environment.local_of(address).
+# Environment.locations.place(uid), Environment.locations.local_of(address).
 
 # ~~ The rules. Each is a Jinja macro; the templates and the utilities call them by name.
 macros: |
@@ -24,7 +24,7 @@ macros: |
      place for this host, then for its platform; a platform seen from another takes that
      one's place, translated — WSL sees the Windows drives under /mnt; a share the host
      syncs, under its sync root; a share the host mounts, at its mount point. #}
-  {% macro place(uid, host, platform) %}
+  {% macro place(uid, host=Environment.host, platform=Environment.platform) %}
   {%- set p = platforms[platform] -%}
   {%- set h = hosts[host] -%}
   {%- set location = locations[uid] -%}
@@ -37,7 +37,7 @@ macros: |
   {% endmacro %}
 
   {# A named folder inside a location, where the location is on a host. #}
-  {% macro folder(uid, inside, host, platform) %}{{ place(uid, host, platform) }}/{{ locations[uid].folders[inside].path }}{% endmacro %}
+  {% macro folder(uid, inside, host=Environment.host, platform=Environment.platform) %}{{ place(uid, host, platform) }}/{{ locations[uid].folders[inside].path }}{% endmacro %}
 
   {# What a location is served as on one scheme, and by which box. #}
   {% macro served(location, scheme) %}{% for key in location if key.startswith(scheme ~ '/') %}{{ location[key] }}{% endfor %}{% endmacro %}
@@ -84,7 +84,7 @@ macros: |
 
   {# The path on a host of an address: the place of the location it is inside of, then
      what lies below it. Empty when the host does not reach it. #}
-  {% macro local_of(address, host, platform) %}
+  {% macro local_of(address, host=Environment.host, platform=Environment.platform) %}
   {%- set uid = location_of(address) -%}
   {%- if uid and place(uid, host, platform) -%}
   {%- for scheme in resources if served(locations[uid], scheme) and address.startswith(uri(uid, scheme)) -%}
@@ -102,7 +102,7 @@ templates:
     refs: {'*/*': [connections, platforms, hosts]}
     provides: files
     tags: []
-    local: "{{ place(uid, Environment.host, Environment.platform) or none }}"
+    local: "{{ place(uid) or none }}"
     uris: "{{ uris(uid) }}"
     canonical: "{{ uri(uid, service) }}"
     mirrors: "{{ uris | reject('equalto', canonical) | list }}"

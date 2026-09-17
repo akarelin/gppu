@@ -3,9 +3,10 @@
 Environment is the basic level, with no configuration file: platform, host, user, home,
 os and the trace rules. Once `Environment.from_env` has loaded the app's configuration —
 and through its `!include` of the shared one, everything the fleet knows — lookups into
-it are strict, and the questions a utility used to answer for itself are macros of the
-configuration called by name: where a location is on a host, what its address is on a
-connection, which path an address means here.
+it are strict, and the questions a utility used to answer for itself are rules of the
+configuration — its macros — reached as Environment.<section>.<rule>(...): where a
+location is on a host, what its address is on a connection, which path an address means
+here, how a command runs on a host. gppu knows no rule by name.
 
 State holds what the configuration constructs. Every section carrying `templates` is a
 table; every other mapping in it is a row keyed by its uid. A row resolves through the
@@ -40,7 +41,14 @@ def platform_name() -> str:
   return 'debian'
 
 
-class Environment:
+class _Sections(type):
+  """Environment.<section> is that table's rules, once the configuration is loaded."""
+  def __getattr__(cls, name: str):
+    if name in State.templates: return cls._Rules(name, State.templates[name])
+    raise AttributeError(f'no table named {name!r}')
+
+
+class Environment(metaclass=_Sections):
   os = detect_os()
   platform: str = platform_name()
   host: str = socket.gethostname().split('.')[0].lower()
@@ -80,51 +88,14 @@ class Environment:
     if not isinstance(result, dict): raise TypeError(f'{path} is not a mapping')
     return result
 
-  # -- macros: the configuration answers, by name ----------------------------------------
-  @staticmethod
-  def macro(section: str, name: str):
-    """A macro of a table section, callable with its arguments."""
-    if section not in State.templates: raise KeyError(f'no table named {section!r}')
-    macros = State.templates[section].environment.globals
-    if name not in macros: raise KeyError(f'{section} defines no macro {name!r}')
-    return macros[name]
-
-  @staticmethod
-  def answer(section: str, name: str, *arguments) -> str:
-    """What a macro says, as text; a macro that says nothing answers ''."""
-    value = Environment.macro(section, name)(*arguments)
-    return '' if value is None else str(value)
-
-  @staticmethod
-  def place(location: str, host: str | None = None, platform: str | None = None) -> str:
-    """Where a location is on a host: this host and platform unless told otherwise."""
-    return Environment.answer('locations', 'place', location, host or Environment.host, platform or Environment.platform)
-
-  @staticmethod
-  def folder(location: str, inside: str, host: str | None = None, platform: str | None = None) -> str:
-    """A named folder of a location, where the location is on a host."""
-    return Environment.answer('locations', 'folder', location, inside, host or Environment.host, platform or Environment.platform)
-
-  @staticmethod
-  def uri(location: str, interface: str) -> str:
-    """A location's address on one interface: sd://s1/SD.Lake, smb://s1/SD.Lake."""
-    return Environment.answer('locations', 'uri', location, interface)
-
-  @staticmethod
-  def location_of(address: str) -> str:
-    """The uid of the location an address is inside of; empty when none is served so."""
-    return Environment.answer('locations', 'location_of', address)
-
-  @staticmethod
-  def local_of(address: str, host: str | None = None, platform: str | None = None) -> str:
-    """The path on a host of an address on a connection; empty when the host does not reach it."""
-    return Environment.answer('locations', 'local_of', address, host or Environment.host, platform or Environment.platform)
-
-
-  @staticmethod
-  def ssh(host: str, platform: str) -> list[str]:
-    """The command that runs a script, read from stdin, on a host's platform."""
-    return list(Environment.macro('hosts', 'ssh')(host, platform))
+  # -- rules: a macro of a table section, reachable as Environment.<section>.<macro>(...) --
+  class _Rules:
+    def __init__(self, section: str, templates: TemplateSet):
+      self._section, self._globals = section, templates.environment.globals
+    def __getattr__(self, name: str):
+      rule = self._globals.get(name)
+      if not callable(rule): raise AttributeError(f'{self._section} defines no rule {name!r}')
+      return rule
 
 class State:
   tables: dict[str, dict[str, Any]] = {}
