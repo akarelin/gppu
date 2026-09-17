@@ -811,3 +811,40 @@ def test_a_move_carries_what_is_held_of_the_thing_moved(tmp_path):
   fs._identify_entry = no_live
   assert fs.info('b/note.md')['gppu']['markdown']['title'] == 'Moved'
   assert [row['gppu']['name'] for row in fs.ls('b')] == ['note.md']
+
+
+class Carrying(Watching):
+  """An index that carries an entry and everything under it when it is told the thing moved."""
+
+  def moved(self, source, destination):
+    self.moves.append((source, destination))
+    def carried(address):
+      return destination + address[len(source):] if address == source or address.startswith(source + '/') else address
+    for address in [held for held in self.held if held == source or held.startswith(source + '/')]:
+      row, children = self.held.pop(address)
+      self.held[carried(address)] = (
+        row, None if children is None else [{**child, 'path': carried(child['path'])} for child in children])
+
+
+def test_a_folder_moved_between_two_locations_keeps_its_index(tmp_path):
+  """Alex's headline case for the file manager: a folder carried between two indexed places, where
+  what the index says about it goes with it rather than being read again."""
+  one, two = tmp_path / 'SD.agents', tmp_path / 'SD.Lake'
+  (one / 'work').mkdir(parents=True)
+  two.mkdir()
+  (one / 'work' / 'note.md').write_bytes(b'---\ntitle: Carried\n---\nText')
+  locations = {one.as_posix(): {'location': 'a', 'canonical': 'a://'},
+               two.as_posix(): {'location': 'b', 'canonical': 'b://'}}
+  carrying = Carrying()
+  source = GppuFileSystem(one, locations=locations, index=carrying)
+  destination = GppuFileSystem(two, locations=locations, index=carrying)
+  source.ls(recurse=True)
+  assert source.info('work/note.md')['gppu']['markdown']['title'] == 'Carried'
+
+  assert source.move_into(destination, 'work', 'work') == 'b://work'
+  assert (two / 'work' / 'note.md').is_file()
+  assert not (one / 'work').exists()
+  assert carrying.moves == [('a://work', 'b://work')]
+  assert carrying.entry('b://work/note.md')[0]['gppu']['markdown']['title'] == 'Carried'
+  assert carrying.entry('a://work/note.md') is None
+  assert [row['gppu']['name'] for row in destination.ls(recurse=True)] == ['work', 'note.md']
