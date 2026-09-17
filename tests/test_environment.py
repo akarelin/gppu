@@ -123,7 +123,7 @@ def test_places_follow_the_rules_per_platform(on):
   on('seven', 'debian')
   assert State.locations['sd-lake']['local'] == '/mnt/S1/SD.Lake'
   assert State.locations['public']['local'] == '/mnt/Public' and Environment.locations.place('public', 'alex-mac', 'macos') == '/Volumes/Public'
-  assert State.locations['yellow-config']['local'] == '/mnt/yellow/config'
+  assert 'local' not in State.locations['yellow-config']              # seven is not connected to yellow
   assert 'local' not in State.locations['obsidian']
   assert Environment.locations.place('sd-lake', 'alex-pc', 'wsl') == '/mnt/d/SD.Lake'
   assert Environment.locations.place('sd-agents', 'trix', 'debian') == '/home/alex/SD.agents'   # the row's own place for one host
