@@ -713,7 +713,10 @@ class SqliteHandler(Handler):
     """Return the file's statistics and the tables and columns it holds."""
 
     path = full_path(path)
-    uri = "file:" + path.as_posix().lstrip("/") + "?mode=ro&immutable=1"
+    # as_uri() keeps the path absolute on both platforms. Building the URI by hand and
+    # stripping the leading slash made every POSIX path relative, so sqlite looked for the
+    # database under the working directory and refused to open it.
+    uri = path.as_uri() + "?mode=ro&immutable=1"
     with closing(sqlite3.connect(uri, uri=True)) as database:
       names = tuple(str(name) for (name,) in database.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"))
