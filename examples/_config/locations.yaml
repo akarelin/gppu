@@ -127,11 +127,6 @@ templates:
     service: repos
     tags: [repo]
 
-  # A vault, synced onto a workstation.
-  vault:
-    service: vault
-    tags: [vault]
-
   # A folder that exists on a machine only; its canonical place is where it is here.
   folder:
     service: file
@@ -223,6 +218,5 @@ ran:
 
 obsidian:
   name: Obsidian
-  template: [location, vault]
-  vault/vault: _
+  template: [location, folder]
   local/windows: "D:/_"

@@ -35,10 +35,6 @@ templates:
     services: [neo4j]
     port: 7687
 
-  obsidian:
-    <<: *_
-    services: [vault]
-
   # -- Cloud, tenant-based
   m365:
     <<: *_
@@ -69,15 +65,15 @@ templates:
   # -- Cloud, not tenant-based
   dropbox:
     <<: *_
-    services: [files]
+    services: [dropbox]
 
   slack:
     <<: *_
-    services: [channels]
+    services: [slack]
 
   telegram:
     <<: *_
-    services: [chats]
+    services: [telegram]
 
   github:
     <<: *_
@@ -121,10 +117,6 @@ pg:
 neo4j:
   template: neo4j
   host: neo4j.karel.in
-
-vault:
-  template: obsidian
-  vaults: ["_"]
 
 # -- Cloud, tenant-based
 karelin:
