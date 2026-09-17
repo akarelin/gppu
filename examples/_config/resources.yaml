@@ -129,17 +129,17 @@ blob_storage:
   class: AzureBlob
   uri: blob
 
-files:
+dropbox:
   template: resource
   class: Dropbox
   uri: account
 
-channels:
+slack:
   template: resource
   class: Slack
   uri: workspace
 
-chats:
+telegram:
   template: resource
   class: Telegram
   uri: account
@@ -148,11 +148,6 @@ repos:
   template: resource
   class: GitRepository
   uri: repos
-
-vault:
-  template: resource
-  class: ObsidianVault
-  uri: account
 
 # -- Databases and work
 pg:
