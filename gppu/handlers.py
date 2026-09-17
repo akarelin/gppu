@@ -5156,6 +5156,7 @@ class GppuFileSystem(AbstractFileSystem):
     self._cacheless = False          # set when the store refuses the index it would keep beside itself
     self._memory: dict[str, sqlite3.Connection] = {}   # a remote store's index, held for this instance
     self._scratch: tempfile.TemporaryDirectory | None = None   # where a listed remote entry is asked about
+    self._indexes: dict[str, str | None] = {}   # folder -> the index it holds, asked of the store once
     self._locations = dict(locations) if locations else {}   # folder -> the location that is there
     self._handlers = _MetadataHandlers({"locations": self._locations})
     self._database_path(self.root)  # Validate the required location name.
@@ -5167,6 +5168,21 @@ class GppuFileSystem(AbstractFileSystem):
     return f'{folder.rstrip("/")}/.{name}.gppufs.sqlite'
 
   def _existing_index(self, folder: str) -> str | None:
+    """Whether a folder holds an index of its own, asked of the store once per folder.
+
+    ``_owner`` asks this of every ancestor of every entry, and on a store that is not the local
+    filesystem each ask is a round trip. A library of a thousand entries would otherwise spend its
+    walk asking SharePoint whether folders hold an index file they have never held. The answer does
+    not change under a walk, because gppufs is what creates that file and ``_database`` records it
+    here when it does.
+    """
+    if isinstance(self.fs, LocalFileSystem):
+      return self._index_at(folder)     # a local answer costs a stat, and the file can move under us
+    if folder not in self._indexes:
+      self._indexes[folder] = self._index_at(folder)
+    return self._indexes[folder]
+
+  def _index_at(self, folder: str) -> str | None:
     expected = self._database_path(folder)
     if self.fs.isfile(expected):
       if isinstance(self.fs, LocalFileSystem) and os.name == 'nt':
@@ -5260,6 +5276,8 @@ class GppuFileSystem(AbstractFileSystem):
     return str(PurePosixPath(key).parent)
 
   def _owner(self, key: str) -> str:
+    if self._cacheless:
+      return '.'   # a store that will not hold the file has no folder below the root owning one
     physical = key.rsplit('::', 1)[-1]
     folder = PurePosixPath(physical)
     for candidate in (folder, *folder.parents):
@@ -5543,8 +5561,11 @@ class GppuFileSystem(AbstractFileSystem):
     folders = [child for child in children if child['type'] == 'directory' and child['ino'] is not None]
     if not folders:
       return False
-    live = [self.fs.info(row['name']) for row in self.fs.ls(self._path(key), detail=True)
-      if row['type'] == 'directory']
+    listed = [row for row in self.fs.ls(self._path(key), detail=True) if row['type'] == 'directory']
+    # A local directory scan reports no inode on Windows and rename recovery needs one, so each
+    # folder is asked about; a store that lists enough already said it, and asking again is a round
+    # trip per folder per listing.
+    live = listed if not isinstance(self.fs, LocalFileSystem) else [self.fs.info(row['name']) for row in listed]
     changed = False
     owner = self._owner(key)
     for child in folders:
@@ -6335,6 +6356,7 @@ class SharePointFileSystem(AbstractFileSystem):
     self.location = f'm365://{self.root}'
     self.host = f'{tenant}-my.sharepoint.com' if service == 'onedrive' else f'{tenant}.sharepoint.com'
     self._drive_id: str | None = None
+    self._asked = None               # one pooled connection: a walk is thousands of calls to one host
 
   @classmethod
   def _get_kwargs_from_urls(cls, path: str) -> dict[str, str]:
@@ -6351,8 +6373,10 @@ class SharePointFileSystem(AbstractFileSystem):
 
   def _asking(self, url: str, params: dict[str, str] | None = None):
     import requests                                             # noqa: PLC0415 - the m365 extra, asked for here only
-    response = requests.get(url if url.startswith('https://') else f'{self.GRAPH}/{url.lstrip("/")}',
-                            headers={'Authorization': f'Bearer {self.token()}'}, params=params)
+    if self._asked is None:
+      self._asked = requests.Session()
+    response = self._asked.get(url if url.startswith('https://') else f'{self.GRAPH}/{url.lstrip("/")}',
+                               headers={'Authorization': f'Bearer {self.token()}'}, params=params)
     if response.status_code == 404:
       raise FileNotFoundError(url)
     if response.status_code >= 400:
