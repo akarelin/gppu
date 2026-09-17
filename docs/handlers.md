@@ -1002,6 +1002,14 @@ row, and each child of the listing carries `path`, `type` and `ino`.
 
 Keep what the handlers read, by address. A None stands for a part this call does not change.
 
+### `GppuIndex.moved(self, source: 'str', destination: 'str') -> 'None'`
+
+The entry at `source`, and everything under it, is at `destination` now.
+
+What the index holds of a thing moves with the thing. Alex's reason for a file manager built on
+this filesystem is that moving a folder between two indexed places keeps the index: the rows are
+carried over, never thrown away and read again, so what was said about a file survives the move.
+
 ## `GppuFileSystem(*args, **kwargs)`
 
 fsspec listings enriched by handlers and stored beside their location.
@@ -1061,6 +1069,25 @@ members identified, like a folder; refreshing the archive probes them.
 `live` reads the folder and reconciles the index with it. `live=False` answers from the
 index alone and touches no filesystem, so what was indexed is listed wherever this runs, and
 a folder the index has never seen lists nothing.
+
+### `GppuFileSystem.cp_file(self, path1: 'str | Path', path2: 'str | Path', **kwargs: 'Any') -> 'None'`
+
+Copy one entry's bytes inside this location. The copy is a new thing and is identified as one.
+
+### `GppuFileSystem.rm_file(self, path: 'str | Path') -> 'None'`
+
+Remove one entry, and forget what was stored of it.
+
+### `GppuFileSystem.mv(self, path1: 'str | Path', path2: 'str | Path', recursive: 'bool' = False, maxdepth: 'int | None' = None, **kwargs: 'Any') -> 'None'`
+
+Move an entry, and move what is held of it with it.
+
+Alex's reason for a file manager on this filesystem: a folder moved between two indexed places
+keeps its index. So the bytes are renamed where the base filesystem can rename them — one
+operation for a folder of a million files, rather than a copy and a delete — and the rows under
+the old address are rewritten to the new one rather than dropped and read again.
+
+fsspec's own `mv` is a copy followed by a delete, which for a folder of that size is neither.
 
 ## `GppuCatalog(*args, **kwargs)`
 

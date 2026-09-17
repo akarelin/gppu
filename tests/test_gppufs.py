@@ -773,3 +773,41 @@ def test_the_file_beside_a_location_is_kept_and_answers_when_the_index_has_nothi
   monkeypatch.setattr(GppuFileSystem, '_identify_entry', no_live)
   again = GppuFileSystem(tmp_path, index=Empty())
   assert again.ls(recurse=True) == rows
+
+
+class Watching(Remembering):
+  """An index that also records the moves it is told about."""
+
+  def __init__(self) -> None:
+    super().__init__()
+    self.moves: list[tuple[str, str]] = []
+
+  def moved(self, source, destination):
+    self.moves.append((source, destination))
+    held = self.held.pop(source, None)
+    if held is not None:
+      self.held[destination] = held
+
+
+def test_a_move_carries_what_is_held_of_the_thing_moved(tmp_path):
+  """Alex's reason for a file manager on this filesystem: a folder moved between two indexed places
+  keeps its index, so what was said about a file survives the move instead of being read again."""
+  (tmp_path / 'a').mkdir()
+  (tmp_path / 'b').mkdir()
+  (tmp_path / 'a' / 'note.md').write_bytes(b'---\ntitle: Moved\n---\nText')
+  watching = Watching()
+  fs = GppuFileSystem(tmp_path, locations={tmp_path.as_posix(): {'location': 'work', 'canonical': 'work://'}},
+                      index=watching)
+  fs.ls(recurse=True)
+  assert fs.info('a/note.md')['gppu']['markdown']['title'] == 'Moved'
+
+  fs.mv('a/note.md', 'b/note.md')
+  assert (tmp_path / 'b' / 'note.md').is_file()
+  assert not (tmp_path / 'a' / 'note.md').exists()
+  assert watching.moves == [('work://a/note.md', 'work://b/note.md')]
+
+  # Nothing is read again: the row that was there is the row that is here.
+  fs._live = no_live
+  fs._identify_entry = no_live
+  assert fs.info('b/note.md')['gppu']['markdown']['title'] == 'Moved'
+  assert [row['gppu']['name'] for row in fs.ls('b')] == ['note.md']
