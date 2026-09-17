@@ -128,6 +128,9 @@ def test_places_follow_the_rules_per_platform(on):
   assert Environment.locations.place('sd-lake', 'alex-pc', 'wsl') == '/mnt/d/SD.Lake'
   assert Environment.locations.place('sd-agents', 'trix', 'debian') == '/home/alex/SD.agents'   # the row's own place for one host
   assert Environment.locations.place('sd-agents', 'seven', 'debian') == '/mnt/S1/SD.agents'
+  assert Environment.locations.place('yellow-config', 'seven', 'debian') is None       # seven is not connected to yellow
+  assert Environment.locations.place('yellow-config', 'iot', 'debian') == '/mnt/yellow/config'
+  assert list(Environment.locations.on_host('alex-pc')) == ['profile', 'dev', 'sd', 'sd-lake', 'sd-agents', 'onedrive', 'ran', 'obsidian']
 
 
 def test_an_address_resolves_to_a_path_on_this_host(on):

@@ -23,7 +23,8 @@ macros: |
   {# Where a location is on a host, in the order the rules apply: the location's own
      place for this host, then for its platform; a platform seen from another takes that
      one's place, translated — WSL sees the Windows drives under /mnt; a share the host
-     syncs, under its sync root; a share the host mounts, at its mount point. #}
+     syncs, under its sync root; a share the host mounts, from a box it is connected to,
+     at its mount point. #}
   {% macro place(uid, host=Environment.host, platform=Environment.platform) %}
   {%- set p = platforms[platform] -%}
   {%- set h = hosts[host] -%}
@@ -32,8 +33,18 @@ macros: |
   {%- elif 'local/' ~ platform in location -%}{{ location['local/' ~ platform] }}
   {%- elif 'from' in p -%}{%- if place(uid, host, p['from']) -%}{{ p.mount }}/{{ place(uid, host, p['from'])[0] | lower }}{{ place(uid, host, p['from'])[2:] }}{%- endif -%}
   {%- elif 'sync' in h and served(location, 'sd') -%}{{ h.sync }}/{{ served(location, 'sd') }}
-  {%- elif 'mount' in h and served(location, 'smb') -%}{{ mount_point(uid, host) }}
+  {%- elif 'mount' in h and served(location, 'smb') and serving(location, 'smb') in h.connections -%}{{ mount_point(uid, host) }}
   {%- endif -%}
+  {% endmacro %}
+
+  {# The locations a host has, with where each one is: every location the rules place there. #}
+  {% macro on_host(host, platform=none) %}
+  {%- set platform = platform or hosts[host].platforms[0] -%}
+  {%- set ns = namespace(out={}) -%}
+  {%- for uid in locations if place(uid, host, platform) -%}
+  {%- set _ = ns.out.update({uid: place(uid, host, platform)}) -%}
+  {%- endfor -%}
+  {{- ns.out -}}
   {% endmacro %}
 
   {# A named folder inside a location, where the location is on a host. #}
