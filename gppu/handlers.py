@@ -6282,6 +6282,11 @@ class PostgresFileSystem(AbstractFileSystem):
   # is the difference between his two examples. A table whose only date is a row stamp has no date
   # of its own and gets no span, which is truer than a span of when the loader ran.
   STAMPS = ('created_at', 'updated_at', 'inserted_at', 'written_at', 'recorded_at', 'stored_at')
+  # The day each system's clock starts from, which is what it writes where a date is unknown. Read
+  # off his own databases: .NET's minimum, Excel and OLE's zero, SQL Server's, and Unix's in both
+  # the spellings a stored value takes here.
+  ZEROS = ('0001-01-01', '0001-12-31', '1899-12-30', '1899-12-31', '1900-01-01',
+           '1969-12-31', '1970-01-01')
   DATED = ("select a.attname from pg_attribute a join pg_class c on c.oid = a.attrelid"
            "  join pg_namespace n on n.oid = c.relnamespace"
            " where n.nspname = %s and c.relname = %s and a.attnum > 0 and not a.attisdropped"
@@ -6300,10 +6305,12 @@ class PostgresFileSystem(AbstractFileSystem):
   def span(self, path: str) -> dict[str, Any] | None:
     """When one table's records happened: the column their date is in, and its first and last.
 
-    Epoch itself is not a date. A row written with a zero where the date was unknown reads as
-    1970-01-01, or as the evening of 1969-12-31 when it was stored without a zone in a western one,
-    and taking either would say the table begins at the beginning of Unix time. Both days are left
-    out of the reading rather than corrected in the data; nothing of his happened on them.
+    A zero is not a date. Where the date was unknown a system writes the day its own clock starts
+    from, and every one of them reads as a real date: Unix writes 1970-01-01, or the evening of
+    1969-12-31 when it was stored without a zone in a western one; .NET writes 0001-01-01; Excel and
+    OLE write 1899-12-30; SQL Server writes 1900-01-01. Taking any of them says the table begins at
+    the beginning of that system's time. They are left out of the reading rather than corrected in
+    the data, and nothing is clamped: a date that is merely old, a photograph from 1967, is a date.
     """
     schema, _, name = self._under(path).partition('/')
     columns = self.dated(schema, name) if name else []

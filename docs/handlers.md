@@ -1178,10 +1178,12 @@ The columns of a table that could carry the date of the thing each row is.
 
 When one table's records happened: the column their date is in, and its first and last.
 
-Epoch itself is not a date. A row written with a zero where the date was unknown reads as
-1970-01-01, or as the evening of 1969-12-31 when it was stored without a zone in a western one,
-and taking either would say the table begins at the beginning of Unix time. Both days are left
-out of the reading rather than corrected in the data; nothing of his happened on them.
+A zero is not a date. Where the date was unknown a system writes the day its own clock starts
+from, and every one of them reads as a real date: Unix writes 1970-01-01, or the evening of
+1969-12-31 when it was stored without a zone in a western one; .NET writes 0001-01-01; Excel and
+OLE write 1899-12-30; SQL Server writes 1900-01-01. Taking any of them says the table begins at
+the beginning of that system's time. They are left out of the reading rather than corrected in
+the data, and nothing is clamped: a date that is merely old, a photograph from 1967, is a date.
 
 ### `PostgresFileSystem.ls(self, path: 'str' = '', detail: 'bool' = True, **kwargs: 'Any') -> 'list'`
 
