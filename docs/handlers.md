@@ -1170,6 +1170,19 @@ knows about each is its metadata.
 `dsn` is the caller's, because which databases exist and how one connects to them is his
 configuration and not this library's. Nothing here writes: a database is read, never indexed into.
 
+### `PostgresFileSystem.dated(self, schema: 'str', name: 'str') -> 'list[str]'`
+
+The columns of a table that could carry the date of the thing each row is.
+
+### `PostgresFileSystem.span(self, path: 'str') -> 'dict[str, Any] | None'`
+
+When one table's records happened: the column their date is in, and its first and last.
+
+Epoch itself is not a date. A row written with a zero where the date was unknown reads as
+1970-01-01, or as the evening of 1969-12-31 when it was stored without a zone in a western one,
+and taking either would say the table begins at the beginning of Unix time. Both days are left
+out of the reading rather than corrected in the data; nothing of his happened on them.
+
 ### `PostgresFileSystem.ls(self, path: 'str' = '', detail: 'bool' = True, **kwargs: 'Any') -> 'list'`
 
 The schemas of a database, or the tables and views of a schema.

@@ -6263,6 +6263,67 @@ class PostgresFileSystem(AbstractFileSystem):
   KINDS = {'r': 'table', 'v': 'view', 'm': 'materialized view', 'p': 'partitioned table',
            'f': 'foreign table'}
 
+  # -- when a table's records happened ---------------------------------------------------------
+  # Alex, 2026-09-17: "Every entity has a date. It can be called date_sent or date_created, but
+  # every entity has a date. Timestamps of systems that process entities should never be used."
+  #
+  # So a table's span is the range its own records cover, read from the entity's own date and never
+  # from the stamp a loader left. `loaded_at`, `indexed_at`, `read_at` say when something read the
+  # row, not when the thing happened, and a span read off one of those says every table covers the
+  # hour the loader ran. They are left out by name; what remains is judged by what it holds, and the
+  # widest real range wins, because a record's own date spreads over the life of the data while a
+  # processing stamp collapses into the run that wrote it.
+  PROCESSED = ('loaded', 'indexed', 'read', 'seen', 'gone', 'ingested', 'imported', 'synced',
+               'probed', 'analysed', 'analyzed', 'refreshed', 'fetched', 'crawled', 'scanned',
+               'exported', 'processed', 'harvested', 'dumped', 'etl')
+  # A bare verb and `_at` is the stamp on the row, written when the row was written: an index's
+  # `created_at` is when it indexed the thing, not when the thing was created. A date of the thing
+  # says so in its name — `date_created`, `date_sent`, `changed_at` for a file's own mtime — which
+  # is the difference between his two examples. A table whose only date is a row stamp has no date
+  # of its own and gets no span, which is truer than a span of when the loader ran.
+  STAMPS = ('created_at', 'updated_at', 'inserted_at', 'written_at', 'recorded_at', 'stored_at')
+  DATED = ("select a.attname from pg_attribute a join pg_class c on c.oid = a.attrelid"
+           "  join pg_namespace n on n.oid = c.relnamespace"
+           " where n.nspname = %s and c.relname = %s and a.attnum > 0 and not a.attisdropped"
+           "   and a.atttypid in ('timestamptz'::regtype, 'timestamp'::regtype, 'date'::regtype)"
+           " order by a.attnum")
+
+  def dated(self, schema: str, name: str) -> list[str]:
+    """The columns of a table that could carry the date of the thing each row is."""
+    with self._asking() as cursor:
+      cursor.execute(self.DATED, (schema, name))
+      found = [row['attname'] for row in cursor.fetchall()]
+    return [column for column in found
+            if column.casefold() not in self.STAMPS
+            and not any(word in column.casefold() for word in self.PROCESSED)]
+
+  def span(self, path: str) -> dict[str, Any] | None:
+    """When one table's records happened: the column their date is in, and its first and last.
+
+    Epoch itself is not a date. A row written with a zero where the date was unknown reads as
+    1970-01-01, or as the evening of 1969-12-31 when it was stored without a zone in a western one,
+    and taking either would say the table begins at the beginning of Unix time. Both days are left
+    out of the reading rather than corrected in the data; nothing of his happened on them.
+    """
+    schema, _, name = self._under(path).partition('/')
+    columns = self.dated(schema, name) if name else []
+    if not columns:
+      return None
+    real = '("{0}" < \'1969-12-31\' or "{0}" >= \'1970-01-02\')'
+    reads = ', '.join(f'min("{column}") filter (where {real.format(column)}) as "from_{i}",'
+                      f' max("{column}") filter (where {real.format(column)}) as "to_{i}"'
+                      for i, column in enumerate(columns))
+    with self._asking() as cursor:
+      cursor.execute(f'select {reads} from "{schema}"."{name}"')   # noqa: S608 - names from pg_catalog
+      read = list(cursor.fetchone().values())
+    widest = None
+    for column, first, last in zip(columns, read[::2], read[1::2]):
+      if first is None or last is None:
+        continue
+      if widest is None or (last - first) > (widest['last'] - widest['first']):
+        widest = {'column': column, 'first': first, 'last': last}
+    return widest
+
   def __init__(self, database: str, dsn: str | None = None, **storage_options: Any) -> None:
     if not dsn:
       raise ValueError('a Postgres location is read with a dsn; which databases exist is configuration')
