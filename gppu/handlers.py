@@ -57,6 +57,7 @@ import sqlite3
 import stat as stat_module
 import subprocess
 import tarfile
+import time
 import tempfile
 import zipfile
 from collections.abc import AsyncIterator, Callable, Collection, Iterator, Mapping, Sequence
@@ -6441,6 +6442,9 @@ class SharePointFileSystem(AbstractFileSystem):
   # The content type and every custom column arrive with the item; this is the whole of the metadata.
   EXPAND = 'listItem($expand=fields)'
   PAGE = 200
+  DEADLINE = (10, 120)          # seconds to reach Graph, and to wait for it to answer
+  PATIENCE = 6                  # how many times a throttled call is asked again before it is raised
+  LONGEST_WAIT = 120            # seconds, whatever Retry-After says
 
   def __init__(self, tenant: str, service: str, site: str, drive: str,
                token: Callable[[], str] | None = None, **storage_options: Any) -> None:
@@ -6469,15 +6473,30 @@ class SharePointFileSystem(AbstractFileSystem):
     return (path[len('m365://'):] if path.startswith('m365://') else path).strip('/')
 
   def _asking(self, url: str, params: dict[str, str] | None = None):
+    """One call to Graph, waited on for a bounded time and asked again while Graph says to wait.
+
+    A walk of a tenant is hundreds of thousands of calls. Without a deadline one stalled read stops
+    the walk for good and says nothing, which is how a library comes to be missing from an index
+    that reports no error. Graph also throttles a walk of this size as a matter of course and says
+    with 429 how long to wait; waiting as told is its protocol rather than a way around a failure.
+    Everything else is raised.
+    """
     import requests                                             # noqa: PLC0415 - the m365 extra, asked for here only
     if self._asked is None:
       self._asked = requests.Session()
-    response = self._asked.get(url if url.startswith('https://') else f'{self.GRAPH}/{url.lstrip("/")}',
-                               headers={'Authorization': f'Bearer {self.token()}'}, params=params)
+    where = url if url.startswith('https://') else f'{self.GRAPH}/{url.lstrip("/")}'
+    for attempt in range(self.PATIENCE):
+      response = self._asked.get(where, headers={'Authorization': f'Bearer {self.token()}'},
+                                 params=params, timeout=self.DEADLINE)
+      if response.status_code not in (429, 503, 504):
+        break
+      if attempt == self.PATIENCE - 1:
+        raise OSError(f'{response.status_code} {where}: still asked to wait after {self.PATIENCE} tries')
+      time.sleep(min(int(response.headers.get('Retry-After', 2 ** attempt)), self.LONGEST_WAIT))
     if response.status_code == 404:
       raise FileNotFoundError(url)
     if response.status_code >= 400:
-      raise OSError(f'{response.status_code} {url}: {response.text[:200]}')
+      raise OSError(f'{response.status_code} {where}: {response.text[:200]}')
     return response
 
   def _identity(self) -> str:
