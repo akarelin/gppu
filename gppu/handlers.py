@@ -6316,7 +6316,8 @@ class PostgresFileSystem(AbstractFileSystem):
     columns = self.dated(schema, name) if name else []
     if not columns:
       return None
-    real = '("{0}" < \'1969-12-31\' or "{0}" >= \'1970-01-02\')'
+    zeros = ', '.join(f"'{day}'" for day in self.ZEROS)
+    real = '("{0}"::date <> all(array[' + zeros + ']::date[]))'
     reads = ', '.join(f'min("{column}") filter (where {real.format(column)}) as "from_{i}",'
                       f' max("{column}") filter (where {real.format(column)}) as "to_{i}"'
                       for i, column in enumerate(columns))
