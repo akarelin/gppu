@@ -1697,6 +1697,10 @@ class FileHandler(Handler):
             parsed = datetime.strptime(value, format_string)
         except ValueError:
             return None
+        if parsed.timetuple()[:6] <= PLACEHOLDER_TIMES[2]:
+            # Older than DOS zero, which valid_time discards anyway. Said here because attaching the
+            # local zone to such a moment is what Windows refuses, and a name is read on any host.
+            return None
         parsed = (
             parsed.replace(tzinfo=zone) if zone is not None else parsed.astimezone()
         )
