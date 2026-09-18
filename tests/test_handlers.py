@@ -1865,3 +1865,18 @@ def test_ten_digits_that_are_not_a_time_do_not_stop_a_walk(tmp_path):
   assert set(found) >= {'order 9999999999.pdf', 'statement 1600000000.pdf', 'acct 4111111111.csv'}
   assert FileHandler._name_span('order 9999999999.pdf') is None, 'a year-2286 number is not a time'
   assert FileHandler._name_span('statement 1600000000.pdf') is not None, 'a real epoch still reads'
+
+
+def test_a_name_spelling_a_date_this_host_cannot_place_does_not_stop_a_walk(tmp_path):
+  """A far date in a name is a number shaped like a date; a hierarchy walk does not stop for it."""
+  from gppu.handlers import FileHandler, FolderHandler
+
+  class Files(FileHandler, FolderHandler):
+    pass
+
+  for name in ('scan 2999-12-31.jpg', 'scan 9999-12-31.jpg', 'note 2024-03-05.md'):
+    (tmp_path / name).write_text('x', encoding='utf-8')
+  found = {record.name for record in Files().identify_sync(tmp_path)}
+  assert {'scan 2999-12-31.jpg', 'scan 9999-12-31.jpg', 'note 2024-03-05.md'} <= found
+  assert FileHandler._name_span('scan 9999-12-31.jpg') is None
+  assert FileHandler._name_span('note 2024-03-05.md') is not None, 'a real date still reads'
