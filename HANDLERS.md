@@ -37,7 +37,7 @@ His own text is preserved unchanged and is not edited: `D:\_\_adrs\ADR001 - Sess
 
 - `identify(path, recursive=True)` returns the root and its descendants with the handlers that match each, and loads no typed objects (`handlers.py:790`).
 - `probe(path, recursive=True)` identifies, then loads the matching handlers and accumulates folder statistics from the descendants (`handlers.py:835`).
-- `normalize(source, destination=None, recursive=True, exclude_handlers=())` renames in place using the first matching handler that defines `normalize_name`, or writes the hierarchy to a destination, excluding `.git` (`handlers.py:1053`).
+- `normalize(source, destination=None, recursive=True, exclude_handlers=())` renames in place using the first matching handler that defines `normalize_name`. With a destination, his specification reads: "If provided - copy into new structure." The hierarchy is written there and `.git` is excluded (`handlers.py:1053`).
 - Each is awaitable inside an event loop and returns directly outside one; the `*_sync` methods are the strict implementations.
 
 ## Files and folders
@@ -82,4 +82,4 @@ His convention, `D:\_\_adrs\ADR001 - Session file naming convention\ADR001 - Ses
 
 # Errors
 
-- **Reading material without the handlers.** `CRAP/Systems/Lake/FILEINDEXER.md` states that everything reads and writes files through gppufs and its handlers, and that a part which opens a path directly has stepped outside the index. Two places read indexed material directly: `CRAP/Systems/Lake/import_indexes.py:126` opens the stranded SQLite indexes with `sqlite3.connect`, although a sqlite handler exists here and names itself; and `CRAP/Projects/lake/shared/filesystem.py:148` and `:168` read and compare bytes with `read_bytes`. The four direct reads in `Systems/Lake` itself are the program's own schema, page and key files, not material.
+- **The sqlite handler is available and unused.** It names itself here, and `CRAP/Systems/Lake/import_indexes.py:126` opens the stranded SQLite indexes with `sqlite3.connect` instead. The claim that everything reads through these handlers, and the second place it does not hold, are recorded in `CRAP/Systems/Lake/LAKE.md`.
