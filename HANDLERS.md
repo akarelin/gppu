@@ -26,7 +26,7 @@ His own text is preserved unchanged and is not edited: `D:\_\_adrs\ADR001 - Sess
 - `FileHandler` means the File and Folder handler, and is the access point to the rest.
 - A record is a single instance of a file or a folder with its metadata: path, whether it is a folder, size, modification time, the names of the handlers that matched, the probes, the statistics and any errors (`Record`, `handlers.py:377`).
 - Statistics on a hierarchy are file count, folder count, byte count and span (`FileStats`, `handlers.py:367`).
-- Every handler holds the metadata mapping its caller gave it; where a key is in both, the caller's wins.
+- Every handler copies the metadata mapping its caller gave it, so a later change to the caller's dictionary does not change results (`handlers.py:271`); where a key is in both, the caller's wins.
 - A read failure does not stop a scan. It becomes a `HandlerError` on the probe and on the record. A handler built with `strict=True` raises instead.
 - The thirteen handlers that name themselves: folder, ignored, sqlite, file, git, archive, markdown, csv, log, email, browser-history, session, location.
 - Archive members are records like filesystem entries, with the archive in `location`.
@@ -49,7 +49,9 @@ His own text is preserved unchanged and is not edited: `D:\_\_adrs\ADR001 - Sess
 ## Sessions
 
 - The session handler identifies the harness from the first 8 records of a log (`SNIFF`, `handlers.py:108`).
-- Nine harness names are carried: chatgpt, cx, claude, cc, gemini, agy, hermes, openclaw, manus (`handlers.py:90-98`), which is the list in his naming convention.
+- Nine harness names are carried: chatgpt, cx, claude, cc, gemini, agy, hermes, openclaw, manus (`handlers.py:90-98`), which is the list in his naming convention, in his order.
+- What produces each of them is the code's decision and is in neither of his files. His convention writes `chatgpt | cx`, `claude | cc` and `gemini | agy` as pairs, and his field is `{model|harness}`. Six are native log recognizers — cx, gemini, cc, openclaw, agy, hermes (`handlers.py:4031-4037`). Two are export handlers — `chatgpt` from a ChatGPT export and `claude` from an Anthropic one (`handlers.py:3787`, `:3900`). So two of his pairs are read as an export and a native log, and the third, gemini and agy, as two different native harnesses.
+- `manus` is his own reserved name from his convention and nothing produces it.
 - A session record carries harness, uid, parent uid, whether it is a subagent, the original source objects, the normalized turns, span, models, topic and whether it is sidechain only (`SessionFile`, `handlers.py:3423`).
 - `probe` gives one record per session and one for the folder holding them.
 - A folder's own uid is the shared session id only where every identified id agrees (`SessionFolder.uid`).
@@ -63,7 +65,7 @@ His convention, `D:\_\_adrs\ADR001 - Session file naming convention\ADR001 - Ses
 
 - Built as `{YYMMDD-HHMM} {turns}{~last-first} - {Topic}.{uid}{suffix}` (`SessionFile.label` and `SessionFile.name`, `handlers.py:3498-3513`).
 - The duration is one unit, days, hours, minutes or seconds, and is omitted where the span is empty (`UNITS`, `handlers.py:115`).
-- The complete name is held to 254 characters and only the label is cut, so the id and the extension survive (`NAME_LIMIT`, `handlers.py:117`).
+- The complete name is held to 254 characters and only the label is cut, so the id and the extension survive (`NAME_LIMIT`, `handlers.py:117`). His convention allows only the topic or title to be cut, and the code could cut further, though nothing in either live store does: a uuid tail is 43 characters, so the cut falls at 211 against a prefix of 17 or 18 ahead of the topic, and reaching past the topic would need a session id of about 230 characters where the longest any harness produces is 36. Run over both stores, 75 of 1,629 parsed names are cut and every cut lands in the topic.
 - `normalize_name` refuses a session with no immutable id, a folder of sessions, and an exported session read out of a zip (`handlers.py:4119`).
 
 ## The file system over the handlers
