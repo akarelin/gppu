@@ -5206,6 +5206,12 @@ class GppuFileSystem(AbstractFileSystem):
         if actual_name != PurePosixPath(expected).name:
           self.fs.mv(str(PurePosixPath(folder) / actual_name), expected)
       return expected
+    if not isinstance(self.fs, LocalFileSystem):
+      # Recovering an index that was renamed means renaming it back, which a store gppufs cannot
+      # write to will not do. There the index is the file named for the folder or nothing at all:
+      # a synced OneDrive carries the index files of the host that syncs it, and those belong to
+      # that host's Locations rather than to this one.
+      return None
     if not self.fs.isdir(folder):
       return None
     try:
