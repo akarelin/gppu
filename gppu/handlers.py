@@ -1702,9 +1702,15 @@ class FileHandler(Handler):
             # Older than DOS zero, which valid_time discards anyway. Said here because attaching the
             # local zone to such a moment is what Windows refuses, and a name is read on any host.
             return None
-        parsed = (
-            parsed.replace(tzinfo=zone) if zone is not None else parsed.astimezone()
-        )
+        if zone is not None:
+            return valid_time(parsed.replace(tzinfo=zone))
+        try:
+            parsed = parsed.astimezone()
+        except (OSError, OverflowError, ValueError):
+            # The far end of the same refusal. A name can spell a date this host cannot put a zone
+            # on, and that is a number shaped like a date rather than a date; a walk of a hierarchy
+            # does not stop for one.
+            return None
         return valid_time(parsed)
 
 
