@@ -1565,6 +1565,67 @@ def test_a_child_gone_between_the_listing_and_the_reading_is_not_a_child(tmp_pat
   assert [child.name for child in handler.children(tmp_path)] == ['here.txt']
 
 
+@pytest.mark.parametrize('junction', [False, True])
+@pytest.mark.parametrize('dangling', [False, True])
+def test_links_keep_their_physical_name_and_target_without_descent(tmp_path: Path,
+                                                                 monkeypatch: pytest.MonkeyPatch,
+                                                                 junction: bool, dangling: bool) -> None:
+  root, target = tmp_path / 'listing', tmp_path / 'different-target-name'
+  root.mkdir()
+  link = root / 'link-name'
+  link.touch()
+  (root / 'ordinary.txt').write_text('ordinary', encoding='utf-8')
+  if not dangling:
+    target.mkdir()
+    (target / 'target-only.txt').write_text('not below the link', encoding='utf-8')
+  original = FileHandler.record
+  monkeypatch.setattr(Path, 'is_symlink', lambda path: path == link and not junction)
+  monkeypatch.setattr(Path, 'is_junction', lambda path: path == link and junction)
+  monkeypatch.setattr(os, 'readlink', lambda path: str(target))
+  monkeypatch.setattr(FileHandler, 'record', lambda self, path: original(self, target if path == link else path))
+
+  class Files(FileHandler, FolderHandler):
+    pass
+
+  files = Files()
+  children = {row.name: row for row in files.children(root)}
+  record = children['link-name']
+  assert record.path == link
+  assert record.target == target
+  assert record.metadata['target'] == str(target)
+  assert bool(record.errors) == dangling
+  assert files.children(record) == files.children(link) == ()
+  for records in (files.identify_sync(root), files.probe_sync(root)):
+    found = {row.path: row for row in records}
+    assert set(found) == {root, link, root / 'ordinary.txt'}
+    assert found[link].target == target
+    assert bool(found[link].errors) == dangling
+
+
+@pytest.mark.parametrize('operation', ['readlink', 'stat'])
+def test_an_inaccessible_link_remains_visible_when_identified_and_probed(tmp_path: Path,
+                                                                      monkeypatch: pytest.MonkeyPatch,
+                                                                      operation: str) -> None:
+  link = tmp_path / 'unreadable-link'
+  link.touch()
+  original = handlers_module.full_path
+  monkeypatch.setattr(Path, 'is_symlink', lambda path: path == link)
+  monkeypatch.setattr(Path, 'is_junction', lambda path: False)
+
+  def denied(path):
+    raise PermissionError('link target access denied')
+
+  monkeypatch.setattr(os, 'readlink', denied if operation == 'readlink' else lambda path: str(tmp_path / 'target'))
+  if operation == 'stat':
+    monkeypatch.setattr(handlers_module, 'full_path', lambda path: denied(path) if path == link else original(path))
+  files = FileHandler()
+  for records in (files.identify_sync(tmp_path), files.probe_sync(tmp_path)):
+    record = next(row for row in records if row.path == link)
+    assert record.name == 'unreadable-link'
+    assert [(error.operation, error.error_type) for error in record.errors] == [(operation, 'PermissionError')]
+    assert files.children(record) == ()
+
+
 def test_a_hermes_log_on_its_own_is_identified_from_its_content(tmp_path: Path) -> None:
   path = _jsonl(tmp_path / '2026-05-12_main_20260512_035400_c197642b.jsonl', HERMES)
 
