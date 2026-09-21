@@ -65,7 +65,7 @@ One named handler's result, contextual metadata, and optional error.
 
 File count, folder count, byte count, and span for one hierarchy.
 
-## `Record(path: 'Path | PurePosixPath', is_folder: 'bool', size: 'int', modified_at: 'datetime | None', handlers: 'tuple[str, ...]', location: 'str | Path | None' = None, probes: 'tuple[Probe, ...]' = (), stats: 'FileStats | None' = None, errors: 'tuple[HandlerError, ...]' = ()) -> None`
+## `Record(path: 'Path | PurePosixPath', is_folder: 'bool', size: 'int', modified_at: 'datetime | None', handlers: 'tuple[str, ...]', location: 'str | Path | None' = None, probes: 'tuple[Probe, ...]' = (), stats: 'FileStats | None' = None, errors: 'tuple[HandlerError, ...]' = (), target: 'Path | None' = None) -> None`
 
 One filesystem or archive entry and the handlers that matched it.
 
