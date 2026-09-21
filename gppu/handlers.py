@@ -62,6 +62,7 @@ import tempfile
 import zipfile
 from collections.abc import AsyncIterator, Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager, nullcontext
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path, PurePosixPath
@@ -80,7 +81,7 @@ from fsspec.implementations.tar import TarFileSystem
 from fsspec.spec import AbstractFileSystem
 from fsspec.utils import stringify_path
 
-from .gppu import OSType, detect_os, full_path, sync
+from .gppu import Env, OSType, TemplateSet, detect_os, full_path, sync
 
 ObjectT = TypeVar("ObjectT")
 StatsT = TypeVar("StatsT")
@@ -6615,7 +6616,15 @@ register_implementation('m365', SharePointFileSystem, clobber=True)
 
 
 class GppuCatalog(AbstractFileSystem):
-  """The Locations gppufs works with on this host, read from a catalog folder.
+  """Configured Locations, exposed as a filesystem-shaped catalog.
+
+  After ``Env.from_env(...)`` or ``Env.from_dict(...)``, ``GppuCatalog()``
+  resolves the configured connections and nested Locations. ``location(uid)``,
+  ``connection(uid)``, ``path(uid, relative_path)`` and ``ls(recurse=True)``
+  operate only on configuration. They never open a provider or index. An
+  explicit mapping accepts the same data from another configuration loader.
+
+  The explicit folder argument retains the existing exported-host catalog:
 
   ``catalog`` is an absolute folder with one subfolder per host or server, named
   as the Locations table names it, holding that host's ``locations.yaml``: one
@@ -6640,9 +6649,20 @@ class GppuCatalog(AbstractFileSystem):
   protocol = 'gppu-catalog'
   cachable = False
 
-  def __init__(self, catalog: str | Path, host: str | None = None) -> None:
-    if catalog is None:
-      raise ValueError('catalog is required')
+  def __init__(self, catalog: str | Path | Mapping | None = None, host: str | None = None) -> None:
+    self._configuration = catalog is None or isinstance(catalog, Mapping)
+    if self._configuration:
+      if catalog is None:
+        if not Env.initialized:
+          raise RuntimeError('load configuration with Env before constructing GppuCatalog')
+        catalog = Env.glob_dict('')
+      super().__init__()
+      self.host = host or socket.gethostname().split('.')[0].lower()
+      self.root = 'gppu-catalog://'
+      self._lock = RLock()
+      self._config = deepcopy(dict(catalog))
+      self._load_configuration()
+      return
     if not Path(catalog).is_absolute():
       raise ValueError(f'{catalog}: the catalog is an absolute folder path')
     super().__init__()
@@ -6677,6 +6697,129 @@ class GppuCatalog(AbstractFileSystem):
     self._lock = RLock()
     self._filesystems: dict[str, GppuFileSystem] = {}
     self._load()
+
+  def _load_configuration(self) -> None:
+    """Resolve configured Locations without opening any provider or index.
+
+    The input is the tree already loaded by Env, or the same plain data returned
+    by a database loader. Nested paths are provider-relative, never appended to
+    their parent's path. Loading does not mutate Env or the supplied mapping.
+    """
+    config = self._config
+    definitions = config['connections']
+    connection_templates = definitions['templates'] if 'templates' in definitions else {}
+    connection_rules = TemplateSet(templates=connection_templates, context=config)
+    self.connections = {
+      uid: connection_rules.resolve({'uid': uid, **row})
+      for uid, row in definitions.items()
+      if uid not in ('templates', 'macros', 'generators') and not uid.endswith('_templates')
+    }
+    tree = config['locations']
+    if isinstance(tree, Mapping):
+      templates = tree['templates'] if 'templates' in tree else {}
+      entries = [{'uid': uid, **row} for uid, row in tree.items()
+                 if uid not in ('templates', 'macros', 'generators') and not uid.endswith('_templates')]
+    elif isinstance(tree, list):
+      templates = config['location_templates'] if 'location_templates' in config else {}
+      entries = tree
+    else:
+      raise TypeError('locations must be a list or a mapping keyed by uid')
+    context = {**config, 'connections': self.connections, 'host': self.host}
+    rules = TemplateSet(templates=templates, context=context)
+    self.locations = {}
+    self._parents = {}
+
+    def add(items, parent=None, connection=None):
+      if not isinstance(items, list):
+        raise TypeError('nested locations must be a list')
+      for item in items:
+        row = dict(item)
+        uid = row['uid']
+        if not isinstance(uid, str) or not uid:
+          raise ValueError('every Location requires a nonempty uid')
+        if uid in self.locations:
+          raise ValueError(f'duplicate Location uid: {uid}')
+        children = row.pop('locations') if 'locations' in row else []
+        owner = row['parent'] if 'parent' in row else parent
+        if parent is not None and owner != parent:
+          raise ValueError(f'{uid}: parent conflicts with its nested Location')
+        serving = row['connection'] if 'connection' in row else connection
+        if serving is not None:
+          if serving not in self.connections:
+            raise KeyError(f'{uid}: unknown connection {serving}')
+          row['connection'] = serving
+        if templates and 'template' not in row:
+          row['template'] = 'connected' if serving is not None else 'location'
+        row['parent'] = owner
+        resolved = rules.resolve(row)
+        resolved['parent'] = owner
+        self.locations[uid] = resolved
+        self._parents[uid] = owner
+        add(children, uid, serving)
+
+    add(entries)
+    for uid, parent in self._parents.items():
+      visited = {uid}
+      while parent is not None:
+        if parent not in self.locations:
+          raise KeyError(f'{uid}: unknown parent Location {parent}')
+        if parent in visited:
+          raise ValueError(f'{uid}: Location hierarchy contains a cycle')
+        visited.add(parent)
+        parent = self._parents[parent]
+
+  def location(self, uid: str) -> dict:
+    """Return one configured Location; this never enumerates its contents."""
+    if not self._configuration:
+      raise TypeError('Location uid lookup requires an Env/configuration catalog')
+    return deepcopy(self.locations[uid])
+
+  def connection(self, uid: str) -> dict:
+    """Return the connection serving a configured Location, without opening it."""
+    row = self.location(uid)
+    return deepcopy(self.connections[row['connection']])
+
+  def path(self, uid: str, relative_path: str = '') -> str:
+    """Resolve a local filename from a Location's configured access root.
+
+    A database/configuration loader resolves the host's access root. Ordinary
+    file writers can use this method without constructing GppuFileSystem.
+    No directory is created and no file, provider or index is opened.
+    """
+    row = self.location(uid)
+    root = row['access'].replace('\\', '/')
+    relative = str(relative_path).replace('\\', '/')
+    if '://' in root or not (root.startswith('/') or re.match(r'^[A-Za-z]:/', root)):
+      raise ValueError(f'{uid}: access must be an absolute local filesystem path')
+    if relative.startswith('/') or re.match(r'^[A-Za-z]:', relative) or '://' in relative:
+      raise ValueError('path inside a Location must be relative')
+    if '..' in relative.split('/'):
+      raise ValueError('path cannot escape its Location')
+    return root.rstrip('/') + '/' + relative if relative else root
+
+  def _configured_row(self, uid: str | None) -> dict:
+    if uid is None:
+      return {'name': self.root, 'type': 'directory', 'size': 0,
+              'gppu': {'uid': None, 'parent': None, 'locations': len(self.locations)}}
+    return {'name': uid, 'type': 'directory', 'size': 0, 'gppu': self.location(uid)}
+
+  def _configured_listing(self, path, detail, recurse, refresh) -> list:
+    if refresh:
+      raise ValueError('reload configuration explicitly; catalog listing does not refresh storage')
+    parent = None if path is None or path == self.root or path == '' else str(path)
+    if parent is not None:
+      self.location(parent)
+    result = []
+
+    def children(uid):
+      for child, owner in self._parents.items():
+        if owner == uid:
+          result.append(self._configured_row(child))
+          if recurse:
+            children(child)
+
+    children(parent)
+    return result if detail else [row['name'] for row in result]
 
   def _load(self) -> None:
     """Read the host's ``locations.yaml``; a Location whose ``index`` is not where gppufs keeps it is an error, not a redirect."""
@@ -6777,6 +6920,11 @@ class GppuCatalog(AbstractFileSystem):
   def info_sync(self, path: str | Path | None = None, refresh: bool = False) -> dict:
     """``info`` on the calling thread."""
     with self._lock:
+      if self._configuration:
+        if refresh:
+          raise ValueError('reload configuration explicitly; catalog lookup does not refresh storage')
+        uid = None if path is None or path == self.root or path == '' else str(path)
+        return self._configured_row(uid)
       if path is None or path == self.root:
         if refresh:
           self._load()
@@ -6799,6 +6947,8 @@ class GppuCatalog(AbstractFileSystem):
               recurse: bool = False, refresh: bool = False) -> list:
     """``ls`` on the calling thread."""
     with self._lock:
+      if self._configuration:
+        return self._configured_listing(path, detail, recurse, refresh)
       if path is None or path == self.root:
         if refresh:
           self._load()
@@ -6814,4 +6964,3 @@ class GppuCatalog(AbstractFileSystem):
         fs = self._location(path)
         result = [self._served(fs, row) for row in fs.ls_sync(path, recurse=recurse, refresh=refresh)]
       return result if detail else [row['name'] for row in result]
-
