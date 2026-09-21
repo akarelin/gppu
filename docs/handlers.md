@@ -1223,7 +1223,15 @@ What one item is, with its content type and its custom columns.
 
 ## `GppuCatalog(*args, **kwargs)`
 
-The Locations gppufs works with on this host, read from a catalog folder.
+Configured Locations, exposed as a filesystem-shaped catalog.
+
+After `Env.from_env(...)` or `Env.from_dict(...)`, `GppuCatalog()`
+resolves the configured connections and nested Locations. `location(uid)`,
+`connection(uid)`, `path(uid, relative_path)` and `ls(recurse=True)`
+operate only on configuration. They never open a provider or index. An
+explicit mapping accepts the same data from another configuration loader.
+
+The explicit folder argument retains the existing exported-host catalog:
 
 `catalog` is an absolute folder with one subfolder per host or server, named
 as the Locations table names it, holding that host's `locations.yaml`: one
@@ -1243,6 +1251,22 @@ them. Every address at or below a Location is served by that Location's
 `GppuFileSystem`; the deepest Location whose root contains the address
 owns it. A Location root's parent is its parent Location when the catalog
 names one, otherwise the catalog root, so a browser walks the Locations tree.
+
+### `GppuCatalog.location(self, uid: 'str') -> 'dict'`
+
+Return one configured Location; this never enumerates its contents.
+
+### `GppuCatalog.connection(self, uid: 'str') -> 'dict'`
+
+Return the connection serving a configured Location, without opening it.
+
+### `GppuCatalog.path(self, uid: 'str', relative_path: 'str' = '') -> 'str'`
+
+Resolve a local filename from a Location's configured access root.
+
+A database/configuration loader resolves the host's access root. Ordinary
+file writers can use this method without constructing GppuFileSystem.
+No directory is created and no file, provider or index is opened.
 
 ### `GppuCatalog.info(self, path: 'str | Path | None' = None, refresh: 'bool' = False, **kwargs) -> 'dict'`
 
