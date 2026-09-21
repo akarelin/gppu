@@ -390,6 +390,7 @@ class Record:
     probes: tuple[Probe, ...] = ()
     stats: FileStats | None = None
     errors: tuple[HandlerError, ...] = ()
+    target: Path | None = None
 
     @property
     def name(self) -> str:
@@ -430,6 +431,8 @@ class Record:
         }
         if self.location is not None:
             value["location"] = str(self.location)
+        if self.target is not None:
+            value["target"] = str(self.target)
         if self.stats is not None:
             value.update(
                 {
@@ -921,6 +924,8 @@ class FileHandler(Handler):
 
         current: Record | None = None
         if isinstance(path, Record):
+            if path.target is not None:
+                return ()
             if path.location is not None:
                 if not path.is_folder or not isinstance(path.location, Path):
                     return ()
@@ -931,6 +936,8 @@ class FileHandler(Handler):
                 return ()
             current = path
             path = Path(path.path)
+        if path.is_symlink() or path.is_junction():
+            return ()
         path = full_path(path)
         if not path.is_dir() or path.is_symlink():
             return ()
@@ -965,6 +972,29 @@ class FileHandler(Handler):
         """Return one child, or ``None`` if it vanished after directory listing."""
 
         try:
+            if path.is_symlink() or path.is_junction():
+                link_stat = path.lstat()
+                try:
+                    record = self.record(path)
+                except Exception as error:
+                    if self.strict:
+                        raise
+                    record = Record(path, False, 0, None, (), errors=(self._error(path, "stat", error),))
+                target, errors = None, record.errors
+                try:
+                    target = Path(os.readlink(path))
+                except FileNotFoundError:
+                    raise
+                except OSError as error:
+                    if self.strict:
+                        raise
+                    errors += (self._error(path, "readlink", error),)
+                return replace(
+                    record, path=path, target=target, errors=errors,
+                    is_folder=record.is_folder or path.is_junction(),
+                    size=link_stat.st_size,
+                    modified_at=valid_time(datetime.fromtimestamp(link_stat.st_mtime, timezone.utc)),
+                )
             path.stat()
             return self.record(path)
         except Exception as error:
@@ -1440,6 +1470,8 @@ class FileHandler(Handler):
             if path.location is not None:
                 raise ValueError(f"{path.display_path}: archive member is not physical")
             record = path
+            if record.target is not None or record.path.is_symlink() or record.path.is_junction():
+                return replace(record, stats=FileStats(0, 0, record.size, None))
             path = full_path(Path(path.path))
         else:
             path = full_path(path)
