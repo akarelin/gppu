@@ -238,7 +238,7 @@ class FileContainer(Container):
             original, number = path, 1
             while path.casefold() in self._held:
               number += 1
-              path = str(self.templates.render_template('collision', path=original, number=number, **context))
+              path = str(self.templates.render_template('collision', **(context | {'path': original, 'number': number})))
             self._known[identity] = self._object_file(path)
             self._held[path.casefold()] = identity
     if not isinstance(path, str):
