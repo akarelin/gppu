@@ -519,7 +519,9 @@ class M365Container(Container):
     if record is not None:
       yield folder, record
     endpoint = self._objects_url(segments)
-    if endpoint is not None:
+    # Contacts delta is folder-scoped. contactFolders includes the native default
+    # Contacts folder; /users/{id}/contacts/delta is not supported by Graph.
+    if endpoint is not None and not (self._branch in ('contacts', 'contactFolders') and not segments):
       yield endpoint, None
     for record in self._folders(segments):
       yield from self._endpoints((*segments, record['id']), seen, record)
