@@ -502,7 +502,8 @@ class M365Container(Container):
       if endpoint is None:
         raise IsADirectoryError(path)
       url = endpoint + '/' + quote(unquote(identity), safe='')
-    return self._object(url, self.location._get(url))
+    read_url = self._user_path + '/events/' + quote(unquote(identity), safe='') if self._branch == 'calendars' else url
+    return self._object(url, self.location._get(read_url))
 
   def write(self, obj: DataObject) -> None:
     raise PermissionError('M365 source Containers are read-only')
@@ -588,14 +589,20 @@ class M365Container(Container):
             if self._branch == 'onedrive':
               object_url = self._user_path + '/drive/items/' + quote(identity, safe='')
             removed = '@removed' in record or 'deleted' in record
-            content = _updated(held['objects'][identity], record) if identity in held['objects'] else deepcopy(record)
+            read_url = self._user_path + '/events/' + quote(identity, safe='') if self._branch == 'calendars' else object_url
+            # Unbounded event delta returns only identity, type, start and end.
+            # Read the complete changed event before yielding or advancing state.
+            if self._branch == 'calendars' and not removed:
+              content = self.location._get(read_url)
+            else:
+              content = _updated(held['objects'][identity], record) if identity in held['objects'] else deepcopy(record)
             if not removed:
               content.pop('@removed', None)
               content.pop('deleted', None)
             held['objects'][identity] = deepcopy(content)
             obj = self._object(object_url, content)
             yield obj
-            yield from self._children(object_url, obj)
+            yield from self._children(read_url, obj)
           if '@odata.nextLink' in page:
             url = page['@odata.nextLink']
           else:
