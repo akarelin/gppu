@@ -211,9 +211,11 @@ class FileContainer(Container):
         context['date'] = datetime.fromisoformat(value) if value else None
       if obj.parent is not None:
         parent = self._object_file(obj.parent).relative_to(self._root).as_posix()
-        path = str(self.templates.render_template(obj.kind, object_path=parent, parent=obj.parent.content, **context))
+        path = self.templates.render_template(obj.kind, object_path=parent, parent=obj.parent.content, **context)
       else:
-        path = str(self.templates.render_template('filename', **context))
+        path = self.templates.render_template('filename', **context)
+      if not isinstance(path, str) or not path.strip():
+        raise ValueError('Object filename template must return a nonempty relative path')
       context['path'] = path
       if 'identity' in self.templates.named:
         identity = self.templates.render_template('identity', **context)
@@ -236,9 +238,15 @@ class FileContainer(Container):
             path = self._known[identity].relative_to(self._root).as_posix()
           else:
             original, number = path, 1
+            attempted: set[str] = set()
             while path.casefold() in self._held:
+              if path.casefold() in attempted:
+                raise ValueError('Collision template must produce a new path')
+              attempted.add(path.casefold())
               number += 1
-              path = str(self.templates.render_template('collision', **(context | {'path': original, 'number': number})))
+              path = self.templates.render_template('collision', **(context | {'path': original, 'number': number}))
+              if not isinstance(path, str) or not path.strip():
+                raise ValueError('Collision template must return a nonempty relative path')
             self._known[identity] = self._object_file(path)
             self._held[path.casefold()] = identity
     if not isinstance(path, str):
