@@ -5211,7 +5211,7 @@ class GppuFileSystem(AbstractFileSystem):
         raise ValueError('Provider access requires the declared Connections')
       self.fs = providers.open(str(location), connections, provider, connection)
       self.root = self.fs.root
-    if not re.fullmatch(r'[A-Za-z]:/', self.root):
+    if self.root != '/' and not re.fullmatch(r'[A-Za-z]:/', self.root):
       self.root = self.root.rstrip('/')
     self.location = self.fs.unstrip_protocol(self.root)
     self._lock = RLock()
@@ -6621,9 +6621,6 @@ class SharePointFileSystem(AbstractFileSystem):
     return None
 
 
-register_implementation('m365', SharePointFileSystem, clobber=True)
-
-
 class GppuCatalog(AbstractFileSystem):
   """Configured Locations, exposed as a filesystem-shaped catalog.
 
@@ -6660,7 +6657,7 @@ class GppuCatalog(AbstractFileSystem):
 
   def __init__(self, catalog: str | Path | Mapping | None = None, host: str | None = None,
                providers: Providers | None = None) -> None:
-    self.providers = providers if providers is not None else Providers()
+    self.providers = providers if providers is not None else Providers().load('gppu.file_provider')
     self._configuration = catalog is None or isinstance(catalog, Mapping)
     if self._configuration:
       if catalog is None:
@@ -6801,6 +6798,11 @@ class GppuCatalog(AbstractFileSystem):
   def filesystem(self, uid: str) -> GppuFileSystem:
     """Open a configured indexing root without changing the configured Location tree."""
     row = self.location(uid)
+    call = self.providers.resolve(row['canonical'])
+    if call.provider == 'file':
+      access = self.path(uid)
+      return GppuFileSystem(Path(access).as_uri(), providers=self.providers, connections=self.connections,
+                            locations={access: {'canonical': row['canonical']}})
     return GppuFileSystem(row['canonical'], providers=self.providers, connections=self.connections,
                           connection=row['connection'])
 

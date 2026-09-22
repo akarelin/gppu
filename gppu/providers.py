@@ -59,7 +59,10 @@ class Providers:
             for provider, method, uri, _, _ in self._schemas]
 
   def uri(self, provider: str, method: str, **arguments) -> str:
-    _, _, template, fields, _ = next(row for row in self._schemas if row[:2] == (provider, method))
+    declared = [row for row in self._schemas if row[:2] == (provider, method)]
+    if not declared:
+      raise KeyError(f'no registered Provider method: {provider}.{method}')
+    _, _, template, fields, _ = declared[0]
     if set(arguments) != set(fields):
       raise ValueError(f'{provider}.{method} requires {fields}')
     encoded = {}
