@@ -5,35 +5,15 @@ updated: 2026-09-21
 generated: { by: Codex/GPT-5, at: 2026-09-21 }
 ---
 
-# Configuration-only Location lookup
+# Location configuration contract
 
-`GppuCatalog()` reads the configuration already loaded by `Env`. Listing or looking up configured Locations does not construct a filesystem, access a provider, enumerate files, or refresh an index. A database loader can pass the same configuration as a mapping instead of changing the consumer API.
+The required Location and Container model is defined in [providers.md](providers.md). This document describes that contract, not the existing implementation.
 
-```python
-from pathlib import Path
-from gppu import Env
-from gppu.handlers import GppuCatalog
+The catalog supplies the Location tree. A Location binds its Provider and Connection. A leaf references a Container; the Container holds folders and DataObjects. Selecting and traversing configured Locations does not read Container contents or run indexing. (Alex, "Fix Dagster paths and duplicate UIDs", 2026-09-22.)
 
-Env.from_env(name='lake', app_path=Path('D:/Dev/CRAP/Projects'))
-catalog = GppuCatalog()
-locations = catalog.ls(recurse=True)
-location = catalog.location('lake')
-connection = catalog.connection('lake')
-root = catalog.path('lake')
-```
+`catalog.location(uid)` returns a Location. `location.ls()` enumerates its child Location objects through the same constructor used for configured Locations. `location.container(path)` selects a Container using path-at-location. Applications call the Location/Container operations. (Alex, same session: Provider plus Connection is Location; reading invokes the Location's operation on the object's path; current session: "Yes, return Location objects".)
 
-The application supplies its own configuration path. Importing gppu does not select a database, host catalog or filesystem.
+Location declarations contain identity, parentage and the path selecting their Container. Provider and Connection choices configure the Location. `access` and `storage` are not Location fields. Provider schemas come from loaded runtime code. Provider-specific file access and naming remain Provider configuration. (Alex, same session, explicit field rejection; current session, runtime schema and file Provider requirements.)
 
-## Input and operations
+The configuration API returns a flat representation of the tree with parent references, so the UI builds one Location control. It does not expose a second representation of the same Location under a `/children` resource. Provider and Connection endpoints supply read-only choices for that control. Container enumeration is a separate operation and never creates Location configuration as a side effect. (Alex, same session, Location tree/API and dropdown requirements.)
 
-`connections` is a mapping keyed by connection UID. Existing gppu named `templates` resolve connection fields. `locations` is a nested list carrying `uid` values, or a mapping keyed by UID. Nested Locations inherit their enclosing connection. Their configured `path` is not appended to the parent's path: it already names the path within the provider. Existing `location_templates` are resolved with gppu's `TemplateSet`; data explicitly present on a Location remains literal.
-
-`catalog.location(uid)` returns the resolved Location mapping. `catalog.connection(uid)` returns its configured connection without opening it. `catalog.path(uid, relative_path)` joins the Location's already-resolved absolute `access` root and a relative path; it refuses absolute input paths and parent traversal. A Location without local access is still listed, but requesting its local path fails.
-
-The configuration loader supplies the execution-host `access` value. The catalog does not infer mounts, substitute a different host, or invent a local copy of an online Location.
-
-`catalog.ls()` lists configured roots. `catalog.ls(uid)` lists configured child Locations. `recurse=True` descends configured Locations only. A Location with no configured children returns an empty list, regardless of the files it may contain. `info` and `ls` return fsspec-shaped rows with `name` equal to the Location UID and the Location properties in `gppu`. Both have synchronous `*_sync` counterparts. `refresh=True` is refused for configuration lookups; load updated configuration and construct a new catalog explicitly.
-
-Files below a Location remain the separate `GppuFileSystem` surface. This change does not run indexing, alter handlers, change Record/Span storage, or change the external-index addressing protocol.
-
-The pre-existing explicit directory argument, `GppuCatalog(absolute_catalog_folder)`, still selects the exported host-catalog implementation. It is not a fallback when configuration is absent or invalid.

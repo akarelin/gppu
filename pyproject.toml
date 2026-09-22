@@ -15,6 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+m365 = ["msal", "requests", "azure-identity", "azure-keyvault-secrets"]
 pg = ["psycopg2-binary"]
 sql = ["sqlalchemy"]
 cache = ["diskcache"]
