@@ -32,6 +32,8 @@ The M365 Provider handles authentication, token renewal, API requests, paginatio
 
 The file Provider accepts DataObjects, applies its configured naming and serialization templates, and writes their content. It resolves the filesystem details internally. The caller does not obtain an operating-system path to pass to a separate custom exporter. (Alex, recovered session: "Why does dagster need a path?" and "We are still working with files"; current session: file Provider owns storage templates.)
 
+M365 filenames retain readable folder and object names. Native IDs remain unchanged in JSON and source URIs. File writes distinguish identities case-sensitively even on SMB, where filenames are case-insensitive; equal readable names receive numbered suffixes. A linked resource belongs to its task even when another task links to the same external object. File naming and identity rules belong to the file templates. (Alex, current session, 2026-09-22: "Keep original readable naming".)
+
 ## gppu operation contract
 
 The public classes are `Location`, `Container` and `DataObject`. Runtime registration belongs inside the catalog. `Providers` and `File` are not the caller-facing class model. Concrete implementations name the Location or Container they implement; Provider remains the implementation role bound within a Location. (Alex, current session: "So providers and file are bad class names in gppu.")
