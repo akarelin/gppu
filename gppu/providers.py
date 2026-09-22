@@ -166,6 +166,8 @@ class FileContainer(Container):
     self._root = root.resolve()
     self.root = self._root.as_posix()
     self.templates = None if templates is None else TemplateSet(named={'objects': deepcopy(templates)})
+    self._known: dict[str, Path] | None = None
+    self._held: dict[str, str] = {}
 
   def _object_file(self, path: str | DataObject) -> Path:
     """Resolve an object's own URI and metadata, or a path returned by ls."""
@@ -185,6 +187,31 @@ class FileContainer(Container):
         path = str(self.templates.render_template(obj.kind, object_path=parent, parent=obj.parent.content, **context))
       else:
         path = str(self.templates.render_template('filename', **context))
+      if 'identity' in self.templates.named:
+        identity = self.templates.render_template('identity', **context)
+        if identity is not None:
+          if not isinstance(identity, str) or not identity:
+            raise ValueError('Object identity template must return a nonempty string or None')
+          if self._known is None:
+            self._known = {}
+            for saved in self._root.rglob('*.json'):
+              saved_identity = self.templates.render_template('identity',
+                **(context | {'it': json.loads(saved.read_bytes())}))
+              if saved_identity is None:
+                continue
+              if saved_identity in self._known:
+                raise ValueError(f'{saved}: duplicate saved object identity')
+              self._known[saved_identity] = saved
+              self._held[saved.relative_to(self._root).as_posix().casefold()] = saved_identity
+          if identity in self._known:
+            path = self._known[identity].relative_to(self._root).as_posix()
+          else:
+            original, number = path, 1
+            while path.casefold() in self._held:
+              number += 1
+              path = str(self.templates.render_template('collision', path=original, number=number, **context))
+            self._known[identity] = self._object_file(path)
+            self._held[path.casefold()] = identity
     if not isinstance(path, str):
       raise TypeError('Container requires a DataObject or a relative path')
     if '\\' in path or PureWindowsPath(path).drive or path.startswith('/') or '://' in path:
@@ -225,6 +252,11 @@ class FileContainer(Container):
     target.parent.mkdir(parents=True, exist_ok=True)
     incoming = obj.content
     binary = isinstance(incoming, bytes) or hasattr(incoming, 'read')
+    if not binary and target.exists() and 'identity' in self.templates.named:
+      identity = self.templates.render_template('identity', uri=obj.uri, it=incoming)
+      if identity is not None and identity != self.templates.render_template('identity',
+          uri=obj.uri, it=json.loads(target.read_bytes())):
+        raise ValueError(f'{target}: refusing to replace a different object identity')
     if not binary:
       stream = BytesIO((json.dumps(incoming, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + '\n').encode('utf-8'))
     elif isinstance(incoming, bytes):
@@ -261,6 +293,10 @@ class FileContainer(Container):
   def delete(self, path: str | DataObject) -> None:
     target = self._object_file(path)
     target.unlink()
+    relative = target.relative_to(self._root).as_posix().casefold()
+    if relative in self._held:
+      identity = self._held.pop(relative)
+      del self._known[identity]
 
   @contextmanager
   def _refresh(self, state: dict[str, Any], path: str) -> Iterator[tuple[Iterator[DataObject], Callable[[], None]]]:
@@ -485,9 +521,9 @@ class M365Container(Container):
         rows.extend(entry(record, 'file') for record in self.location._each(url))
     return rows if detail else [row['name'] for row in rows]
 
-  def _object(self, endpoint: str, record: dict[str, Any]) -> DataObject:
+  def _object(self, endpoint: str, record: dict[str, Any], parent: DataObject | None = None) -> DataObject:
     return DataObject(self.location._namespace + endpoint, record, record['id'],
-                      removed='@removed' in record or 'deleted' in record)
+                      parent=parent, removed='@removed' in record or 'deleted' in record)
 
   def read(self, path: str) -> DataObject:
     if not path:
@@ -503,7 +539,12 @@ class M365Container(Container):
         raise IsADirectoryError(path)
       url = endpoint + '/' + quote(unquote(identity), safe='')
     read_url = self._user_path + '/events/' + quote(unquote(identity), safe='') if self._branch == 'calendars' else url
-    return self._object(url, self.location._get(read_url))
+    parent = None
+    if self._branch in ('contacts', 'contactFolders', 'calendars', 'todo'):
+      for index in range(len(segments)):
+        folder_url = self._folder_url(segments[:index + 1])
+        parent = self._object(folder_url, self.location._get(folder_url), parent)
+    return self._object(url, self.location._get(read_url), parent)
 
   def write(self, obj: DataObject) -> None:
     raise PermissionError('M365 source Containers are read-only')
@@ -512,20 +553,22 @@ class M365Container(Container):
     raise PermissionError('M365 source Containers are read-only')
 
   def _endpoints(self, segments: tuple[str, ...], seen: set[str],
-                 record: dict[str, Any] | None = None) -> Iterator[tuple[str, dict[str, Any] | None]]:
+                 record: dict[str, Any] | None = None,
+                 parent: DataObject | None = None) -> Iterator[tuple[str, DataObject | None]]:
     folder = self._folder_url(segments)
     if folder in seen:
       return
     seen.add(folder)
     if record is not None:
-      yield folder, record
+      parent = self._object(folder, record, parent)
+      yield folder, parent
     endpoint = self._objects_url(segments)
     # Contacts delta is folder-scoped. contactFolders includes the native default
     # Contacts folder; /users/{id}/contacts/delta is not supported by Graph.
     if endpoint is not None and not (self._branch in ('contacts', 'contactFolders') and not segments):
       yield endpoint, None
     for record in self._folders(segments):
-      yield from self._endpoints((*segments, record['id']), seen, record)
+      yield from self._endpoints((*segments, record['id']), seen, record, parent)
 
   def _children(self, endpoint: str, obj: DataObject) -> Iterator[DataObject]:
     if obj.removed:
@@ -552,7 +595,7 @@ class M365Container(Container):
       for relation in ('checklistItems', 'linkedResources'):
         for child in self.location._each(endpoint + '/' + relation):
           identity = child['externalId'] if relation == 'linkedResources' and child.get('externalId') else child['id']
-          yield DataObject(obj.uri + '/' + relation + '/' + quote(identity, safe=''), child, identity)
+          yield DataObject(obj.uri + '/' + relation + '/' + quote(identity, safe=''), child, identity, parent=obj)
 
   @contextmanager
   def _refresh(self, state: dict[str, Any], path: str) -> Iterator[tuple[Iterator[DataObject], Callable[[], None]]]:
@@ -565,17 +608,19 @@ class M365Container(Container):
     def objects() -> Iterator[DataObject]:
       if self._branch == 'onedrive' and segments:
         raise NotImplementedError('OneDrive delta refresh is supported at the drive root')
-      endpoints: Iterable[tuple[str, dict[str, Any] | None]]
+      endpoints: Iterable[tuple[str, DataObject | None]]
       if self._branch == 'onedrive':
         endpoints = [(self._folder_url(segments), None)]
       else:
         folder = self.location._get(self._folder_url(segments)) if segments else None
         endpoints = self._endpoints(segments, set(), folder)
+      parent = None
       for endpoint, folder in endpoints:
         if folder is not None:
-          if endpoint not in pending or pending[endpoint] != folder:
-            pending[endpoint] = deepcopy(folder)
-            yield self._object(endpoint, folder)
+          parent = folder
+          if endpoint not in pending or pending[endpoint] != folder.content:
+            pending[endpoint] = deepcopy(folder.content)
+            yield folder
           continue
         held = pending[endpoint] if endpoint in pending else {'objects': {}}
         url = held['delta'] if 'delta' in held else endpoint + '/delta'
@@ -600,7 +645,7 @@ class M365Container(Container):
               content.pop('@removed', None)
               content.pop('deleted', None)
             held['objects'][identity] = deepcopy(content)
-            obj = self._object(object_url, content)
+            obj = self._object(object_url, content, parent)
             yield obj
             yield from self._children(read_url, obj)
           if '@odata.nextLink' in page:
