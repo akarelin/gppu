@@ -1,13 +1,31 @@
 """The file Provider: a root or a configured folder on this host."""
 from pathlib import Path
 import socket
+from datetime import datetime
+from urllib.parse import unquote, urlsplit
 
 from fsspec.implementations.local import LocalFileSystem
+from gppu.gppu import TemplateSet
 
 
 class File:
   uid = 'file'
   schemas = {'local': 'file:///{path}', 'host': 'file://{host}/{path}'}
+
+  def object_path(self, obj, location):
+    """The destination's templates decide where a Provider object is stored."""
+    templates = TemplateSet(named={'storage_templates': location['storage']})
+    uri = urlsplit(obj.uri)
+    if obj.parent is not None:
+      parent = self.object_path(obj.parent, location)
+      return str(templates.render_template(obj.kind, object_path=parent, filename=obj.name, uri=obj.uri))
+    value = templates.render_template('date', it=obj.content, uri=obj.uri)
+    try:
+      date = datetime.fromisoformat(value) if value else None
+    except (TypeError, ValueError):
+      date = None
+    return str(templates.render_template('filename', uri=obj.uri, endpoint=uri.path, tenant=uri.netloc,
+                                        date=date, inside=location['path'], it=obj.content, unquote=unquote))
 
   def local(self, connection, path):
     if any('/' in part or '\\' in part for part in path):

@@ -7,6 +7,16 @@ from urllib.parse import quote, unquote
 
 
 @dataclass(frozen=True)
+class ProviderObject:
+  uri: str
+  content: dict | bytes
+  identity: str | None
+  kind: str = 'object'
+  name: str = ''
+  parent: 'ProviderObject | None' = None
+
+
+@dataclass(frozen=True)
 class ProviderCall:
   provider: str
   method: str
