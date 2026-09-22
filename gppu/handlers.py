@@ -68,7 +68,7 @@ from datetime import date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any, BinaryIO, Literal, Protocol, TypeVar, runtime_checkable
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from zoneinfo import ZoneInfo
 from threading import RLock
 
@@ -82,7 +82,7 @@ from fsspec.spec import AbstractFileSystem
 from fsspec.utils import stringify_path
 
 from .gppu import Env, OSType, TemplateSet, detect_os, full_path, sync
-from .providers import Providers
+from .providers import FileLocation, Location
 
 ObjectT = TypeVar("ObjectT")
 StatsT = TypeVar("StatsT")
@@ -5196,21 +5196,13 @@ class GppuFileSystem(AbstractFileSystem):
   _index_name = re.compile(r'^\..+\.gppufs\.sqlite(?:-(?:journal|wal|shm))?$')
 
   def __init__(self, location: str | Path, locations: Mapping[str, Mapping[str, str]] | None = None,
-               index: GppuIndex | None = None, providers: Providers | None = None,
-               connections: Mapping | None = None, connection: str | None = None,
-               provider: str | None = None, **storage_options: Any) -> None:
+               index: GppuIndex | None = None, **storage_options: Any) -> None:
     if location is None:
       raise ValueError('location is required')
     if '://' not in str(location) and not Path(location).is_absolute():
       raise ValueError(f'{location}: a location is an absolute path or a URL, never a relative one')
     super().__init__()
-    if providers is None:
-      self.fs, self.root = url_to_fs(str(location), **storage_options)
-    else:
-      if connections is None:
-        raise ValueError('Provider access requires the declared Connections')
-      self.fs = providers.open(str(location), connections, provider, connection)
-      self.root = self.fs.root
+    self.fs, self.root = url_to_fs(str(location), **storage_options)
     if self.root != '/' and not re.fullmatch(r'[A-Za-z]:/', self.root):
       self.root = self.root.rstrip('/')
     self.location = self.fs.unstrip_protocol(self.root)
@@ -6625,10 +6617,10 @@ class GppuCatalog(AbstractFileSystem):
   """Configured Locations, exposed as a filesystem-shaped catalog.
 
   After ``Env.from_env(...)`` or ``Env.from_dict(...)``, ``GppuCatalog()``
-  resolves the configured connections and nested Locations. ``location(uid)``,
-  ``connection(uid)``, ``path(uid, relative_path)`` and ``ls(recurse=True)``
-  operate only on configuration. They never open a provider or index. An
-  explicit mapping accepts the same data from another configuration loader.
+  resolves the configured connections and nested Locations. ``ls(recurse=True)``
+  walks that configuration tree. ``location(uid)`` returns the Location whose
+  ``ls`` and ``walk`` enumerate children at its address. An explicit mapping
+  accepts the same data from another configuration loader.
 
   The explicit folder argument retains the existing exported-host catalog:
 
@@ -6656,8 +6648,8 @@ class GppuCatalog(AbstractFileSystem):
   cachable = False
 
   def __init__(self, catalog: str | Path | Mapping | None = None, host: str | None = None,
-               providers: Providers | None = None) -> None:
-    self.providers = providers if providers is not None else Providers().load('gppu.file_provider')
+               location_types: Mapping | None = None) -> None:
+    self.location_types = {'file': FileLocation} if location_types is None else dict(location_types)
     self._configuration = catalog is None or isinstance(catalog, Mapping)
     if self._configuration:
       if catalog is None:
@@ -6669,6 +6661,7 @@ class GppuCatalog(AbstractFileSystem):
       self.root = 'gppu-catalog://'
       self._lock = RLock()
       self._config = deepcopy(dict(catalog))
+      self._bound_locations = {}
       self._load_configuration()
       return
     if not Path(catalog).is_absolute():
@@ -6776,66 +6769,38 @@ class GppuCatalog(AbstractFileSystem):
         visited.add(parent)
         parent = self._parents[parent]
 
-  def location(self, uid: str) -> dict:
-    """Return one configured Location; this never enumerates its contents."""
+  def location(self, uid: str) -> Location:
+    """Return the configured Location itself, binding its implementation lazily."""
     if not self._configuration:
-      raise TypeError('Location uid lookup requires an Env/configuration catalog')
-    return deepcopy(self.locations[uid])
-
-  def connection(self, uid: str) -> dict:
-    """Return the connection serving a configured Location, without opening it."""
-    row = self.location(uid)
-    return deepcopy(self.connections[row['connection']])
-
-  @property
-  def schemas(self) -> list[dict]:
-    """Supported URI schemas are supplied by the currently loaded Provider code."""
-    return self.providers.schemas
-
-  def resolve(self, uri: str):
-    return self.providers.resolve(uri)
+      raise TypeError('Location operations require a configured catalog')
+    with self._lock:
+      if uid not in self._bound_locations:
+        row = self.locations[uid]
+        scheme = urlsplit(row['canonical']).scheme
+        kind = self.location_types[scheme]
+        connection = self.connections[row['connection']] if row.get('connection') is not None else None
+        parent = self._parents[uid]
+        self._bound_locations[uid] = kind(row, connection=connection,
+          parent=self.location(parent) if parent is not None else None,
+          children=lambda: (self.location(child) for child, owner in self._parents.items() if owner == uid))
+      return self._bound_locations[uid]
 
   def filesystem(self, uid: str) -> GppuFileSystem:
-    """Open a configured indexing root without changing the configured Location tree."""
-    row = self.location(uid)
-    call = self.providers.resolve(row['canonical'])
-    if call.provider == 'file':
-      access = self.path(uid)
-      return GppuFileSystem(Path(access).as_uri(), providers=self.providers, connections=self.connections,
-                            locations={access: {'canonical': row['canonical']}})
-    return GppuFileSystem(row['canonical'], providers=self.providers, connections=self.connections,
-                          connection=row['connection'])
-
-  def path(self, uid: str, relative_path: str = '') -> str:
-    """Resolve a local filename from a Location's configured access root.
-
-    A database/configuration loader resolves the host's access root. Ordinary
-    file writers can use this method without constructing GppuFileSystem.
-    No directory is created and no file, provider or index is opened.
-    """
-    row = self.location(uid)
-    root = row['access'].replace('\\', '/')
-    relative = str(relative_path).replace('\\', '/')
-    if '://' in root or not (root.startswith('/') or re.match(r'^[A-Za-z]:/', root)):
-      raise ValueError(f'{uid}: access must be an absolute local filesystem path')
-    if relative.startswith('/') or re.match(r'^[A-Za-z]:', relative) or '://' in relative:
-      raise ValueError('path inside a Location must be relative')
-    if '..' in relative.split('/'):
-      raise ValueError('path cannot escape its Location')
-    return root.rstrip('/') + '/' + relative if relative else root
+    """Indexing is explicitly selected; ingestion uses Location operations."""
+    return GppuFileSystem(self.locations[uid]['canonical'])
 
   def _configured_row(self, uid: str | None) -> dict:
     if uid is None:
       return {'name': self.root, 'type': 'directory', 'size': 0,
               'gppu': {'uid': None, 'parent': None, 'locations': len(self.locations)}}
-    return {'name': uid, 'type': 'directory', 'size': 0, 'gppu': self.location(uid)}
+    return {'name': uid, 'type': 'directory', 'size': 0, 'gppu': deepcopy(self.locations[uid])}
 
   def _configured_listing(self, path, detail, recurse, refresh) -> list:
     if refresh:
       raise ValueError('reload configuration explicitly; catalog listing does not refresh storage')
     parent = None if path is None or path == self.root or path == '' else str(path)
     if parent is not None:
-      self.location(parent)
+      self.locations[parent]
     result = []
 
     def children(uid):
