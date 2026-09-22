@@ -15,7 +15,8 @@ Requirements: Alex's messages recovered from "Fix Dagster paths and duplicate UI
 - Complete in production: simple Markdown templates produce readable files with working source JSON links; regular M365 jobs succeed without downloading unchanged objects; schedules and the Plaud Markdown trigger are running.
 - Complete in production: retain the original Telegram exporter, original destinations and schedules; exclude Telegram from the replacement Markdown flow. Alex, 2026-09-22: "D:\TextLake\Telegram Is perfect. Do not erase it."
 - Complete in production: admin Location editor uses the flat tree and read-only Provider/Connection choices at Systems/admin_ui.
+- Complete in production: suspended Inventory exports are absent from the public API and OpenAPI; current Location configuration and Project Manager remain available.
 
 ## Independent and unscoped
 
-- Complete: production source writes, incremental reads, Markdown output and configuration API verified.
+- Complete: production source writes, incremental reads, Markdown output and current configuration API verified.
