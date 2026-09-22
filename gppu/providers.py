@@ -231,6 +231,8 @@ class FileContainer(Container):
       stream = BytesIO(incoming)
     else:
       stream = incoming
+    if isinstance(stream, BytesIO) and target.is_file() and target.read_bytes() == stream.getvalue():
+      return
     # Stage beside the object so replacement stays on its filesystem.
     with tempfile.NamedTemporaryFile(dir=target.parent, prefix='.', suffix='.pending', delete=False) as staged:
       pending = Path(staged.name)
