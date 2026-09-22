@@ -66,6 +66,18 @@ def test_a_sidecar_without_its_utility_is_an_error(tmp_path: Path) -> None:
         load_sidecar_registry(tmp_path)
 
 
+@pytest.mark.parametrize('missing_first', [True, False])
+def test_registry_skips_missing_directories(tmp_path: Path, utility: Path, caplog, missing_first) -> None:
+    missing = tmp_path / 'missing'
+    directories = (missing, tmp_path) if missing_first else (tmp_path, missing)
+
+    apps = load_sidecar_registry(*directories)
+
+    assert list(apps) == ['cleaner']
+    assert apps['cleaner']['script'] == str(utility)
+    assert f'Skipping missing utility directory: {missing}' in caplog.text
+
+
 def test_an_unknown_manifest_key_is_an_error(tmp_path: Path, utility: Path) -> None:
     utility.with_name('cleaner.py.md').write_text(
         '---\nname: Cleaner\nargs: [--run]\n---\n', encoding='utf-8')
