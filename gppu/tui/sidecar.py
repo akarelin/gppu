@@ -42,7 +42,7 @@ from pathlib import Path
 
 import yaml
 
-from gppu import Env
+from gppu import Env, Warn
 
 from .launcher import _tui_available, platform_ok, _platform_label
 
@@ -109,12 +109,14 @@ def _mode_injects(mode: dict | None) -> bool:
 def load_sidecar_registry(*directories: Path) -> dict[str, dict]:
     """Collect every ``{name}.{ext}.md`` sidecar found in ``directories``.
 
-    Items are ordered by ``nav`` path, then by display name.
+    Missing directories are reported and skipped. Items are ordered by ``nav``
+    path, then by display name.
     """
     apps: dict[str, dict] = {}
     for directory in directories:
         if not directory.is_dir():
-            raise FileNotFoundError(f'Utility directory does not exist: {directory}')
+            Warn(f'Skipping missing utility directory: {directory}')
+            continue
         for sidecar in sorted(directory.glob('*.*.md')):
             if sidecar.with_suffix('').suffix.casefold() not in RUNTIME_SUFFIXES:
                 continue
