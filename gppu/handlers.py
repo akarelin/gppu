@@ -82,6 +82,7 @@ from fsspec.spec import AbstractFileSystem
 from fsspec.utils import stringify_path
 
 from .gppu import Env, OSType, TemplateSet, detect_os, full_path, sync
+from .providers import Providers
 
 ObjectT = TypeVar("ObjectT")
 StatsT = TypeVar("StatsT")
@@ -5195,13 +5196,21 @@ class GppuFileSystem(AbstractFileSystem):
   _index_name = re.compile(r'^\..+\.gppufs\.sqlite(?:-(?:journal|wal|shm))?$')
 
   def __init__(self, location: str | Path, locations: Mapping[str, Mapping[str, str]] | None = None,
-               index: GppuIndex | None = None, **storage_options: Any) -> None:
+               index: GppuIndex | None = None, providers: Providers | None = None,
+               connections: Mapping | None = None, connection: str | None = None,
+               provider: str | None = None, **storage_options: Any) -> None:
     if location is None:
       raise ValueError('location is required')
     if '://' not in str(location) and not Path(location).is_absolute():
       raise ValueError(f'{location}: a location is an absolute path or a URL, never a relative one')
     super().__init__()
-    self.fs, self.root = url_to_fs(str(location), **storage_options)
+    if providers is None:
+      self.fs, self.root = url_to_fs(str(location), **storage_options)
+    else:
+      if connections is None:
+        raise ValueError('Provider access requires the declared Connections')
+      self.fs = providers.open(str(location), connections, provider, connection)
+      self.root = self.fs.root
     if not re.fullmatch(r'[A-Za-z]:/', self.root):
       self.root = self.root.rstrip('/')
     self.location = self.fs.unstrip_protocol(self.root)
@@ -5219,7 +5228,7 @@ class GppuFileSystem(AbstractFileSystem):
   def _database_path(self, folder: str) -> str:
     name = folder.rstrip('/').rsplit('/', 1)[-1].rstrip(':')
     if not name:
-      raise ValueError('gppufs requires a named location root')
+      return f'{folder.rstrip("/")}/.gppufs.sqlite'
     return f'{folder.rstrip("/")}/.{name}.gppufs.sqlite'
 
   def _existing_index(self, folder: str) -> str | None:
@@ -6649,7 +6658,9 @@ class GppuCatalog(AbstractFileSystem):
   protocol = 'gppu-catalog'
   cachable = False
 
-  def __init__(self, catalog: str | Path | Mapping | None = None, host: str | None = None) -> None:
+  def __init__(self, catalog: str | Path | Mapping | None = None, host: str | None = None,
+               providers: Providers | None = None) -> None:
+    self.providers = providers if providers is not None else Providers()
     self._configuration = catalog is None or isinstance(catalog, Mapping)
     if self._configuration:
       if catalog is None:
@@ -6778,6 +6789,20 @@ class GppuCatalog(AbstractFileSystem):
     """Return the connection serving a configured Location, without opening it."""
     row = self.location(uid)
     return deepcopy(self.connections[row['connection']])
+
+  @property
+  def schemas(self) -> list[dict]:
+    """Supported URI schemas are supplied by the currently loaded Provider code."""
+    return self.providers.schemas
+
+  def resolve(self, uri: str):
+    return self.providers.resolve(uri)
+
+  def filesystem(self, uid: str) -> GppuFileSystem:
+    """Open a configured indexing root without changing the configured Location tree."""
+    row = self.location(uid)
+    return GppuFileSystem(row['canonical'], providers=self.providers, connections=self.connections,
+                          connection=row['connection'])
 
   def path(self, uid: str, relative_path: str = '') -> str:
     """Resolve a local filename from a Location's configured access root.
