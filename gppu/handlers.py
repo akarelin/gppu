@@ -2680,6 +2680,7 @@ class MarkdownHandler(Handler):
     """
 
     name = "markdown"
+    extensions = (".md",)
 
     @sync
     async def identify(self, path: Path) -> bool:
@@ -3041,7 +3042,7 @@ class EmailHandler(Handler):
         """Return whether ``path`` is a physical MSG or EML file."""
 
         path = full_path(path)
-        return path.suffix.casefold() in self.extensions and path.is_file()
+        return path.suffix.casefold() in EmailHandler.extensions and path.is_file()
 
     @sync
     async def __call__(

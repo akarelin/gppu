@@ -41,6 +41,16 @@ class Container:
     """Immediate folders and objects in this Container, using fsspec entries."""
     raise NotImplementedError
 
+  def walk(self, path: str = '', *, level: str = 'files', recursive: bool = False,
+           boundaries: Iterable[str] = ()) -> Iterator[tuple[dict, list[dict]]]:
+    """Yield successfully enumerated folders and their immediate indexed entries.
+
+    Paths remain relative to this Container. Explicit child Location boundaries
+    are reported but never entered. Listing errors propagate to the indexer.
+    """
+    from .indexing import walk_container
+    yield from walk_container(self, path, level, recursive, boundaries)
+
   def read(self, path: str | DataObject) -> DataObject:
     """Read one object without changing a refresh cursor."""
     raise NotImplementedError
@@ -107,6 +117,14 @@ class Location(_Base):
   def container(self, path: str = '') -> Container:
     raise NotImplementedError(f'{self.uri}: Containers are not implemented')
 
+  def address(self, path: str = '') -> str:
+    """Canonical address of a relative path, with literal names URI-escaped."""
+    self.relative(path)
+    if not path:
+      return self.uri
+    base = self.uri if self.uri.endswith('://') else self.uri.rstrip('/') + '/'
+    return base + quote(path, safe='/')
+
   @staticmethod
   def relative(path: str) -> str:
     if not isinstance(path, str) or path.startswith('/') or '\\' in path or '://' in path:
@@ -130,14 +148,21 @@ class FileLocation(Location):
     uri = urlsplit(self.uri)
     if uri.scheme != 'file':
       raise ValueError('FileLocation requires a file URI')
-    if uri.netloc and uri.netloc.casefold() != socket.gethostname().split('.')[0].casefold():
-      if os.name == 'nt':
-        return Path('//' + uri.netloc + unquote(uri.path))
-      raise ValueError(f'{self.uri}: file URI does not identify a file on this host')
     path = unquote(uri.path)
+    if not path:
+      raise ValueError(f'{self.uri}: select a child Location with a filesystem root')
     if len(path) >= 3 and path[0] == '/' and path[2] == ':':
       path = path[1:]
-    return Path(path)
+    if uri.netloc and uri.netloc.casefold() != socket.gethostname().split('.')[0].casefold():
+      if os.name == 'nt' and not PureWindowsPath(path).drive:
+        return Path('//' + uri.netloc + unquote(uri.path))
+      raise ValueError(f'{self.uri}: file URI does not identify a file on this host')
+    if len(path) == 2 and path[1] == ':':
+      path += '/'
+    root = Path(path)
+    if not root.is_absolute():
+      raise ValueError(f'{self.uri}: file Location requires an absolute filesystem root')
+    return root
 
   def container(self, path: str = '') -> 'FileContainer':
     self.relative(path)
@@ -145,7 +170,7 @@ class FileLocation(Location):
     target = (root / unquote(path)).resolve()
     if not target.is_relative_to(root):
       raise ValueError('Container must stay within its Location')
-    return FileContainer(target, templates=self.templates)
+    return FileContainer(target, templates=self.templates, uri=self.address(path))
 
 def _updated(previous: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
   result = deepcopy(previous)
@@ -159,12 +184,14 @@ def _updated(previous: dict[str, Any], incoming: dict[str, Any]) -> dict[str, An
 
 class FileContainer(Container):
   """List, read, write and delete files using configured object path templates."""
-  def __init__(self, root: str | Path, *, templates: dict[str, str] | None = None) -> None:
+  def __init__(self, root: str | Path, *, templates: dict[str, str] | None = None,
+               uri: str | None = None) -> None:
     root = Path(root)
     if not root.is_absolute():
       raise ValueError('File Container root must be absolute')
     self._root = root.resolve()
     self.root = self._root.as_posix()
+    self.uri = self._root.as_uri() if uri is None else uri
     self.templates = None if templates is None else TemplateSet(named={'objects': deepcopy(templates)})
     self._known: dict[str, Path] | None = None
     self._held: dict[str, str] = {}
@@ -231,6 +258,13 @@ class FileContainer(Container):
       rows.append({'name': name, 'type': 'directory' if target.is_dir() else 'file',
                    'size': 0 if target.is_dir() else target.stat().st_size})
     return rows if detail else [row['name'] for row in rows]
+
+  def walk(self, path: str = '', *, level: str = 'files', recursive: bool = False,
+           boundaries: Iterable[str] = ()) -> Iterator[tuple[dict, list[dict]]]:
+    from .indexing import walk_files
+    Location.relative(path)
+    self._object_file(path)
+    yield from walk_files(self._root, path, level, recursive, boundaries)
 
   def read(self, path: str | DataObject) -> DataObject:
     target = self._object_file(path)
