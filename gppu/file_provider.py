@@ -16,7 +16,7 @@ class File:
     if not path or not (len(path[0]) == 2 and path[0][1] == ':'):
       root = '/' + root
     fs = LocalFileSystem()
-    fs.root = str(Path(root))
+    fs.root = Path(root).as_posix()
     if not Path(fs.root).is_absolute():
       raise ValueError('file Location must be absolute on this host')
     return fs
