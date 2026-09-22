@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class DataObject:
   uri: str
-  content: dict[str, Any] | bytes | BinaryIO
+  content: dict[str, Any] | list[Any] | str | int | float | bool | None | bytes | BinaryIO
   identity: str | None
   kind: str = 'object'
   name: str = ''
@@ -207,10 +207,9 @@ class FileContainer(Container):
 
   def read(self, path: str | DataObject) -> DataObject:
     target = self._object_file(path)
-    if target.suffix.casefold() == '.json':
+    binary = isinstance(path, DataObject) and (isinstance(path.content, bytes) or hasattr(path.content, 'read'))
+    if target.suffix.casefold() == '.json' and not binary:
       content = json.loads(target.read_bytes())
-      if not isinstance(content, dict):
-        raise TypeError(f'{path}: a JSON DataObject must contain an object')
     else:
       content = target.open('rb')
     if isinstance(path, DataObject):
@@ -225,7 +224,8 @@ class FileContainer(Container):
       raise ValueError('object template must name a file')
     target.parent.mkdir(parents=True, exist_ok=True)
     incoming = obj.content
-    if isinstance(incoming, dict):
+    binary = isinstance(incoming, bytes) or hasattr(incoming, 'read')
+    if not binary:
       stream = BytesIO((json.dumps(incoming, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + '\n').encode('utf-8'))
     elif isinstance(incoming, bytes):
       stream = BytesIO(incoming)
@@ -243,7 +243,7 @@ class FileContainer(Container):
         pending.unlink()
         raise
     try:
-      if isinstance(incoming, dict):
+      if not binary:
         if target.exists() and filecmp.cmp(pending, target, shallow=False):
           return
         os.replace(pending, target)
@@ -281,7 +281,7 @@ class FileContainer(Container):
           try:
             yield obj
           finally:
-            if not isinstance(obj.content, (dict, bytes)):
+            if hasattr(obj.content, 'close'):
               obj.content.close()
         pending[name] = signature
       for name in previous.keys() - pending.keys():
