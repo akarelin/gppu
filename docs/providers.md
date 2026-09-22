@@ -17,3 +17,5 @@ A Provider registers its supported URI schemas when its module is loaded. `Provi
 The built-in `file` Provider supports many independently configured Locations. Host-specific access comes from the catalog's declared access mapping. Lake loads its `m365-graph` and `plaud` modules into the same registry. `plaud://` is a complete Location with no further configured subdivisions; recordings are its contents. SharePoint is a component of `m365-graph`.
 
 Provider filesystem reads do not themselves invoke indexing. Constructing a catalog or reading its schemas opens neither the Provider nor its index.
+
+M365 readers return `ProviderObject` values containing the object's URI, content and identity. Binary objects also carry their name and parent object. The readers do not receive destination settings. A file destination owns its `storage` templates (`date`, `filename`, `attachment`, `photo`); `File.object_path` renders those templates from the object. The transfer passes the resulting path and content to the writer.
