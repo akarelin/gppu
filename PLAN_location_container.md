@@ -11,11 +11,11 @@ Requirements: Alex's messages recovered from "Fix Dagster paths and duplicate UI
 - Complete: document the intended gppu/API model and the intended Dagster-to-gppu ingestion map from Alex's explanation; production code is not design authority.
 - Complete in dev: Location.ls returns Location objects, Container exchanges typed DataObjects, FileContainer resolves configured paths for read/write/delete.
 - Complete in production: M365 uses folder-scoped Contacts delta and reads full changed calendar events; source state stays in successful Dagster materializations.
-- In progress: restore readable M365 filenames and repair the new source copies from preserved snapshots; imports and Markdown remain paused until verification and cutover complete.
-- Pending: enable the simple Markdown templates and verify regular incremental jobs.
+- Complete in production: readable M365 names restored; colliding source copies reconstructed and verified from native snapshots; replaced copies preserved separately and native delta links retained.
+- Complete in production: simple Markdown templates produce readable files with working source JSON links; regular M365 jobs succeed without downloading unchanged objects; schedules and the Plaud Markdown trigger are running.
 - Complete in production: retain the original Telegram exporter, original destinations and schedules; exclude Telegram from the replacement Markdown flow. Alex, 2026-09-22: "D:\TextLake\Telegram Is perfect. Do not erase it."
 - Complete in production: admin Location editor uses the flat tree and read-only Provider/Connection choices at Systems/admin_ui.
 
 ## Independent and unscoped
 
-- Pending: production verification.
+- Complete: production source writes, incremental reads, Markdown output and configuration API verified.
