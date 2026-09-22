@@ -5,12 +5,15 @@ from contextlib import AbstractContextManager, contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime
+import filecmp
+from io import BytesIO
 import json
 import os
 from pathlib import Path, PureWindowsPath
 import socket
+import shutil
 import tempfile
-from typing import Any, TYPE_CHECKING
+from typing import Any, BinaryIO, TYPE_CHECKING
 from urllib.parse import quote, unquote, urlsplit
 
 from .gppu import TemplateSet, _Base
@@ -23,7 +26,7 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class DataObject:
   uri: str
-  content: dict[str, Any] | bytes
+  content: dict[str, Any] | bytes | BinaryIO
   identity: str | None
   kind: str = 'object'
   name: str = ''
@@ -174,7 +177,8 @@ class FileContainer(Container):
       context = dict(uri=obj.uri, endpoint=uri.path, tenant=uri.netloc, inside='.',
                      it=obj.content, unquote=unquote, identity=obj.identity, filename=obj.name, kind=obj.kind)
       if 'date' in self.templates.named:
-        value = self.templates.render_template('date', it=obj.content, uri=obj.uri)
+        value = self.templates.render_template('date', it=obj.content, uri=obj.uri,
+          parent=obj.parent.content if obj.parent is not None else None)
         context['date'] = datetime.fromisoformat(value) if value else None
       if obj.parent is not None:
         parent = self._object_file(obj.parent).relative_to(self._root).as_posix()
@@ -203,13 +207,14 @@ class FileContainer(Container):
 
   def read(self, path: str | DataObject) -> DataObject:
     target = self._object_file(path)
-    content = target.read_bytes()
     if target.suffix.casefold() == '.json':
-      content = json.loads(content)
+      content = json.loads(target.read_bytes())
       if not isinstance(content, dict):
         raise TypeError(f'{path}: a JSON DataObject must contain an object')
+    else:
+      content = target.open('rb')
     if isinstance(path, DataObject):
-      return replace(path, content=content)
+      return replace(path, content=content, name=target.name)
     return DataObject(target.as_uri(), content, path, name=target.name)
 
   def write(self, obj: DataObject) -> None:
@@ -221,18 +226,16 @@ class FileContainer(Container):
     target.parent.mkdir(parents=True, exist_ok=True)
     incoming = obj.content
     if isinstance(incoming, dict):
-      content = (json.dumps(incoming, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + '\n').encode('utf-8')
+      stream = BytesIO((json.dumps(incoming, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + '\n').encode('utf-8'))
     elif isinstance(incoming, bytes):
-      content = incoming
+      stream = BytesIO(incoming)
     else:
-      raise TypeError('DataObject content must be a dict or bytes')
-    if target.exists() and target.read_bytes() == content:
-      return
+      stream = incoming
     # Stage beside the object so replacement stays on its filesystem.
     with tempfile.NamedTemporaryFile(dir=target.parent, prefix='.', suffix='.pending', delete=False) as staged:
       pending = Path(staged.name)
       try:
-        staged.write(content)
+        shutil.copyfileobj(stream, staged)
         staged.flush()
         os.fsync(staged.fileno())
       except BaseException:
@@ -240,7 +243,16 @@ class FileContainer(Container):
         pending.unlink()
         raise
     try:
-      os.replace(pending, target)
+      if isinstance(incoming, dict):
+        if target.exists() and filecmp.cmp(pending, target, shallow=False):
+          return
+        os.replace(pending, target)
+      else:
+        try:
+          os.link(pending, target)
+        except FileExistsError:
+          if not filecmp.cmp(pending, target, shallow=False):
+            raise FileExistsError(f'{target}: different content requires delete then write') from None
     finally:
       pending.unlink(missing_ok=True)
 
@@ -265,7 +277,12 @@ class FileContainer(Container):
         stat = target.stat()
         signature = [stat.st_mtime_ns, stat.st_size]
         if name not in previous or previous[name] != signature:
-          yield self.read(name)
+          obj = self.read(name)
+          try:
+            yield obj
+          finally:
+            if not isinstance(obj.content, (dict, bytes)):
+              obj.content.close()
         pending[name] = signature
       for name in previous.keys() - pending.keys():
         target = self._object_file(name)
