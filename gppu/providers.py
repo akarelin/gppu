@@ -214,6 +214,7 @@ class FileContainer(Container):
         path = str(self.templates.render_template(obj.kind, object_path=parent, parent=obj.parent.content, **context))
       else:
         path = str(self.templates.render_template('filename', **context))
+      context['path'] = path
       if 'identity' in self.templates.named:
         identity = self.templates.render_template('identity', **context)
         if identity is not None:
@@ -223,7 +224,8 @@ class FileContainer(Container):
             self._known = {}
             for saved in self._root.rglob('*.json'):
               saved_identity = self.templates.render_template('identity',
-                **(context | {'it': json.loads(saved.read_bytes())}))
+                **(context | {'it': json.loads(saved.read_bytes()),
+                             'path': saved.relative_to(self._root).as_posix()}))
               if saved_identity is None:
                 continue
               if saved_identity in self._known:
@@ -287,9 +289,10 @@ class FileContainer(Container):
     incoming = obj.content
     binary = isinstance(incoming, bytes) or hasattr(incoming, 'read')
     if not binary and target.exists() and 'identity' in self.templates.named:
-      identity = self.templates.render_template('identity', uri=obj.uri, it=incoming)
+      relative = target.relative_to(self._root).as_posix()
+      identity = self.templates.render_template('identity', uri=obj.uri, it=incoming, path=relative)
       if identity is not None and identity != self.templates.render_template('identity',
-          uri=obj.uri, it=json.loads(target.read_bytes())):
+          uri=obj.uri, it=json.loads(target.read_bytes()), path=relative):
         raise ValueError(f'{target}: refusing to replace a different object identity')
     if not binary:
       stream = BytesIO((json.dumps(incoming, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + '\n').encode('utf-8'))
