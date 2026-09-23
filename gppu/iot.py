@@ -181,6 +181,8 @@ class y2uri:
     return str(self) < str(other)
   def to_json(self) -> str: return str(self)
 
+  def endswith(self, suffix) -> bool: return self.path.endswith(suffix)
+
   def __truediv__(self, path: y2path | str) -> 'y2uri':
     if not isinstance(path, (str, y2path)):
       return NotImplemented

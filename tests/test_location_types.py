@@ -160,3 +160,13 @@ def test_uri_constructs_scheme_path_and_parameter_dictionary():
   uri = y2uri('https', y2path('host/items'), {'q': 'a b', 'empty': ''})
   assert str(uri) == 'https://host/items?q=a+b&empty='
   assert y2uri(str(uri)).params == uri.params
+
+
+def test_uri_endswith_checks_path_only():
+  uri = y2uri('https://host/folder/item?query=other#section')
+  assert uri.endswith('folder/item')
+  assert not uri.endswith('section')
+  assert not uri.endswith('other')
+  uri.path.append('child')
+  assert uri.endswith('item/child')
+  assert not hasattr(uri, 'startswith')
