@@ -37,7 +37,7 @@ def test_uri_path_operators(root, expected):
     uri / 'child?query=value'
 
 
-@pytest.mark.parametrize('value', ['', 'folder/item', '1bad://path'])
+@pytest.mark.parametrize('value', ['', '1bad://path'])
 def test_uri_requires_scheme(value):
   with pytest.raises(ValueError):
     y2uri(value)
@@ -156,10 +156,31 @@ def test_uri_mutable_query_parameters_and_path_joins():
   assert str(uri) == 'xxx://host/folder/item#section'
 
 
-def test_uri_constructs_scheme_path_and_parameter_dictionary():
-  uri = y2uri(y2path('host/items'), scheme='https', params={'q': 'a b', 'empty': ''})
+def test_uri_scheme_path_and_parameter_dictionary():
+  uri = y2uri(y2path('host/items'), scheme='https')
+  uri.params = {'q': 'a b', 'empty': ''}
   assert str(uri) == 'https://host/items?q=a+b&empty='
   assert y2uri(str(uri)).params == uri.params
+
+
+def test_uri_query_and_fragment_instance_access():
+  import inspect
+  assert list(inspect.signature(y2uri).parameters) == ['o', 'scheme']
+  uri = y2uri('https://host/path?key=first#section')
+  assert uri.query == 'key=first'
+  assert uri.fragment == 'section'
+  uri.query = 'tag=a&tag=b&empty=&q=hello%20world'
+  assert uri.params == {'tag': ['a', 'b'], 'empty': '', 'q': 'hello world'}
+  uri.params['q'] = 'other'
+  uri.fragment = 'next'
+  assert str(uri) == 'https://host/path?tag=a&tag=b&empty=&q=other#next'
+  joined = uri / 'child'
+  assert joined.query == uri.query
+  assert joined.fragment == 'next'
+  uri.query = ''
+  uri.fragment = ''
+  assert uri.params == {}
+  assert str(uri) == 'https://host/path'
 
 
 def test_uri_endswith_checks_path_only():
@@ -214,5 +235,10 @@ def test_uri_constructor_scheme_matches_eid_namespace_precedence():
   assert y2uri(y2path('host/path'), scheme='https') == 'https://host/path'
   assert y2uri('file:///data', scheme='https') == 'file:///data'
   assert y2uri({'uri': 'host/path'}, scheme='https') == 'https://host/path'
-  with pytest.raises(ValueError, match='requires a scheme'):
-    y2uri('host/path')
+  assert y2uri('host/path') == 'null://host/path'
+  assert y2uri.default_scheme == 'null'
+
+  class FileURI(y2uri):
+    default_scheme = 'file'
+
+  assert FileURI('host/path') == 'file://host/path'
