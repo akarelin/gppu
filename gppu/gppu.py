@@ -288,7 +288,6 @@ class y2uri:
       https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Query
       https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Fragment/Media_fragments
       https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Fragment/Text_fragments
-
   
   """
   scheme: str
@@ -322,29 +321,20 @@ class y2uri:
 
   def __repr__(self) -> str: return str(self)
   def __hash__(self) -> int: return hash(str(self))
-  def __eq__(self, other):
-    if not isinstance(other, (y2uri, str)): return NotImplemented
-    return str(self) == str(other)
-  def __lt__(self, other):
-    if not isinstance(other, (y2uri, str)): return NotImplemented
-    return str(self) < str(other)
+  def __eq__(self, other): return str(self) == str(other)
   def to_json(self) -> str: return str(self)
 
   @property
-  def query(self) -> str:
-    return self._query
+  def query(self) -> str: return self._query
 
   @query.setter
-  def query(self, value: str) -> None:
-    self._query = value
+  def query(self, value: str) -> None: self._query = value
 
   @property
-  def fragment(self) -> str | None:
-    return self._fragment
+  def fragment(self) -> str | None: return self._fragment
   
   @fragment.setter
-  def fragment(self, value: str) -> None:
-    self._fragment = value
+  def fragment(self, value: str) -> None: self._fragment = value
     # elif ':~:' in value:
     #   anchor, _, directives = value.partition(':~:')
     #   fields = {}
@@ -385,27 +375,27 @@ class y2uri:
     # anchor = quote(fields['anchor'], safe='') if 'anchor' in fields else ''
     # return anchor + ':~:' + '&'.join(directives)
 
-  def endswith(self, suffix) -> bool: return self.path.endswith(suffix)
+  # def endswith(self, suffix) -> bool: return self.path.endswith(suffix)
 
-  def __truediv__(self, path: y2path | str) -> 'y2uri':
-    if not isinstance(path, (str, y2path)):
-      return NotImplemented
-    value = str(path)
-    if '://' in value:
-      raise ValueError('Join a path, not another URI')
-    if '?' in value or '#' in value:
-      raise ValueError('Join an escaped path; set params and fragment separately')
-    if not value:
-      return y2uri(self)
-    tail = str(self.path)
-    base = self.scheme + '://' + (tail.rstrip('/') + '/' if tail else '')
-    result = y2uri(base + value.lstrip('/'))
-    result.query = self.query
-    result.fragment = self.fragment
-    return result
+  # def __truediv__(self, path: y2path | str) -> 'y2uri':
+  #   if not isinstance(path, (str, y2path)):
+  #     return NotImplemented
+  #   value = str(path)
+  #   if '://' in value:
+  #     raise ValueError('Join a path, not another URI')
+  #   if '?' in value or '#' in value:
+  #     raise ValueError('Join an escaped path; set params and fragment separately')
+  #   if not value:
+  #     return y2uri(self)
+  #   tail = str(self.path)
+  #   base = self.scheme + '://' + (tail.rstrip('/') + '/' if tail else '')
+  #   result = y2uri(base + value.lstrip('/'))
+  #   result.query = self.query
+  #   result.fragment = self.fragment
+  #   return result
 
-  def __add__(self, path: y2path | str) -> 'y2uri':
-    return self / path
+  # def __add__(self, path: y2path | str) -> 'y2uri':
+  #   return self / path
 
 # endregion
 
