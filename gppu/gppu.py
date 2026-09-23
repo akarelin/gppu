@@ -27,7 +27,8 @@ from typing import TypeAlias, ClassVar, Callable, Protocol
 from collections import defaultdict, UserDict, UserList
 from enum import Enum
 from functools import wraps, partial, cache
-from datetime import date, datetime, timezone
+from datetime import date, dt, timezone 
+from zoneinfo import ZoneInfo
 
 from copy import deepcopy
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -39,6 +40,8 @@ from contextlib import contextmanager
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 try: _ver_full = _pkg_version('gppu')
 except PackageNotFoundError: _ver_full = '0.0.0'
+
+
 _ver_parts = _ver_full.split('.')
 VER_GPPU_BASE = '.'.join(_ver_parts[:3])
 VER_GPPU_BUILD = _ver_parts[3] if len(_ver_parts) > 3 else '0'
@@ -84,7 +87,6 @@ def full_path(path: str | Path, base_dir: str | Path | None = None, *, strict: b
   return result.resolve(strict=strict)
 # endregion
 
-
 # region Safe typecasting
 def safe_float(o, default: float = float("NaN")) -> float:
   if o is None: return default
@@ -102,9 +104,314 @@ def safe_list(o) -> list:
   elif isinstance(o, dict): result = list(o.keys())
   return result
 def safe_timedelta(o: object) -> float:
-  try: then = datetime.fromisoformat(str(o)).timestamp()
+  try: then = dt.fromisoformat(str(o)).timestamp()
   except: then = 0.0
   return now_ts() - then
+
+MY_TZ = ZoneInfo("America/Los_Angeles")
+def to_dt(o: object) -> dt | None:
+  if isinstance(o, int | float): 
+    try: result = dt.fromtimestamp(o, MY_TZ)
+    except: result: None
+    return result
+  
+  if isinstance(o, dt):
+    if o.tzinfo is None: return o.replace(tzinfo=MY_TZ)
+    return o.astimezone(MY_TZ)
+
+  if isinstance(o, str):
+    try: result = dt.fromisoformat(o)
+    except: return None
+    if result.tzinfo is None: return result.replace(tzinfo=MY_TZ)
+    return result.astimezone(MY_TZ)
+
+# endregion
+
+
+
+# region Time helpers
+def now_str(): return dt.now().strftime("%Y%m%d.%H%M%S")
+def now_ts(): return dt.now().timestamp()
+
+def timestamp(): return dt.now().strftime("%y%m%d-%H%M")
+def datestamp(): return dt.now().strftime("%y%m%d")
+
+def prepend_datestamp(path, separator=" ") -> Path:
+  datestamp_str = datestamp()  
+  _ = Path(path)
+  return _.parent / f"{datestamp_str}{separator}{_.name}"
+
+def append_timestamp(path, separator=" ") -> Path:
+  timestamp_str = timestamp()
+  _ = Path(path)
+  return _.parent / f"{_.stem}{separator}{timestamp_str}{_.suffix}"
+
+
+def pretty_timedelta(ts) -> str:
+  delta = now_ts() - ts
+  seconds = int(delta)
+  days, seconds = divmod(seconds, 86400)
+  hours, seconds = divmod(seconds, 3600)
+  minutes, seconds = divmod(seconds, 60)
+  if days > 0: return '%dd %dh %dm %ds' % (days, hours, minutes, seconds)
+  elif hours > 0: return '%dh %dm %ds' % (hours, minutes, seconds)
+  elif minutes > 0: return '%dm %ds' % (minutes, seconds)
+  else: return '%ds' % (seconds,)
+# endregion
+
+
+# region Native Types
+class Date(date):
+  """A date a template reads by name: date.YYYY, date.YY, date.MM, date.DD, date.YYMMDD, date.ISO."""
+  @property
+  def YYYY(self) -> str: return f'{self.year:04d}'
+  @property
+  def YY(self) -> str: return f'{self.year % 100:02d}'
+  @property
+  def MM(self) -> str: return f'{self.month:02d}'
+  @property
+  def DD(self) -> str: return f'{self.day:02d}'
+  @property
+  def YYMMDD(self) -> str: return self.YY + self.MM + self.DD
+  @property
+  def ISO(self) -> str: return self.isoformat()
+
+
+def to_date(o: object) -> Date:
+  """A Date from what a configuration writes: a date, a datetime, YYYY-MM-DD with or without
+  a time, or YYMMDD. Anything else is an error, never a guess."""
+  if isinstance(o, datetime): o = o.date()
+  if not isinstance(o, date):
+    s = str(o).strip()
+    o = dt.strptime(s, '%y%m%d').date() if re.fullmatch(r'\d{6}', s) else dt.fromisoformat(s).date()
+  return Date(o.year, o.month, o.day)
+
+
+class Span:
+  def __contains__(self, value: Span) -> bool:
+    ...
+
+class TimeSpan(Span):
+  start: dt
+  end: dt
+
+  def __init__(self, **kw):
+    if start := kw.get('start'):
+      self.start = to_dt(start)
+    if end := kw.get('end'):
+      self.end = to_dt(end)
+
+
+class y2list(UserList):
+  data: List[Any]
+  token: str
+
+  def _any2list(self, o) -> list:
+    result = []
+    if o:
+      if hasattr(o, 'data'): o = o.data
+      if isinstance(o, (list, tuple)): result = [_ for _ in o if _]
+      elif self.token: result = str(o).split(self.token)
+      else: result = re.findall('[a-zA-Z0-9]+', str(o))
+    return result
+
+  def __init__(self, o: Optional[Any] = None) -> None:
+    super().__init__()
+    self.token = ""
+    self.data = self._any2list(o)
+
+
+  def __str__(self): return self.token.join(self.data)
+  def __repr__(self): return self.token.join(self.data)
+  def __eq__(self, other: Any) -> bool:
+    if hasattr(other, 'data'): return self.data == other.data
+    else: return str(self) == str(other)
+  def __hash__(self): return hash(str(self))  # type: ignore
+
+
+  def upper(self): return str(self).upper()
+  def lower(self): return str(self).lower()
+  def encode(self, encoding='utf-8', errors='strict'): return str(self.data).encode(encoding, errors)
+  def iadd(self, o): self.data += self._any2list(o)
+  def to_json(self): return str(self)
+
+
+  @property
+  def head(self) -> Optional[str]: return self.data[0] if len(self.data) > 0 else None
+  @property
+  def tail(self) -> Optional[str]: return self.data[-1] if len(self.data) > 0 else None
+
+
+  def endswith(self, ix) -> bool:
+    slow = str(self).lower()
+    if isinstance(ix, list):
+      for element in ix:
+        if slow.endswith(element.lower()): return True
+      return False
+    if '_' in ix: six = ix.replace('_',self.token)
+    elif '/' in ix: six = ix.replace('/',self.token)
+    else: six = ix.lower()
+    return slow.endswith(six)
+  def startswith(self, ix) -> bool:
+    slow = str(self).lower()
+    if isinstance(ix, list):
+      for element in ix:
+        if slow.startswith(element.lower()): return True
+      return False
+    if '_' in ix: six = ix.replace('_', self.token)
+    elif '/' in ix: six = ix.replace('/', self.token)
+    else: six = ix.lower()
+    return slow.startswith(six)
+
+
+  def extract(self, s:str, default=None):
+    """
+    Removes element by value and returns it or default
+    ! modifies self.data
+    """
+    if s in self.data: return self.data.pop(self.data.index(s))
+    return default
+
+
+  def discard(self, element): self.data = [e for e in self.data if not e == element]
+  def pophead(self) -> Optional[str]: return self.data.pop(0) if len(self.data) > 0 else None
+  def poptail(self) -> Optional[str]: return self.data.pop(-1) if len(self.data) > 0 else None
+  def popsuffix(self, ix):
+    if self.endswith(ix):
+      if '_' in ix and self.token != '_': ix = ix.replace('_',self.token)
+      elif '/' in ix and self.token != '/': ix = ix.replace('/',self.token)
+      self.data = self._any2list(str(self).replace(ix, ''))
+      return self.token.join(self._any2list(ix))
+  def popprefix(self, ix):
+    if self.startswith(ix):
+      if '_' in ix and self.token != '_': ix = ix.replace('_', self.token)
+      elif '/' in ix and self.token != '/': ix = ix.replace('/', self.token)
+      self.data = self._any2list(str(self).replace(ix, ''))
+      return self.token.join(self._any2list(ix))
+  def popxfix(self, ix): return self.popsuffix(ix) or self.popprefix(ix)
+
+
+class y2path(y2list):
+  def __init__(self, *args):
+    data = []
+    self.token = '/'
+
+    for a in args: data += self._any2list(a)
+    self.data = self._any2list(data)
+
+
+class y2topic(y2path):
+  def is_wildcard(self) -> bool: return bool(set(self.data) & {"#", "+"})
+
+
+@total_ordering
+class y2uri:
+  """
+    Implements:
+      https://www.rfc-editor.org/info/rfc3986/
+      https://www.w3.org/TR/media-frags/
+      https://www.w3.org/TR/fragid-best-practices
+      https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Query
+      https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Fragment/Media_fragments
+      https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Fragment/Text_fragments
+
+  
+  """
+  scheme: str
+  path: y2path
+
+  _fragment: str | None
+  _query: str
+
+
+  def __init__(self, o: Any, scheme: Optional[str] = None):
+    if isinstance(o, dict) and 'uri' in o: s = o['uri']
+    else: s = str(o)
+
+    if '://' in s:
+      head, _, sail = s.partition('://')
+      if scheme and head and head != scheme: raise ValueError(f"Two schemas in uri {head} {scheme}")
+      self.scheme = head or scheme or 'null'
+    else: self.sceme = scheme or 'null'
+    
+    s, _, self._fragment = s.partition('#')
+    s, _, self._query = s.partition('?')
+
+    self.path = y2path(s)
+
+
+  def __str__(self) -> str:
+    result = f'{self.scheme}://{self.path}'
+    if self._query: result += '?' + self._query
+    if self._fragment: result += '#' + self._fragment
+    return result
+
+  def __repr__(self) -> str: return str(self)
+  def __hash__(self) -> int: return hash(str(self))
+  def __eq__(self, other):
+    if not isinstance(other, (y2uri, str)): return NotImplemented
+    return str(self) == str(other)
+  def __lt__(self, other):
+    if not isinstance(other, (y2uri, str)): return NotImplemented
+    return str(self) < str(other)
+  def to_json(self) -> str: return str(self)
+
+  @property
+  def query(self) -> str:
+    return self._query
+
+  @query.setter
+  def query(self, value: str) -> None:
+    self._query = value
+
+  @property
+  def fragment(self) -> str | None:
+    return self._fragment
+  
+  @fragment.setter
+  def fragment(self, value: str) -> None:
+    self._fragment = value
+    # elif ':~:' in value:
+    #   anchor, _, directives = value.partition(':~:')
+    #   fields = {}
+    #   if anchor: fields['anchor'] = unquote(anchor)
+    #   fields['text'] = []
+    #   for directive in directives.split('&'):
+    #     name, separator, selector = directive.partition('=')
+    #     if name != 'text' or not separator:
+    #       raise ValueError('Unsupported text fragment directive')
+    #     parts, text = selector.split(','), {}
+    #     if parts[0].endswith('-'): text['prefix'] = unquote(parts.pop(0)[:-1])
+    #     if parts and parts[-1].startswith('-'): text['suffix'] = unquote(parts.pop()[1:])
+    #     if not 1 <= len(parts) <= 2 or not all(parts):
+    #       raise ValueError('Text fragment requires textStart and optional textEnd')
+    #     text['textStart'] = unquote(parts[0])
+    #     if len(parts) == 2: text['textEnd'] = unquote(parts[1])
+    #     fields['text'].append(text)
+    #   self._fragment = fields
+    # elif '=' in value:
+    #   self._fragment = {key: values[0] if len(values) == 1 else values
+    #     for key, values in parse_qs(value.replace('+', '%2B'), keep_blank_values=True).items()}
+    # else:
+      # self._fragment = {'anchor': unquote(value)} if value else {}
+    # fields = self.fragment
+    # if not fields: return ''
+    # if set(fields) == {'anchor'}: return quote(fields['anchor'], safe='')
+    # if 'text' not in fields:
+    #   return urlencode(fields, doseq=True, quote_via=quote, safe=',:')
+    # def escaped(value): return quote(value, safe='').replace('-', '%2D')
+    # directives = []
+    # for text in fields['text']:
+    #   parts = []
+    #   if 'prefix' in text: parts.append(escaped(text['prefix']) + '-')
+    #   parts.append(escaped(text['textStart']))
+    #   if 'textEnd' in text: parts.append(escaped(text['textEnd']))
+    #   if 'suffix' in text: parts.append('-' + escaped(text['suffix']))
+    #   directives.append('text=' + ','.join(parts))
+    # anchor = quote(fields['anchor'], safe='') if 'anchor' in fields else ''
+    # return anchor + ':~:' + '&'.join(directives)
+
+
 # endregion
 
 
@@ -365,31 +672,6 @@ def template_populate(o, data: dict = {}, excludes:list = []) -> Any:
   return __tp(_, data)
 
 
-class Date(date):
-  """A date a template reads by name: date.YYYY, date.YY, date.MM, date.DD, date.YYMMDD, date.ISO."""
-  @property
-  def YYYY(self) -> str: return f'{self.year:04d}'
-  @property
-  def YY(self) -> str: return f'{self.year % 100:02d}'
-  @property
-  def MM(self) -> str: return f'{self.month:02d}'
-  @property
-  def DD(self) -> str: return f'{self.day:02d}'
-  @property
-  def YYMMDD(self) -> str: return self.YY + self.MM + self.DD
-  @property
-  def ISO(self) -> str: return self.isoformat()
-
-
-def to_date(o: object) -> Date:
-  """A Date from what a configuration writes: a date, a datetime, YYYY-MM-DD with or without
-  a time, or YYMMDD. Anything else is an error, never a guess."""
-  if isinstance(o, datetime): o = o.date()
-  if not isinstance(o, date):
-    s = str(o).strip()
-    o = datetime.strptime(s, '%y%m%d').date() if re.fullmatch(r'\d{6}', s) else datetime.fromisoformat(s).date()
-  return Date(o.year, o.month, o.day)
-
 
 def jinja_helpers() -> dict:
   """gppu's own filters, offered to every Jinja environment it builds."""
@@ -587,36 +869,6 @@ class TemplateSet:
 # endregion
 
 
-# region Time helpers
-def now_str(): return datetime.now().strftime("%Y%m%d.%H%M%S")
-def now_ts(): return datetime.now().timestamp()
-
-def timestamp(): return datetime.now().strftime("%y%m%d-%H%M")
-def datestamp(): return datetime.now().strftime("%y%m%d")
-
-def prepend_datestamp(path, separator=" ") -> Path:
-  datestamp_str = datestamp()  
-  _ = Path(path)
-  return _.parent / f"{datestamp_str}{separator}{_.name}"
-
-def append_timestamp(path, separator=" ") -> Path:
-  timestamp_str = timestamp()
-  _ = Path(path)
-  return _.parent / f"{_.stem}{separator}{timestamp_str}{_.suffix}"
-
-
-def pretty_timedelta(ts) -> str:
-  delta = now_ts() - ts
-  seconds = int(delta)
-  days, seconds = divmod(seconds, 86400)
-  hours, seconds = divmod(seconds, 3600)
-  minutes, seconds = divmod(seconds, 60)
-  if days > 0: return '%dd %dh %dm %ds' % (days, hours, minutes, seconds)
-  elif hours > 0: return '%dh %dm %ds' % (hours, minutes, seconds)
-  elif minutes > 0: return '%dm %ds' % (minutes, seconds)
-  else: return '%ds' % (seconds,)
-# endregion
-
 
 # region Human-readable formatters
 
@@ -697,8 +949,6 @@ def slugify(o) -> str:
   """Converts any object to string, then slugifies it"""
   return re.sub(r'[^a-zA-Z0-9_]', '_', str(o).lower())
 # endregion
-
-
 
 
 # region Async helpers
