@@ -157,6 +157,7 @@ class y2uri:
   scheme: str
   path: y2path
   params: dict[str, str | list[str]]
+  fragment: str
 
   def __init__(self, value: 'y2uri | str', path: y2path | str | None = None,
                params: dict[str, str | list[str]] | None = None):
