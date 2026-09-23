@@ -13,18 +13,18 @@ from gppu.providers import FileContainer, M365Container
 def test_uri_round_trip(value):
   uri = y2uri(value)
   assert isinstance(uri.path, y2path)
-  assert y2uri(uri.path, scheme=uri.scheme) == value
+  assert y2uri(uri) == value
   assert json.loads(json.dumps({'uri': uri.to_json()})) == {'uri': value}
 
 
 @pytest.mark.parametrize('root, expected', [
   ('file:///', 'file:///folder/item'),
-  ('file:///D:/', 'file:///D:/folder/item'),
-  ('file://server/share/', 'file://server/share/folder/item'),
-  ('https://host/a//b/', 'https://host/a//b/folder/item'),
+  ('file:///D:/', 'file:///D:/folder/item/'),
+  ('file://server/share/', 'file://server/share/folder/item/'),
+  ('https://host/a/b/', 'https://host/a/b/folder/item/'),
   ('plaud://', 'plaud://folder/item'),
 ])
-def test_uri_joins_preserve_root_and_empty_segments(root, expected):
+def test_uri_joins_preserve_leading_and_trailing_slashes(root, expected):
   original = y2uri(root)
   assert str(original / 'folder' / 'item') == expected
   assert str(original / y2path('folder/item')) == expected
@@ -116,6 +116,32 @@ def test_path_join_returns_independent_path():
     assert str(joined) == 'folder/child/item'
     joined.iadd('more')
     assert str(original) == 'folder'
+
+
+def test_uri_keeps_slash_markers_without_interpreting_path_components():
+  uri = y2uri('custom:///C:/folder/?q=value#section')
+  assert uri.path == y2path(['C:', 'folder'])
+  assert not hasattr(uri, 'authority')
+  assert str(uri) == 'custom:///C:/folder/?q=value#section'
+  assert str(uri / 'child') == 'custom:///C:/folder/child/?q=value#section'
+  assert str(uri / 'child/') == 'custom:///C:/folder/child/?q=value#section'
+  assert str(uri) == 'custom:///C:/folder/?q=value#section'
+  assert y2path('/a//b/', ['c', '', 'd']).data == ['a', 'b', 'c', 'd']
+
+
+def test_uri_format_does_not_control_path_joining():
+  from string.templatelib import Template
+
+  uri = y2uri('custom:///folder?q=value#section')
+  assert isinstance(vars(uri)['_format'], Template)
+  uri._format = t'[{uri.path}]'
+  joined = uri / 'child'
+  assert joined._format is uri._format
+  assert str(joined) == '[folder/child]?q=value#section'
+  assert joined.scheme == 'custom'
+  assert joined.query == 'q=value'
+  assert joined.fragment == 'section'
+  assert str(uri) == '[folder]?q=value#section'
 
 
 def test_uri_mutation_updates_representation_and_equality():
