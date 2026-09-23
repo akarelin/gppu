@@ -158,10 +158,25 @@ class y2uri:
   path: y2path
   params: dict[str, str | list[str]]
   fragment: str
+  _ready: bool = False
 
-  def __init__(self, value: 'y2uri | str', path: y2path | str | None = None,
+  def __bool__(self) -> bool: return self._ready
+
+  def __init__(self, o: Any, path: y2path | str | None = None,
                params: dict[str, str | list[str]] | None = None):
-    text = str(value) if path is None else f'{value}://{path}'
+    self._ready = False
+    if not o: raise ValueError('y2uri: empty input')
+    if isinstance(o, y2uri): text = str(o)
+    elif isinstance(o, dict):
+      if 'uri' not in o: raise ValueError('y2uri: mapping requires uri')
+      text = o['uri']
+    elif isinstance(o, str): text = o
+    elif hasattr(o, 'uri'): text = o.uri
+    else: raise ValueError('y2uri: unsupported input')
+    if isinstance(text, y2uri): text = str(text)
+    if not isinstance(text, str) or not text:
+      raise ValueError('y2uri: uri must be a nonempty string or y2uri')
+    if path is not None: text = f'{text}://{path}'
     scheme, separator, value = text.partition('://')
     if not separator or not re.fullmatch(r'[A-Za-z][A-Za-z0-9+.-]*', scheme):
       raise ValueError('y2uri requires a scheme followed by ://')
@@ -175,6 +190,7 @@ class y2uri:
     if params is not None:
       self.params = {key: list(value) if isinstance(value, list) else value
                      for key, value in params.items()}
+    self._ready = True
 
   def __str__(self) -> str:
     uri = f'{self.scheme}://{self.path}'
