@@ -170,3 +170,40 @@ def test_uri_endswith_checks_path_only():
   uri.path.append('child')
   assert uri.endswith('item/child')
   assert not hasattr(uri, 'startswith')
+
+
+@pytest.mark.parametrize('form', ['string', 'instance', 'mapping', 'object', 'typed_mapping', 'typed_object'])
+def test_uri_constructor_accepts_y2eid_style_inputs(form):
+  from types import SimpleNamespace
+  text = 'm365://tenant/users/alex?tag=a&tag=b#section'
+  original = y2uri(text)
+  inputs = {'string': text, 'instance': original, 'mapping': {'uri': text},
+    'object': SimpleNamespace(uri=text), 'typed_mapping': {'uri': original},
+    'typed_object': SimpleNamespace(uri=original)}
+  uri = y2uri(inputs[form])
+  assert uri
+  assert uri == text
+  assert uri.scheme == 'm365'
+  assert isinstance(uri.path, y2path)
+  assert uri.params == {'tag': ['a', 'b']}
+  assert uri.fragment == 'section'
+  uri.path.append('child')
+  uri.params['tag'].append('c')
+  assert original == text
+
+
+@pytest.mark.parametrize('value', [None, '', {}, 12, [], {'other': 'file:///path'},
+  {'uri': None}, {'uri': 12}, {'uri': ''}])
+def test_uri_constructor_rejects_empty_and_unsupported_inputs(value):
+  uri = y2uri.__new__(y2uri)
+  assert not uri
+  with pytest.raises(ValueError):
+    uri.__init__(value)
+  assert not uri
+
+
+def test_uri_constructor_accepts_location_and_dataobject():
+  location = Location({'uid': 'test', 'canonical': 'file:///data'})
+  obj = DataObject('file:///data/item', {}, 'item')
+  assert y2uri(location) == location.uri
+  assert y2uri(obj) == obj.uri
