@@ -856,6 +856,10 @@ class TemplateSet:
 
 
 # region Human-readable formatters
+def pfy(object) -> str: return "\n"+pprint.pformat(object, indent=4, width=40, compact=True)
+def slugify(o) -> str:
+  """Converts any object to string, then slugifies it"""
+  return re.sub(r'[^a-zA-Z0-9_]', '_', str(o).lower())
 
 def format_size(size: int | float) -> str:
   """Format byte count as '0 B', '1.5 KB', '2.3 MB', '4.5 GB', '7.8 TB'.
@@ -928,12 +932,6 @@ def format_since(when) -> str:
 # endregion
 
 
-# region prettify and slugify
-def pfy(object) -> str: return "\n"+pprint.pformat(object, indent=4, width=40, compact=True)
-def slugify(o) -> str:
-  """Converts any object to string, then slugifies it"""
-  return re.sub(r'[^a-zA-Z0-9_]', '_', str(o).lower())
-# endregion
 
 
 # region Async helpers
