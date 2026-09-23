@@ -150,7 +150,7 @@ class FileLocation(Location):
     self.templates = deepcopy(templates)
 
   def _root(self) -> Path:
-    uri = urlsplit(self.uri)
+    uri = urlsplit(str(self.uri))
     if uri.scheme != 'file':
       raise ValueError('FileLocation requires a file URI')
     path = unquote(uri.path)
@@ -207,7 +207,7 @@ class FileContainer(Container):
       obj = path
       if self.templates is None:
         raise ValueError('File Container requires naming templates to resolve a DataObject')
-      uri = urlsplit(obj.uri)
+      uri = urlsplit(str(obj.uri))
       context = dict(uri=obj.uri, endpoint=uri.path, tenant=uri.netloc, inside='.',
                      it=obj.content, unquote=unquote, identity=obj.identity, filename=obj.name, kind=obj.kind)
       if 'date' in self.templates.named:
@@ -394,7 +394,7 @@ class M365Location(Location):
     self._session = parent._session if isinstance(parent, M365Location) and self._connection == parent._connection else requests.Session()
     self._app: 'msal.ConfidentialClientApplication | None' = None
     self._credential_root = credential_root
-    uri = urlsplit(self.uri)
+    uri = urlsplit(str(self.uri))
     if uri.scheme != self.scheme or not uri.netloc or uri.query or uri.fragment:
       raise ValueError('M365 Location requires an absolute m365 URI without query or fragment')
     self._namespace = 'm365://' + uri.netloc
@@ -402,7 +402,7 @@ class M365Location(Location):
   def ls(self) -> list[Location]:
     children = list(super().ls())
     configured = {child.uri for child in children}
-    path = urlsplit(self.uri).path.strip('/')
+    path = urlsplit(str(self.uri)).path.strip('/')
     segments = tuple(unquote(segment) for segment in path.split('/')) if path else ()
     if not segments:
       rows = [('users', 'Users')]
@@ -415,20 +415,20 @@ class M365Location(Location):
     else:
       rows = []
     for relative, name in rows:
-      uri = self.uri.rstrip('/') + '/' + relative
+      uri = self.uri / relative
       if uri in configured:
         continue
       properties = deepcopy(self._my)
-      properties.update(uid=self.uid.rstrip('/') + '/' + relative, canonical=uri,
-        name=name, path=unquote(urlsplit(uri).path.lstrip('/')), parent=self.uid)
+      properties.update(uid=self.uid.rstrip('/') + '/' + relative, canonical=str(uri),
+        name=name, path=unquote(urlsplit(str(uri)).path.lstrip('/')), parent=self.uid)
       children.append(M365Location(properties, connection=self._connection, parent=self,
         credential_root=self._credential_root))
     return children
 
   def container(self, path: y2path | str = '') -> 'M365Container':
     path = str(self.relative(path))
-    full = self.uri.rstrip('/') + ('/' + path if path else '')
-    segments = tuple(unquote(segment) for segment in urlsplit(full).path.strip('/').split('/')) if urlsplit(full).path.strip('/') else ()
+    full = self.uri / path
+    segments = tuple(unquote(segment) for segment in urlsplit(str(full)).path.strip('/').split('/')) if urlsplit(str(full)).path.strip('/') else ()
     if len(segments) >= 3 and segments[0] == 'users':
       user, branch, tail = segments[1], segments[2], segments[3:]
       if branch == 'todo':
@@ -442,7 +442,7 @@ class M365Location(Location):
     if branch not in ('contacts', 'contactFolders', 'calendars', 'todo', 'onedrive', 'sharepoint'):
       raise ValueError(f'Unsupported M365 endpoint: {branch}')
     mailbox = self._connection['email'] if 'alias' in self._connection and user == self._connection['alias'] else user
-    return M365Container(self, mailbox, branch, tail, self.uri.rstrip('/') + ('/' + path if path else ''))
+    return M365Container(self, mailbox, branch, tail, self.uri / path)
 
   def _token(self) -> str:
     if isinstance(self.parent, M365Location) and self._connection == self.parent._connection:
@@ -653,7 +653,7 @@ class M365Container(Container):
   def _refresh(self, state: dict[str, Any], path: y2path | str) -> Iterator[tuple[Iterator[DataObject], Callable[[], None]]]:
     path = str(Location.relative(path))
     segments = self.path + tuple(unquote(segment) for segment in path.split('/')) if path else self.path
-    scope = self.uri.rstrip('/') + ('/' + path if path else '')
+    scope = str(self.uri / path)
     pending = deepcopy(state[scope]) if scope in state else {}
     def commit() -> None:
       state[scope] = pending

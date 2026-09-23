@@ -50,7 +50,7 @@ def walk_container(container, path, level, recursive, boundaries):
       elif row['type'] != 'directory' and level in ('handlers', 'archives'):
         obj = container.read(name)
         try:
-          row['object'] = {'uri': obj.uri, 'identity': obj.identity, 'kind': obj.kind}
+          row['object'] = {'uri': str(obj.uri), 'identity': obj.identity, 'kind': obj.kind}
         finally:
           if hasattr(obj.content, 'close'):
             obj.content.close()
