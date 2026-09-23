@@ -26,7 +26,7 @@ Location and Container paths use `y2path`; their URIs and DataObject URIs use `y
 
 `y2uri(y2path('tenant/users/alex'), scheme='m365')` constructs a URI from its parts; `y2uri('m365://tenant/users/alex')` parses its string form. `.scheme` is assignable and `.path` is a stored, mutable `y2path`, including the authority. Path changes update the URI's string representation, comparisons and joins. URI paths and join operands retain their escaped spelling; `Location.address()` escapes literal relative filenames. Use `str(uri)` or `uri.to_json()` at string and JSON boundaries. File roots and empty scheme roots retain their separators. (Alex, 2026-09-22: "uri.scheme = 'xxx'" and "uri.path will give me y2path".)
 
-`.params` is a mutable dictionary serialized after `?`, with keys and values URL-encoded. `.query` reads or assigns its encoded string form without the `?`; assigning an empty query clears the dictionary. Parsing decodes parameter values; repeated keys have list values and empty values remain empty strings. `.fragment` is a mutable string without `#`. Path joins retain the query and fragment and copy mutable values. The constructor takes only `o: Any` and an optional scheme. A scheme in the input takes precedence; otherwise the supplied scheme or `default_scheme = 'null'` is used. (Alex, 2026-09-22: "uri also has parameters. dict followed by ?"; "Not constructor. Constructor takes Any + scheme".)
+`.params` is a mutable dictionary serialized after `?`, with keys and values URL-encoded. `.query` reads or assigns its encoded string form without the `?`; assigning an empty query clears the dictionary. Parsing decodes parameter values; repeated keys have list values and empty values remain empty strings. `.fragment` is a mutable dictionary of parsed anchor, text or media fields. Assigning fragment syntax without `#` parses it; rendering encodes its fields. Path joins retain the query and fragment and copy mutable values. The constructor takes only `o: Any` and an optional scheme. A scheme in the input takes precedence; otherwise the supplied scheme or `default_scheme = 'null'` is used. (Alex, 2026-09-22: "uri also has parameters. dict followed by ?"; "Not constructor. Constructor takes Any + scheme".)
 
 Like `y2eid`, equality, ordering and hashing use the current string representation. Do not mutate a URI while using it as a dictionary key or set member; use its string representation for stable keys.
 
@@ -59,3 +59,18 @@ The public classes are `Location`, `Container` and `DataObject`. Runtime registr
 | `container.delete(object)` | DataObject or relative path | Completed deletion; no return value |
 
 These call names reflect Alex's corrections in the current session: "Yes, return Location objects"; "container has write, delete, read and ls - all makes sense". Runtime enumeration does not save Locations into configuration. Providers implement source operations; callers do not branch on Graph methods or file naming rules. Dagster retains opaque source state in successful materializations; M365 does not write SQL. Destination failure leaves the previous successful state available for the next run. No indexing or `lake://` implementation is implied. (Alex, recovered session, nested enumeration, native Dagster and file-only requirements; current session, SQL rejection.)
+
+
+## Parsed fragments
+
+Alex, 2026-09-22: "Expose parsed fields"; "There are 3 types of fragment: anchor, text and media".
+
+| Fragment syntax | `uri.fragment` |
+|---|---|
+| `#chapter%201` | `{'anchor': 'chapter 1'}` |
+| `#:~:text=hello%20world` | `{'text': [{'textStart': 'hello world'}]}` |
+| `#t=10,20&xywh=percent:10,20,30,40` | `{'t': '10,20', 'xywh': 'percent:10,20,30,40'}` |
+
+Text selectors expose `textStart`, optional `textEnd`, `prefix` and `suffix`; repeated text selectors remain a list. An anchor can accompany text selectors. Media dimensions retain their dimension-specific values as strings; repeated fields remain lists. Mutating these fields changes URI rendering. URI copies and joins own separate fragment dictionaries. Empty fragments use an empty dictionary.
+
+The parser follows the fragment syntax linked in the y2uri docstring: [media fragments](https://www.w3.org/TR/media-frags/) and [text fragments](https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Fragment/Text_fragments). It parses and renders addresses; media playback bounds and matching document text are responsibilities of the consumer.

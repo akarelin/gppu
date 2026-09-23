@@ -18,8 +18,9 @@ import yaml
 from collections import UserList
 from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping
 from concurrent.futures import Future
+from copy import deepcopy
 from typing import Any, ClassVar, List, Optional
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import parse_qs, quote, unquote, urlencode
 
 try:
   import aiomqtt
@@ -157,7 +158,7 @@ class y2uri:
   scheme: str
   path: y2path
   params: dict[str, str | list[str]]
-  fragment: str
+  fragment: dict[str, Any]
   default_scheme: ClassVar[str] = 'null'
   _ready: bool = False
 
@@ -187,7 +188,7 @@ class y2uri:
   def __str__(self) -> str:
     uri = f'{self.scheme}://{self.path}'
     if self.params: uri += '?' + self.query
-    if self.fragment: uri += '#' + self.fragment
+    if self.fragment: uri += '#' + self._fragment_string()
     return uri
   def __repr__(self) -> str: return str(self)
   def __hash__(self) -> int: return hash(str(self))
@@ -206,6 +207,55 @@ class y2uri:
   def query(self, value: str) -> None:
     self.params = {key: values[0] if len(values) == 1 else values
                    for key, values in parse_qs(value, keep_blank_values=True).items()}
+
+  @property
+  def fragment(self) -> dict[str, Any]: return self._fragment
+
+  @fragment.setter
+  def fragment(self, value: str | dict[str, Any]) -> None:
+    if isinstance(value, dict):
+      self._fragment = deepcopy(value)
+    elif ':~:' in value:
+      anchor, _, directives = value.partition(':~:')
+      fields = {}
+      if anchor: fields['anchor'] = unquote(anchor)
+      fields['text'] = []
+      for directive in directives.split('&'):
+        name, separator, selector = directive.partition('=')
+        if name != 'text' or not separator:
+          raise ValueError('Unsupported text fragment directive')
+        parts, text = selector.split(','), {}
+        if parts[0].endswith('-'): text['prefix'] = unquote(parts.pop(0)[:-1])
+        if parts and parts[-1].startswith('-'): text['suffix'] = unquote(parts.pop()[1:])
+        if not 1 <= len(parts) <= 2 or not all(parts):
+          raise ValueError('Text fragment requires textStart and optional textEnd')
+        text['textStart'] = unquote(parts[0])
+        if len(parts) == 2: text['textEnd'] = unquote(parts[1])
+        fields['text'].append(text)
+      self._fragment = fields
+    elif '=' in value:
+      self._fragment = {key: values[0] if len(values) == 1 else values
+        for key, values in parse_qs(value.replace('+', '%2B'), keep_blank_values=True).items()}
+    else:
+      self._fragment = {'anchor': unquote(value)} if value else {}
+
+  def _fragment_string(self) -> str:
+    fields = self.fragment
+    if not fields: return ''
+    if set(fields) == {'anchor'}: return quote(fields['anchor'], safe='')
+    if 'text' not in fields:
+      return urlencode(fields, doseq=True, quote_via=quote, safe=',:')
+    def escaped(value): return quote(value, safe='').replace('-', '%2D')
+    directives = []
+    for text in fields['text']:
+      parts = []
+      if 'prefix' in text: parts.append(escaped(text['prefix']) + '-')
+      parts.append(escaped(text['textStart']))
+      if 'textEnd' in text: parts.append(escaped(text['textEnd']))
+      if 'suffix' in text: parts.append('-' + escaped(text['suffix']))
+      directives.append('text=' + ','.join(parts))
+    anchor = quote(fields['anchor'], safe='') if 'anchor' in fields else ''
+    return anchor + ':~:' + '&'.join(directives)
 
   def endswith(self, suffix) -> bool: return self.path.endswith(suffix)
 
