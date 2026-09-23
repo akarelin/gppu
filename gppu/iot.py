@@ -142,9 +142,18 @@ class y2path(y2list):
     self.data = self._any2list(data)
 
 
+class y2topic(y2path):
+  def is_wildcard(self) -> bool: return bool(set(self.data) & {"#", "+"})
+
+
 @total_ordering
 class y2uri:
-  """Mutable scheme, escaped y2path and query params, following y2eid."""
+  """
+    Implements:
+      https://www.rfc-editor.org/info/rfc3986/
+      https://www.w3.org/TR/fragid-best-practices
+  
+  """
   scheme: str
   path: y2path
   params: dict[str, str | list[str]]
@@ -202,9 +211,6 @@ class y2uri:
   def __add__(self, path: y2path | str) -> 'y2uri':
     return self / path
 
-
-class y2topic(y2path):
-  def is_wildcard(self) -> bool: return bool(set(self.data) & {"#", "+"})
 
 
 class y2slug(y2list):
