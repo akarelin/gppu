@@ -549,13 +549,19 @@ class _DebugScreen(Screen):
 
 
 class TUIApp(mixin_Config, TextualApp):
-  """Textual App with per-instance config via self.my().
+  """Textual application base, imported from ``gppu.tui``.
+
+  Subclass and define ``compose()`` for widgets and ``on_mount()`` for startup
+  work; Textual owns the event loop. Load configuration with ``Env.from_env()``
+  before ``MyApp.main()`` when needed, or ``Environment.from_env()`` for State.
+  Read it through ``Env.glob(...)``. To use ``self.my(...)``, first copy config
+  with ``self._config_from_env()`` or ``self._config_from_dict(mapping)``.
 
   Works standalone (``app.run()``) or embedded in a TUILauncher via AppScreen.
   Use ``self.done(result)`` to finish — it calls ``exit()`` or ``dismiss()``
   depending on context.
 
-  Override ``cli()`` to provide a CLI fallback when textual is unavailable.
+  Override ``cli()`` for use without an interactive terminal; Textual is required.
   Use ``MyApp.main()`` as the unified entry point.
 
   Built-in bindings (inherited by all subclasses):

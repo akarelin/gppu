@@ -116,7 +116,13 @@ else:
 
 
 class mixin_Mqtt:
-  """Reconnecting MQTT transport for a host with ``_spawn`` and logging."""
+  """MQTT for a host that owns its lifecycle and loop, as Y2 does.
+
+  Supply ``connection``, ``Info``/``Warn`` and ``_spawn(coro)`` to schedule and
+  track work on that loop. Call ``_start_mqtt()`` there at startup, then cancel
+  and await the host's tasks at shutdown. Use the same subscription, publishing
+  and connected-work hooks described on ``MqttApp``.
+  """
 
   _CLIENT_KEYS = ('hostname', 'port', 'username', 'password', 'identifier')
   MQTT_RECONNECT_DELAY = 5
@@ -297,7 +303,18 @@ class mixin_Mqtt:
 
 
 class MqttApp(mixin_Mqtt, AsyncApp):
-  """AsyncApp with one reconnecting MQTT client."""
+  """AsyncApp with one reconnecting MQTT client; import from ``gppu``.
+
+  Supply the configured broker mapping in ``data['connection']`` at construction.
+  Override async ``subscribe()`` to ``await self.mqtt_listen(callback,
+  topic)``; callbacks take ``(topic, payload)`` and may be sync or async.
+
+  Run with ``asyncio.run(MyApp(data=config).run())`` and stop as for ``AsyncApp``. Keep
+  ``await super().start()`` if overriding ``start()``. Subscriptions register
+  before connection; for work needing a connection, have ``_mqtt_tasks()``
+  return fresh coroutines for each connection. Publish with
+  ``await self.mqtt_publish(topic, payload)``; disconnected publishes are discarded.
+  """
 
   async def subscribe(self) -> None: pass
 

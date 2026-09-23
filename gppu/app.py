@@ -1,11 +1,13 @@
 """gppu.app — application bases and lifecycle.
 
-Home of the App class family and the YMRO (Y2 Method Resolution Order)
-init→load→start lifecycle. Each step walks the MRO for ``__method``-named
-methods on every ancestor and calls them in order, giving cooperative
-multi-inheritance without explicit ``super()`` chains. Subclasses can extend
-the lifecycle by overriding ``POSSIBLE_STEPS`` (e.g. Y2 adds ``refresh`` and
-``publish``).
+Import ``App`` from gppu for a synchronous utility, ``AsyncApp`` for asyncio
+work, or ``MqttApp`` for an MQTT service. For Textual, use ``gppu.tui.TUIApp``.
+
+The separate YMRO (Y2 Method Resolution Order) init→load→start lifecycle walks
+the MRO for ``__method``-named methods on every ancestor and calls them in order,
+giving cooperative multi-inheritance without explicit ``super()`` chains. Subclasses can extend
+the lifecycle by overriding ``POSSIBLE_STEPS``. These are stepper hooks;
+``App`` and ``AsyncApp`` do not run them.
 
 ``AsyncApp`` is the conventional asyncio counterpart: construction runs a
 synchronous ``setup()`` hook, and ``run()`` opens one ``TaskGroup`` before
@@ -149,7 +151,24 @@ class _App(_Base):
     super().__init__(name=self.name, **kw)
 
 
-class App(_App, _DC): pass
+class App(_App, _DC):
+  """Synchronous utility: define an entry method and call it after construction.
+
+  Read settings with ``self.my(...)``. Construction loads Environment and State
+  beside the subclass when Env is uninitialized; an already loaded Env is reused.
+  If loading configuration explicitly and needing State, use
+  ``Environment.from_env(...)``; ``Env.from_env()`` and ``Env.from_dict()``
+  only load Env.
+
+  Usage::
+
+      from gppu import App
+      class Hello(App):
+        def main(self):
+          self.Info('Hello world')
+      Hello().main()
+  """
+  pass
 # endregion
 
 
@@ -206,11 +225,18 @@ def _born(cls: type) -> str:
 class mixin_Rest:
   """Every public member of the application's own classes, over HTTP, and nothing
   declared. A field or property reads; a method is called with the JSON body as
-  its keyword arguments, and one that takes none answers a GET as well. A name is
-  the application's when a class born under ``Env.app_path`` defines it — a base
-  may define it too — and the private names and the lifecycle steps are the only
-  exclusion. The host names its object rosters in ``rest_registries``; a transport
-  binds the four ``rest_*`` calls, each answering ``(payload, status)``."""
+  its keyword arguments; a synchronous method needing none answers a GET as well.
+  A name is the application's when a class born under ``Env.app_path`` defines
+  it — a base may define it too — and the private names and the lifecycle steps
+  are the only exclusion.
+
+  AsyncApp includes this mixin; a host with its own lifecycle can compose it
+  before its application base, as Y2 does. Override ``rest_registries()`` with
+  ``{registry: {key: object}}``; by default it contains the app itself. The HTTP
+  host serves ``rest_manifest`` and binds ``rest_objects``, ``rest_read`` and
+  awaited ``rest_call``, which return ``(payload, status)``. The host supplies
+  the HTTP listener and JSON serialization.
+  """
   REST_RESERVED = (*_YMRO.POSSIBLE_STEPS, 'initialize', 'terminate', 'setup', 'run')
   _rest_manifest: dict | None = None
 
@@ -293,10 +319,16 @@ class mixin_Rest:
 class AsyncApp(mixin_Rest, App, EventLoopBridge):
   """Application base for long-lived asyncio services.
 
-  ``setup()`` runs after App/_DC construction. ``run()`` opens the application's
-  TaskGroup and calls ``start()``. ``stop()`` cancels tasks created by ``_spawn()``.
+  Override ``setup()`` for synchronous setup during construction with config ready,
+  and async ``start()`` for work. Run with ``asyncio.run(MyApp().run())`` or
+  ``await app.run()`` on a host's loop. In ``start()``, use ``self._spawn(coro)``
+  for concurrent work; ``run()`` waits for start and its TaskGroup to finish.
+
+  On that loop, ``await app.stop()`` cancels spawned tasks, not ``start()`` itself.
+  Put resource cleanup in the owning coroutine's ``finally`` or async context;
+  ``run()`` does not call ``stop()`` automatically.
   The app is an ``EventLoopBridge`` onto its own running loop, so off-loop threads
-  ``schedule``/``submit``/``call`` work onto it.
+  ``schedule``/``submit``/``call`` work onto it. See ``mixin_Rest`` for HTTP hosting.
   """
 
   _task_group: asyncio.TaskGroup | None
