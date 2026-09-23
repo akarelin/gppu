@@ -30,7 +30,7 @@ from functools import wraps, partial, cache
 from datetime import datetime as dt, timezone
 from zoneinfo import ZoneInfo
 
-from copy import deepcopy
+from copy import copy, deepcopy
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from string import Template
@@ -296,10 +296,10 @@ class y2uri:
   path: y2path
 
   _fragment: str | None
-  _query: str
+  _query: str | None
 
 
-  def __init__(self, o: Any, scheme: Optional[str] = None):
+  def __init__(self, o: Any, scheme: str | None = None):
     if isinstance(o, dict) and 'uri' in o: s = o['uri']
     else: s = str(o)
 
@@ -312,14 +312,14 @@ class y2uri:
     s, _, self._fragment = s.partition('#')
     s, _, self._query = s.partition('?')
 
-    self.path = y2path()
-    self.path.data = s.split('/')
-
+    self.path = y2path(s.split('/'))
+    self._format = t'{self.scheme}:///{self.path}' if s.startswith('/') else t'{self.scheme}://{self.path}'
+    if s.endswith('/') and self.path: self._format += t'/'
 
   def __str__(self) -> str:
-    result = f'{self.scheme}://{self.path}'
-    if self._query: result += '?' + self._query
-    if self._fragment: result += '#' + self._fragment
+    result = ''.join(part if isinstance(part, str) else str(getattr(self, part.expression.split('.')[-1])) for part in self._format)
+    if self._query: result += f'?{self._query}'
+    if self._fragment: result += f'#{self._fragment}'
     return result
 
   def __repr__(self) -> str: return str(self)
@@ -328,10 +328,8 @@ class y2uri:
   def to_json(self) -> str: return str(self)
 
   def __truediv__(self, path: y2path | str) -> 'y2uri':
-    result = y2uri(self)
-    if str(path):
-      if result.path.data[-1:] == ['']: result.path.data.pop()
-      result.path.data += str(path).lstrip('/').split('/')
+    result = copy(self)
+    result.path = self.path / path
     return result
 
   @property
