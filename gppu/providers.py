@@ -19,6 +19,20 @@ from .gppu import TemplateSet, _Base, y2path, y2uri
 
 @dataclass(frozen=True)
 class DataObject:
+  """A source-addressed object exchanged by Container operations.
+
+  This Python dataclass carries source content and identity. Content can be JSON,
+  text, bytes or a binary stream; it is not a fixed HTTP response representation.
+
+  Attributes:
+    uri (y2uri): Canonical source address, converted to y2uri on construction.
+    content (dict[str, Any] | list[Any] | str | int | float | bool | None | bytes | BinaryIO): Source payload or binary content; its structure belongs to the source.
+    identity (str | None): Source-owned object identity, or None when the source supplies no identity.
+    kind (str): Source object kind; defaults to object.
+    name (str): Source object name used by destination naming templates; defaults to an empty string.
+    parent (DataObject | None): Parent source object when one is supplied; defaults to None.
+    removed (bool): Whether refresh reports this object as removed; defaults to False.
+  """
   uri: y2uri
   content: dict[str, Any] | list[Any] | str | int | float | bool | None | bytes | BinaryIO
   identity: str | None
@@ -32,10 +46,24 @@ class DataObject:
 
 
 class Container:
-  """Operations below a Location boundary, with source-owned refresh state."""
+  """Operations below a Location boundary, with source-owned refresh state.
+
+  Obtain this Python interface from Location.container(path). Provider subclasses
+  implement the operations they support. The base interface declares methods,
+  not a serialized property record. Container.read returns a DataObject;
+  Container.ls returns filesystem entries or names, not child Locations.
+  """
 
   def ls(self, path: y2path | str = '', detail: bool = True) -> list[dict[str, Any]] | list[str]:
-    """Immediate folders and objects in this Container, using fsspec entries."""
+    """Immediate folders and objects in this Container, using fsspec entries.
+
+    Args:
+      path (y2path | str): Relative folder path within this Container; empty selects its root.
+      detail (bool): Return entry dictionaries when True, or entry names when False.
+
+    Returns:
+      list[dict[str, Any]] | list[str]: Immediate filesystem entries with provider-defined metadata, or their names. Detailed entries use fsspec name, type and size fields.
+    """
     raise NotImplementedError
 
   def walk(self, path: y2path | str = '', *, level: str = 'files', recursive: bool = False,
@@ -44,20 +72,50 @@ class Container:
 
     Paths remain relative to this Container. Explicit child Location boundaries
     are reported but never entered. Listing errors propagate to the indexer.
+
+    Args:
+      path (y2path | str): Relative folder path within this Container; empty selects its root.
+      level (str): Indexing detail level passed to the container walker; defaults to files.
+      recursive (bool): Whether to descend into folders below the selected path.
+      boundaries (Iterable[y2path | str]): Child Location paths to report without entering.
+
+    Returns:
+      Iterator[tuple[dict, list[dict]]]: Each enumerated folder entry paired with its immediate indexed entries.
     """
     from .indexing import walk_container
     yield from walk_container(self, str(Location.relative(path)), level, recursive, boundaries)
 
   def read(self, path: y2path | str | DataObject) -> DataObject:
-    """Read one object without changing a refresh cursor."""
+    """Read one object without changing a refresh cursor.
+
+    Args:
+      path (y2path | str | DataObject): Relative object path or a source DataObject accepted by the provider.
+
+    Returns:
+      DataObject: The addressed object with its source content, identity and metadata.
+    """
     raise NotImplementedError
 
   def write(self, obj: DataObject) -> None:
-    """Write the object's files."""
+    """Write the object's files.
+
+    Args:
+      obj (DataObject): Source object to write using the destination provider's naming and content rules.
+
+    Returns:
+      None: Completes after the provider writes the object.
+    """
     raise NotImplementedError
 
   def delete(self, path: y2path | str | DataObject) -> None:
-    """Explicitly remove an object before a deliberate replacement."""
+    """Explicitly remove an object before a deliberate replacement.
+
+    Args:
+      path (y2path | str | DataObject): Relative object path or source DataObject accepted by the provider.
+
+    Returns:
+      None: Completes after the provider removes the object.
+    """
     raise NotImplementedError
 
   def _refresh(self, state: dict[str, Any], path: y2path | str) -> AbstractContextManager[tuple[Iterator[DataObject], Callable[[], None]]]:
@@ -71,6 +129,13 @@ class Container:
     with source.refresh(state, folder) as changes:
       for obj in changes:
         destination.write(obj)
+
+    Args:
+      state (dict[str, Any]): Caller-owned refresh state; the provider updates it only after successful full consumption.
+      path (y2path | str): Relative source path to refresh; empty selects the Container root.
+
+    Returns:
+      ContextManager[Iterator[DataObject]]: A context manager yielding changed DataObjects, including removal markers. Incomplete iteration or a handler exception prevents state advancement.
     """
     with self._refresh(state, path) as (objects, commit):
       complete = False
@@ -88,7 +153,18 @@ class Container:
 
 
 class Location(_Base):
-  """A Location in the tree, constructed from configuration or enumeration."""
+  """A Location in the tree, constructed from configuration or enumeration.
+
+  GppuCatalog.location(uid) binds a configured Location to its provider
+  implementation. Its public properties identify the Location; ls and walk
+  expose its child relationships, and container selects operations below it.
+  Configuration properties are also available through the inherited my method.
+
+  Attributes:
+    uid (str): Configured or enumerated Location identity from properties.uid.
+    uri (y2uri): Canonical source address from properties.canonical.
+    parent (Location | None): Parent Location object, or None for a root.
+  """
 
   def __init__(self, properties: dict[str, Any], *, connection: dict[str, Any] | None = None,
                parent: 'Location | None' = None,
@@ -102,20 +178,44 @@ class Location(_Base):
     self._children = children
 
   def walk(self) -> Iterator[tuple['Location', list['Location']]]:
-    """Yield each Location and its immediate children, listing each node once."""
+    """Yield each Location and its immediate children, listing each node once.
+
+    Returns:
+      Iterator[tuple[Location, list[Location]]]: A depth-first traversal, starting with this Location, with each parent paired with its immediate children.
+    """
     children = self.ls()
     yield self, children
     for child in children:
       yield from child.walk()
 
   def ls(self) -> list['Location']:
+    """List this Location's immediate children.
+
+    Returns:
+      list[Location]: Child Location objects; an empty collection when no children are supplied.
+    """
     return list(self._children()) if self._children is not None else []
 
   def container(self, path: y2path | str = '') -> Container:
+    """Select a Container below this Location using its provider implementation.
+
+    Args:
+      path (y2path | str): Relative path below the Location; empty selects its root.
+
+    Returns:
+      Container: Provider-specific Container operations for the selected path. The base Location does not implement Containers and raises NotImplementedError.
+    """
     raise NotImplementedError(f'{self.uri}: Containers are not implemented')
 
   def address(self, path: y2path | str = '') -> y2uri:
-    """Canonical address of a relative path, with literal names URI-escaped."""
+    """Canonical address of a relative path, with literal names URI-escaped.
+
+    Args:
+      path (y2path | str): Relative path below this Location; empty returns its own URI.
+
+    Returns:
+      y2uri: Canonical address of the selected path.
+    """
     path = self.relative(path)
     if not path:
       return self.uri
@@ -123,6 +223,14 @@ class Location(_Base):
 
   @staticmethod
   def relative(path: y2path | str) -> y2path:
+    """Validate a relative, slash-separated Location path.
+
+    Args:
+      path (y2path | str): Empty or relative path without URI, absolute, backslash, empty-segment or traversal syntax.
+
+    Returns:
+      y2path: The validated relative path. Invalid syntax raises ValueError.
+    """
     if isinstance(path, y2path):
       path = str(path)
     if not isinstance(path, str) or path.startswith('/') or '\\' in path or '://' in path:
