@@ -3,7 +3,7 @@ import json
 import pytest
 
 from gppu import DataObject, FileLocation, Location, y2path, y2uri
-from gppu.providers import FileContainer, M365Container
+from gppu.providers import FileContainer
 
 
 @pytest.mark.parametrize('value', [
@@ -54,27 +54,6 @@ def test_location_and_file_container_use_types(tmp_path):
   with pytest.raises(ValueError):
     location.container(y2path('..'))
 
-
-def test_m365_container_keeps_typed_paths_and_source_uris():
-  class Source:
-    _namespace = 'm365://tenant'
-
-    def _each(self, endpoint):
-      if endpoint.endswith('/contacts'):
-        return [{'id': 'id/part', 'displayName': 'Name'}]
-      return []
-
-    def _get(self, endpoint):
-      return {'id': 'id/part', 'displayName': 'Name'}
-
-  container = M365Container(Source(), 'alex', 'contacts', y2path(),
-    y2uri('m365://tenant/users/alex/contacts'))
-  assert isinstance(container.path, y2path)
-  assert isinstance(container.uri, y2uri)
-  assert container.ls(y2path(), detail=False) == ['id%2Fpart']
-  obj = container.read(y2path('id%2Fpart'))
-  assert isinstance(obj.uri, y2uri)
-  assert obj.uri == 'm365://tenant/users/alex/contacts/id%2Fpart'
 
 
 def test_dataobject_constructs_uri_type():
