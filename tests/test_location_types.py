@@ -14,7 +14,7 @@ def test_uri_round_trip(value):
   uri = y2uri(value)
   assert isinstance(uri.path, y2path)
   assert y2uri(uri.scheme, uri.path) == value
-  assert json.loads(json.dumps({'uri': uri})) == {'uri': value}
+  assert json.loads(json.dumps({'uri': uri.to_json()})) == {'uri': value}
 
 
 @pytest.mark.parametrize('root, expected', [
@@ -33,6 +33,8 @@ def test_uri_path_operators(root, expected):
   assert uri / 'id%2Fpart' == expected.removesuffix('folder/item') + 'id%2Fpart'
   with pytest.raises(ValueError):
     uri / 'file:///other'
+  with pytest.raises(ValueError):
+    uri / 'child?query=value'
 
 
 @pytest.mark.parametrize('value', ['', 'folder/item', '1bad://path'])
@@ -47,7 +49,7 @@ def test_location_and_file_container_use_types(tmp_path):
   location = FileLocation({'uid': 'test', 'canonical': tmp_path.as_uri()})
   assert isinstance(location.uri, y2uri)
   assert isinstance(Location.relative('folder'), y2path)
-  assert location.address(y2path('name #%.json')).endswith('/name%20%23%25.json')
+  assert location.address(y2path('name #%.json')).path.tail == 'name%20%23%25.json'
   container = location.container(y2path('folder'))
   assert isinstance(container.uri, y2uri)
   assert container.ls(y2path(), detail=False) == ['item.json']
@@ -101,3 +103,60 @@ def test_file_write_reads_typed_source_uri_in_template(tmp_path):
   assert container.read(obj).uri == obj.uri
   container.delete(obj)
   assert container.ls() == []
+
+
+def test_uri_mutation_updates_representation_comparison_and_joins():
+  uri = y2uri('file://host/folder')
+  path = uri.path
+  uri.scheme = 'xxx'
+  path.append('item')
+  assert uri.path is path
+  assert isinstance(path, y2path)
+  assert str(uri) == 'xxx://host/folder/item'
+  assert uri == 'xxx://host/folder/item'
+  assert 'xxx://host/folder/item' == uri
+  assert uri != 'file://host/folder'
+  assert uri < 'xxx://host/folder/z'
+  assert uri <= y2uri(str(uri))
+  assert uri > 'aaa://host'
+  assert uri >= y2uri(str(uri))
+  assert {uri: 'found'}[str(uri)] == 'found'
+  assert len({uri, y2uri(str(uri)), str(uri)}) == 1
+  assert uri / 'child' == 'xxx://host/folder/item/child'
+  assert uri + y2path('child') == uri / 'child'
+  copied = y2uri(uri)
+  joined = uri / ''
+  copied.path.append('copy')
+  joined.scheme = 'other'
+  assert str(uri) == 'xxx://host/folder/item'
+  uri.path = y2path('replacement')
+  assert str(uri) == 'xxx://replacement'
+
+
+def test_uri_mutable_query_parameters_and_path_joins():
+  uri = y2uri('https://host/folder?q=hello+world&empty=&tag=a&tag=b#section')
+  assert str(uri.path) == 'host/folder'
+  assert uri.params == {'q': 'hello world', 'empty': '', 'tag': ['a', 'b']}
+  uri.scheme = 'xxx'
+  uri.params['q'] = 'a&b?c/é'
+  uri.path.append('item')
+  assert str(uri) == 'xxx://host/folder/item?q=a%26b%3Fc%2F%C3%A9&empty=&tag=a&tag=b#section'
+  for joined in (uri / y2path('child'), uri + 'child'):
+    assert str(joined.path) == 'host/folder/item/child'
+    assert joined.params == uri.params
+    assert joined.fragment == 'section'
+    joined.params['tag'].append('c')
+    assert uri.params['tag'] == ['a', 'b']
+  copied = y2uri(uri)
+  copied.params['q'] = 'changed'
+  assert copied != uri
+  uri.params = {'page': '2'}
+  assert str(uri).endswith('?page=2#section')
+  uri.params.clear()
+  assert str(uri) == 'xxx://host/folder/item#section'
+
+
+def test_uri_constructs_scheme_path_and_parameter_dictionary():
+  uri = y2uri('https', y2path('host/items'), {'q': 'a b', 'empty': ''})
+  assert str(uri) == 'https://host/items?q=a+b&empty='
+  assert y2uri(str(uri)).params == uri.params

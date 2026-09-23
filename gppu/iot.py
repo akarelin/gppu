@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from functools import total_ordering
 import json
 import re
 import ssl
@@ -18,6 +19,7 @@ from collections import UserList
 from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping
 from concurrent.futures import Future
 from typing import Any, ClassVar, List, Optional
+from urllib.parse import parse_qs, urlencode
 
 try:
   import aiomqtt
@@ -140,31 +142,43 @@ class y2path(y2list):
     self.data = self._any2list(data)
 
 
-class y2uri(str):
-  """A hierarchical URI: scheme plus a slash-separated, escaped y2path.
+@total_ordering
+class y2uri:
+  """Mutable scheme, escaped y2path and query params, following y2eid."""
+  scheme: str
+  path: y2path
+  params: dict[str, str | list[str]]
 
-  String storage keeps URI spelling intact at JSON and library boundaries.
-  The path includes the authority and preserves empty segments, including the
-  leading slash in file:/// addresses. No decoding or normalization is implicit.
-  """
-
-  def __new__(cls, value: str, path: y2path | str | None = None):
+  def __init__(self, value: 'y2uri | str', path: y2path | str | None = None,
+               params: dict[str, str | list[str]] | None = None):
     text = str(value) if path is None else f'{value}://{path}'
-    scheme, separator, _ = text.partition('://')
+    scheme, separator, value = text.partition('://')
     if not separator or not re.fullmatch(r'[A-Za-z][A-Za-z0-9+.-]*', scheme):
       raise ValueError('y2uri requires a scheme followed by ://')
-    return super().__new__(cls, text)
+    self.scheme = scheme
+    value, _, self.fragment = value.partition('#')
+    value, _, query = value.partition('?')
+    self.path = y2path()
+    self.path.data = value.split('/') if value else []
+    self.params = {key: values[0] if len(values) == 1 else values
+                   for key, values in parse_qs(query, keep_blank_values=True).items()}
+    if params is not None:
+      self.params = {key: list(value) if isinstance(value, list) else value
+                     for key, value in params.items()}
 
-  @property
-  def scheme(self) -> str: return self.partition('://')[0]
-
-  @property
-  def path(self) -> y2path:
-    path = y2path()
-    value = self.partition('://')[2]
-    path.data = value.split('/') if value else []
-    return path
-
+  def __str__(self) -> str:
+    uri = f'{self.scheme}://{self.path}'
+    if self.params: uri += '?' + urlencode(self.params, doseq=True)
+    if self.fragment: uri += '#' + self.fragment
+    return uri
+  def __repr__(self) -> str: return str(self)
+  def __hash__(self) -> int: return hash(str(self))
+  def __eq__(self, other):
+    if not isinstance(other, (y2uri, str)): return NotImplemented
+    return str(self) == str(other)
+  def __lt__(self, other):
+    if not isinstance(other, (y2uri, str)): return NotImplemented
+    return str(self) < str(other)
   def to_json(self) -> str: return str(self)
 
   def __truediv__(self, path: y2path | str) -> 'y2uri':
@@ -173,11 +187,15 @@ class y2uri(str):
     value = str(path)
     if '://' in value:
       raise ValueError('Join a path, not another URI')
+    if '?' in value or '#' in value:
+      raise ValueError('Join an escaped path; set params and fragment separately')
     if not value:
-      return self
-    scheme, _, tail = self.partition('://')
-    base = scheme + '://' + (tail.rstrip('/') + '/' if tail else '')
-    return y2uri(base + value.lstrip('/'))
+      return y2uri(self)
+    tail = str(self.path)
+    base = self.scheme + '://' + (tail.rstrip('/') + '/' if tail else '')
+    result = y2uri(base + value.lstrip('/'), params=self.params)
+    result.fragment = self.fragment
+    return result
 
   def __add__(self, path: y2path | str) -> 'y2uri':
     return self / path

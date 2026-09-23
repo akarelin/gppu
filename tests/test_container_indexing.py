@@ -103,7 +103,7 @@ def test_container_and_location_paths_cannot_escape(tmp_path):
       list(location.container().walk(path))
   with pytest.raises(ValueError):
     location.container('%2e%2e/other')
-  assert location.address('space and #hash.txt').endswith('/space%20and%20%23hash.txt')
+  assert location.address('space and #hash.txt').path.tail == 'space%20and%20%23hash.txt'
   assert Location({'uid': 'plaud', 'canonical': 'plaud://'}).address('recording') == 'plaud://recording'
 
 
