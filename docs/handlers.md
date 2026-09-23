@@ -1231,6 +1231,10 @@ walks that configuration tree. `location(uid)` returns the Location whose
 `ls` and `walk` enumerate children at its address. An explicit mapping
 accepts the same data from another configuration loader.
 
+Files are built in. A connection's `provider` can name an external Location
+implementation by its Python module and class; configuration loading imports
+it and registers its declared scheme. `schemas` reports the loaded schemes.
+
 The explicit folder argument retains the existing exported-host catalog:
 
 `catalog` is an absolute folder with one subfolder per host or server, named
@@ -1255,6 +1259,10 @@ names one, otherwise the catalog root, so a browser walks the Locations tree.
 ### `GppuCatalog.location(self, uid: 'str') -> 'Location'`
 
 Return the configured Location itself, binding its implementation lazily.
+
+### `GppuCatalog.schemas`
+
+URI schemes served by the implementations loaded in this catalog.
 
 ### `GppuCatalog.filesystem(self, uid: 'str') -> 'GppuFileSystem'`
 

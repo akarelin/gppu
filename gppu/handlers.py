@@ -46,6 +46,7 @@ import asyncio
 import csv
 import fnmatch
 import hashlib
+import importlib
 import io
 import json
 import os
@@ -6624,6 +6625,10 @@ class GppuCatalog(AbstractFileSystem):
   ``ls`` and ``walk`` enumerate children at its address. An explicit mapping
   accepts the same data from another configuration loader.
 
+  Files are built in. A connection's ``provider`` can name an external Location
+  implementation by its Python module and class; configuration loading imports
+  it and registers its declared scheme. ``schemas`` reports the loaded schemes.
+
   The explicit folder argument retains the existing exported-host catalog:
 
   ``catalog`` is an absolute folder with one subfolder per host or server, named
@@ -6651,7 +6656,9 @@ class GppuCatalog(AbstractFileSystem):
 
   def __init__(self, catalog: str | Path | Mapping | None = None, host: str | None = None,
                location_types: Mapping | None = None) -> None:
-    self.location_types = {'file': FileLocation} if location_types is None else dict(location_types)
+    self.location_types = {'file': FileLocation}
+    if location_types is not None:
+      self.location_types.update(location_types)
     self._configuration = catalog is None or isinstance(catalog, Mapping)
     if self._configuration:
       if catalog is None:
@@ -6717,6 +6724,21 @@ class GppuCatalog(AbstractFileSystem):
       for uid, row in definitions.items()
       if uid not in ('templates', 'macros', 'generators') and not uid.endswith('_templates')
     }
+    for connection in self.connections.values():
+      if 'provider' not in connection:
+        continue
+      provider = connection['provider']
+      if provider in self.location_types:
+        continue
+      module, _, name = provider.rpartition('.')
+      if not module:
+        raise ValueError(f'{provider}: unknown configured provider')
+      kind = getattr(importlib.import_module(module), name)
+      if not isinstance(kind, type) or not issubclass(kind, Location):
+        raise TypeError(f'{provider}: provider must implement Location')
+      if kind.scheme in self.location_types and self.location_types[kind.scheme] is not kind:
+        raise ValueError(f'{kind.scheme}: provider already registered')
+      self.location_types[kind.scheme] = kind
     tree = config['locations']
     if isinstance(tree, Mapping):
       templates = tree['templates'] if 'templates' in tree else {}
@@ -6786,6 +6808,13 @@ class GppuCatalog(AbstractFileSystem):
           parent=self.location(parent) if parent is not None else None,
           children=lambda: (self.location(child) for child, owner in self._parents.items() if owner == uid))
       return self._bound_locations[uid]
+
+  @property
+  def schemas(self) -> list[dict[str, str]]:
+    """URI schemes served by the implementations loaded in this catalog."""
+    return [{'scheme': scheme + '://',
+             'implementation': (kind.func if hasattr(kind, 'func') else kind).__name__}
+            for scheme, kind in self.location_types.items()]
 
   def filesystem(self, uid: str) -> GppuFileSystem:
     """Indexing is explicitly selected; ingestion uses Location operations."""
