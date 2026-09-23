@@ -162,34 +162,27 @@ class y2uri:
 
   def __bool__(self) -> bool: return self._ready
 
-  def __init__(self, o: Any, path: y2path | str | None = None,
-               params: dict[str, str | list[str]] | None = None):
+  def __init__(self, o: Any, scheme: Optional[str] = None, **kw):
     self._ready = False
-    if not o: raise ValueError('y2uri: empty input')
-    if isinstance(o, y2uri): text = str(o)
-    elif isinstance(o, dict):
-      if 'uri' not in o: raise ValueError('y2uri: mapping requires uri')
-      text = o['uri']
-    elif isinstance(o, str): text = o
-    elif hasattr(o, 'uri'): text = o.uri
+    if not o and not scheme: raise ValueError('y2uri: empty input')
+    if isinstance(o, y2uri): s = str(o)
+    elif isinstance(o, dict) and 'uri' in o: s = str(o['uri'])
+    elif isinstance(o, (str, y2path)): s = str(o)
+    elif hasattr(o, 'uri'): s = str(o.uri)
     else: raise ValueError('y2uri: unsupported input')
-    if isinstance(text, y2uri): text = str(text)
-    if not isinstance(text, str) or not text:
-      raise ValueError('y2uri: uri must be a nonempty string or y2uri')
-    if path is not None: text = f'{text}://{path}'
-    scheme, separator, value = text.partition('://')
-    if not separator or not re.fullmatch(r'[A-Za-z][A-Za-z0-9+.-]*', scheme):
-      raise ValueError('y2uri requires a scheme followed by ://')
     self.scheme = scheme
-    value, _, self.fragment = value.partition('#')
-    value, _, query = value.partition('?')
+    if '://' in s: self.scheme, s = s.split('://', 1)
+    if not self.scheme or not re.fullmatch(r'[A-Za-z][A-Za-z0-9+.-]*', self.scheme):
+      raise ValueError('y2uri requires a scheme')
+    s, _, self.fragment = s.partition('#')
+    s, _, query = s.partition('?')
     self.path = y2path()
-    self.path.data = value.split('/') if value else []
+    self.path.data = s.split('/') if s else []
     self.params = {key: values[0] if len(values) == 1 else values
                    for key, values in parse_qs(query, keep_blank_values=True).items()}
-    if params is not None:
+    if 'params' in kw:
       self.params = {key: list(value) if isinstance(value, list) else value
-                     for key, value in params.items()}
+                     for key, value in kw['params'].items()}
     self._ready = True
 
   def __str__(self) -> str:
