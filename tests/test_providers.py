@@ -122,6 +122,21 @@ def test_file_locations_select_independent_containers(tmp_path):
       assert stream.read() == name.encode()
 
 
+def test_file_templates_receive_uri_text_and_keep_typed_objects(tmp_path):
+  from gppu import DataObject
+
+  container = FileLocation({'uid': 'files', 'canonical': tmp_path.as_uri()}, templates={
+    'date': "{{ '2026-09-22' if 'plaud://' in uri else '' }}",
+    'filename': "{{ date.year }}/{{ uri.split('://')[1] }}.json",
+    'identity': "{{ it.id if uri.startswith('plaud://') else none }}",
+  }).container()
+  obj = DataObject(y2uri('plaud://recording'), {'id': 'recording', 'name': 'Before'}, 'recording')
+  container.write(obj)
+  container.write(DataObject(obj.uri, {'id': 'recording', 'name': 'After'}, 'recording'))
+  assert container.read('2026/recording.json').content['name'] == 'After'
+  assert isinstance(obj.uri, y2uri)
+
+
 @pytest.mark.parametrize('path', ['D:/other', '../other', '/etc/passwd', 'smb://server/share'])
 def test_container_rejects_nonlocal_object_paths(tmp_path, path):
   container = FileLocation({'uid': 'local', 'canonical': tmp_path.as_uri()}).container()

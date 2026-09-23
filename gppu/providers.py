@@ -201,10 +201,10 @@ class FileContainer(Container):
       if self.templates is None:
         raise ValueError('File Container requires naming templates to resolve a DataObject')
       uri = urlsplit(str(obj.uri))
-      context = dict(uri=obj.uri, endpoint=uri.path, tenant=uri.netloc, inside='.',
+      context = dict(uri=str(obj.uri), endpoint=uri.path, tenant=uri.netloc, inside='.',
                      it=obj.content, unquote=unquote, identity=obj.identity, filename=obj.name, kind=obj.kind)
       if 'date' in self.templates.named:
-        value = self.templates.render_template('date', it=obj.content, uri=obj.uri,
+        value = self.templates.render_template('date', it=obj.content, uri=str(obj.uri),
           parent=obj.parent.content if obj.parent is not None else None)
         context['date'] = datetime.fromisoformat(value) if value else None
       if obj.parent is not None:
@@ -298,9 +298,9 @@ class FileContainer(Container):
     binary = isinstance(incoming, bytes) or hasattr(incoming, 'read')
     if not binary and target.exists() and 'identity' in self.templates.named:
       relative = target.relative_to(self._root).as_posix()
-      identity = self.templates.render_template('identity', uri=obj.uri, it=incoming, path=relative)
+      identity = self.templates.render_template('identity', uri=str(obj.uri), it=incoming, path=relative)
       if identity is not None and identity != self.templates.render_template('identity',
-          uri=obj.uri, it=json.loads(target.read_bytes()), path=relative):
+          uri=str(obj.uri), it=json.loads(target.read_bytes()), path=relative):
         raise ValueError(f'{target}: refusing to replace a different object identity')
     if not binary:
       stream = BytesIO((json.dumps(incoming, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + '\n').encode('utf-8'))
