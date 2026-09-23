@@ -163,7 +163,7 @@ class Location(_Base):
   The inherited my method reads the Location's configuration.
 
   Attributes:
-    uid (str): Location identity accepted by GppuCatalog.location.
+    uid (str): Configured or enumerated Location identity.
     uri (y2uri): Canonical address of the Location.
 
   Relationships:
