@@ -1,72 +1,72 @@
-"""Provider registration is runtime-only; URI dispatch and construction are inverse."""
+"""Catalog binds Location implementations; Locations select Containers."""
 import pytest
 
-from gppu.providers import Providers
+from gppu import FileLocation, Location, y2uri
+from gppu.handlers import GppuCatalog
 
 
-class Graph:
-  uid = 'm365-graph'
-  schemas = {'root': 'm365://{connection}', 'contacts': 'm365://{connection}/{user}/contacts/{path}',
-             'todo': 'm365://{connection}/{user}/todo/{path}'}
+def test_runtime_location_registration_and_child_binding():
+  class Graph(Location):
+    def container(self, path=''):
+      return self.address(path)
 
-  def root(self, connection):
-    return connection
-
-  def contacts(self, connection, user, path):
-    return connection, user, path
-
-  todo = contacts
-
-
-def test_runtime_registration_dispatch_and_reverse():
-  registry = Providers()
-  assert registry.schemas == []
-  registry.register(Graph())
-  for connection in ('karelin', 'tulaco'):
-    for method in ('contacts', 'todo'):
-      for path in ((), ('folder with space',), ('folder/encoded', 'record%id')):
-        args = {'connection': connection, 'user': 'alex', 'path': path}
-        uri = registry.uri('m365-graph', method, **args)
-        call = registry.resolve(uri)
-        assert (call.provider, call.method, call.arguments, call.uri) == ('m365-graph', method, args, uri)
-        assert registry.open(uri, {connection: {'tenant': connection}}) == ({'tenant': connection}, 'alex', path)
-  assert registry.resolve('m365://karelin').method == 'root'
+  config = {'connections': {'graph': {'provider': 'm365'}}, 'locations': [
+    {'uid': 'graph', 'canonical': 'm365://tenant', 'connection': 'graph', 'locations': [
+      {'uid': 'contacts', 'canonical': 'm365://tenant/alex/contacts'},
+    ]},
+  ]}
+  catalog = GppuCatalog(config, location_types={'m365': Graph})
+  root = catalog.location('graph')
+  contacts = catalog.location('contacts')
+  assert isinstance(root, Graph)
+  assert root.ls() == [contacts]
+  assert contacts.parent is root
+  assert contacts.container('folder with space/record%id') == 'm365://tenant/alex/contacts/folder%20with%20space/record%25id'
+  assert list(root.walk()) == [(root, [contacts]), (contacts, [])]
 
 
 def test_fixed_root_does_not_require_uri_subdivisions():
-  class Plaud:
-    uid = 'plaud'
-    schemas = {'root': 'plaud://'}
-    def root(self, connection):
-      return connection
-  registry = Providers()
-  registry.register(Plaud())
-  assert registry.uri('plaud', 'root') == 'plaud://'
-  assert registry.open('plaud://', {'plaud': {'token': 'test'}}, connection='plaud') == {'token': 'test'}
-  with pytest.raises(ValueError, match='no loaded Provider'):
-    registry.resolve('plaud://invented-folder')
+  catalog = GppuCatalog({'connections': {}, 'locations': {
+    'plaud': {'canonical': 'plaud://'},
+  }}, location_types={'plaud': Location})
+  root = catalog.location('plaud')
+  assert isinstance(root.uri, y2uri)
+  assert root.address() == 'plaud://'
+  assert root.ls() == []
 
 
-def test_missing_and_ambiguous_routes_fail():
-  registry = Providers()
-  registry.register(Graph())
-  with pytest.raises(ValueError, match='already registered'):
-    registry.register(Graph())
-  with pytest.raises(ValueError, match='no loaded Provider'):
-    registry.resolve('m365://karelin/alex/unknown')
+def test_unknown_location_and_unregistered_scheme_fail():
+  catalog = GppuCatalog({'connections': {}, 'locations': {
+    'remote': {'canonical': 'unknown://root'},
+  }})
   with pytest.raises(KeyError):
-    registry.open('m365://missing', {})
-  with pytest.raises(ValueError, match='differs'):
-    registry.open('m365://karelin', {}, connection='tulaco')
-  with pytest.raises(ValueError, match='dot traversal'):
-    registry.resolve('m365://karelin/alex/contacts/%2e%2e')
+    catalog.location('missing')
+  with pytest.raises(KeyError):
+    catalog.location('remote')
 
 
-def test_file_provider_root_and_multiple_location_paths(tmp_path):
-  registry = Providers().load('gppu.file_provider')
-  for path in (tmp_path, tmp_path / 'one', tmp_path / 'two'):
-    uri = path.as_uri()
-    call = registry.resolve(uri)
-    assert registry.uri(call.provider, call.method, **call.arguments) == uri
-    assert registry.open(uri, {}).root.replace('\\', '/') == str(path).replace('\\', '/')
-  assert registry.resolve('file:///').uri == 'file:///'
+def test_file_locations_select_independent_containers(tmp_path):
+  for name in ('one', 'two'):
+    folder = tmp_path / name
+    folder.mkdir()
+    (folder / 'item.txt').write_text(name)
+  catalog = GppuCatalog({'connections': {}, 'locations': {
+    name: {'canonical': (tmp_path / name).as_uri()} for name in ('one', 'two')
+  }})
+  for name in ('one', 'two'):
+    location = catalog.location(name)
+    assert isinstance(location, FileLocation)
+    container = location.container()
+    assert container.root == (tmp_path / name).as_posix()
+    assert container.ls(detail=False) == ['item.txt']
+    obj = container.read('item.txt')
+    assert obj.uri == location.address('item.txt')
+    with obj.content as stream:
+      assert stream.read() == name.encode()
+
+
+@pytest.mark.parametrize('path', ['D:/other', '../other', '/etc/passwd', 'smb://server/share'])
+def test_container_rejects_nonlocal_object_paths(tmp_path, path):
+  container = FileLocation({'uid': 'local', 'canonical': tmp_path.as_uri()}).container()
+  with pytest.raises(ValueError):
+    container.read(path)
