@@ -26,8 +26,8 @@ from typing import Union, Any, Literal, List, Optional, Tuple, Dict, DefaultDict
 from typing import TypeAlias, ClassVar, Callable, Protocol
 from collections import defaultdict, UserDict, UserList
 from enum import Enum
-from functools import wraps, partial, cache
-from datetime import date, dt, timezone 
+from functools import wraps, partial, cache, total_ordering
+from datetime import datetime as dt, timezone
 from zoneinfo import ZoneInfo
 
 from copy import deepcopy
@@ -109,10 +109,10 @@ def safe_timedelta(o: object) -> float:
   return now_ts() - then
 
 MY_TZ = ZoneInfo("America/Los_Angeles")
-def to_dt(o: object) -> dt | None:
+def safe_datetime(o: object) -> dt | None:
   if isinstance(o, int | float): 
     try: result = dt.fromtimestamp(o, MY_TZ)
-    except: result: None
+    except (OverflowError, OSError, ValueError): return None
     return result
   
   if isinstance(o, dt):
@@ -161,32 +161,6 @@ def pretty_timedelta(ts) -> str:
 
 
 # region Native Types
-class Date(date):
-  """A date a template reads by name: date.YYYY, date.YY, date.MM, date.DD, date.YYMMDD, date.ISO."""
-  @property
-  def YYYY(self) -> str: return f'{self.year:04d}'
-  @property
-  def YY(self) -> str: return f'{self.year % 100:02d}'
-  @property
-  def MM(self) -> str: return f'{self.month:02d}'
-  @property
-  def DD(self) -> str: return f'{self.day:02d}'
-  @property
-  def YYMMDD(self) -> str: return self.YY + self.MM + self.DD
-  @property
-  def ISO(self) -> str: return self.isoformat()
-
-
-def to_date(o: object) -> Date:
-  """A Date from what a configuration writes: a date, a datetime, YYYY-MM-DD with or without
-  a time, or YYMMDD. Anything else is an error, never a guess."""
-  if isinstance(o, datetime): o = o.date()
-  if not isinstance(o, date):
-    s = str(o).strip()
-    o = dt.strptime(s, '%y%m%d').date() if re.fullmatch(r'\d{6}', s) else dt.fromisoformat(s).date()
-  return Date(o.year, o.month, o.day)
-
-
 class Span:
   def __contains__(self, value: Span) -> bool:
     ...
@@ -196,10 +170,10 @@ class TimeSpan(Span):
   end: dt
 
   def __init__(self, **kw):
-    if start := kw.get('start'):
-      self.start = to_dt(start)
-    if end := kw.get('end'):
-      self.end = to_dt(end)
+    self.start = safe_datetime(kw['start'])
+    self.end = safe_datetime(kw['end'])
+    if self.start is None or self.end is None: raise ValueError('TimeSpan requires valid start and end values')
+    if self.end < self.start: raise ValueError('TimeSpan end precedes start')
 
 
 class y2list(UserList):
@@ -329,10 +303,10 @@ class y2uri:
     else: s = str(o)
 
     if '://' in s:
-      head, _, sail = s.partition('://')
+      head, _, s = s.partition('://')
       if scheme and head and head != scheme: raise ValueError(f"Two schemas in uri {head} {scheme}")
       self.scheme = head or scheme or 'null'
-    else: self.sceme = scheme or 'null'
+    else: self.scheme = scheme or 'null'
     
     s, _, self._fragment = s.partition('#')
     s, _, self._query = s.partition('?')
@@ -411,6 +385,27 @@ class y2uri:
     # anchor = quote(fields['anchor'], safe='') if 'anchor' in fields else ''
     # return anchor + ':~:' + '&'.join(directives)
 
+  def endswith(self, suffix) -> bool: return self.path.endswith(suffix)
+
+  def __truediv__(self, path: y2path | str) -> 'y2uri':
+    if not isinstance(path, (str, y2path)):
+      return NotImplemented
+    value = str(path)
+    if '://' in value:
+      raise ValueError('Join a path, not another URI')
+    if '?' in value or '#' in value:
+      raise ValueError('Join an escaped path; set params and fragment separately')
+    if not value:
+      return y2uri(self)
+    tail = str(self.path)
+    base = self.scheme + '://' + (tail.rstrip('/') + '/' if tail else '')
+    result = y2uri(base + value.lstrip('/'))
+    result.query = self.query
+    result.fragment = self.fragment
+    return result
+
+  def __add__(self, path: y2path | str) -> 'y2uri':
+    return self / path
 
 # endregion
 
@@ -678,7 +673,7 @@ def jinja_helpers() -> dict:
   return {
     'safe_int': safe_int, 'safe_float': safe_float, 'safe_list': safe_list,
     'safe_timedelta': safe_timedelta, 'dict_sanitize': dict_sanitize,
-    'pretty_timedelta': pretty_timedelta, 'pfy': pfy, 'slugify': slugify, 'to_date': to_date,
+    'pretty_timedelta': pretty_timedelta, 'pfy': pfy, 'slugify': slugify,
   }
 
 
@@ -911,24 +906,24 @@ def format_since(when) -> str:
   return ``'0s'``.
   """
 
-  dt = None
-  if isinstance(when, datetime):
-    dt = when
+  moment = None
+  if isinstance(when, dt):
+    moment = when
   elif isinstance(when, (int, float)):
-    dt = datetime.fromtimestamp(float(when), tz=timezone.utc)
+    moment = dt.fromtimestamp(float(when), tz=timezone.utc)
   elif isinstance(when, str):
     s = when.strip()
     if not s: return ""
     if s.endswith('Z'): s = s[:-1] + '+00:00'
-    try: dt = datetime.fromisoformat(s)
+    try: moment = dt.fromisoformat(s)
     except ValueError: return ""
   else:
     return ""
 
-  if dt.tzinfo is None:
-    dt = dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
+  if moment.tzinfo is None:
+    moment = moment.replace(tzinfo=dt.now().astimezone().tzinfo)
 
-  secs = int((datetime.now(timezone.utc) - dt).total_seconds())
+  secs = int((dt.now(timezone.utc) - moment).total_seconds())
   if secs < 0:    return "0s"
   if secs < 60:   return f"{secs}s"
   mins = secs // 60
