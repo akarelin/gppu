@@ -144,7 +144,7 @@ def test_uri_mutable_query_parameters_and_path_joins():
   for joined in (uri / y2path('child'), uri + 'child'):
     assert str(joined.path) == 'host/folder/item/child'
     assert joined.params == uri.params
-    assert joined.fragment == 'section'
+    assert joined.fragment == {'anchor': 'section'}
     joined.params['tag'].append('c')
     assert uri.params['tag'] == ['a', 'b']
   copied = y2uri(uri)
@@ -168,7 +168,7 @@ def test_uri_query_and_fragment_instance_access():
   assert list(inspect.signature(y2uri).parameters) == ['o', 'scheme']
   uri = y2uri('https://host/path?key=first#section')
   assert uri.query == 'key=first'
-  assert uri.fragment == 'section'
+  assert uri.fragment == {'anchor': 'section'}
   uri.query = 'tag=a&tag=b&empty=&q=hello%20world'
   assert uri.params == {'tag': ['a', 'b'], 'empty': '', 'q': 'hello world'}
   uri.params['q'] = 'other'
@@ -176,7 +176,7 @@ def test_uri_query_and_fragment_instance_access():
   assert str(uri) == 'https://host/path?tag=a&tag=b&empty=&q=other#next'
   joined = uri / 'child'
   assert joined.query == uri.query
-  assert joined.fragment == 'next'
+  assert joined.fragment == {'anchor': 'next'}
   uri.query = ''
   uri.fragment = ''
   assert uri.params == {}
@@ -207,7 +207,7 @@ def test_uri_constructor_accepts_y2eid_style_inputs(form):
   assert uri.scheme == 'm365'
   assert isinstance(uri.path, y2path)
   assert uri.params == {'tag': ['a', 'b']}
-  assert uri.fragment == 'section'
+  assert uri.fragment == {'anchor': 'section'}
   uri.path.append('child')
   uri.params['tag'].append('c')
   assert original == text
@@ -242,3 +242,58 @@ def test_uri_constructor_scheme_matches_eid_namespace_precedence():
     default_scheme = 'file'
 
   assert FileURI('host/path') == 'file://host/path'
+
+
+def test_media_fragment_fields_are_mutable_and_separate_from_query():
+  uri = y2uri('https://host/video?t=1,2#t=10,20&xywh=percent:10,20,30,40&track=audio&track=video')
+  assert uri.params == {'t': '1,2'}
+  assert uri.fragment == {'t': '10,20', 'xywh': 'percent:10,20,30,40', 'track': ['audio', 'video']}
+  uri.fragment['t'] = '30,40'
+  assert str(uri).endswith('#t=30,40&xywh=percent:10,20,30,40&track=audio&track=video')
+  joined = uri / 'child'
+  joined.fragment['track'].append('captions')
+  assert uri.fragment['track'] == ['audio', 'video']
+  assert y2uri(str(uri)).fragment == uri.fragment
+  uri.fragment = 'id=A+B%20C'
+  assert uri.fragment == {'id': 'A+B C'}
+  assert str(uri).endswith('#id=A%2BB%20C')
+
+
+def test_text_fragment_fields_and_escaped_delimiters_round_trip():
+  uri = y2uri('https://host/page#section:~:text=before-,hello%2C%20world,end%2Dtext,-after&text=other')
+  assert uri.fragment == {'anchor': 'section', 'text': [
+    {'prefix': 'before', 'textStart': 'hello, world', 'textEnd': 'end-text', 'suffix': 'after'},
+    {'textStart': 'other'}]}
+  assert str(uri) == 'https://host/page#section:~:text=before-,hello%2C%20world,end%2Dtext,-after&text=other'
+  uri.fragment['text'][0]['textStart'] = 'new&text'
+  assert 'text=before-,new%26text,end%2Dtext,-after' in str(uri)
+  copied = y2uri(uri)
+  copied.fragment['text'][0]['prefix'] = 'changed'
+  assert uri.fragment['text'][0]['prefix'] == 'before'
+  assert y2uri(str(uri)).fragment == uri.fragment
+  joined = uri + 'child'
+  joined.fragment['text'][0]['textStart'] = 'different'
+  assert uri.fragment['text'][0]['textStart'] == 'new&text'
+
+
+def test_assign_parsed_fragment_fields():
+  uri = y2uri('host/path')
+  uri.fragment = {'t': '10,20'}
+  assert str(uri) == 'null://host/path#t=10,20'
+  uri.fragment = {'text': [{'textStart': 'hello world'}]}
+  assert str(uri) == 'null://host/path#:~:text=hello%20world'
+  uri.fragment = 'section'
+  assert str(uri) == 'null://host/path#section'
+
+
+def test_anchor_fragment_fields_mutation_and_copy():
+  uri = y2uri('https://host/page#chapter%201')
+  assert uri.fragment == {'anchor': 'chapter 1'}
+  assert str(uri) == 'https://host/page#chapter%201'
+  uri.fragment['anchor'] = 'chapter 2'
+  assert str(uri).endswith('#chapter%202')
+  copied = y2uri(uri)
+  copied.fragment['anchor'] = 'other'
+  assert uri.fragment == {'anchor': 'chapter 2'}
+  uri.fragment.clear()
+  assert str(uri) == 'https://host/page'
