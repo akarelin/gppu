@@ -61,7 +61,7 @@ strict; `FileHandler` captures their failures per record.
 
 One named handler's result, contextual metadata, and optional error.
 
-## `FileStats(files: 'int', folders: 'int', bytes: 'int', span: 'Span | None') -> None`
+## `FileStats(files: 'int', folders: 'int', bytes: 'int', span: 'TimeSpan | None') -> None`
 
 File count, folder count, byte count, and span for one hierarchy.
 
@@ -445,7 +445,7 @@ macOS and Debian installations expose `rar` or `unrar` through
 WinRAR installation directories because its installer does not add the
 commands to `PATH`. Absence is an error instead of a reduced parser.
 
-### `ArchiveHandler.archive_name(cls, span: 'Span', name: 'str', extension: 'str', local_time: 'tzinfo') -> 'str'`
+### `ArchiveHandler.archive_name(cls, span: 'TimeSpan', name: 'str', extension: 'str', local_time: 'tzinfo') -> 'str'`
 
 Return the required end/start archive name for a hierarchy span.
 
@@ -678,7 +678,7 @@ Return file statistics and metadata without parsing the message.
 
 Return `NotImplemented`; email payload parsing is not implemented.
 
-## `BrowserProfile(path: 'Path', family: 'str', browser: 'str', profile: 'str', history: 'int', urls: 'int', favorites: 'int', downloads: 'int', span: 'Span | None') -> None`
+## `BrowserProfile(path: 'Path', family: 'str', browser: 'str', profile: 'str', history: 'int', urls: 'int', favorites: 'int', downloads: 'int', span: 'TimeSpan | None') -> None`
 
 One browser profile's history, bookmarks, and downloads, as counts and a span.
 
@@ -740,7 +740,7 @@ Placeholder for video EXIF metadata after media-format recognition.
 
 One extracted user or assistant message with provenance flags.
 
-## `SessionFile(path: 'Path | PurePosixPath', harness: 'Harness', uid: 'str | None', parent_uid: 'str | None', subagent: 'bool', records: 'tuple[Mapping[str, Any], ...]', turns: 'tuple[SessionTurn, ...]', span: 'Span | None', models: 'tuple[str, ...]', topic: 'str', sidechain_only: 'bool' = False, location: 'Path | None' = None) -> None`
+## `SessionFile(path: 'Path | PurePosixPath', harness: 'Harness', uid: 'str | None', parent_uid: 'str | None', subagent: 'bool', records: 'tuple[Mapping[str, Any], ...]', turns: 'tuple[SessionTurn, ...]', span: 'TimeSpan | None', models: 'tuple[str, ...]', topic: 'str', sidechain_only: 'bool' = False, location: 'Path | None' = None) -> None`
 
 One complete native or exported session.
 
@@ -1226,10 +1226,10 @@ What one item is, with its content type and its custom columns.
 Configured Locations, exposed as a filesystem-shaped catalog.
 
 After `Env.from_env(...)` or `Env.from_dict(...)`, `GppuCatalog()`
-resolves the configured connections and nested Locations. `location(uid)`,
-`connection(uid)`, `path(uid, relative_path)` and `ls(recurse=True)`
-operate only on configuration. They never open a provider or index. An
-explicit mapping accepts the same data from another configuration loader.
+resolves the configured connections and nested Locations. `ls(recurse=True)`
+walks that configuration tree. `location(uid)` returns the Location whose
+`ls` and `walk` enumerate children at its address. An explicit mapping
+accepts the same data from another configuration loader.
 
 The explicit folder argument retains the existing exported-host catalog:
 
@@ -1252,21 +1252,13 @@ them. Every address at or below a Location is served by that Location's
 owns it. A Location root's parent is its parent Location when the catalog
 names one, otherwise the catalog root, so a browser walks the Locations tree.
 
-### `GppuCatalog.location(self, uid: 'str') -> 'dict'`
+### `GppuCatalog.location(self, uid: 'str') -> 'Location'`
 
-Return one configured Location; this never enumerates its contents.
+Return the configured Location itself, binding its implementation lazily.
 
-### `GppuCatalog.connection(self, uid: 'str') -> 'dict'`
+### `GppuCatalog.filesystem(self, uid: 'str') -> 'GppuFileSystem'`
 
-Return the connection serving a configured Location, without opening it.
-
-### `GppuCatalog.path(self, uid: 'str', relative_path: 'str' = '') -> 'str'`
-
-Resolve a local filename from a Location's configured access root.
-
-A database/configuration loader resolves the host's access root. Ordinary
-file writers can use this method without constructing GppuFileSystem.
-No directory is created and no file, provider or index is opened.
+Indexing is explicitly selected; ingestion uses Location operations.
 
 ### `GppuCatalog.info(self, path: 'str | Path | None' = None, refresh: 'bool' = False, **kwargs) -> 'dict'`
 

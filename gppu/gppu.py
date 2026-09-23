@@ -26,7 +26,7 @@ from typing import Union, Any, Literal, List, Optional, Tuple, Dict, DefaultDict
 from typing import TypeAlias, ClassVar, Callable, Protocol
 from collections import defaultdict, UserDict, UserList
 from enum import Enum
-from functools import wraps, partial, cache, total_ordering
+from functools import wraps, partial, cache
 from datetime import datetime as dt, timezone
 from zoneinfo import ZoneInfo
 
@@ -281,7 +281,6 @@ class y2topic(y2path):
   def is_wildcard(self) -> bool: return bool(set(self.data) & {"#", "+"})
 
 
-@total_ordering
 class y2uri:
   """
     Implements:
@@ -313,7 +312,8 @@ class y2uri:
     s, _, self._fragment = s.partition('#')
     s, _, self._query = s.partition('?')
 
-    self.path = y2path(s)
+    self.path = y2path()
+    self.path.data = s.split('/')
 
 
   def __str__(self) -> str:
@@ -329,7 +329,9 @@ class y2uri:
 
   def __truediv__(self, path: y2path | str) -> 'y2uri':
     result = y2uri(self)
-    result.path = self.path / path
+    if str(path):
+      if result.path.data[-1:] == ['']: result.path.data.pop()
+      result.path.data += str(path).lstrip('/').split('/')
     return result
 
   @property

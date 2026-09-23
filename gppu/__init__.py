@@ -24,6 +24,12 @@ from .app import (
 )
 
 from .gppu import (
+    Span,
+    TimeSpan,
+    y2list,
+    y2path,
+    y2uri,
+    y2topic,
     # Vault / Secrets
     Vault,
     VaultProvider,
@@ -136,10 +142,6 @@ from .environment import Environment, State
 
 from .iot import (
     # y2xxx classes
-    y2list,
-    y2path,
-    y2uri,
-    y2topic,
     y2slug,
     y2eid,
 
@@ -156,6 +158,7 @@ from .iot import (
 
 __version__ = VER_GPPU
 __all__ = [
+    'Span', 'TimeSpan',
     # Version
     'VER_GPPU', 'VER_GPPU_BASE', 'VER_GPPU_BUILD', '__version__',
 

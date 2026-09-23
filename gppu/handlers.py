@@ -81,12 +81,11 @@ from fsspec.implementations.tar import TarFileSystem
 from fsspec.spec import AbstractFileSystem
 from fsspec.utils import stringify_path
 
-from .gppu import Env, OSType, TemplateSet, detect_os, full_path, sync
+from .gppu import TimeSpan, Env, OSType, TemplateSet, detect_os, full_path, sync
 from .providers import FileLocation, Location
 
 ObjectT = TypeVar("ObjectT")
 StatsT = TypeVar("StatsT")
-Span = tuple[datetime, datetime]
 Signature = tuple[int, int, int]
 Harness = Literal[
     "chatgpt",
@@ -372,7 +371,7 @@ class FileStats:
     files: int
     folders: int
     bytes: int
-    span: Span | None
+    span: TimeSpan | None
 
 
 @dataclass(frozen=True)
@@ -415,7 +414,7 @@ class Record:
         return f"{self.location}::{self.path.as_posix()}"
 
     @property
-    def span(self) -> Span | None:
+    def span(self) -> TimeSpan | None:
         """Return the derived hierarchy span when statistics are available."""
 
         return self.stats.span if self.stats is not None else None
@@ -469,7 +468,7 @@ class _FolderFrame:
     files: int = 0
     folders: int = 0
     bytes: int = 0
-    span: Span | None = None
+    span: TimeSpan | None = None
 
     def add(self, child: Record) -> None:
         """Accumulate one completed direct child record."""
@@ -483,9 +482,9 @@ class _FolderFrame:
             self.span = (
                 child.stats.span
                 if self.span is None
-                else (
-                    min(self.span[0], child.stats.span[0]),
-                    max(self.span[1], child.stats.span[1]),
+                else TimeSpan(
+                    start=min(self.span.start, child.stats.span.start),
+                    end=max(self.span.end, child.stats.span.end),
                 )
             )
 
@@ -1565,7 +1564,7 @@ class FileHandler(Handler):
         spans = [span for probe in record.probes if (span := _stats_span(probe.stats))]
         span = _combine_spans(spans) or FileHandler._name_span(record.name)
         modified = (
-            (record.modified_at, record.modified_at) if record.modified_at else None
+            TimeSpan(start=record.modified_at, end=record.modified_at) if record.modified_at else None
         )
         return FileStats(1, 0, record.size, span or modified)
 
@@ -1594,7 +1593,7 @@ class FileHandler(Handler):
         files: int,
         folders: int,
         size: int,
-        child_span: Span | None,
+        child_span: TimeSpan | None,
     ) -> FileStats:
         """Combine incremental child totals with a folder's own span evidence."""
 
@@ -1614,12 +1613,12 @@ class FileHandler(Handler):
             if child_span is not None:
                 spans.append(child_span)
         modified = (
-            (record.modified_at, record.modified_at) if record.modified_at else None
+            TimeSpan(start=record.modified_at, end=record.modified_at) if record.modified_at else None
         )
         return FileStats(files, folders, size, _combine_spans(spans) or modified)
 
     @classmethod
-    def _name_span(cls, name: str) -> Span | None:
+    def _name_span(cls, name: str) -> TimeSpan | None:
         """Derive a span from supported dates, timestamps, epochs, and durations."""
 
         if match := FILENAME_SHORT_DATE_SPAN.search(name):
@@ -1634,15 +1633,15 @@ class FileHandler(Handler):
 
         times = cls._filename_times(name)
         if times:
-            span = min(times), max(times)
+            span = TimeSpan(start=min(times), end=max(times))
             if len(times) == 1 and (duration := FILENAME_DURATION.search(name)):
                 seconds = int(duration.group(1)) * next(
                     size for unit, size in UNITS if unit == duration.group(2).casefold()
                 )
                 if (
-                    end := valid_time(span[0] + timedelta(seconds=seconds))
+                    end := valid_time(span.start + timedelta(seconds=seconds))
                 ) is not None:
-                    span = span[0], end
+                    span = TimeSpan(start=span.start, end=end)
             return span
 
         dates = cls._filename_dates(name)
@@ -1651,10 +1650,10 @@ class FileHandler(Handler):
         return cls._date_span(dates)
 
     @staticmethod
-    def _date_span(dates: Sequence[datetime]) -> Span:
+    def _date_span(dates: Sequence[datetime]) -> TimeSpan:
         """Inclusive span covering every representable instant of each date."""
 
-        return min(dates), max(dates) + timedelta(days=1, microseconds=-1)
+        return TimeSpan(start=min(dates), end=max(dates) + timedelta(days=1, microseconds=-1))
 
     @classmethod
     def _filename_times(cls, name: str) -> tuple[datetime, ...]:
@@ -1803,7 +1802,7 @@ class GitHandler(Handler):
         super().__init__(metadata, strict=strict)
         self._git_cache: dict[
             Path,
-            tuple[tuple[Any, ...], frozenset[Path], dict[Path, Span]],
+            tuple[tuple[Any, ...], frozenset[Path], dict[Path, TimeSpan]],
         ] = {}
 
     @sync
@@ -1870,7 +1869,7 @@ class GitHandler(Handler):
         self,
         root: Path,
         metadata: Path,
-    ) -> tuple[frozenset[Path], dict[Path, Span]]:
+    ) -> tuple[frozenset[Path], dict[Path, TimeSpan]]:
         """Return the cached tracked paths and local commit spans for a repository."""
 
         state = self._state(metadata)
@@ -1891,7 +1890,7 @@ class GitHandler(Handler):
                 if parent == root:
                     break
 
-        spans: dict[Path, Span] = {}
+        spans: dict[Path, TimeSpan] = {}
         moment: datetime | None = None
         history = self._git(
             root,
@@ -2014,13 +2013,13 @@ class GitHandler(Handler):
         return path
 
     @staticmethod
-    def _add_span(spans: dict[Path, Span], path: Path, moment: datetime) -> None:
+    def _add_span(spans: dict[Path, TimeSpan], path: Path, moment: datetime) -> None:
         """Extend ``path`` to include one commit timestamp."""
 
         if span := spans.get(path):
-            spans[path] = min(span[0], moment), max(span[1], moment)
+            spans[path] = TimeSpan(start=min(span.start, moment), end=max(span.end, moment))
         else:
-            spans[path] = moment, moment
+            spans[path] = TimeSpan(start=moment, end=moment)
 
     @classmethod
     def _state(cls, metadata: Path) -> tuple[Any, ...]:
@@ -2405,7 +2404,7 @@ class ArchiveHandler(Handler):
     @classmethod
     def archive_name(
         cls,
-        span: Span,
+        span: TimeSpan,
         name: str,
         extension: str,
         local_time: tzinfo,
@@ -2420,7 +2419,7 @@ class ArchiveHandler(Handler):
         )
         if not safe_name:
             raise ValueError("archive name is empty")
-        start, end = (moment.astimezone(local_time) for moment in span)
+        start, end = (moment.astimezone(local_time) for moment in (span.start, span.end))
         return f"{end:%y%m%d}_end-{start:%y%m%d}_start_{safe_name}{extension}"
 
     @staticmethod
@@ -2622,13 +2621,13 @@ class MarkdownFile:
         return tuple(str(item) for item in values if item is not None)
 
     @property
-    def span(self) -> Span | None:
+    def span(self) -> TimeSpan | None:
         """Return the chronological ``created`` to ``updated`` span."""
 
         created = self._time(self.frontmatter.get("created"))
         updated = self._time(self.frontmatter.get("updated"))
         return (
-            (min(created, updated), max(created, updated))
+            TimeSpan(start=min(created, updated), end=max(created, updated))
             if created is not None and updated is not None
             else None
         )
@@ -2752,10 +2751,10 @@ class CSVFile:
         return {"header": self.header, "rows": len(self.rows)}
 
     @property
-    def span(self) -> Span | None:
+    def span(self) -> TimeSpan | None:
         """Return the earliest-to-latest valid timestamp cell."""
 
-        return (min(self.timestamps), max(self.timestamps)) if self.timestamps else None
+        return TimeSpan(start=min(self.timestamps), end=max(self.timestamps)) if self.timestamps else None
 
 
 class CSVHandler(Handler):
@@ -2895,10 +2894,10 @@ class LogFile:
         return {"rows": len(self.rows)}
 
     @property
-    def span(self) -> Span | None:
+    def span(self) -> TimeSpan | None:
         """Return the first-to-last recorded timestamp, if any rows have one."""
 
-        return (min(self.timestamps), max(self.timestamps)) if self.timestamps else None
+        return TimeSpan(start=min(self.timestamps), end=max(self.timestamps)) if self.timestamps else None
 
 
 class LogHandler(Handler):
@@ -2990,10 +2989,10 @@ class EmailFile:
     collision: int | None
 
     @property
-    def span(self) -> Span | None:
+    def span(self) -> TimeSpan | None:
         """Return the filename timestamp as a one-instant span."""
 
-        return (self.timestamp, self.timestamp) if self.timestamp is not None else None
+        return TimeSpan(start=self.timestamp, end=self.timestamp) if self.timestamp is not None else None
 
     @property
     def metadata(self) -> dict[str, Any]:
@@ -3124,7 +3123,7 @@ class BrowserProfile:
     urls: int
     favorites: int
     downloads: int
-    span: Span | None
+    span: TimeSpan | None
 
     @property
     def metadata(self) -> dict[str, Any]:
@@ -3343,7 +3342,7 @@ class BrowserHandler(Handler):
             urls=urls,
             favorites=favorites,
             downloads=downloads,
-            span=(min(times), max(times)) if times else None,
+            span=TimeSpan(start=min(times), end=max(times)) if times else None,
         )
 
     @classmethod
@@ -3431,7 +3430,7 @@ class BrowserHandler(Handler):
             urls=urls,
             favorites=favorites,
             downloads=downloads,
-            span=(min(times), max(times)) if times else None,
+            span=TimeSpan(start=min(times), end=max(times)) if times else None,
         )
 
 
@@ -3472,7 +3471,7 @@ class SessionFile:
     subagent: bool
     records: tuple[Mapping[str, Any], ...]
     turns: tuple[SessionTurn, ...]
-    span: Span | None
+    span: TimeSpan | None
     models: tuple[str, ...]
     topic: str
     sidechain_only: bool = False
@@ -3494,13 +3493,13 @@ class SessionFile:
     def span_start(self) -> datetime | None:
         """Return the first valid session timestamp."""
 
-        return self.span[0] if self.span else None
+        return self.span.start if self.span else None
 
     @property
     def span_end(self) -> datetime | None:
         """Return the last valid session timestamp."""
 
-        return self.span[1] if self.span else None
+        return self.span.end if self.span else None
 
     @property
     def user_messages(self) -> tuple[str, ...]:
@@ -3523,7 +3522,7 @@ class SessionFile:
 
         if self.span is None:
             return ""
-        seconds = round((self.span[1] - self.span[0]).total_seconds())
+        seconds = round((self.span.end - self.span.start).total_seconds())
         if not seconds:
             return ""
         unit, size = next(pair for pair in UNITS if seconds >= pair[1])
@@ -3533,7 +3532,7 @@ class SessionFile:
     def label(self) -> str:
         """Return the date, turn count, duration, and topic display label."""
 
-        start = f"{self.span[0].astimezone():%y%m%d-%H%M} " if self.span else ""
+        start = f"{self.span.start.astimezone():%y%m%d-%H%M} " if self.span else ""
         topic = f" - {self.topic}" if self.topic else ""
         return f"{start}{len(self.turns)}{self.length}{topic}"
 
@@ -3588,11 +3587,11 @@ class SessionStats:
     models: tuple[str, ...]
 
     @property
-    def span(self) -> Span | None:
+    def span(self) -> TimeSpan | None:
         """Return the complete span when both bounds are available."""
 
         return (
-            (self.span_start, self.span_end)
+            TimeSpan(start=self.span_start, end=self.span_end)
             if self.span_start is not None and self.span_end is not None
             else None
         )
@@ -3615,8 +3614,8 @@ class SessionStats:
             sessions=len({file.uid for file in files if file.uid}),
             turns=sum(len(file.turns) for file in files),
             bytes=sum(path.stat().st_size for path in paths),
-            span_start=span[0] if span else None,
-            span_end=span[1] if span else None,
+            span_start=span.start if span else None,
+            span_end=span.end if span else None,
             models=tuple(
                 dict.fromkeys(model for file in files for model in file.models)
             ),
@@ -3801,7 +3800,7 @@ class _LLMExportHandler(Handler):
             subagent=False,
             records=(conversation,),
             turns=turns,
-            span=(min(timestamps), max(timestamps)) if timestamps else None,
+            span=TimeSpan(start=min(timestamps), end=max(timestamps)) if timestamps else None,
             models=SessionHandler._models((conversation,)),
             topic=SessionHandler._topic(turns),
             location=location,
@@ -4204,7 +4203,7 @@ class SessionHandler(Handler):
             subagent=subagent,
             records=records,
             turns=turns,
-            span=(min(timestamps), max(timestamps)) if timestamps else None,
+            span=TimeSpan(start=min(timestamps), end=max(timestamps)) if timestamps else None,
             models=self._models(records),
             topic=self._topic(turns),
             sidechain_only=sidechain and not mainline,
@@ -4939,26 +4938,26 @@ def _archive_stats(records: Sequence[Record]) -> FileStats:
     return FileHandler._folder_stats(root, children)
 
 
-def _stats_span(stats: Any) -> Span | None:
+def _stats_span(stats: Any) -> TimeSpan | None:
     """Read a complete span from either supported statistics representation."""
 
     span = getattr(stats, "span", None)
-    if isinstance(span, tuple) and len(span) == 2:
+    if isinstance(span, TimeSpan):
         return span
     start = getattr(stats, "span_start", None)
     end = getattr(stats, "span_end", None)
     return (
-        (start, end)
+        TimeSpan(start=start, end=end)
         if isinstance(start, datetime) and isinstance(end, datetime)
         else None
     )
 
 
-def _combine_spans(spans: Sequence[Span]) -> Span | None:
+def _combine_spans(spans: Sequence[TimeSpan]) -> TimeSpan | None:
     """Return the earliest start and latest end across all spans."""
 
     return (
-        (min(span[0] for span in spans), max(span[1] for span in spans))
+        TimeSpan(start=min(span.start for span in spans), end=max(span.end for span in spans))
         if spans
         else None
     )
@@ -4981,8 +4980,10 @@ def typed(text: str) -> str:
     return text
 
 
-def _metadata_text(value: Any) -> str:
+def _metadata_text(value: Any) -> str | list[datetime]:
     """JSON text for a value the index carries: a time in this host's local zone, anything else as written."""
+    if isinstance(value, TimeSpan):
+        return [value.start, value.end]
     if isinstance(value, datetime):
         return str(value.astimezone())
     return str(value)
@@ -5529,7 +5530,7 @@ class GppuFileSystem(AbstractFileSystem):
     for handler, stored in value['stats'].items():
       stats = dict(stored)
       if 'span' in stats and stats['span'] is not None:
-        stats['span'] = tuple(datetime.fromisoformat(bound) for bound in stats['span'])
+        stats['span'] = TimeSpan(start=stats['span'][0], end=stats['span'][1])
       for field in ('span_start', 'span_end'):
         if field in stats and stats[field] is not None:
           stats[field] = datetime.fromisoformat(stats[field])
@@ -5538,7 +5539,7 @@ class GppuFileSystem(AbstractFileSystem):
       value['size'], datetime.fromisoformat(value['modified_at']) if value['modified_at'] else None,
       tuple(value['handlers']), probes=tuple(probes),
       stats=None if value.get('files') is None else FileStats(value['files'], value['folders'], value['bytes'],
-        tuple(datetime.fromisoformat(bound) for bound in value['span']) if value['span'] else None))
+        TimeSpan(start=value['span'][0], end=value['span'][1]) if value['span'] else None))
 
   def _save(self, rows: dict[str, tuple[dict, list[str] | None]], scope: str) -> None:
     def metadata_for(key):
@@ -6866,14 +6867,14 @@ class GppuCatalog(AbstractFileSystem):
     rows = {path: self._location_row(fs)['gppu'] for path, fs in self._filesystems.items()}
     counted = [row for path, row in rows.items() if row['files'] is not None
       and not any(rows[parent]['files'] is not None for parent in self._ancestors(path))]
-    spans = [tuple(datetime.fromisoformat(bound) for bound in row['span']) for row in counted if row['span']]
+    spans = [TimeSpan(start=row['span'][0], end=row['span'][1]) for row in counted if row['span']]
     refreshed = [datetime.fromisoformat(row['probed_at']) for row in rows.values() if row['probed_at']]
     return {'name': self.root, 'type': 'directory', 'size': 0, 'gppu': {
       'name': self.catalog.name, 'path': self.root, 'parent': None, 'type': 'folder', 'modified_at': None,
       'handlers': [], 'files': sum(row['files'] for row in counted) if counted else None,
       'folders': sum(row['folders'] for row in counted) if counted else None,
       'bytes': sum(row['bytes'] for row in counted) if counted else None,
-      'span': [str(min(span[0] for span in spans)), str(max(span[1] for span in spans))] if spans else None,
+      'span': [str(min(span.start for span in spans)), str(max(span.end for span in spans))] if spans else None,
       'stats': {}, 'probed': False, 'probed_at': str(max(refreshed)) if refreshed else None, 'is_container': True,
       'locations': len(self.locations), 'indexed': sum(row['indexed'] for row in rows.values())}}
 

@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 import gppu.handlers as handlers_module
-from gppu import OSType, detect_os
+from gppu import OSType, TimeSpan, detect_os
 
 from gppu.handlers import (
   typed,
@@ -254,8 +254,17 @@ def _git_commit(path: Path, message: str, timestamp: str) -> None:
   )
 
 
-def _iso(span) -> list[str]:
-  return [moment.isoformat() for moment in span]
+def _bounds(span) -> tuple[datetime, datetime]:
+  assert isinstance(span, TimeSpan)
+  return span.start, span.end
+
+
+def _iso(span) -> list[datetime]:
+  return list(_bounds(span))
+
+
+def _stats(stats):
+  return stats.files, stats.folders, stats.bytes, _bounds(stats.span) if stats.span else None
 
 
 def test_session_handler_returns_stats_and_complete_object(tmp_path: Path) -> None:
@@ -268,14 +277,14 @@ def test_session_handler_returns_stats_and_complete_object(tmp_path: Path) -> No
   assert (len(session.turns), session.user_messages) == (2, ('Question',))
   assert session.models == ('gpt-5.6',)
   assert (stats.files, stats.sessions, stats.turns) == (1, 1, 2)
-  assert _iso(stats.span) == [
+  assert _iso(stats.span) == [datetime.fromisoformat(value) for value in [
     '2026-08-20T01:00:00+00:00',
     '2026-08-20T01:02:00+00:00',
-  ]
+  ]]
 
   record = file_handler.probe(path, recursive=False)[0]
   assert record.handlers == ('session',)
-  assert record.span == stats.span
+  assert _bounds(record.span) == _bounds(stats.span)
 
 
 def test_session_identification_checks_extension_and_size_before_reading(
@@ -370,10 +379,10 @@ def test_openai_export_chunks_are_one_session_collection(tmp_path: Path) -> None
   assert sessions.files[0].user_messages == ('Question',)
   assert sessions.files[0].models == ('gpt-5.6',)
   assert (stats.files, stats.sessions, stats.turns, stats.bytes) == (1, 2, 4, path.stat().st_size)
-  assert _iso(stats.span) == [
+  assert _iso(stats.span) == [datetime.fromisoformat(value) for value in [
     '2026-08-01T12:00:00+00:00',
     '2026-08-01T12:02:00+00:00',
-  ]
+  ]]
   assert file_handler.identify(path, recursive=False)[0].handlers == ('chatgpt', 'archive')
 
 
@@ -391,10 +400,10 @@ def test_anthropic_export_uses_flat_human_and_assistant_messages(tmp_path: Path)
   assert sessions.files[0].uid == 'claude-one'
   assert sessions.files[0].user_messages == ('Question',)
   assert sessions.files[0].topic == 'Question'
-  assert _iso(stats.span) == [
+  assert _iso(stats.span) == [datetime.fromisoformat(value) for value in [
     '2026-08-01T12:00:00+00:00',
     '2026-08-01T12:02:00+00:00',
-  ]
+  ]]
 
 
 def test_chatgpt_and_anthropic_handlers_load_extracted_export_folders(tmp_path: Path) -> None:
@@ -449,7 +458,7 @@ def test_file_handler_uses_concrete_handler_mixins(tmp_path: Path) -> None:
   stats, folder = folder_handler(tmp_path)
 
   assert folder == tmp_path
-  assert stats == FileStats(0, 0, 0, None)
+  assert _stats(stats) == _stats(FileStats(0, 0, 0, None))
   assert file_handler.identify(tmp_path, recursive=False)[0].handlers == ('folder',)
 
 
@@ -515,11 +524,11 @@ unknown:
     'Display name',
     ('meta', 'handlers'),
   )
-  assert _iso(markdown.span) == [
+  assert _iso(markdown.span) == [datetime.fromisoformat(value) for value in [
     '2026-08-27T19:42:00-07:00',
     '2026-09-01T05:11:00-07:00',
-  ]
-  assert stats == FileStats(1, 0, path.stat().st_size, markdown.span)
+  ]]
+  assert _stats(stats) == _stats(FileStats(1, 0, path.stat().st_size, markdown.span))
   assert file_handler.probe(path, recursive=False)[0].handlers == ('markdown',)
 
 
@@ -562,7 +571,7 @@ def test_csv_handler_reads_header_and_every_row(tmp_path: Path) -> None:
   assert isinstance(table, CSVFile)
   assert table.header == ('title', 'tags')
   assert table.rows == (('One', 'a,b'), ('Two', 'c'))
-  assert stats == FileStats(1, 0, path.stat().st_size, None)
+  assert _stats(stats) == _stats(FileStats(1, 0, path.stat().st_size, None))
   assert file_handler.probe(path, recursive=False)[0].handlers == ('csv',)
 
 
@@ -583,11 +592,11 @@ def test_csv_handler_derives_span_and_allows_subclass_time_format(
 
   stats, table = BillingCSVHandler()(path)
 
-  assert _iso(table.span) == [
+  assert _iso(table.span) == [datetime.fromisoformat(value) for value in [
     '2026-08-27T19:42:00-07:00',
     '2026-09-01T05:11:00-07:00',
-  ]
-  assert stats.span == table.span
+  ]]
+  assert _bounds(stats.span) == _bounds(table.span)
 
 
 def test_log_handler_uses_timestamped_rows_for_span(tmp_path: Path) -> None:
@@ -607,11 +616,11 @@ def test_log_handler_uses_timestamped_rows_for_span(tmp_path: Path) -> None:
     'continuation without a timestamp',
     '2026-09-04 09:15:30,500 finished',
   )
-  assert _iso(log.span) == [
+  assert _iso(log.span) == [datetime.fromisoformat(value) for value in [
     '2026-09-04T08:00:00-07:00',
     '2026-09-04T09:15:30.500000-07:00',
-  ]
-  assert stats == FileStats(1, 0, path.stat().st_size, log.span)
+  ]]
+  assert _stats(stats) == _stats(FileStats(1, 0, path.stat().st_size, log.span))
   assert file_handler.probe(path, recursive=False)[0].handlers == ('log',)
 
 
@@ -666,7 +675,7 @@ def test_email_handler_derives_filename_metadata_without_parsing_message(
   assert email.party == party
   assert email.collision == collision
   assert email.timestamp.isoformat() == timestamp
-  assert stats.span == email.span
+  assert _bounds(stats.span) == _bounds(email.span)
   assert EmailHandler.parse_message(path) is NotImplemented
   record = file_handler.probe(path, recursive=False)[0]
   assert record.handlers == ('email',)
@@ -864,7 +873,7 @@ def test_identify_and_probe_consume_the_public_walk(
   assert [record.path for record in probed] == [
     record.path for record in identified
   ]
-  assert probed[0].stats == FileStats(1, 1, 3, probed[0].span)
+  assert _stats(probed[0].stats) == _stats(FileStats(1, 1, 3, probed[0].span))
 
 
 def test_exif_handlers_are_unregistered_placeholders() -> None:
@@ -901,7 +910,7 @@ def test_handlers_are_awaitable_without_changing_synchronous_calls(tmp_path: Pat
     stats, session = await session_handler(session_path)
     assert (stats.sessions, session.uid) == (1, 'codex-one')
     assert (await file_handler.identify(session_path, recursive=False))[0].handlers == ('session',)
-    assert (await file_handler.probe(session_path, recursive=False))[0].span == stats.span
+    assert _bounds((await file_handler.probe(session_path, recursive=False))[0].span) == _bounds(stats.span)
     assert (await file_handler.load(session_path)).uid == 'codex-one'
     assert await archive_handler.identify(archive_path) is True
     archive_stats, records = await archive_handler(archive_path)
@@ -1043,13 +1052,13 @@ def test_file_and_folder_records_have_handler_derived_spans(tmp_path: Path) -> N
   records = file_handler.probe(tmp_path)
   found = {record.path: record for record in records}
 
-  assert found[first].span[0].timestamp() == first_time
-  assert found[second].span[1].timestamp() == second_time
-  assert _iso(found[tmp_path].span) == [
+  assert found[first].span.start.timestamp() == first_time
+  assert found[second].span.end.timestamp() == second_time
+  assert _iso(found[tmp_path].span) == [datetime.fromisoformat(value) for value in [
     '2026-08-01T12:00:00+00:00',
     '2026-09-01T12:00:00+00:00',
-  ]
-  assert found[tmp_path].stats == FileStats(2, 1, 6, found[tmp_path].span)
+  ]]
+  assert _stats(found[tmp_path].stats) == _stats(FileStats(2, 1, 6, found[tmp_path].span))
 
 
 def test_git_history_spans_tracked_repository_folders_and_files(tmp_path: Path) -> None:
@@ -1108,19 +1117,19 @@ def test_git_history_spans_tracked_repository_folders_and_files(tmp_path: Path) 
   assert found[first].handlers == ('git',)
   assert found[second].handlers == ('git',)
   assert found[untracked].handlers == ()
-  assert _iso(found[repository].span) == [
+  assert _iso(found[repository].span) == [datetime.fromisoformat(value) for value in [
     '2026-06-01T11:00:00+00:00',
     '2026-08-02T13:00:00+00:00',
-  ]
-  assert found[nested].span == found[repository].span
-  assert _iso(found[first].span) == [
+  ]]
+  assert _bounds(found[nested].span) == _bounds(found[repository].span)
+  assert _iso(found[first].span) == [datetime.fromisoformat(value) for value in [
     '2026-07-01T12:00:00+00:00',
     '2026-08-02T13:00:00+00:00',
-  ]
-  assert _iso(found[second].span) == [
+  ]]
+  assert _iso(found[second].span) == [datetime.fromisoformat(value) for value in [
     '2026-08-02T13:00:00+00:00',
     '2026-08-02T13:00:00+00:00',
-  ]
+  ]]
   git_repository = git_handler(first)[1]
   assert isinstance(git_repository, GitRepository)
   assert git_repository.metadata_path == repository / '.git'
@@ -1135,17 +1144,17 @@ def test_git_history_spans_tracked_repository_folders_and_files(tmp_path: Path) 
   async def exercise() -> None:
     assert await git_handler.identify(first) is True
     stats, metadata = await git_handler(first)
-    assert stats.span == found[first].span
+    assert _bounds(stats.span) == _bounds(found[first].span)
     assert metadata.metadata_path == repository / '.git'
 
   asyncio.run(exercise())
 
   first.write_text('changed again', encoding='utf-8')
   _git_commit(repository, 'third', '2026-09-03T14:00:00+00:00')
-  assert _iso(handler.probe(first, recursive=False)[0].span) == [
+  assert _iso(handler.probe(first, recursive=False)[0].span) == [datetime.fromisoformat(value) for value in [
     '2026-07-01T12:00:00+00:00',
     '2026-09-03T14:00:00+00:00',
-  ]
+  ]]
 
 
 def test_archive_files_and_folders_are_the_same_records(tmp_path: Path) -> None:
@@ -1171,7 +1180,7 @@ def test_archive_files_and_folders_are_the_same_records(tmp_path: Path) -> None:
   assert found[PurePosixPath('logs')].is_folder
   assert found[PurePosixPath('logs')].stats.files == 2
   assert probe.stats.files == 2
-  assert archive_record.span == probe.stats.span
+  assert _bounds(archive_record.span) == _bounds(probe.stats.span)
   assert file_handler.children(archive_record) == (found[PurePosixPath('logs')],)
   assert file_handler.children(found[PurePosixPath('logs')]) == (
     found[PurePosixPath('logs/first.txt')],
@@ -1335,8 +1344,8 @@ def test_rar_handler_determines_the_final_archive_span(tmp_path: Path) -> None:
   record = file_handler.probe(archive, recursive=False)[0]
   probe, = record.probes
 
-  assert probe.stats == FileStats(1, 0, source.stat().st_size, probe.stats.span)
-  assert probe.stats.span[0].astimezone(timezone.utc).date().isoformat() == '2026-08-20'
+  assert _stats(probe.stats) == _stats(FileStats(1, 0, source.stat().st_size, probe.stats.span))
+  assert probe.stats.span.start.astimezone(timezone.utc).date().isoformat() == '2026-08-20'
 
 
 def test_rar_reader_finds_the_platform_command_from_path(
@@ -1429,7 +1438,7 @@ def test_session_span_uses_record_times_not_values_quoted_inside_content(tmp_pat
 
   _, session = session_handler(path)
 
-  assert _iso(session.span) == ['2026-08-20T01:00:00+00:00', '2026-08-20T01:03:00+00:00']
+  assert _iso(session.span) == [datetime.fromisoformat(value) for value in ['2026-08-20T01:00:00+00:00', '2026-08-20T01:03:00+00:00']]
 
 
 def test_session_topic_skips_the_injected_agents_preamble(tmp_path: Path) -> None:
@@ -1458,10 +1467,10 @@ def test_archive_member_without_a_stored_time_has_none_and_does_not_widen_the_sp
 
   assert records[PurePosixPath('undated.txt')].modified_at is None
   assert records[PurePosixPath('undated.txt')].span is None
-  assert _iso(file_handler.probe(archive)[0].probes[0].stats.span) == [
+  assert _iso(file_handler.probe(archive)[0].probes[0].stats.span) == [datetime.fromisoformat(value) for value in [
     datetime(2026, 8, 20, 1, 0, 0).astimezone().isoformat(),
     datetime(2026, 8, 20, 1, 0, 0).astimezone().isoformat(),
-  ]
+  ]]
 
 
 def test_archive_root_and_absolute_member_names_are_listed_relative(tmp_path: Path) -> None:
@@ -1633,7 +1642,7 @@ def test_a_hermes_log_on_its_own_is_identified_from_its_content(tmp_path: Path) 
   stats, session = session_handler(path)
   assert (session.harness, session.uid) == ('hermes', '20260512_035400_c197642b')
   assert (len(session.turns), session.user_messages) == (2, ('Question',))
-  assert _iso(stats.span) == ['2026-05-12T10:54:00+00:00', '2026-05-12T10:55:00+00:00']
+  assert _iso(stats.span) == [datetime.fromisoformat(value) for value in ['2026-05-12T10:54:00+00:00', '2026-05-12T10:55:00+00:00']]
 
 
 def test_an_agy_transcript_and_its_session_folder_are_identified(tmp_path: Path) -> None:
@@ -1663,7 +1672,7 @@ def test_an_agy_transcript_and_its_session_folder_are_identified(tmp_path: Path)
   assert session_handler.identify(path.parents[2]) is True
   assert (session.harness, session.uid) == ('agy', uid)
   assert (len(session.turns), session.user_messages) == (2, ('Question',))
-  assert _iso(stats.span) == ['2026-08-29T14:35:31+00:00', '2026-08-29T14:49:31+00:00']
+  assert _iso(stats.span) == [datetime.fromisoformat(value) for value in ['2026-08-29T14:35:31+00:00', '2026-08-29T14:49:31+00:00']]
 
   folder_stats, folder = session_handler(path.parents[2])
   assert isinstance(folder, SessionFolder)
@@ -1751,7 +1760,7 @@ def test_browser_handler_reads_a_chromium_profile_from_its_folder(tmp_path: Path
   stats, profile = handler.call_sync(folder)
   assert (profile.family, profile.browser, profile.profile) == ('chromium', 'chrome', 'Default')
   assert (profile.history, profile.urls, profile.favorites, profile.downloads) == (2, 1, 2, 1)
-  assert stats.span == (moment, moment + timedelta(days=1))
+  assert _bounds(stats.span) == (moment, moment + timedelta(days=1))
   assert profile.metadata['history'] == 2 and 'url' not in profile.metadata
 
 
@@ -1776,7 +1785,7 @@ def test_browser_handler_reads_a_firefox_profile_and_leaves_the_original_alone(t
 
   assert (profile.family, profile.browser, profile.profile) == ('firefox', 'firefox', 'abc.default')
   assert (profile.history, profile.urls, profile.favorites, profile.downloads) == (1, 1, 1, 0)
-  assert stats.span == (moment, moment)
+  assert _bounds(stats.span) == (moment, moment)
   assert database.read_bytes() == before                     # the profile is read through a copy, never in place
 
 
@@ -1888,7 +1897,7 @@ def test_the_session_cache_does_not_grow_without_bound(tmp_path: Path) -> None:
 def test_a_sqlite_file_is_read_as_material(tmp_path: Path) -> None:
   """Alex's rule for an old location index: it is discovered material, read like a .rar file and
   never written, read once via handler and never reopened. So an index standing beside files now
-  sealed in an archive is still known — what it indexed and what it recorded — without opening it."""
+  sealed in an archive is still known â€” what it indexed and what it recorded â€” without opening it."""
   import sqlite3
 
   from gppu.handlers import SqliteHandler

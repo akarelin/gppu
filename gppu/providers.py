@@ -16,8 +16,7 @@ import tempfile
 from typing import Any, BinaryIO, TYPE_CHECKING
 from urllib.parse import quote, unquote, urlsplit
 
-from .gppu import TemplateSet, _Base
-from .iot import y2path, y2uri
+from .gppu import TemplateSet, _Base, y2path, y2uri
 
 if TYPE_CHECKING:
   import msal
@@ -628,26 +627,26 @@ class M365Container(Container):
     if self._branch == 'onedrive' and 'file' in obj.content:
       response = self.location._request(endpoint + '/content')
       response.raise_for_status()
-      yield DataObject(obj.uri + '/content', response.content, obj.identity,
+      yield DataObject(obj.uri / 'content', response.content, obj.identity,
                        kind='file', name=obj.content['name'], parent=obj)
     if self._branch in ('contacts', 'contactFolders'):
       photo = self.location._bytes(endpoint + '/photo/$value')
       if photo is not None:
-        yield DataObject(obj.uri + '/photo/$value', photo, None, kind='photo', parent=obj)
+        yield DataObject(obj.uri / 'photo/$value', photo, None, kind='photo', parent=obj)
     if self._branch in ('calendars', 'todo') and obj.content.get('hasAttachments'):
       for attachment in self.location._each(endpoint + '/attachments'):
         if 'contentBytes' in attachment:
-          yield DataObject(obj.uri + '/attachments/' + quote(attachment['id'], safe=''),
+          yield DataObject(obj.uri / 'attachments' / quote(attachment['id'], safe=''),
             base64.b64decode(attachment['contentBytes'], validate=True), attachment['id'],
             kind='attachment', name=attachment['name'], parent=obj)
         else:
-          yield DataObject(obj.uri + '/attachments/' + quote(attachment['id'], safe=''), attachment,
+          yield DataObject(obj.uri / 'attachments' / quote(attachment['id'], safe=''), attachment,
                            attachment['id'], kind='attachment', name=attachment['name'], parent=obj)
     if self._branch == 'todo':
       for relation in ('checklistItems', 'linkedResources'):
         for child in self.location._each(endpoint + '/' + relation):
           identity = child['externalId'] if relation == 'linkedResources' and child.get('externalId') else child['id']
-          yield DataObject(obj.uri + '/' + relation + '/' + quote(identity, safe=''), child, identity, parent=obj)
+          yield DataObject(obj.uri / relation / quote(identity, safe=''), child, identity, parent=obj)
 
   @contextmanager
   def _refresh(self, state: dict[str, Any], path: y2path | str) -> Iterator[tuple[Iterator[DataObject], Callable[[], None]]]:
