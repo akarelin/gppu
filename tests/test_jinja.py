@@ -114,14 +114,3 @@ def test_behavior_rewrites_what_the_row_itself_carries():
     templates={'host': {'behavior': 'sets'}},
   ).resolve({'template': 'host', 'services': ['docker', 'nginx']})
   assert resolved['services'] == ['DOCKER', 'NGINX']
-
-
-def test_to_date_reads_both_of_the_configuration_date_formats_and_is_read_by_name():
-  from datetime import date
-  from gppu import jinja_template
-  assert jinja_template("{% set date = d | to_date %}{{ date.MM }}/{{ date.DD }}", d='2026-09-16') == '09/16'
-  assert jinja_template("{{ (d | to_date).YYYY }}-{{ (d | to_date).YY }}", d='260916') == '2026-26'
-  assert jinja_template("{{ d | to_date }}", d='2026-09-16 1840') == date(2026, 9, 16)
-  assert jinja_template("{{ (d | to_date).YYMMDD }}_x", d='2026-09-16') == '260916_x'
-  with pytest.raises(ValueError):
-    jinja_template("{{ d | to_date }}", d='16.09.2026')

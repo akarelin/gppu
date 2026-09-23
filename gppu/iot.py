@@ -36,7 +36,7 @@ try:
 except ImportError:
   aiohttp = None  # type: ignore[assignment]
 from .app import AsyncApp, AsyncSubmission, EventLoopBridge
-from .gppu import Env, _DC, _DC_BASE_TYPE_MAP
+from .gppu import Env, _DC, _DC_BASE_TYPE_MAP, y2list, y2path, y2topic, y2uri
 
 
 
