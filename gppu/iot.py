@@ -158,19 +158,22 @@ class y2uri:
   path: y2path
   params: dict[str, str | list[str]]
   fragment: str
+  default_scheme: ClassVar[str] = 'null'
   _ready: bool = False
 
   def __bool__(self) -> bool: return self._ready
 
-  def __init__(self, o: Any, scheme: Optional[str] = None, **kw):
+  def __init__(self, o: Any, scheme: Optional[str] = None):
     self._ready = False
     if not o and not scheme: raise ValueError('y2uri: empty input')
     if isinstance(o, y2uri): s = str(o)
-    elif isinstance(o, dict) and 'uri' in o: s = str(o['uri'])
+    elif isinstance(o, dict) and 'uri' in o: s = o['uri']
     elif isinstance(o, (str, y2path)): s = str(o)
-    elif hasattr(o, 'uri'): s = str(o.uri)
+    elif hasattr(o, 'uri'): s = o.uri
     else: raise ValueError('y2uri: unsupported input')
-    self.scheme = scheme
+    if not isinstance(s, (str, y2uri)) or (not s and not scheme): raise ValueError('y2uri: invalid URI input')
+    s = str(s)
+    self.scheme = scheme or self.default_scheme
     if '://' in s: self.scheme, s = s.split('://', 1)
     if not self.scheme or not re.fullmatch(r'[A-Za-z][A-Za-z0-9+.-]*', self.scheme):
       raise ValueError('y2uri requires a scheme')
@@ -178,16 +181,12 @@ class y2uri:
     s, _, query = s.partition('?')
     self.path = y2path()
     self.path.data = s.split('/') if s else []
-    self.params = {key: values[0] if len(values) == 1 else values
-                   for key, values in parse_qs(query, keep_blank_values=True).items()}
-    if 'params' in kw:
-      self.params = {key: list(value) if isinstance(value, list) else value
-                     for key, value in kw['params'].items()}
+    self.query = query
     self._ready = True
 
   def __str__(self) -> str:
     uri = f'{self.scheme}://{self.path}'
-    if self.params: uri += '?' + urlencode(self.params, doseq=True)
+    if self.params: uri += '?' + self.query
     if self.fragment: uri += '#' + self.fragment
     return uri
   def __repr__(self) -> str: return str(self)
@@ -199,6 +198,14 @@ class y2uri:
     if not isinstance(other, (y2uri, str)): return NotImplemented
     return str(self) < str(other)
   def to_json(self) -> str: return str(self)
+
+  @property
+  def query(self) -> str: return urlencode(self.params, doseq=True)
+
+  @query.setter
+  def query(self, value: str) -> None:
+    self.params = {key: values[0] if len(values) == 1 else values
+                   for key, values in parse_qs(value, keep_blank_values=True).items()}
 
   def endswith(self, suffix) -> bool: return self.path.endswith(suffix)
 
@@ -214,7 +221,8 @@ class y2uri:
       return y2uri(self)
     tail = str(self.path)
     base = self.scheme + '://' + (tail.rstrip('/') + '/' if tail else '')
-    result = y2uri(base + value.lstrip('/'), params=self.params)
+    result = y2uri(base + value.lstrip('/'))
+    result.query = self.query
     result.fragment = self.fragment
     return result
 
