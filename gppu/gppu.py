@@ -273,6 +273,9 @@ class y2path(y2list):
     for a in args: data += self._any2list(a)
     self.data = self._any2list(data)
 
+  def __truediv__(self, other: str | y2path) -> y2path:
+    return y2path(self, other)
+
 
 class y2topic(y2path):
   def is_wildcard(self) -> bool: return bool(set(self.data) & {"#", "+"})
@@ -323,6 +326,11 @@ class y2uri:
   def __hash__(self) -> int: return hash(str(self))
   def __eq__(self, other): return str(self) == str(other)
   def to_json(self) -> str: return str(self)
+
+  def __truediv__(self, path: y2path | str) -> 'y2uri':
+    result = y2uri(self)
+    result.path = self.path / path
+    return result
 
   @property
   def query(self) -> str: return self._query
