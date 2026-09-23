@@ -13,7 +13,7 @@ from gppu.providers import FileContainer, M365Container
 def test_uri_round_trip(value):
   uri = y2uri(value)
   assert isinstance(uri.path, y2path)
-  assert y2uri(uri.scheme, uri.path) == value
+  assert y2uri(uri.path, scheme=uri.scheme) == value
   assert json.loads(json.dumps({'uri': uri.to_json()})) == {'uri': value}
 
 
@@ -157,7 +157,7 @@ def test_uri_mutable_query_parameters_and_path_joins():
 
 
 def test_uri_constructs_scheme_path_and_parameter_dictionary():
-  uri = y2uri('https', y2path('host/items'), {'q': 'a b', 'empty': ''})
+  uri = y2uri(y2path('host/items'), scheme='https', params={'q': 'a b', 'empty': ''})
   assert str(uri) == 'https://host/items?q=a+b&empty='
   assert y2uri(str(uri)).params == uri.params
 
@@ -207,3 +207,12 @@ def test_uri_constructor_accepts_location_and_dataobject():
   obj = DataObject('file:///data/item', {}, 'item')
   assert y2uri(location) == location.uri
   assert y2uri(obj) == obj.uri
+
+
+def test_uri_constructor_scheme_matches_eid_namespace_precedence():
+  assert y2uri('host/path', 'https') == 'https://host/path'
+  assert y2uri(y2path('host/path'), scheme='https') == 'https://host/path'
+  assert y2uri('file:///data', scheme='https') == 'file:///data'
+  assert y2uri({'uri': 'host/path'}, scheme='https') == 'https://host/path'
+  with pytest.raises(ValueError, match='requires a scheme'):
+    y2uri('host/path')
