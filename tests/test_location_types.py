@@ -130,18 +130,17 @@ def test_uri_keeps_slash_markers_without_interpreting_path_components():
 
 
 def test_uri_format_does_not_control_path_joining():
-  from string.templatelib import Template
-
   uri = y2uri('custom:///folder?q=value#section')
-  assert isinstance(vars(uri)['_format'], Template)
-  uri._format = t'[{uri.path}]'
+  uri._append_slash = True
   joined = uri / 'child'
-  assert joined._format is uri._format
-  assert str(joined) == '[folder/child]?q=value#section'
+  assert joined._prepend_slash is True
+  assert joined._append_slash is True
+  assert joined.path.data == ['folder', 'child']
+  assert str(joined) == 'custom:///folder/child/?q=value#section'
   assert joined.scheme == 'custom'
   assert joined.query == 'q=value'
   assert joined.fragment == 'section'
-  assert str(uri) == '[folder]?q=value#section'
+  assert str(uri) == 'custom:///folder/?q=value#section'
 
 
 def test_uri_mutation_updates_representation_and_equality():
