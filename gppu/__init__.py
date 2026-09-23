@@ -138,6 +138,7 @@ from .iot import (
     # y2xxx classes
     y2list,
     y2path,
+    y2uri,
     y2topic,
     y2slug,
     y2eid,
@@ -217,7 +218,7 @@ __all__ = [
     '_Logger', '_Config', '_Base', '_App', 'App', 'AsyncApp', 'mixin_Rest', '_init_logger_base',
 
     # y2xxx classes
-    'y2list', 'y2path', 'y2topic', 'y2slug', 'y2eid',
+    'y2list', 'y2path', 'y2uri', 'y2topic', 'y2slug', 'y2eid',
 
     # mqtt library
     'mixin_Mqtt', 'MqttApp',

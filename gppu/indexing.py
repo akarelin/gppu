@@ -29,7 +29,7 @@ def _selection(path, level, boundaries):
   Location.relative(path)
   if level not in LEVELS:
     raise ValueError(f'unknown indexing level: {level}')
-  return {Location.relative(value) for value in boundaries}
+  return {str(Location.relative(value)) for value in boundaries}
 
 
 def walk_container(container, path, level, recursive, boundaries):
@@ -40,7 +40,7 @@ def walk_container(container, path, level, recursive, boundaries):
     rows = []
     for item in container.ls(folder):
       row = dict(item)
-      name = Location.relative(row['name'])
+      name = str(Location.relative(row['name']))
       if name.rpartition('/')[0] != folder or name == folder:
         raise ValueError(f'{name}: listing must contain immediate Container children')
       if row['type'] != 'directory' and level == 'refresh':
