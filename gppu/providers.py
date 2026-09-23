@@ -21,8 +21,8 @@ from .gppu import TemplateSet, _Base, y2path, y2uri
 class DataObject:
   """A source-addressed object exchanged by Container operations.
 
-  This Python dataclass carries source content and identity. Content can be JSON,
-  text, bytes or a binary stream; it is not a fixed HTTP response representation.
+  A DataObject carries source content and identity. Content can be JSON, text,
+  bytes or a binary stream.
 
   Attributes:
     uri (y2uri): Canonical source address, converted to y2uri on construction.
@@ -30,8 +30,10 @@ class DataObject:
     identity (str | None): Source-owned object identity, or None when the source supplies no identity.
     kind (str): Source object kind; defaults to object.
     name (str): Source object name used by destination naming templates; defaults to an empty string.
-    parent (DataObject | None): Parent source object when one is supplied; defaults to None.
     removed (bool): Whether refresh reports this object as removed; defaults to False.
+
+  Relationships:
+    parent (DataObject): Parent source object when one is supplied. A root object has no parent.
   """
   uri: y2uri
   content: dict[str, Any] | list[Any] | str | int | float | bool | None | bytes | BinaryIO
@@ -48,10 +50,10 @@ class DataObject:
 class Container:
   """Operations below a Location boundary, with source-owned refresh state.
 
-  Obtain this Python interface from Location.container(path). Provider subclasses
-  implement the operations they support. The base interface declares methods,
-  not a serialized property record. Container.read returns a DataObject;
-  Container.ls returns filesystem entries or names, not child Locations.
+  Obtain a Container from Location.container(path). Its provider implements
+  operations on the folders and objects below the selected Location boundary.
+  Container.read returns a DataObject. Container.ls lists folder and object
+  entries using the provider's filesystem metadata.
   """
 
   def ls(self, path: y2path | str = '', detail: bool = True) -> list[dict[str, Any]] | list[str]:
@@ -155,15 +157,17 @@ class Container:
 class Location(_Base):
   """A Location in the tree, constructed from configuration or enumeration.
 
-  GppuCatalog.location(uid) binds a configured Location to its provider
-  implementation. Its public properties identify the Location; ls and walk
-  expose its child relationships, and container selects operations below it.
-  Configuration properties are also available through the inherited my method.
+  GppuCatalog.location(uid) returns a Location with its provider implementation.
+  ls returns the child Locations and walk traverses the Location tree.
+  container selects operations on the contents below the Location boundary.
+  The inherited my method reads the Location's configuration.
 
   Attributes:
-    uid (str): Configured or enumerated Location identity from properties.uid.
-    uri (y2uri): Canonical source address from properties.canonical.
-    parent (Location | None): Parent Location object, or None for a root.
+    uid (str): Location identity accepted by GppuCatalog.location.
+    uri (y2uri): Canonical address of the Location.
+
+  Relationships:
+    parent (Location): Parent Location. A root Location has no parent.
   """
 
   def __init__(self, properties: dict[str, Any], *, connection: dict[str, Any] | None = None,
