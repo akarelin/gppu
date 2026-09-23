@@ -140,6 +140,49 @@ class y2path(y2list):
     self.data = self._any2list(data)
 
 
+class y2uri(str):
+  """A hierarchical URI: scheme plus a slash-separated, escaped y2path.
+
+  String storage keeps URI spelling intact at JSON and library boundaries.
+  The path includes the authority and preserves empty segments, including the
+  leading slash in file:/// addresses. No decoding or normalization is implicit.
+  """
+
+  def __new__(cls, value: str, path: y2path | str | None = None):
+    text = str(value) if path is None else f'{value}://{path}'
+    scheme, separator, _ = text.partition('://')
+    if not separator or not re.fullmatch(r'[A-Za-z][A-Za-z0-9+.-]*', scheme):
+      raise ValueError('y2uri requires a scheme followed by ://')
+    return super().__new__(cls, text)
+
+  @property
+  def scheme(self) -> str: return self.partition('://')[0]
+
+  @property
+  def path(self) -> y2path:
+    path = y2path()
+    value = self.partition('://')[2]
+    path.data = value.split('/') if value else []
+    return path
+
+  def to_json(self) -> str: return str(self)
+
+  def __truediv__(self, path: y2path | str) -> 'y2uri':
+    if not isinstance(path, (str, y2path)):
+      return NotImplemented
+    value = str(path)
+    if '://' in value:
+      raise ValueError('Join a path, not another URI')
+    if not value:
+      return self
+    scheme, _, tail = self.partition('://')
+    base = scheme + '://' + (tail.rstrip('/') + '/' if tail else '')
+    return y2uri(base + value.lstrip('/'))
+
+  def __add__(self, path: y2path | str) -> 'y2uri':
+    return self / path
+
+
 class y2topic(y2path):
   def is_wildcard(self) -> bool: return bool(set(self.data) & {"#", "+"})
 
@@ -202,8 +245,8 @@ class y2eid:
 # endregion
 
 
-_DC_BASE_TYPE_MAP |= {'y2eid': y2eid, 'y2topic': y2topic}
-_DC._DC_TYPE_MAP |= {'y2eid': y2eid, 'y2topic': y2topic}
+_DC_BASE_TYPE_MAP |= {'y2eid': y2eid, 'y2topic': y2topic, 'y2path': y2path, 'y2uri': y2uri}
+_DC._DC_TYPE_MAP |= {'y2eid': y2eid, 'y2topic': y2topic, 'y2path': y2path, 'y2uri': y2uri}
 
 
 # region mqtt

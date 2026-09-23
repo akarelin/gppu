@@ -17,6 +17,7 @@ from typing import Any, BinaryIO, TYPE_CHECKING
 from urllib.parse import quote, unquote, urlsplit
 
 from .gppu import TemplateSet, _Base
+from .iot import y2path, y2uri
 
 if TYPE_CHECKING:
   import msal
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class DataObject:
-  uri: str
+  uri: y2uri
   content: dict[str, Any] | list[Any] | str | int | float | bool | None | bytes | BinaryIO
   identity: str | None
   kind: str = 'object'
@@ -33,25 +34,28 @@ class DataObject:
   parent: 'DataObject | None' = None
   removed: bool = False
 
+  def __post_init__(self) -> None:
+    object.__setattr__(self, 'uri', y2uri(self.uri))
+
 
 class Container:
   """Operations below a Location boundary, with source-owned refresh state."""
 
-  def ls(self, path: str = '', detail: bool = True) -> list[dict[str, Any]] | list[str]:
+  def ls(self, path: y2path | str = '', detail: bool = True) -> list[dict[str, Any]] | list[str]:
     """Immediate folders and objects in this Container, using fsspec entries."""
     raise NotImplementedError
 
-  def walk(self, path: str = '', *, level: str = 'files', recursive: bool = False,
-           boundaries: Iterable[str] = ()) -> Iterator[tuple[dict, list[dict]]]:
+  def walk(self, path: y2path | str = '', *, level: str = 'files', recursive: bool = False,
+           boundaries: Iterable[y2path | str] = ()) -> Iterator[tuple[dict, list[dict]]]:
     """Yield successfully enumerated folders and their immediate indexed entries.
 
     Paths remain relative to this Container. Explicit child Location boundaries
     are reported but never entered. Listing errors propagate to the indexer.
     """
     from .indexing import walk_container
-    yield from walk_container(self, path, level, recursive, boundaries)
+    yield from walk_container(self, str(Location.relative(path)), level, recursive, boundaries)
 
-  def read(self, path: str | DataObject) -> DataObject:
+  def read(self, path: y2path | str | DataObject) -> DataObject:
     """Read one object without changing a refresh cursor."""
     raise NotImplementedError
 
@@ -59,16 +63,16 @@ class Container:
     """Write the object's files."""
     raise NotImplementedError
 
-  def delete(self, path: str | DataObject) -> None:
+  def delete(self, path: y2path | str | DataObject) -> None:
     """Explicitly remove an object before a deliberate replacement."""
     raise NotImplementedError
 
-  def _refresh(self, state: dict[str, Any], path: str) -> AbstractContextManager[tuple[Iterator[DataObject], Callable[[], None]]]:
+  def _refresh(self, state: dict[str, Any], path: y2path | str) -> AbstractContextManager[tuple[Iterator[DataObject], Callable[[], None]]]:
     """Yield objects and a callback updating the caller's refresh state."""
     raise NotImplementedError
 
   @contextmanager
-  def refresh(self, state: dict[str, Any], path: str = '') -> Iterator[Iterator[DataObject]]:
+  def refresh(self, state: dict[str, Any], path: y2path | str = '') -> Iterator[Iterator[DataObject]]:
     """Commit source state only after full iteration and successful handling.
 
     with source.refresh(state, folder) as changes:
@@ -99,7 +103,7 @@ class Location(_Base):
     super().__init__()
     self._config_from_dict(properties)
     self.uid = properties['uid']
-    self.uri = properties['canonical']
+    self.uri = y2uri(properties['canonical'])
     self.parent = parent
     self._connection = deepcopy(connection)
     self._children = children
@@ -114,24 +118,25 @@ class Location(_Base):
   def ls(self) -> list['Location']:
     return list(self._children()) if self._children is not None else []
 
-  def container(self, path: str = '') -> Container:
+  def container(self, path: y2path | str = '') -> Container:
     raise NotImplementedError(f'{self.uri}: Containers are not implemented')
 
-  def address(self, path: str = '') -> str:
+  def address(self, path: y2path | str = '') -> y2uri:
     """Canonical address of a relative path, with literal names URI-escaped."""
-    self.relative(path)
+    path = self.relative(path)
     if not path:
       return self.uri
-    base = self.uri if self.uri.endswith('://') else self.uri.rstrip('/') + '/'
-    return base + quote(path, safe='/')
+    return self.uri / quote(str(path), safe='/')
 
   @staticmethod
-  def relative(path: str) -> str:
+  def relative(path: y2path | str) -> y2path:
+    if isinstance(path, y2path):
+      path = str(path)
     if not isinstance(path, str) or path.startswith('/') or '\\' in path or '://' in path:
       raise ValueError('Location path must be relative and slash-separated')
     if path and any(part in ('', '.', '..') for part in path.split('/')):
       raise ValueError('Location path cannot contain empty or traversal segments')
-    return path
+    return y2path(path)
 
 
 class FileLocation(Location):
@@ -164,8 +169,8 @@ class FileLocation(Location):
       raise ValueError(f'{self.uri}: file Location requires an absolute filesystem root')
     return root
 
-  def container(self, path: str = '') -> 'FileContainer':
-    self.relative(path)
+  def container(self, path: y2path | str = '') -> 'FileContainer':
+    path = str(self.relative(path))
     root = self._root().resolve()
     target = (root / unquote(path)).resolve()
     if not target.is_relative_to(root):
@@ -185,18 +190,18 @@ def _updated(previous: dict[str, Any], incoming: dict[str, Any]) -> dict[str, An
 class FileContainer(Container):
   """List, read, write and delete files using configured object path templates."""
   def __init__(self, root: str | Path, *, templates: dict[str, str] | None = None,
-               uri: str | None = None) -> None:
+               uri: y2uri | str | None = None) -> None:
     root = Path(root)
     if not root.is_absolute():
       raise ValueError('File Container root must be absolute')
     self._root = root.resolve()
     self.root = self._root.as_posix()
-    self.uri = self._root.as_uri() if uri is None else uri
+    self.uri = y2uri(self._root.as_uri() if uri is None else uri)
     self.templates = None if templates is None else TemplateSet(named={'objects': deepcopy(templates)})
     self._known: dict[str, Path] | None = None
     self._held: dict[str, str] = {}
 
-  def _object_file(self, path: str | DataObject) -> Path:
+  def _object_file(self, path: y2path | str | DataObject) -> Path:
     """Resolve an object's own URI and metadata, or a path returned by ls."""
     if isinstance(path, DataObject):
       obj = path
@@ -249,6 +254,8 @@ class FileContainer(Container):
                 raise ValueError('Collision template must return a nonempty relative path')
             self._known[identity] = self._object_file(path)
             self._held[path.casefold()] = identity
+    if isinstance(path, y2path):
+      path = str(path)
     if not isinstance(path, str):
       raise TypeError('Container requires a DataObject or a relative path')
     if '\\' in path or PureWindowsPath(path).drive or path.startswith('/') or '://' in path:
@@ -260,7 +267,7 @@ class FileContainer(Container):
       raise ValueError('Container path cannot escape its root')
     return target
 
-  def ls(self, path: str = '', detail: bool = True) -> list[dict[str, Any]] | list[str]:
+  def ls(self, path: y2path | str = '', detail: bool = True) -> list[dict[str, Any]] | list[str]:
     rows = []
     for target in sorted(self._object_file(path).iterdir()):
       name = target.relative_to(self._root).as_posix()
@@ -269,14 +276,14 @@ class FileContainer(Container):
                    'size': 0 if target.is_dir() else target.stat().st_size})
     return rows if detail else [row['name'] for row in rows]
 
-  def walk(self, path: str = '', *, level: str = 'files', recursive: bool = False,
-           boundaries: Iterable[str] = ()) -> Iterator[tuple[dict, list[dict]]]:
+  def walk(self, path: y2path | str = '', *, level: str = 'files', recursive: bool = False,
+           boundaries: Iterable[y2path | str] = ()) -> Iterator[tuple[dict, list[dict]]]:
     from .indexing import walk_files
-    Location.relative(path)
+    path = str(Location.relative(path))
     self._object_file(path)
     yield from walk_files(self._root, path, level, recursive, boundaries)
 
-  def read(self, path: str | DataObject) -> DataObject:
+  def read(self, path: y2path | str | DataObject) -> DataObject:
     target = self._object_file(path)
     binary = isinstance(path, DataObject) and (isinstance(path.content, bytes) or hasattr(path.content, 'read'))
     if target.suffix.casefold() == '.json' and not binary:
@@ -285,7 +292,7 @@ class FileContainer(Container):
       content = target.open('rb')
     if isinstance(path, DataObject):
       return replace(path, content=content, name=target.name)
-    return DataObject(target.as_uri(), content, path, name=target.name)
+    return DataObject(target.as_uri(), content, str(path), name=target.name)
 
   def write(self, obj: DataObject) -> None:
     if not isinstance(obj, DataObject):
@@ -335,7 +342,7 @@ class FileContainer(Container):
     finally:
       pending.unlink(missing_ok=True)
 
-  def delete(self, path: str | DataObject) -> None:
+  def delete(self, path: y2path | str | DataObject) -> None:
     target = self._object_file(path)
     target.unlink()
     relative = target.relative_to(self._root).as_posix().casefold()
@@ -344,7 +351,7 @@ class FileContainer(Container):
       del self._known[identity]
 
   @contextmanager
-  def _refresh(self, state: dict[str, Any], path: str) -> Iterator[tuple[Iterator[DataObject], Callable[[], None]]]:
+  def _refresh(self, state: dict[str, Any], path: y2path | str) -> Iterator[tuple[Iterator[DataObject], Callable[[], None]]]:
     root = self._object_file(path)
     scope = root.as_uri()
     previous = state[scope] if scope in state else {}
@@ -418,8 +425,8 @@ class M365Location(Location):
         credential_root=self._credential_root))
     return children
 
-  def container(self, path: str = '') -> 'M365Container':
-    self.relative(path)
+  def container(self, path: y2path | str = '') -> 'M365Container':
+    path = str(self.relative(path))
     full = self.uri.rstrip('/') + ('/' + path if path else '')
     segments = tuple(unquote(segment) for segment in urlsplit(full).path.strip('/').split('/')) if urlsplit(full).path.strip('/') else ()
     if len(segments) >= 3 and segments[0] == 'users':
@@ -498,10 +505,10 @@ class M365Location(Location):
 class M365Container(Container):
   """Folders and objects below an M365 Location; connection stays on the Location."""
 
-  def __init__(self, location: M365Location, user: str, branch: str, path: tuple[str, ...], uri: str) -> None:
+  def __init__(self, location: M365Location, user: str, branch: str, path: y2path | tuple[str, ...], uri: y2uri | str) -> None:
     self.location = location
-    self.user, self._branch, self.path = user, branch, tuple(path)
-    self.uri = uri
+    self.user, self._branch, self.path = user, branch, y2path(path)
+    self.uri = y2uri(uri)
     self._user_path = '/users/' + quote(user, safe='')
 
   def _folder_url(self, segments: tuple[str, ...]) -> str:
@@ -548,8 +555,8 @@ class M365Container(Container):
       if self._branch != 'onedrive' or 'folder' in record:
         yield record
 
-  def ls(self, path: str = '', detail: bool = True) -> list[dict[str, object]] | list[str]:
-    Location.relative(path)
+  def ls(self, path: y2path | str = '', detail: bool = True) -> list[dict[str, object]] | list[str]:
+    path = str(Location.relative(path))
     segments = self.path + tuple(unquote(segment) for segment in path.split('/')) if path else self.path
     rows = []
     def entry(record: dict[str, Any], kind: str) -> dict[str, object]:
@@ -570,11 +577,11 @@ class M365Container(Container):
     return DataObject(self.location._namespace + endpoint, record, record['id'],
                       parent=parent, removed='@removed' in record or 'deleted' in record)
 
-  def read(self, path: str) -> DataObject:
+  def read(self, path: y2path | str) -> DataObject:
+    path = str(Location.relative(path))
     if not path:
       raise IsADirectoryError(self.uri)
     folder, _, identity = path.rpartition('/')
-    Location.relative(path)
     segments = self.path + tuple(unquote(segment) for segment in folder.split('/')) if folder else self.path
     if self._branch == 'onedrive':
       url = self._folder_url((*segments, unquote(identity)))
@@ -594,7 +601,7 @@ class M365Container(Container):
   def write(self, obj: DataObject) -> None:
     raise PermissionError('M365 source Containers are read-only')
 
-  def delete(self, path: str | DataObject) -> None:
+  def delete(self, path: y2path | str | DataObject) -> None:
     raise PermissionError('M365 source Containers are read-only')
 
   def _endpoints(self, segments: tuple[str, ...], seen: set[str],
@@ -643,8 +650,8 @@ class M365Container(Container):
           yield DataObject(obj.uri + '/' + relation + '/' + quote(identity, safe=''), child, identity, parent=obj)
 
   @contextmanager
-  def _refresh(self, state: dict[str, Any], path: str) -> Iterator[tuple[Iterator[DataObject], Callable[[], None]]]:
-    Location.relative(path)
+  def _refresh(self, state: dict[str, Any], path: y2path | str) -> Iterator[tuple[Iterator[DataObject], Callable[[], None]]]:
+    path = str(Location.relative(path))
     segments = self.path + tuple(unquote(segment) for segment in path.split('/')) if path else self.path
     scope = self.uri.rstrip('/') + ('/' + path if path else '')
     pending = deepcopy(state[scope]) if scope in state else {}

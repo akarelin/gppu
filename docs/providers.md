@@ -22,6 +22,10 @@ Location configuration does not carry `access` or `storage` fields. Provider-spe
 
 ## DataObject
 
+Location and Container paths use `y2path`; their URIs and DataObject URIs use `y2uri`. A URI comprises a scheme and a path. Both `uri / path` and `uri + path` return `y2uri`, including chained joins. (Alex, 2026-09-22, location types request and corrections: "My mistake. I meant scheme"; "Make sure addition or slash operations work: uri / path = uri".)
+
+`y2uri('m365', y2path('tenant/users/alex'))` constructs a URI from its parts; `y2uri('m365://tenant/users/alex')` parses its string form. `.scheme` returns the scheme and `.path` returns a `y2path` containing everything after `://`, including the authority. URI paths and join operands retain their escaped spelling; `Location.address()` escapes literal relative filenames. URI values serialize directly as JSON strings. File roots and empty scheme roots retain their separators.
+
 Reads return DataObjects: data with its URI and source identity. Binary content may include its original name and parent-object relationship. A DataObject contains no destination path. The name is `DataObject`, not `ProviderObject`. (Alex, recovered session: "DataObject", "It does not return providers"; current session: M365 returns objects and has no destination knowledge.)
 
 ## Provider responsibilities
