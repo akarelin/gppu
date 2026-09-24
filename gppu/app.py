@@ -240,6 +240,15 @@ class EventLoopBridge:
 
 
 # region REST surface
+_FS = str(Path(__file__).with_name('fs.py'))
+
+
+def _homes() -> tuple[str, ...]:
+  """Where the classes whose members are served are born: the application's folder, when an app set one, and
+  gppu's fs module."""
+  return (str(Env.app_path), _FS) if hasattr(Env, 'app_path') else (_FS,)
+
+
 def _born(cls: type) -> str:
   """Where a class's source lives; a built-in has none."""
   try: return inspect.getsourcefile(cls) or ''
@@ -269,10 +278,10 @@ class mixin_Rest:
     return {'app': {getattr(self, 'name', 'app'): self}}
 
   def _rest_members(self, cls: type) -> dict[str, dict]:
-    home, rows = str(Env.app_path), {}
+    homes, rows = _homes(), {}
     for name in dir(cls):
       if name[0] == '_' or name in self.REST_RESERVED: continue
-      if not any(_born(c).startswith(home) for c in cls.__mro__ if name in c.__dict__): continue
+      if not any(_born(c).startswith(homes) for c in cls.__mro__ if name in c.__dict__): continue
       member = inspect.getattr_static(cls, name)
       fn = getattr(member, '__func__', member)
       if not inspect.isfunction(fn): rows[name] = {'kind': 'value'}; continue
@@ -288,12 +297,11 @@ class mixin_Rest:
   def rest_manifest(self) -> dict:
     """The classes born under app_path and their members, walked once."""
     if self._rest_manifest is None:
-      seen, stack = set(), [_mixin, _Base, _DC]
+      seen, stack = set(), [_mixin, _Base, _DC, *{type(o) for roster in self.rest_registries().values() for o in roster.values()}]
       while stack:
         cls = stack.pop()
         if cls not in seen: seen.add(cls); stack.extend(cls.__subclasses__())
-      home = str(Env.app_path)
-      classes = {c.__name__: {'members': self._rest_members(c)} for c in sorted(seen, key=lambda c: c.__name__) if _born(c).startswith(home)}
+      classes = {c.__name__: {'members': self._rest_members(c)} for c in sorted(seen, key=lambda c: c.__name__) if _born(c).startswith(_homes())}
       self._rest_manifest = {'registries': list(self.rest_registries()), 'classes': {n: c for n, c in classes.items() if c['members']}}
     return self._rest_manifest
 
@@ -307,8 +315,9 @@ class mixin_Rest:
     """What the object holds and what it can be asked to do. Values only are read
     here: calling a method to build a payload would run it for anyone listing the objects."""
     rows = self._rest_rows(obj)
+    fields = {n: v for n, v in vars(obj).items() if n[0] != '_' and not callable(v)} if hasattr(obj, '__dict__') else {}
     return {'class': type(obj).__name__,
-            'members': {n: getattr(obj, n) for n, r in rows.items() if r['kind'] == 'value'},
+            'members': fields | {n: getattr(obj, n) for n, r in rows.items() if r['kind'] == 'value'},
             'methods': {n: r['args'] for n, r in rows.items() if r['kind'] == 'method'}}
 
   def rest_objects(self, kind: str | None = None, full: bool = False) -> tuple[dict, int]:
