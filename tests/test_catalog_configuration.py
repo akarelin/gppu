@@ -56,7 +56,7 @@ def test_native_env_catalog_preserves_input_and_resolves_nested_templates():
   assert contact['path'] == 'alex/contacts'
   assert contact['canonical'] == 'm365://karelin/alex/contacts'
   assert catalog.connections[contact['connection']]['provider'] == 'm365'
-  assert str(catalog.location('lake').address('Contacts/person.json')) == 'lake://Contacts/person.json'
+  assert str(catalog.location('lake').uri_of('Contacts/person.json')) == 'lake://Contacts/person.json'
   assert catalog.info_sync(contact['uid'])['gppu'] == contact
   assert catalog.ls_sync('lake') == []
   contact['name'] = 'Changed outside catalog'
@@ -84,33 +84,33 @@ def test_local_path_cannot_escape_location(relative, tmp_path):
 def test_drive_root_stays_absolute():
   location = FileLocation({'uid': 'drive', 'canonical': 'file:///D:/'})
   assert str(location.uri) == 'file:///D:/'
-  assert str(location.address('Contacts/person.json')) == 'file:///D:/Contacts/person.json/'
+  assert str(location.uri_of('Contacts/person.json')) == 'file:///D:/Contacts/person.json/'
 
 
 def test_missing_connection_and_parent_are_errors():
   config = deepcopy(CONFIG)
   config['locations'][1]['connection'] = 'missing'
   with pytest.raises(KeyError, match='unknown connection'):
-    GppuCatalog(config)
+    GppuCatalog(config, location_types={'m365': Location, 'lake': Location})
   config = deepcopy(CONFIG)
   config['locations'][1]['parent'] = 'missing'
   with pytest.raises(KeyError, match='unknown parent'):
-    GppuCatalog(config)
+    GppuCatalog(config, location_types={'m365': Location, 'lake': Location})
 
 
 def test_duplicate_and_cyclic_locations_are_errors():
   config = deepcopy(CONFIG)
   config['locations'].append(deepcopy(config['locations'][1]))
   with pytest.raises(ValueError, match='duplicate Location'):
-    GppuCatalog(config)
+    GppuCatalog(config, location_types={'m365': Location, 'lake': Location})
   config = deepcopy(CONFIG)
   config['locations'][1]['parent'] = 'lake'
   with pytest.raises(ValueError, match='cycle'):
-    GppuCatalog(config)
+    GppuCatalog(config, location_types={'m365': Location, 'lake': Location})
 
 
 def test_refresh_is_not_an_implicit_indexing_request():
-  catalog = GppuCatalog(CONFIG)
+  catalog = GppuCatalog(CONFIG, location_types={'m365': Location, 'lake': Location})
   with pytest.raises(ValueError, match='reload configuration explicitly'):
     catalog.ls_sync(refresh=True)
   with pytest.raises(ValueError, match='reload configuration explicitly'):
@@ -120,5 +120,5 @@ def test_refresh_is_not_an_implicit_indexing_request():
 def test_nested_paths_are_not_appended_twice():
   config = deepcopy(CONFIG)
   config['locations'][0]['locations'][0]['path'] = 'alex'
-  catalog = GppuCatalog(config)
+  catalog = GppuCatalog(config, location_types={'m365': Location, 'lake': Location})
   assert catalog.info_sync('m365-karelin-graph/alex/contacts')['gppu']['path'] == 'alex/contacts'

@@ -103,8 +103,8 @@ def test_container_and_location_paths_cannot_escape(tmp_path):
       list(location.container().walk(path))
   with pytest.raises(ValueError):
     location.container('%2e%2e/other')
-  assert location.address('space and #hash.txt').path.tail == 'space%20and%20%23hash.txt'
-  assert Location({'uid': 'plaud', 'canonical': 'plaud://'}).address('recording') == 'plaud://recording'
+  assert location.uri_of('space and #hash.txt').path.tail == 'space%20and%20%23hash.txt'
+  assert Location({'uid': 'plaud', 'canonical': 'plaud://'}).uri_of('recording') == 'plaud://recording'
 
 
 @pytest.mark.skipif(__import__('os').name != 'nt', reason='Windows drive roots')
@@ -114,5 +114,5 @@ def test_drive_root_is_absolute_and_host_group_is_not_a_container():
   assert location._root() == Path('D:/')
   with pytest.raises(ValueError, match='select a child Location'):
     FileLocation({'uid': 'host', 'canonical': f'file://{host}'}).container()
-  with pytest.raises(ValueError, match='does not identify a file on this host'):
+  with pytest.raises(ValueError, match='refers to another host'):
     FileLocation({'uid': 'foreign', 'canonical': 'file://another-host/D:/data'}).container()

@@ -1,4 +1,4 @@
-"""Locations select Containers; Containers exchange source-addressed data."""
+"""Locations form a tree; Containers contain DataObjects."""
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from copy import deepcopy
@@ -19,13 +19,13 @@ from .gppu import TemplateSet, _Base, y2path, y2uri
 
 @dataclass(frozen=True)
 class DataObject:
-  """A source-addressed object exchanged by Container operations.
+  """Data and its URI, read from or written to a Container.
 
   A DataObject carries source content and identity. Content can be JSON, text,
   bytes or a binary stream.
 
   Attributes:
-    uri (y2uri): Canonical source address, converted to y2uri on construction.
+    uri (y2uri): Canonical source URI, converted to y2uri on construction.
     content (dict[str, Any] | list[Any] | str | int | float | bool | None | bytes | BinaryIO): Source payload or binary content; its structure belongs to the source.
     identity (str | None): Source-owned object identity, or None when the source supplies no identity.
     kind (str): Source object kind; defaults to object.
@@ -48,10 +48,10 @@ class DataObject:
 
 
 class Container:
-  """Operations below a Location boundary, with source-owned refresh state.
+  """A hierarchy of DataObjects, independent of Location.
 
-  Obtain a Container from Location.container(path). Its provider implements
-  operations on the folders and objects below the selected Location boundary.
+  Its provider implements operations on its folders and objects. The default
+  provider is file; FileContainer can be constructed directly from a root path.
   Container.read returns a DataObject. Container.ls lists folder and object
   entries using the provider's filesystem metadata.
   """
@@ -72,20 +72,20 @@ class Container:
            boundaries: Iterable[y2path | str] = ()) -> Iterator[tuple[dict, list[dict]]]:
     """Yield successfully enumerated folders and their immediate indexed entries.
 
-    Paths remain relative to this Container. Explicit child Location boundaries
-    are reported but never entered. Listing errors propagate to the indexer.
+    Paths remain relative to this Container. Boundary paths supplied by the
+    caller are reported but never entered. Listing errors propagate to the indexer.
 
     Args:
       path (y2path | str): Relative folder path within this Container; empty selects its root.
       level (str): Indexing detail level passed to the container walker; defaults to files.
       recursive (bool): Whether to descend into folders below the selected path.
-      boundaries (Iterable[y2path | str]): Child Location paths to report without entering.
+      boundaries (Iterable[y2path | str]): Relative folder paths to report without entering.
 
     Returns:
       Iterator[tuple[dict, list[dict]]]: Each enumerated folder entry paired with its immediate indexed entries.
     """
     from .indexing import walk_container
-    yield from walk_container(self, str(Location.relative(path)), level, recursive, boundaries)
+    yield from walk_container(self, str(path), level, recursive, boundaries)
 
   def read(self, path: y2path | str | DataObject) -> DataObject:
     """Read one object without changing a refresh cursor.
@@ -94,12 +94,12 @@ class Container:
       path (y2path | str | DataObject): Relative object path or a source DataObject accepted by the provider.
 
     Returns:
-      DataObject: The addressed object with its source content, identity and metadata.
+      DataObject: The selected object with its source content, identity and metadata.
     """
     raise NotImplementedError
 
   def write(self, obj: DataObject) -> None:
-    """Write the object's files.
+    """Write a DataObject into this Container.
 
     Args:
       obj (DataObject): Source object to write using the destination provider's naming and content rules.
@@ -155,16 +155,22 @@ class Container:
 
 
 class Location(_Base):
-  """A Location in the tree, constructed from configuration or enumeration.
+  """A node in the Location tree, keyed by uid.
 
-  GppuCatalog.location(uid) returns a Location with its provider implementation.
-  ls returns the child Locations and walk traverses the Location tree.
-  container selects operations on the contents below the Location boundary.
-  The inherited my method reads the Location's configuration.
+  A Location combines a Provider/Connection UID and a path. The UID includes
+  the Provider/Connection hierarchy, for example m365-karelin-graph, followed
+  by the Location path. A Location with no parent is a root.
+
+  GppuCatalog.location(uid) returns the Location with its Provider and Connection
+  bound. ls returns child Locations; walk traverses the tree. Configuration and
+  provider enumeration produce the same class and use uid for each Location.
+  The inherited my method reads configuration, including the provider-relative
+  path. container(path) opens a Container through the Provider; the Container
+  is independent of the Location.
 
   Attributes:
-    uid (str): Configured or enumerated Location identity.
-    uri (y2uri): Canonical address of the Location.
+    uid (str): Unique Location key, including the Provider/Connection hierarchy and Location path.
+    uri (y2uri): Canonical URI of the Location.
 
   Relationships:
     parent (Location): Parent Location. A root Location has no parent.
@@ -176,6 +182,8 @@ class Location(_Base):
     super().__init__()
     self._config_from_dict(properties)
     self.uid = properties['uid']
+    if not isinstance(self.uid, str) or not self.uid:
+      raise ValueError('every Location requires a nonempty uid')
     self.uri = y2uri(properties['canonical'])
     self.parent = parent
     self._connection = deepcopy(connection)
@@ -209,16 +217,16 @@ class Location(_Base):
     Returns:
       Container: Provider-specific Container operations for the selected path. The base Location does not implement Containers and raises NotImplementedError.
     """
-    raise NotImplementedError(f'{self.uri}: Containers are not implemented')
+    raise NotImplementedError(f'{self.uid}: Containers are not implemented')
 
-  def address(self, path: y2path | str = '') -> y2uri:
-    """Canonical address of a relative path, with literal names URI-escaped.
+  def uri_of(self, path: y2path | str = '') -> y2uri:
+    """Canonical URI of a relative path, with literal names URI-escaped.
 
     Args:
       path (y2path | str): Relative path below this Location; empty returns its own URI.
 
     Returns:
-      y2uri: Canonical address of the selected path.
+      y2uri: Canonical URI of the selected path.
     """
     path = self.relative(path)
     if not path:
@@ -245,7 +253,11 @@ class Location(_Base):
 
 
 class FileLocation(Location):
-  """Files at the configured URI; naming rules belong to this implementation."""
+  """A Location served by the file Provider.
+
+  uid is the Location key. Its canonical file URI supplies the filesystem root.
+  container(path) opens a FileContainer with the configured naming templates.
+  """
   scheme = 'file'
 
   def __init__(self, properties: dict[str, Any], *, connection: dict[str, Any] | None = None,
@@ -266,7 +278,7 @@ class FileLocation(Location):
     if uri.netloc and uri.netloc.casefold() != socket.gethostname().split('.')[0].casefold():
       if os.name == 'nt' and not PureWindowsPath(path).drive:
         return Path('//' + uri.netloc + unquote(uri.path))
-      raise ValueError(f'{self.uri}: file URI does not identify a file on this host')
+      raise ValueError(f'{self.uri}: file URI refers to another host')
     if len(path) == 2 and path[1] == ':':
       path += '/'
     root = Path(path)
@@ -280,7 +292,7 @@ class FileLocation(Location):
     target = (root / unquote(path)).resolve()
     if not target.is_relative_to(root):
       raise ValueError('Container must stay within its Location')
-    return FileContainer(target, templates=self.templates, uri=self.address(path))
+    return FileContainer(target, templates=self.templates, uri=self.uri_of(path))
 
 def _updated(previous: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
   result = deepcopy(previous)
@@ -293,7 +305,12 @@ def _updated(previous: dict[str, Any], incoming: dict[str, Any]) -> dict[str, An
 
 
 class FileContainer(Container):
-  """List, read, write and delete files using configured object path templates."""
+  """The default Container implementation: a hierarchy of files at a root path.
+
+  Construct FileContainer(root) directly, or obtain one through a FileLocation.
+  ls and read use relative paths. Writing DataObjects uses the supplied naming
+  templates; existing files are matched by the source identity in their content.
+  """
   def __init__(self, root: str | Path, *, templates: dict[str, str] | None = None,
                uri: y2uri | str | None = None) -> None:
     root = Path(root)
@@ -303,8 +320,8 @@ class FileContainer(Container):
     self.root = self._root.as_posix()
     self.uri = y2uri(self._root.as_uri() if uri is None else uri)
     self.templates = None if templates is None else TemplateSet(named={'objects': deepcopy(templates)})
-    self._known: dict[str, Path] | None = None
-    self._held: dict[str, str] = {}
+    self._files: dict[str, Path] | None = None
+    self._paths: dict[str, str] = {}
 
   def _object_file(self, path: y2path | str | DataObject) -> Path:
     """Resolve an object's own URI and metadata, or a path returned by ls."""
@@ -332,24 +349,24 @@ class FileContainer(Container):
         if identity is not None:
           if not isinstance(identity, str) or not identity:
             raise ValueError('Object identity template must return a nonempty string or None')
-          if self._known is None:
-            self._known = {}
+          if self._files is None:
+            self._files = {}
             for saved in self._root.rglob('*.json'):
-              saved_identity = self.templates.render_template('identity',
+              key = self.templates.render_template('identity',
                 **(context | {'it': json.loads(saved.read_bytes()),
                              'path': saved.relative_to(self._root).as_posix()}))
-              if saved_identity is None:
+              if key is None:
                 continue
-              if saved_identity in self._known:
+              if key in self._files:
                 raise ValueError(f'{saved}: duplicate saved object identity')
-              self._known[saved_identity] = saved
-              self._held[saved.relative_to(self._root).as_posix().casefold()] = saved_identity
-          if identity in self._known:
-            path = self._known[identity].relative_to(self._root).as_posix()
+              self._files[key] = saved
+              self._paths[saved.relative_to(self._root).as_posix().casefold()] = key
+          if identity in self._files:
+            path = self._files[identity].relative_to(self._root).as_posix()
           else:
             original, number = path, 1
             attempted: set[str] = set()
-            while path.casefold() in self._held:
+            while path.casefold() in self._paths:
               if path.casefold() in attempted:
                 raise ValueError('Collision template must produce a new path')
               attempted.add(path.casefold())
@@ -357,8 +374,8 @@ class FileContainer(Container):
               path = self.templates.render_template('collision', **(context | {'path': original, 'number': number}))
               if not isinstance(path, str) or not path.strip():
                 raise ValueError('Collision template must return a nonempty relative path')
-            self._known[identity] = self._object_file(path)
-            self._held[path.casefold()] = identity
+            self._files[identity] = self._object_file(path)
+            self._paths[path.casefold()] = identity
     if isinstance(path, y2path):
       path = str(path)
     if not isinstance(path, str):
@@ -384,7 +401,7 @@ class FileContainer(Container):
   def walk(self, path: y2path | str = '', *, level: str = 'files', recursive: bool = False,
            boundaries: Iterable[y2path | str] = ()) -> Iterator[tuple[dict, list[dict]]]:
     from .indexing import walk_files
-    path = str(Location.relative(path))
+    path = str(path)
     self._object_file(path)
     yield from walk_files(self._root, path, level, recursive, boundaries)
 
@@ -451,9 +468,9 @@ class FileContainer(Container):
     target = self._object_file(path)
     target.unlink()
     relative = target.relative_to(self._root).as_posix().casefold()
-    if relative in self._held:
-      identity = self._held.pop(relative)
-      del self._known[identity]
+    if relative in self._paths:
+      identity = self._paths.pop(relative)
+      del self._files[identity]
 
   @contextmanager
   def _refresh(self, state: dict[str, Any], path: y2path | str) -> Iterator[tuple[Iterator[DataObject], Callable[[], None]]]:

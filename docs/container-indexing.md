@@ -10,7 +10,7 @@ generated: { by: Codex/GPT-6, at: 2026-09-22 }
 
 Alex, 2026-09-22: "Correctly implement containers and locations so file indexer works via gppu"
 
-`Location.ls()` enumerates child Locations. `Location.container(path)` selects a Container. Container folders remain contents; traversal never creates configured Locations. `Location.address(path)` returns the escaped canonical source URI without exposing a physical path to the consumer.
+`Location.ls()` enumerates child Locations. `Location.container(path)` selects a Container. Container folders remain contents; traversal never creates configured Locations. `Location.uri_of(path)` returns the escaped canonical source URI without exposing a physical path to the consumer.
 
 `Container.walk(path='', level='files', recursive=False, boundaries=())` yields `(folder, entries)` after the folder has been successfully enumerated. Entries use Container-relative `name`, fsspec `type`, `size`, and provider or handler metadata. A listing error raises before a complete folder is yielded. Explicit child Location boundaries are reported but not entered.
 
