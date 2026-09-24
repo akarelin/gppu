@@ -8,7 +8,7 @@ for now.
   Location                    a Provider, its connection and a path; the configurable tree   /config
   Container                   a tree of DataObjects, by path; reached through a Location     /lake
     Collection                links arbitrary DataObjects by uri: the Lake, a Thread         /lake
-  Link                        source uri, label, target uri: a native type, like TimeSpan
+  Link                        source uri, label, target uri, date: a native type, like TimeSpan
   Provider                    reaches a source; instantiated from a connection              /config, a list
     FileSystem                files; its handlers are all the existing ones
     M365, Telegram, Plaud
@@ -302,7 +302,7 @@ class Collection(Container):
 
 @dataclass(frozen=True)
 class Link:
-  """A graph link: a source uri, a label and a target uri. A native type, like TimeSpan.
+  """A graph link: a source uri, a label, a target uri and a date. A native type, like TimeSpan.
 
   Annotations, a Collection's members and the original Location of a Container are all Links. The index keeps
   them, and who made each: a handler or a person.
@@ -310,6 +310,8 @@ class Link:
   source: y2uri
   label: str
   target: y2uri
+  date: datetime
+  """A link needs a label and a date, and nothing else."""
 
 
 class Provider:
