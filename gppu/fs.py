@@ -4,13 +4,13 @@ Two APIs, made of the public methods of these classes. They take over the routes
 
 /config: the configuration, as admin.karelin.ai/configuration/locations shows it today.
   GET  /config/locations            every Location, one row each, parent by uid:
-         {"uid": "laptop-data/TextLake", "parent": "laptop-data", "provider": "file://",
+         {"uid": "file-alex-laptop/D:/TextLake", "parent": "file-alex-laptop/D:", "provider": "file-alex-laptop",
           "uri": "file://alex-laptop/D:/TextLake", "name": "TextLake", "kind": "Location", "path": "D:/TextLake",
           "service": "file", "icon": "/machine.svg", "tags": [], "folders": {}}
   GET  /config/locations/{uid}      one Location, the same row
   POST /config/locations/{uid}/save write it to configuration                          Location.save
   GET  /config/locations/{uid}/ls   the Locations directly below it                    Location.ls
-  GET  /config/providers            Providers, by uri: `file://`, `m365://`, `telegram://`, `plaud://`
+  GET  /config/providers            the Provider tree: uid, parent, scheme, authority, connection
   GET  /config/connections          connection names, without credentials
   POST /config/locations/{uid}/uri_of, container, path_of   used by FileIndexer, Dagster and the template preview
 
@@ -49,14 +49,11 @@ class Location:
   builds a Location from each row of the locations table.
   """
   uid: str
-  """Its key in configuration, readable by a person. A dash steps down the configured tree to a named Location, a
-  slash to a path below one: `laptop` is Alex-Laptop, `laptop-data` its D: volume, `laptop-data/TextLake` a folder
-  on it. The Provider is not part of it."""
+  """Its Provider's uid, a slash and its path: `file-alex-laptop/D:/TextLake` is file://alex-laptop/D:/TextLake."""
   parent: Location | None
   """The Location above it, or None for a root."""
   provider: Provider
-  """The Provider that reaches its data, by its uri: `file://` for every Location made of files, local, on smb or
-  on Synology Drive; `m365://` for Microsoft 365."""
+  """The Provider that reaches its data: `file-alex-laptop`, `m365-karelin-graph`."""
   uri: y2uri
   """Its canonical uri: `file://alex-laptop/D:/TextLake`, `m365://karelin/alex/onedrive`."""
   name: str
@@ -66,7 +63,7 @@ class Location:
   path: y2path
   """Its path on its Provider: `D:/TextLake`; empty for a root."""
   service: str
-  """How its Provider reaches it: `file` on the host itself, `smb` over a share, `sd` through Synology Drive."""
+  """The service that serves it: `file`, `smb`, `sd`."""
   icon: str
   """The icon admin_ui shows for it."""
   tags: list[str]
@@ -220,9 +217,17 @@ class Provider:
   One Provider both finds Locations and reads the Containers below them, because both go through the same
   connection and the same client. Paths are below the Provider's Location.
   """
-  uri: y2uri
-  """Its uri: `file://`, `m365://`. It is not per host or per account; hosts, tenants and accounts are Locations,
-  and each carries the connection its Provider uses to reach it."""
+  uid: str
+  """Its place in the Provider tree, a dash per level: scheme, authority, connection. `file` is file://,
+  `file-alex-laptop` is file://alex-laptop, `m365-karelin-graph` is m365://karelin over the graph connection."""
+  parent: Provider | None
+  """The Provider one level up: `file` for `file-alex-laptop`."""
+  scheme: str
+  """`file`, `m365`, `smb`, `telegram`."""
+  authority: str | None
+  """The host, tenant or account: `alex-laptop`, `karelin`."""
+  connection: str | None
+  """The connection it reaches its authority through: `karelin` for `m365-karelin-graph`."""
   handlers: tuple[Handler, ...]
   """The handlers that read what it lists, in the order they are tried. Empty when the source returns objects
   already read."""
