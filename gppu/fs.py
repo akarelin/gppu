@@ -32,8 +32,8 @@ session and its Thread. The graph is not held by the objects: a Link holds uris 
 the index, and it is read around one uri at a time. The graph is what /lake adds to a file system.
 
 What is read from where. A graph is not needed where there is a single tree, so a tree is read from tables and
-only Links are read from the graph. Locations and Providers are a tree: configuration, tables. DataObjects are
-a tree: rows with a parent; folders, files, records and spans are all rows, a span's TimeSpan in its row. A Link
+only Links are read from the graph. Locations and Providers are a tree, read from configuration and never from
+the index. DataObjects are a tree: rows with a parent; folders, files, records and spans are all rows, a span's TimeSpan in its row. A Link
 is what one tree cannot hold: one Container under two Locations, a member of a Collection, a span and the next,
 an annotation on an object. The graph is edges only; a node is a uri, and the row it names is in the tables. A
 Container reads tables only. A Collection is a uri that edges lead to, and its members are found by following
@@ -41,7 +41,7 @@ its edges to rows.
 
 Today the production graph meta holds the configuration as nodes -- Location, Provider, Connection, Host,
 Tenant, Container -- beside Thread and Tag nodes, and IS_PART_OF, ALTERNATE_OF and TAGGED_AS edges; fact.record
-and fact.span are tables. The configuration nodes are a tree kept in a graph, and they go back to tables.
+and fact.span are tables. Where configuration is kept is not the index's business.
 
 The Lake is an index and storage. gppu has no Lake: to gppu it is a Collection loaded from configuration. The upper
 levels -- Locations -- come from configuration; the lower levels are loaded from the database.
@@ -81,7 +81,7 @@ class DataObject:
   Today: providers.DataObject and handlers.Record, with Probe, FileStats and HandlerError, become this one type.
   identity becomes uid; kind and name move into metadata; the source uri becomes path; parent is the path without
   its last segment; removed becomes a time. is_folder, size and modified_at, the probes, stats and errors move into
-  metadata, each under its handler's name. CRAP's span rows (fact.every_span) become DataObjects with a fragment.
+  metadata, each under its handler's name. CRAP's span rows (fact.span) become DataObjects with a fragment.
   The lake's entity rows are DataObjects, instance rows their references and fingerprint rows their ids; the
   stopped textlake.record, records.record and public.files hold the same thing in older shapes.
   """
@@ -595,7 +595,7 @@ class GppuIndex:
   lake/common/index.py implements the database side: lake.entity holds the DataObjects, lake.instance their
   references at each Location, and lake.fingerprint their ids; fact.span holds the spans. The Links are the
   edges of the AGE graph meta: IS_PART_OF, ALTERNATE_OF and TAGGED_AS. Its configuration nodes are not the
-  index's business and leave the graph for tables.
+  index's business.
   """
 
   def entry(self, path: y2path) -> tuple[DataObject, list[DataObject] | None] | None:
