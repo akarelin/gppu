@@ -17,9 +17,10 @@ for now.
   GppuIndex                   the tree and the graph, held for retrieval: SqliteIndex beside the data, a database
                               in CRAP
 
-Routes. The API has two routes, /config and /lake, and every public method belongs to one of them as it is.
-Location's belong to /config; Container's and Collection's to /lake. How a Provider or a handler reaches and reads
-an object is its inner working, so those methods are protected.
+Routes. The API has two routes, /config and /lake, generated from three classes as they are: Location's public
+methods are /config; Container's and Collection's are /lake. A public method is a class's API. Provider, Handler
+and GppuIndex have theirs too: Location, Container and Collection call them, and CRAP implements them -- its
+Providers for M365, Telegram and Plaud, and its Lake as the database index. No route serves those directly.
 
 Paths and uris. A DataObject is known by its Location and its path; a Container understands paths only. A uri
 names a Location, or what a Link leads to, and only a Collection resolves one. A DataObject with its own uri is
@@ -330,7 +331,8 @@ class Provider:
     configuration; two classes would fix it in code.
   - Refresh re-reads both from the same delta state: the discovered Locations and the changed DataObjects.
 
-  Route: /config, a list, read only. Its methods are protected: how it reaches its source is its inner working.
+  Route: /config lists Providers, read only. Its methods are what Location, Container and Collection call, and
+  what a Provider written outside gppu implements. Which API and which request each uses is inside them.
 
   Today: the reaching is spread over GppuFileSystem, SharePointFileSystem and CRAP's Location/Container pairs;
   GppuCatalog resolves the connection. One Provider class per provider takes it over. No Provider for Postgres is
@@ -347,27 +349,57 @@ class Provider:
     """Instantiated from a Location's connection."""
     ...
 
-  def _locations(self, path: y2path) -> list[Location]:
-    """The Locations below path that the source itself defines: the discovered Locations."""
+  def locations(self, path: y2path) -> list[Location]:
+    """The Locations below path that the source itself defines: the discovered Locations.
+
+    Called by Location.ls, and by Container.refresh for the Locations it discovers. Today: the ls() of CRAP's
+    M365Location, PlaudLocation and TelegramLocation.
+    """
     ...
 
-  def _ls(self, path: y2path) -> list[DataObject]:
-    """What the Container at path holds, with what the source always supplies."""
+  def ls(self, path: y2path) -> list[DataObject]:
+    """What the Container at path holds, with what the source always supplies.
+
+    Called by Container.ls for a path the index has never listed. Today: FileContainer.ls through fsspec, and the
+    ls of CRAP's M365Container, PlaudContainer and TelegramContainer.
+    """
     ...
 
-  def _info(self, path: y2path) -> DataObject:
-    """The DataObject at path, from the source."""
+  def info(self, path: y2path) -> DataObject:
+    """The DataObject at path, from the source.
+
+    Called by Container.info for a path the index does not hold. Today: fsspec's info inside GppuFileSystem.
+    """
     ...
 
-  def _open(self, path: y2path, mode: str = 'rb') -> IO[bytes]:
+  def open(self, path: y2path, mode: str = 'rb') -> IO[bytes]:
+    """The bytes at path. Called by Container.open, and by the handlers as they probe.
+
+    Today: fsspec's open inside GppuFileSystem, and the read streams of FileContainer and PlaudContainer.
+    """
     ...
 
-  def _write(self, path: y2path, obj: DataObject) -> DataObject:
+  def path_of(self, obj: DataObject) -> y2path:
+    """The path this Provider stores obj at, named from its templates.
+
+    Called by Collection.write when it is given a Location's own uri. Today: FileContainer._object_file, which
+    admin_ui's template preview and plaud_import reach into.
+    """
     ...
 
-  def _refresh(self, path: y2path, state: dict[str, Any]) -> Iterator[DataObject]:
+  def write(self, path: y2path, obj: DataObject) -> DataObject:
+    """Store obj at path, replacing what is there. Called by Collection.write.
+
+    Today: FileContainer.write; M365Container, PlaudContainer and TelegramContainer raise.
+    """
+    ...
+
+  def refresh(self, path: y2path, state: dict[str, Any]) -> Iterator[DataObject]:
     """What changed below path since state, removed objects included. state moves on only after every change
-    was consumed."""
+    was consumed.
+
+    Called by Container.refresh. Today: the _refresh of CRAP's M365Container, PlaudContainer and TelegramContainer.
+    """
     ...
 
 
@@ -411,7 +443,7 @@ class Handler:
   that order is the order they identify and probe in. A failure is kept in the metadata under the handler's name,
   so one bad file does not stop a listing.
 
-  Its methods are protected: how a handler reads is its inner working.
+  Its methods are what a Container calls as it lists and reads, and what a new handler implements.
 
   Today: handlers.Handler with identify, __call__, identify_sync and call_sync on a local Path, returning a Record
   and a typed object. The typed objects -- MarkdownFile, CSVFile, LogFile, EmailFile, BrowserProfile, SessionFile,
@@ -419,17 +451,29 @@ class Handler:
   """
   name: str
 
-  def _identify(self, obj: DataObject, container: Container) -> bool:
-    """Whether this handler recognises obj, from what the source always supplies."""
+  def identify(self, obj: DataObject, container: Container) -> bool:
+    """Whether this handler recognises obj, from what the source always supplies.
+
+    Called by Container.ls and info. Today: Handler.identify and identify_sync, called on a path by RAN's preserve.
+    """
     ...
 
-  def _probe(self, obj: DataObject, container: Container) -> DataObject:
-    """obj read: with this handler's metadata and, where it has one, its content."""
+  def probe(self, obj: DataObject, container: Container) -> DataObject:
+    """obj read: with this handler's metadata and, where it has one, its content.
+
+    Called by Container.read. Today: Handler.__call__ and call_sync, reached as probe_sync and load_sync by
+    LakeFileSystem and admin_ui's session classify and cluster, and as SessionHandler(path) by RAN's preserve,
+    list-sessions and sessions-clean.
+    """
     ...
 
-  def _links(self, obj: DataObject, container: Container) -> list[Link]:
+  def links(self, obj: DataObject, container: Container) -> list[Link]:
     """The Links this handler finds from obj as it reads it -- a session's spans and their order. Most find none.
-    They go to the index, not onto obj."""
+    They go to the index, not onto obj.
+
+    Called by Container.read, which hands them to the index; Collection.links returns them to admin_ui's spans
+    and chains.
+    """
     ...
 
 
@@ -459,8 +503,11 @@ class ArchiveHandler(Handler):
   Today: ArchiveHandler with _RarFileSystem.
   """
 
-  def _open(self, obj: DataObject, container: Container, path: y2path, mode: str = 'rb') -> IO[bytes]:
-    """The bytes of the member at path inside the archive obj."""
+  def open(self, obj: DataObject, container: Container, path: y2path, mode: str = 'rb') -> IO[bytes]:
+    """The bytes of the member at path inside the archive obj.
+
+    Called by Container.open for a path inside an archive. Today: the gppu-rar cat_file admin_ui's archives use.
+    """
     ...
 
 
@@ -525,37 +572,56 @@ class GppuIndex:
   The other is in a database: CRAP's Lake. The id is internal to the index. It is not a pure cache: a removed
   DataObject stays, with the time it went. The database collects the SQLite indexes stored with the data.
 
-  Its methods are protected: an index is the inner working of a Container.
+  Its methods are what Container and Collection ask, and what SqliteIndex and CRAP's Lake implement.
 
   Today: handlers.GppuIndex, a Protocol with entry, put and moved on dict rows. CRAP's class Lake in
   lake/common/index.py implements the database side: lake.entity holds the DataObjects, lake.instance their
   references at each Location, and lake.fingerprint their ids.
   """
 
-  def _entry(self, path: y2path) -> tuple[DataObject, list[DataObject] | None] | None:
+  def entry(self, path: y2path) -> tuple[DataObject, list[DataObject] | None] | None:
     """The DataObject at path and what it holds, or None when neither is held. The listing is None when the index
-    was never told what it holds."""
+    was never told what it holds.
+
+    Asked by Container.ls and info. Today: GppuIndex.entry.
+    """
     ...
 
-  def _put(self, obj: DataObject, listing: list[DataObject] | None = None) -> None:
+  def put(self, obj: DataObject, listing: list[DataObject] | None = None) -> None:
+    """Hold obj, and what it holds when a listing is given.
+
+    Called by Container.ls and read after the handlers, by Container.refresh, and by Collection.write. Today:
+    GppuIndex.put, and the fact.record writes FileIndexer does itself.
+    """
     ...
 
-  def _moved(self, source: y2path, destination: y2path) -> None:
-    """The DataObject at source, and everything below it, is at destination now. What was said about it moves too."""
+  def moved(self, source: y2path, destination: y2path) -> None:
+    """The DataObject at source, and everything below it, is at destination now. What was said about it moves too.
+
+    Called by Container.refresh when a change is a move. Today: GppuIndex.moved.
+    """
     ...
 
-  def _find(self, path: y2path, criteria: dict[str, Any]) -> list[DataObject]:
+  def find(self, path: y2path, criteria: dict[str, Any]) -> list[DataObject]:
+    """Every DataObject below path whose metadata matches criteria. Asked by Container.find.
+
+    Today: the Postgres queries FileIndexer, admin_ui and the lake run themselves.
+    """
     ...
 
-  def _link(self, link: Link) -> None:
+  def link(self, link: Link) -> None:
+    """Hold link, and who made it. Called by Collection.link, and by Container.read for the handlers' Links."""
     ...
 
-  def _links(self, uri: y2uri) -> list[Link]:
-    """The Links from and to uri."""
+  def links(self, uri: y2uri) -> list[Link]:
+    """The Links from and to uri. Asked by Collection.links."""
     ...
 
-  def _collect(self, index: GppuIndex) -> None:
-    """Take in another index's rows: data that arrives from a place never indexed here keeps what was said about it."""
+  def collect(self, index: GppuIndex) -> None:
+    """Take in another index's rows: data that arrives from a place never indexed here keeps what was said about it.
+
+    Called on the database index for each SqliteIndex that arrives with its data.
+    """
     ...
 
 
