@@ -31,6 +31,15 @@ Location and the Containers it reaches, a Collection and its members, one span o
 session and its Thread. The graph is not held by the objects: a Link holds uris only, the whole graph is kept in
 the index, and it is read around one uri at a time. The graph is what /lake adds to a file system.
 
+What is read from where. Location, Provider and Collection are read from the graph: configuration is the graph,
+and a Thread is a node in it. A DataObject is read from tables: a tree is rows with a parent, and one object in
+one place needs nothing more; folders, files, records and spans are all rows, a span's TimeSpan in its row. A
+Link is an edge of the graph: what one tree cannot hold, one Container under two Locations, a member of a
+Collection, a span and the next, a Tag on an object. So a Container reads tables only, and a Collection is a
+node whose edges lead to rows. That is the running system: the graph meta holds Location, Provider, Connection,
+Host, Tenant, Container, Thread and Tag nodes with IS_PART_OF, ALTERNATE_OF and TAGGED_AS edges; fact.record
+and fact.span hold the objects.
+
 The Lake is an index and storage. gppu has no Lake: to gppu it is a Collection loaded from configuration. The upper
 levels -- Locations -- come from configuration; the lower levels are loaded from the database.
 """
@@ -247,7 +256,8 @@ class Collection(Container):
   Container that understands uris: it resolves one to a Location and a path.
 
   A Collection is a form of annotation: its members are the DataObjects linked to it, and a Link to it adds one.
-  A Thread is a Collection of sessions and their spans.
+  A Thread is a Collection of sessions and their spans. A Collection is a node in the graph, like a Location,
+  and its members are its edges, each leading to a row; a Container reads the tables only.
 
   The Lake is a Collection loaded from configuration. Its Locations come from configuration, and what is below them
   is loaded from the database. `Collection()` is that global Collection, the one the admin tool shows.
@@ -572,11 +582,17 @@ class GppuIndex:
   The other is in a database: CRAP's Lake. The id is internal to the index. It is not a pure cache: a removed
   DataObject stays, with the time it went. The database collects the SQLite indexes stored with the data.
 
-  Its methods are what Container and Collection ask, and what SqliteIndex and CRAP's Lake implement.
+  Its methods are what Container and Collection ask, and what SqliteIndex and CRAP's Lake implement. They are
+  in two parts. entry, put, moved and find are the tree: DataObjects as rows with a parent, which is where a
+  Container reads. link and links are the graph: Links as edges between uris, which is where a Collection reads
+  its members and where annotations, spans in order and Threads live. A row is never an edge and an edge never
+  a row; the two meet only in a Collection, which follows edges to rows.
 
   Today: handlers.GppuIndex, a Protocol with entry, put and moved on dict rows. CRAP's class Lake in
   lake/common/index.py implements the database side: lake.entity holds the DataObjects, lake.instance their
-  references at each Location, and lake.fingerprint their ids.
+  references at each Location, and lake.fingerprint their ids; fact.every_span holds the spans. The edges are
+  in the AGE graph meta, whose nodes are the configuration -- Location, Provider, Connection, Host, Tenant,
+  Container -- and the Threads and Tags, and whose edges are IS_PART_OF, ALTERNATE_OF and TAGGED_AS: the Links.
   """
 
   def entry(self, path: y2path) -> tuple[DataObject, list[DataObject] | None] | None:
