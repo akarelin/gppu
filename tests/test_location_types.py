@@ -110,10 +110,10 @@ def test_uri_keeps_slash_markers_without_interpreting_path_components():
 
 def test_uri_format_does_not_control_path_joining():
   uri = y2uri('custom:///folder?q=value#section')
-  uri._append_slash = True
+  uri._last_segment_empty = True
   joined = uri / 'child'
-  assert joined._prepend_slash is True
-  assert joined._append_slash is True
+  assert joined._path_absolute is True
+  assert joined._last_segment_empty is True
   assert joined.path.data == ['folder', 'child']
   assert str(joined) == 'custom:///folder/child/?q=value#section'
   assert joined.scheme == 'custom'
