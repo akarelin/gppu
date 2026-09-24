@@ -14,7 +14,7 @@ import pytest
 import yaml
 from fsspec.implementations.memory import MemoryFileSystem
 
-from gppu.handlers import ArchiveHandler, GppuCatalog, GppuFileSystem
+from gppu.fs import ArchiveHandler, GppuCatalog, GppuFileSystem
 
 
 def index(folder: Path) -> Path:
@@ -976,7 +976,7 @@ def test_a_folder_moved_between_two_locations_keeps_its_index(tmp_path):
 def test_a_postgres_location_is_addressed_like_any_other():
   """Alex, 2026-09-17 04:21: an index of his Postgres databases, schemas and tables. They are read
   through gppufs like any other place, so a schema is a folder and a table is an entry in it."""
-  from gppu.handlers import PostgresFileSystem
+  from gppu.fs import PostgresFileSystem
 
   with pytest.raises(ValueError, match='dsn'):
     PostgresFileSystem('pg://pg.karel.in/files')
@@ -1059,7 +1059,7 @@ def test_a_store_that_lists_enough_is_identified_without_its_bytes(monkeypatch):
 
 
 def test_an_m365_address_names_its_tenant_service_site_and_drive():
-  from gppu.handlers import SharePointFileSystem
+  from gppu.fs import SharePointFileSystem
   assert SharePointFileSystem._get_kwargs_from_urls('m365://karelin/sharepoint/sites/Suntrust/Statements') == {
     'tenant': 'karelin', 'service': 'sharepoint', 'site': 'sites/Suntrust', 'drive': 'Statements'}
   assert SharePointFileSystem._get_kwargs_from_urls('m365://karelin/onedrive/personal/alex_karelin_com/Documents') == {

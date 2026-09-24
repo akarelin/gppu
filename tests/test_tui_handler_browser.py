@@ -8,7 +8,7 @@ import yaml
 from textual.widgets import DataTable, Static, TextArea
 
 from examples.handler_browser import HandlerBrowser
-from gppu.handlers import GppuCatalog, GppuFileSystem
+from gppu.fs import GppuCatalog, GppuFileSystem
 from gppu.tui import TreeTable
 
 

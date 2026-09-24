@@ -6,8 +6,8 @@ import zipfile
 import pytest
 
 from gppu import Container, DataObject, FileLocation, Location
-from gppu.handlers import GppuCatalog
-from gppu.providers import FileContainer
+from gppu.fs import GppuCatalog
+from gppu.fs import FileContainer
 
 
 def test_file_location_uses_its_container_and_keeps_child_boundaries(tmp_path):
@@ -42,7 +42,7 @@ def test_refresh_reports_only_folders_without_marking_files_missing(tmp_path):
 
 @pytest.mark.parametrize('level', ['files', 'handlers'])
 def test_archives_are_not_opened_below_archives_level(tmp_path, monkeypatch, level):
-  from gppu.indexing import _IndexHandlers
+  from gppu.fs import _IndexHandlers
   archive = tmp_path / 'data.zip'
   with zipfile.ZipFile(archive, 'w') as output:
     output.writestr('inside.txt', 'inside')
@@ -67,8 +67,8 @@ def test_archive_members_have_original_paths_and_handler_readings(tmp_path):
 
 
 def test_a_failed_listing_is_not_a_successful_empty_directory(tmp_path, monkeypatch):
-  from gppu.handlers import HandlerError, Record
-  from gppu.indexing import _IndexHandlers
+  from gppu.fs import HandlerError, Record
+  from gppu.fs import _IndexHandlers
   error = HandlerError('file', 'list', tmp_path, 'PermissionError', 'denied')
   monkeypatch.setattr(_IndexHandlers, 'children', lambda *args: ())
   monkeypatch.setattr(_IndexHandlers, 'record', lambda *args: Record(tmp_path, True, 0, None, (), errors=(error,)))

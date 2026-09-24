@@ -11,7 +11,7 @@ import yaml
 
 from examples.handler_ls import listing, main
 from gppu import Env
-from gppu.handlers import GppuCatalog
+from gppu.fs import GppuCatalog
 
 
 def catalog_for(tmp_path: Path, *locations: Path) -> Path:
