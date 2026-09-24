@@ -4,13 +4,13 @@ Two APIs, made of the public methods of these classes. They take over the routes
 
 /config: the configuration, as admin.karelin.ai/configuration/locations shows it today.
   GET  /config/locations            every Location, one row each, parent by uid:
-         {"uid": "file-alex-laptop/D:/TextLake", "parent": "file-alex-laptop/D:", "provider": "file-alex-laptop",
+         {"uid": "file-alex-laptop/D:/TextLake", "parent": "file-alex-laptop/D:", "provider": "file",
           "uri": "file://alex-laptop/D:/TextLake", "name": "TextLake", "kind": "Location", "path": "D:/TextLake",
           "service": "file", "icon": "/machine.svg", "tags": [], "folders": {}}
   GET  /config/locations/{uid}      one Location, the same row
   POST /config/locations/{uid}/save write it to configuration                          Location.save
   GET  /config/locations/{uid}/ls   the Locations directly below it                    Location.ls
-  GET  /config/providers            the Provider tree: uid, parent, scheme, authority, connection
+  GET  /config/providers            the Providers: `file`, later `m365`, `telegram`, `plaud`
   GET  /config/connections          connection names, without credentials
   POST /config/locations/{uid}/uri_of, container, path_of   used by FileIndexer, Dagster and the template preview
 
@@ -49,11 +49,13 @@ class Location:
   builds a Location from each row of the locations table.
   """
   uid: str
-  """Its Provider's uid, a slash and its path: `file-alex-laptop/D:/TextLake` is file://alex-laptop/D:/TextLake."""
+  """Readable by a person. A root's uid is its Provider, a dash and its authority, with a dash and the connection
+  when there is one: `file-alex-laptop` is file://alex-laptop, `m365-karelin-graph` is m365://karelin over graph.
+  Below a root it is the root's uid, a slash and the path: `file-alex-laptop/D:/TextLake`."""
   parent: Location | None
   """The Location above it, or None for a root."""
   provider: Provider
-  """The Provider that reaches its data: `file-alex-laptop`, `m365-karelin-graph`."""
+  """The Provider that reaches its data: `file`."""
   uri: y2uri
   """Its canonical uri: `file://alex-laptop/D:/TextLake`, `m365://karelin/alex/onedrive`."""
   name: str
@@ -218,16 +220,8 @@ class Provider:
   connection and the same client. Paths are below the Provider's Location.
   """
   uid: str
-  """Its place in the Provider tree, a dash per level: scheme, authority, connection. `file` is file://,
-  `file-alex-laptop` is file://alex-laptop, `m365-karelin-graph` is m365://karelin over the graph connection."""
-  parent: Provider | None
-  """The Provider one level up: `file` for `file-alex-laptop`."""
-  scheme: str
-  """`file`, `m365`, `smb`, `telegram`."""
-  authority: str | None
-  """The host, tenant or account: `alex-laptop`, `karelin`."""
-  connection: str | None
-  """The connection it reaches its authority through: `karelin` for `m365-karelin-graph`."""
+  """Its name, which is its scheme: `file` is file://. Hosts, tenants and connections are Locations, not
+  Providers."""
   handlers: tuple[Handler, ...]
   """The handlers that read what it lists, in the order they are tried. Empty when the source returns objects
   already read."""
