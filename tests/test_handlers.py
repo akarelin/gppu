@@ -14,10 +14,10 @@ from pathlib import Path, PurePosixPath
 from zoneinfo import ZoneInfo
 
 import pytest
-import gppu.handlers as handlers_module
+import gppu.fs as handlers_module
 from gppu import OSType, TimeSpan, detect_os
 
-from gppu.handlers import (
+from gppu.fs import (
   typed,
   ArchiveHandler,
   BrowserHandler,
@@ -1900,7 +1900,7 @@ def test_a_sqlite_file_is_read_as_material(tmp_path: Path) -> None:
   sealed in an archive is still known â€” what it indexed and what it recorded â€” without opening it."""
   import sqlite3
 
-  from gppu.handlers import SqliteHandler
+  from gppu.fs import SqliteHandler
 
   database = tmp_path / 'old-index.sqlite'
   with sqlite3.connect(database) as connection:
@@ -1924,7 +1924,7 @@ def test_a_sqlite_file_is_read_as_material(tmp_path: Path) -> None:
 
 def test_ten_digits_that_are_not_a_time_do_not_stop_a_walk(tmp_path):
   """A ten-digit number in a name is as likely to be an account number as a timestamp."""
-  from gppu.handlers import FileHandler, FolderHandler
+  from gppu.fs import FileHandler, FolderHandler
 
   class Files(FileHandler, FolderHandler):
     pass
@@ -1939,7 +1939,7 @@ def test_ten_digits_that_are_not_a_time_do_not_stop_a_walk(tmp_path):
 
 def test_a_name_spelling_a_date_this_host_cannot_place_does_not_stop_a_walk(tmp_path):
   """A far date in a name is a number shaped like a date; a hierarchy walk does not stop for it."""
-  from gppu.handlers import FileHandler, FolderHandler
+  from gppu.fs import FileHandler, FolderHandler
 
   class Files(FileHandler, FolderHandler):
     pass

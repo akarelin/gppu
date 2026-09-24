@@ -3,7 +3,7 @@ import json
 import pytest
 
 from gppu import DataObject, FileLocation, Location, y2path, y2uri
-from gppu.providers import FileContainer
+from gppu.fs import FileContainer
 
 
 @pytest.mark.parametrize('value', [

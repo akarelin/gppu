@@ -2,7 +2,7 @@
 import pytest
 
 from gppu import FileLocation, Location, y2uri
-from gppu.handlers import GppuCatalog
+from gppu.fs import GppuCatalog
 
 
 @pytest.mark.parametrize('uid', ['', None, 123])
@@ -164,7 +164,7 @@ def test_file_write_uses_explicit_path_and_checks_source_identity(tmp_path):
 def test_file_write_without_templates_round_trips_json_and_binary(tmp_path):
   from io import BytesIO
   from gppu import DataObject, y2path
-  from gppu.providers import FileContainer
+  from gppu.fs import FileContainer
 
   container = FileContainer(tmp_path)
   obj = DataObject('file:///source/object', {'value': 'text'}, 'source')
@@ -185,7 +185,7 @@ def test_file_write_without_templates_round_trips_json_and_binary(tmp_path):
 @pytest.mark.parametrize('path', ['', '.', '../outside', '/absolute', 'C:/absolute', 'file:///outside', r'folder\file'])
 def test_file_write_rejects_invalid_destination_before_writing(tmp_path, path):
   from gppu import DataObject
-  from gppu.providers import FileContainer
+  from gppu.fs import FileContainer
 
   container = FileContainer(tmp_path)
   with pytest.raises(ValueError):
@@ -195,7 +195,7 @@ def test_file_write_rejects_invalid_destination_before_writing(tmp_path, path):
 
 @pytest.mark.parametrize('as_text', [False, True])
 def test_file_delete_by_uri_without_loading_a_dataobject(tmp_path, as_text):
-  from gppu.providers import FileContainer
+  from gppu.fs import FileContainer
 
   target = tmp_path / 'space #percent%.json'
   target.write_text('{"value": true}')
@@ -208,7 +208,7 @@ def test_file_delete_by_uri_without_loading_a_dataobject(tmp_path, as_text):
 
 
 def test_file_delete_rejects_uri_outside_container(tmp_path):
-  from gppu.providers import FileContainer
+  from gppu.fs import FileContainer
 
   root = tmp_path / 'container'
   root.mkdir()
@@ -223,7 +223,7 @@ def test_file_delete_rejects_uri_outside_container(tmp_path):
 
 @pytest.mark.parametrize('suffix', ['?key=value', '#part'])
 def test_file_delete_rejects_uri_query_and_fragment(tmp_path, suffix):
-  from gppu.providers import FileContainer
+  from gppu.fs import FileContainer
 
   target = tmp_path / 'keep.json'
   target.write_text('{}')

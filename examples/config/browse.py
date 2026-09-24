@@ -4,7 +4,7 @@ constructs, is there when the object is; a location's rules turn an address into
 on this host, and gppufs lists it the same way wherever it is. Zero arguments."""
 from gppu import App, Environment, State
 from gppu.gppu import _DC
-from gppu.handlers import GppuFileSystem
+from gppu.fs import GppuFileSystem
 
 
 class Location(_DC):
