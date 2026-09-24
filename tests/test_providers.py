@@ -193,6 +193,45 @@ def test_file_write_rejects_invalid_destination_before_writing(tmp_path, path):
   assert list(tmp_path.iterdir()) == []
 
 
+@pytest.mark.parametrize('as_text', [False, True])
+def test_file_delete_by_uri_without_loading_a_dataobject(tmp_path, as_text):
+  from gppu.providers import FileContainer
+
+  target = tmp_path / 'space #percent%.json'
+  target.write_text('{"value": true}')
+  sibling = tmp_path / 'keep.json'
+  sibling.write_text('{}')
+  uri = target.as_uri()
+  FileContainer(tmp_path).delete(uri if as_text else y2uri(uri))
+  assert not target.exists()
+  assert sibling.read_text() == '{}'
+
+
+def test_file_delete_rejects_uri_outside_container(tmp_path):
+  from gppu.providers import FileContainer
+
+  root = tmp_path / 'container'
+  root.mkdir()
+  outside = tmp_path / 'keep.json'
+  outside.write_text('{}')
+  container = FileContainer(root)
+  for uri in (outside.as_uri(), root.as_uri() + '/%2e%2e/keep.json'):
+    with pytest.raises(ValueError, match='outside this Container'):
+      container.delete(uri)
+  assert outside.read_text() == '{}'
+
+
+@pytest.mark.parametrize('suffix', ['?key=value', '#part'])
+def test_file_delete_rejects_uri_query_and_fragment(tmp_path, suffix):
+  from gppu.providers import FileContainer
+
+  target = tmp_path / 'keep.json'
+  target.write_text('{}')
+  with pytest.raises(ValueError, match='query or fragment'):
+    FileContainer(tmp_path).delete(target.as_uri() + suffix)
+  assert target.read_text() == '{}'
+
+
 @pytest.mark.parametrize('path', ['D:/other', '../other', '/etc/passwd', 'smb://server/share'])
 def test_container_rejects_nonlocal_object_paths(tmp_path, path):
   container = FileLocation({'uid': 'local', 'canonical': tmp_path.as_uri()}).container()
