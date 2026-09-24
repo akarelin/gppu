@@ -44,7 +44,7 @@ from .gppu import y2path, y2uri
 class Attribute(StrEnum):
   """File system attributes, as named values. Part of a DataObject's metadata.
 
-  Windows names them; a file system that names none carries them as named extended attributes. A folder listed and
+  Windows names them; a file system that names none carries them as named extended attributes. A path listed and
   never read is DIRECTORY and NOT_CONTENT_INDEXED. A handler that identified an object without reading it leaves
   NOT_CONTENT_INDEXED set and its own name in the metadata.
 
@@ -199,7 +199,7 @@ class Collection(Container):
 
   A Collection is loaded from configuration: its Locations come from configuration, and what is below them is
   loaded from the database. `Collection()` is the global Collection of configured Locations that the admin tool
-  shows: the Lake. `Collection(root)` is rooted at any folder or Location, which is read, indexed beside itself and
+  shows: the Lake. `Collection(root)` is rooted at any path or Location, which is read, indexed beside itself and
   then browsed the same way. A uri resolves to the Location whose uri begins it; the rest of the uri is the path
   inside. Objects are saved by uri, so saving is here and not on Container.
 
@@ -215,7 +215,7 @@ class Collection(Container):
   """The handlers that identify and read what is below the Locations."""
 
   def __init__(self, root: y2uri | None = None) -> None:
-    """The global Collection of configured Locations; or, given root, the Collection of that folder or Location."""
+    """The global Collection of configured Locations; or, given root, the Collection of that path or Location."""
     ...
 
   def find(self, criteria: dict[str, Any]) -> list[DataObject]:
@@ -407,11 +407,11 @@ class FolderHandler(Handler):
 
 
 class IgnoredHandler(Handler):
-  """A folder to report and never enter, such as a cache."""
+  """A path to report and never enter, such as a cache."""
 
 
 class LocationHandler(Handler):
-  """A folder that is a Location: this is how a Location is detected on refresh."""
+  """A path that is a Location: this is how a Location is detected on refresh."""
 
 
 class ArchiveHandler(Handler):
@@ -513,8 +513,8 @@ class GppuIndex:
 
 
 class SqliteIndex(GppuIndex):
-  """The index stored with the data: `.<folder>.gppufs.sqlite` beside the folder it describes. An index named for a
-  folder below owns that folder's tree.
+  """The index stored with the data: `.<name>.gppufs.sqlite` beside the path it describes. An index named for a
+  path below owns the tree under it.
 
   Today: inside GppuFileSystem.
   """
