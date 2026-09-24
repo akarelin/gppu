@@ -95,6 +95,7 @@ from fsspec.spec import AbstractFileSystem
 from fsspec.utils import stringify_path
 
 from .gppu import TimeSpan, Env, OSType, TemplateSet, _Base, detect_os, full_path, sync, y2path, y2uri
+from .environment import is_table_key
 
 
 # region providers
@@ -7642,6 +7643,17 @@ class Collection:
     """The Location a uri falls under, and the path below it."""
     return self._catalog.location_of(uri)
 
+  def config(self, table: str | None = None) -> list[str] | dict[str, dict[str, Any]]:
+    """The configuration, before templates resolve it: the names of its tables, or one table's rows by uid.
+
+    A table is what the configuration was loaded with, never the objects built from it. Locations are listed with
+    the rest; /config/locations adds and changes them.
+    """
+    tables = {name: rows for name, rows in self._catalog._config.items() if isinstance(rows, Mapping)}
+    if table is None:
+      return sorted(tables)
+    return {uid: deepcopy(row) for uid, row in tables[table].items() if isinstance(row, Mapping) and not is_table_key(uid)}
+
   def _at(self, uri: y2uri | str) -> tuple[Container, y2path]:
     location, path = self.location_of(uri)
     return location.container(), path
@@ -7895,6 +7907,8 @@ def _json(value: Any) -> Any:
 def serve(lake: Collection, host: str = '127.0.0.1', port: int = 8765) -> None:
   """Serve lake's configuration and content as REST resources. A write to the configuration carries its author as who.
 
+  GET    /config                    the names of the configuration's tables
+  GET    /config/{table}[/{uid}]    a table's rows as configured, or one row
   GET    /config/locations          every Location's configuration
   GET    /config/locations/{uid}    one Location's configuration; the uid is URL-encoded, a generated one has slashes
   POST   /config/locations          add a Location: who, provider, uid, name, path, service, kind, icon, tags, folders
@@ -7911,7 +7925,7 @@ def serve(lake: Collection, host: str = '127.0.0.1', port: int = 8765) -> None:
     def _route(self) -> tuple[str, str | None, dict[str, str]]:
       url = urlsplit(self.path)
       query = {key: values[0] for key, values in parse_qs(url.query, keep_blank_values=True).items()}
-      for collection in ('/config/locations', '/lake'):
+      for collection in ('/config/locations', '/config', '/lake'):
         if url.path == collection:
           return collection, None, query
         if url.path.startswith(collection + '/'):
@@ -7944,6 +7958,12 @@ def serve(lake: Collection, host: str = '127.0.0.1', port: int = 8765) -> None:
           if name is None:
             return 200, [location.data for location in lake.locations.values()]
           return 200, lake.location(name).data
+        if collection == '/config':
+          if name is None:
+            return 200, lake.config()
+          table, _, uid = name.partition('/')
+          rows = lake.config(table)
+          return 200, rows[uid] if uid else rows
         if 'ls' in query:
           return 200, lake.ls(name)
         if 'walk' in query:
