@@ -323,6 +323,10 @@ class Location(_Base):
     """
     raise NotImplementedError(f'{self.uid}: Containers are not implemented')
 
+  def save(self, who: str, **fields: Any) -> None:
+    """Write fields into this Location's configuration row as who: uid, name, path, service, kind, icon, tags, folders."""
+    self._store(self, who, fields)
+
   def uri_of(self, path: y2path | str = '') -> y2uri:
     """Canonical URI of a relative path, with literal names URI-escaped.
 
@@ -7586,17 +7590,20 @@ class Collection:
   it for longest, and the rest is the path inside that Location's Container.
   """
 
-  def __init__(self, catalog: GppuCatalog | None = None) -> None:
-    self._catalog = catalog if catalog is not None else GppuCatalog()
+  def __init__(self, catalog: GppuCatalog, store: Callable[[Location, str, dict[str, Any]], None]) -> None:
+    """The Lake of catalog's Locations; store writes a Location's configuration row where the configuration is kept."""
+    self._catalog, self._store = catalog, store
 
   @property
   def locations(self) -> dict[str, Location]:
     """Every configured Location, by uid."""
-    return {uid: self._catalog.location(uid) for uid in self._catalog.locations}
+    return {uid: self.location(uid) for uid in self._catalog.locations}
 
   def location(self, uid: str) -> Location:
     """The configured Location with uid."""
-    return self._catalog.location(uid)
+    location = self._catalog.location(uid)
+    location._store = self._store
+    return location
 
   def location_of(self, uri: y2uri | str) -> tuple[Location, y2path]:
     """The Location a uri falls under, and the path below it."""
@@ -7862,23 +7869,27 @@ def _json(value: Any) -> Any:
   return str(value)
 
 
-def serve(lake: Collection | None = None, host: str = '127.0.0.1', port: int = 8765) -> None:
-  """Serve /config and /lake for lake, the Lake of the loaded configuration by default.
+def serve(lake: Collection, host: str = '127.0.0.1', port: int = 8765) -> None:
+  """Serve /config and /lake for lake.
 
   GET /config/locations                      every Location
   GET /config/locations?uid=U                one Location
   GET /config/locations/<method>?uid=U&...   a method of that Location
+  POST /config/locations/save?uid=U {who, uid, name, ...}   write that Location's configuration row
   GET /lake/<method>?uri=...&...             a method of the Lake
   """
   from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
   from urllib.parse import parse_qs
-  api = LakeApi(lake if lake is not None else Collection())
+  api = LakeApi(lake)
 
   class Handler(BaseHTTPRequestHandler):
-    def do_GET(self) -> None:
+    def do_POST(self) -> None:
+      self.do_GET(json.loads(self.rfile.read(int(self.headers['Content-Length'])) or b'{}'))
+
+    def do_GET(self, body: dict | None = None) -> None:
       url = urlsplit(self.path)
       parts = [part for part in url.path.split('/') if part]
-      query = {key: values[0] for key, values in parse_qs(url.query).items()}
+      query = {key: values[0] for key, values in parse_qs(url.query).items()} | (body or {})
       if parts == ['config', 'locations'] and 'uid' not in query:
         payload, status = [api.rest_payload(location) for location in api.lake.locations.values()], 200
       elif parts == ['config', 'locations']:
