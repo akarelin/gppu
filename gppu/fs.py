@@ -70,7 +70,8 @@ class DataObject:
   removed: datetime | None = None
   """When it was deleted. Its metadata stays held."""
   links: tuple[Link, ...] = ()
-  """The Links from it: its edges in the graph, and what has been said about it."""
+  """The Links from it: its edges in the graph, and what has been said about it -- by handlers as they read it,
+  and by people."""
 
 
 class Container(DataObject):
@@ -206,8 +207,8 @@ class Collection(Container):
   def link(self, source: y2uri, label: str, target: y2uri | str, evidence: str = '') -> Link:
     """Link the DataObject at source to target under label: its Thread, the next span, a tag, a value.
 
-    Neither end has to exist: a uri names what it leads to without knowing anything about it. The caller is who
-    made the Link. Returns it as held.
+    This is how people make Links; handlers make theirs while reading. Neither end has to exist: a uri names what
+    it leads to without knowing anything about it. The caller is who made the Link. Returns it as held.
     """
     ...
 
@@ -221,6 +222,9 @@ class Link:
   and the next, and a session and its Thread. A Link whose target is a value says something about its source: a
   tag, a title, a verification.
 
+  Handlers make Links as they read: a session's spans and the links between them. The important ones are made by
+  people. who tells them apart.
+
   Route: /lake, in the links of a DataObject.
 
   Today: the typed edges of the graph database, and CRAP's annotation rows (`pg://pg.karel.in/files/lake/annotation`)
@@ -232,7 +236,7 @@ class Link:
   """The uri it leads to, or a value."""
   date: datetime
   who: str
-  """Who made it: a person or a process."""
+  """Who made it: a person, or the handler that read its source."""
   evidence: str = ''
 
 
@@ -258,7 +262,8 @@ class Handler:
     ...
 
   def _probe(self, obj: DataObject, container: Container) -> DataObject:
-    """obj read: with this handler's metadata and, where it has one, its content."""
+    """obj read: with this handler's metadata, its content where it has one, and the Links it found -- the spans
+    of a session and the links between them."""
     ...
 
 
