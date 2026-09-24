@@ -11,7 +11,7 @@ for now.
   Link                        source uri, label, target uri: a native type, like TimeSpan
   Provider                    reaches a source; instantiated from a connection              /config, a list
     FileSystem                files; its handlers are all the existing ones
-    M365, Postgres
+    M365, Telegram, Plaud, Postgres
   Handler                     reads a DataObject for its Provider: identify, probe
     FolderHandler, ArchiveHandler, MarkdownHandler, SessionHandler, ...
   GppuIndex                   the tree and the graph, held for retrieval: SqliteIndex beside the data, a database
@@ -318,8 +318,7 @@ class Provider:
   A Provider lists, opens and writes what its source holds, on its own paths, and reads what it reaches with its
   handlers. Provider instances form a hierarchy, encoded in the uid as a dash-separated path: `laptop` above
   `laptop-data`, and `m365` above `m365-karelin` above `m365-karelin-graph`. How it reaches an object -- which API,
-  which request -- is its inner working and never a uri. Outside gppu, CRAP declares Plaud and Telegram the same
-  way, and configuration names the class.
+  which request -- is its inner working and never a uri. Configuration names the class.
 
   One Provider does what two classes do today: the Location implementations, which enumerate Locations, and the
   Container implementations with the fsspec filesystems, which enumerate DataObjects. They are one because:
@@ -383,6 +382,20 @@ class M365(Provider):
   objects already read, so it has no handlers.
 
   Today: SharePointFileSystem, and CRAP's M365Location and M365Container.
+  """
+
+
+class Telegram(Provider):
+  """The Provider for Telegram: an account's chats and contacts.
+
+  Today: CRAP's TelegramLocation and TelegramContainer.
+  """
+
+
+class Plaud(Provider):
+  """The Provider for Plaud: recordings, their audio and their texts. Its root Location has no path below it.
+
+  Today: CRAP's PlaudLocation and PlaudContainer, with audio and texts.
   """
 
 
