@@ -4,13 +4,13 @@ Two APIs, made of the public methods of these classes. They take over the routes
 
 /config: the configuration, as admin.karelin.ai/configuration/locations shows it today.
   GET  /config/locations            every Location, one row each, parent by uid:
-         {"uid": "file-alex-laptop/D:/TextLake", "parent": "file-alex-laptop/D:", "provider": "file-alex-laptop",
+         {"uid": "file-alex-laptop/D:/TextLake", "parent": "file-alex-laptop/D:", "provider": "file://",
           "uri": "file://alex-laptop/D:/TextLake", "name": "TextLake", "kind": "Location", "path": "D:/TextLake",
           "service": "file", "icon": "/machine.svg", "tags": [], "folders": {}}
   GET  /config/locations/{uid}      one Location, the same row
   POST /config/locations/{uid}/save write it to configuration                          Location.save
   GET  /config/locations/{uid}/ls   the Locations directly below it                    Location.ls
-  GET  /config/providers            Providers: uid, scheme, authority                  Provider
+  GET  /config/providers            Providers, by uri: `file://`, `m365://`, `telegram://`, `plaud://`
   GET  /config/connections          connection names, without credentials
   POST /config/locations/{uid}/uri_of, container, path_of   used by FileIndexer, Dagster and the template preview
 
@@ -53,7 +53,7 @@ class Location:
   parent: Location | None
   """The Location above it, or None for a root."""
   provider: Provider
-  """The Provider that reaches its data: `file-alex-laptop`, `m365-karelin-graph`."""
+  """The Provider that reaches its data, by its uri: `file://` for files, `m365://` for Microsoft 365."""
   uri: y2uri
   """Its canonical uri: `file://alex-laptop/D:/TextLake`, `m365://karelin/alex/onedrive`."""
   name: str
@@ -217,8 +217,8 @@ class Provider:
   One Provider both finds Locations and reads the Containers below them, because both go through the same
   connection and the same client. Paths are below the Provider's Location.
   """
-  scheme: str
-  """The scheme of its Locations' uris: `file`, `m365`."""
+  uri: y2uri
+  """Its uri, which is its scheme and nothing else: `file://`, `m365://`. Hosts are Locations, not Providers."""
   handlers: tuple[Handler, ...]
   """The handlers that read what it lists, in the order they are tried. Empty when the source returns objects
   already read."""
