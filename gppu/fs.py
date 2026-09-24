@@ -15,7 +15,6 @@ for now.
     Provider                  a Handler instantiated from a connection                      /config, a list
       FileSystem, M365, Postgres
     FolderHandler, ArchiveHandler, MarkdownHandler, SessionHandler, ...
-  Connection                  what a Provider is instantiated from                          /config, a list
   GppuIndex                   the tree: SqliteIndex beside the data, a database in CRAP
   Attribute                   file system attributes
 
@@ -166,7 +165,8 @@ class Location(Container):
   Today: providers.Location, a _Base that hands out a separate Container and whose ls and walk list child
   Locations; FileLocation; and CRAP's M365Location, PlaudLocation and TelegramLocation. The subclasses for each
   store give way to Providers. A Location's children are the Locations naming it as parent. CRAP's
-  catalog_configuration.save becomes save.
+  catalog_configuration.save becomes save. The rows of State.connections become _connection, and admin_ui's
+  config_connections list goes.
   """
   uid: str
   """Its Provider's uid, then `/` and the path, readable by a human: `laptop`, `laptop-data`,
@@ -181,6 +181,9 @@ class Location(Container):
   """Its other uris. uri is the canonical one."""
   configured: bool
   """Written in configuration, rather than discovered."""
+  _connection: dict[str, Any]
+  """The connection its Provider is instantiated from: an account, an endpoint and credentials. Internal to the
+  Location; no route serves it."""
 
   def uri_of(self, path: y2path) -> y2uri:
     """Canonical uri of a path inside this Location: its uri, `:`, and the escaped path.
@@ -286,19 +289,6 @@ class Annotation:
   date: datetime
 
 
-class Connection:
-  """The configuration object a Provider is instantiated from: an account, an endpoint and its credentials.
-
-  Route: /config, a list of uid and name. Its credentials never leave it.
-
-  Today: the rows of State.connections, resolved by GppuCatalog and listed by admin_ui's config_connections.
-  """
-  uid: str
-  name: str | None
-  _values: dict[str, Any]
-  """The configuration row, credentials included."""
-
-
 class Handler:
   """What DataObjects come from. A handler returns metadata, and that metadata is stored as the DataObject.
 
@@ -342,11 +332,11 @@ class Provider(Handler):
   """
   uid: str
   parent: Provider | None
-  connection: Connection | None
   scheme: str
   authority: str | None
 
-  def __init__(self, connection: Connection | None) -> None:
+  def __init__(self, connection: dict[str, Any]) -> None:
+    """Instantiated from a Location's connection."""
     ...
 
   def _ls(self, path: y2path) -> list[DataObject]:
