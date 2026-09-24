@@ -1,12 +1,12 @@
 r"""gppufs: DataObjects in Containers, Containers in Locations and Collections.
 
-Two APIs are made of the public methods of these classes. /config is the Locations, as
-admin.karelin.ai/configuration/locations shows them; /lake is the Containers and the Collection, which the Dagster jobs
-write into \\s1\Lake.
+A Location is one place in the configured hierarchy, known by its uid. A Container holds alike objects and takes
+paths relative to itself. A Collection holds the Locations by uid and reaches their objects by uri; the Lake is a
+Collection. A Provider reaches objects by uri over one connection, and an instance of it is that Connection:
+FileSystem is the Provider of files, and M365, Telegram and Plaud are Providers in CRAP. A DataObject is content
+with its uri.
 
-uid, Alex, 2026-09-21: "uid for an object is (path + uid)" / "uid for locaition is provider uid (dash-separated and
-path)" / "m365 -child-> m365-karelin -child-> m365-karelin-graph -child-> m365-karelin-graph/alex/contacts" / "uid and
-path are human readable and are used to build URIs" / "bigint ids are interna"
+The public methods are the API. /config serves the Locations; /lake serves the Collection and its Containers.
 
 Handlers:
 Typed, caller-composed handlers for large file hierarchies.
@@ -135,7 +135,9 @@ def _join(uri: y2uri | str, path: y2path | str) -> y2uri:
 class Provider:
   """Reaches objects by their uri over one connection.
 
-  An instance is a Connection: the Provider with its connection parameters. FileSystem is the Provider of files;
+  An instance is a Connection: the Provider with its connection parameters. The same connection that reads a
+  Container's objects is the one that finds the Locations below a tenant, so one instance does both and holds the
+  session and credentials once. FileSystem is the Provider of files;
   M365, Telegram and Plaud are Providers written in CRAP. A Provider that cannot write raises PermissionError from
   write and delete. Container and Location call these methods; nothing else needs to.
 
