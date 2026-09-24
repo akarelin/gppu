@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import pytest
 
-from gppu import Env, Location, FileLocation
+from gppu import Env, FileSystem, Location, Provider
 from gppu.fs import GppuCatalog, GppuFileSystem
 
 
@@ -41,7 +41,7 @@ def refuse_filesystem(monkeypatch):
 def test_native_env_catalog_preserves_input_and_resolves_nested_templates():
   before = deepcopy(CONFIG)
   Env.from_dict(CONFIG)
-  catalog = GppuCatalog(location_types={'m365': Location, 'lake': Location})
+  catalog = GppuCatalog(location_types={'m365': Provider, 'lake': Provider})
   assert CONFIG == before
   assert Env.glob_dict('') == before
   assert catalog.ls_sync(detail=False) == ['m365', 'lake']
@@ -71,18 +71,19 @@ def test_plain_database_records_use_the_same_catalog_without_templates(tmp_path)
     },
   })
   assert catalog.info_sync('local-contacts')['gppu']['id'] == 123
-  assert catalog.location('local-contacts').container('Contacts').root == (tmp_path / 'Contacts').as_posix()
+  container = catalog.location('local-contacts').container('Contacts')
+  assert container.provider.local(container.uri) == tmp_path / 'Contacts'
   assert catalog.ls_sync(detail=False, recurse=True) == ['local-contacts']
 
 
 @pytest.mark.parametrize('relative', ['../elsewhere', 'Contacts/../../elsewhere', '/etc/passwd', 'smb://s1/other'])
 def test_local_path_cannot_escape_location(relative, tmp_path):
   with pytest.raises(ValueError):
-    FileLocation({'uid': 'local', 'canonical': tmp_path.as_uri()}).container(relative)
+    Location({'uid': 'local', 'canonical': tmp_path.as_uri()}, provider=FileSystem()).container(relative)
 
 
 def test_drive_root_stays_absolute():
-  location = FileLocation({'uid': 'drive', 'canonical': 'file:///D:/'})
+  location = Location({'uid': 'drive', 'canonical': 'file:///D:/'}, provider=FileSystem())
   assert str(location.uri) == 'file:///D:/'
   assert str(location.uri_of('Contacts/person.json')) == 'file:///D:/Contacts/person.json/'
 
@@ -91,26 +92,26 @@ def test_missing_connection_and_parent_are_errors():
   config = deepcopy(CONFIG)
   config['locations'][1]['connection'] = 'missing'
   with pytest.raises(KeyError, match='unknown connection'):
-    GppuCatalog(config, location_types={'m365': Location, 'lake': Location})
+    GppuCatalog(config, location_types={'m365': Provider, 'lake': Provider})
   config = deepcopy(CONFIG)
   config['locations'][1]['parent'] = 'missing'
   with pytest.raises(KeyError, match='unknown parent'):
-    GppuCatalog(config, location_types={'m365': Location, 'lake': Location})
+    GppuCatalog(config, location_types={'m365': Provider, 'lake': Provider})
 
 
 def test_duplicate_and_cyclic_locations_are_errors():
   config = deepcopy(CONFIG)
   config['locations'].append(deepcopy(config['locations'][1]))
   with pytest.raises(ValueError, match='duplicate Location'):
-    GppuCatalog(config, location_types={'m365': Location, 'lake': Location})
+    GppuCatalog(config, location_types={'m365': Provider, 'lake': Provider})
   config = deepcopy(CONFIG)
   config['locations'][1]['parent'] = 'lake'
   with pytest.raises(ValueError, match='cycle'):
-    GppuCatalog(config, location_types={'m365': Location, 'lake': Location})
+    GppuCatalog(config, location_types={'m365': Provider, 'lake': Provider})
 
 
 def test_refresh_is_not_an_implicit_indexing_request():
-  catalog = GppuCatalog(CONFIG, location_types={'m365': Location, 'lake': Location})
+  catalog = GppuCatalog(CONFIG, location_types={'m365': Provider, 'lake': Provider})
   with pytest.raises(ValueError, match='reload configuration explicitly'):
     catalog.ls_sync(refresh=True)
   with pytest.raises(ValueError, match='reload configuration explicitly'):
@@ -120,5 +121,5 @@ def test_refresh_is_not_an_implicit_indexing_request():
 def test_nested_paths_are_not_appended_twice():
   config = deepcopy(CONFIG)
   config['locations'][0]['locations'][0]['path'] = 'alex'
-  catalog = GppuCatalog(config, location_types={'m365': Location, 'lake': Location})
+  catalog = GppuCatalog(config, location_types={'m365': Provider, 'lake': Provider})
   assert catalog.info_sync('m365-karelin-graph/alex/contacts')['gppu']['path'] == 'alex/contacts'

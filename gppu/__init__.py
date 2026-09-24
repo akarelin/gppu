@@ -5,7 +5,7 @@ A comprehensive utility library providing configuration loading, logging,
 data manipulation, and type safety utilities.
 """
 
-from .fs import Container, DataObject, FileLocation, Location
+from .fs import Collection, Container, DataObject, FileSystem, Location, Provider
 
 from .app import (
     # App family

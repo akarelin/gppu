@@ -1,7 +1,7 @@
-"""Catalog binds Location implementations; Locations select Containers."""
+"""Catalog gives each Location its Provider; Locations select Containers."""
 import pytest
 
-from gppu import FileLocation, Location, y2uri
+from gppu import Container, DataObject, FileSystem, Location, Provider, y2uri
 from gppu.fs import GppuCatalog
 
 
@@ -15,11 +15,11 @@ def test_catalog_uses_location_uid_separately_from_uri():
   uid = 'm365-karelin-graph/users/alex/contacts'
   catalog = GppuCatalog({'connections': {}, 'locations': {
     uid: {'path': 'users/alex/contacts', 'canonical': 'm365://karelin/users/alex/contacts'},
-  }}, location_types={'m365': Location})
+  }}, location_types={'m365': Provider})
   location = catalog.location(uid)
   assert location.uid == uid
   assert catalog.location(uid) is location
-  assert location.my('path') == 'users/alex/contacts'
+  assert location.data['path'] == 'users/alex/contacts'
   assert catalog.ls_sync(detail=False) == [uid]
   with pytest.raises(KeyError):
     catalog.location(str(location.uri))
@@ -33,7 +33,7 @@ def test_file_provider_is_available_from_env_without_registration(tmp_path):
     'files': {'canonical': tmp_path.as_uri(), 'connection': 'disk'},
   }})
   catalog = GppuCatalog()
-  assert catalog.schemas == [{'scheme': 'file://', 'implementation': 'FileLocation'}]
+  assert catalog.schemas == [{'scheme': 'file://', 'implementation': 'FileSystem'}]
   container = catalog.location('files').container()
   with container.read('item.txt').content as stream:
     assert stream.read() == b'configured file'
@@ -44,48 +44,49 @@ def test_configured_provider_loads_without_application_registration(monkeypatch)
   from types import ModuleType
   from gppu import Env
 
-  class ExternalLocation(Location):
+  class External(Provider):
     scheme = 'external'
 
   module = ModuleType('test_external_provider')
-  module.ExternalLocation = ExternalLocation
+  module.External = External
   monkeypatch.setitem(sys.modules, module.__name__, module)
   Env.from_dict({'connections': {
-    'remote': {'provider': 'test_external_provider.ExternalLocation'},
-  }, 'locations': {'remote': {'canonical': 'external://tenant', 'connection': 'remote'}}})
+    'remote': {'provider': 'test_external_provider.External'},
+  }, 'locations': {'remote': {'canonical': 'external://tenant', 'connection': 'remote'},
+                   'other': {'canonical': 'external://tenant/other', 'connection': 'remote'}}})
   catalog = GppuCatalog()
   location = catalog.location('remote')
-  assert isinstance(location, ExternalLocation)
+  assert isinstance(location.provider, External)
+  assert catalog.location('other').provider is location.provider
   assert location.uri == 'external://tenant'
-  assert location._connection['provider'] == 'test_external_provider.ExternalLocation'
+  assert location.provider.connection['provider'] == 'test_external_provider.External'
   assert catalog.schemas == [
-    {'scheme': 'file://', 'implementation': 'FileLocation'},
-    {'scheme': 'external://', 'implementation': 'ExternalLocation'},
+    {'scheme': 'file://', 'implementation': 'FileSystem'},
+    {'scheme': 'external://', 'implementation': 'External'},
   ]
   assert GppuCatalog({'connections': {}, 'locations': {}}).schemas == [
-    {'scheme': 'file://', 'implementation': 'FileLocation'}]
+    {'scheme': 'file://', 'implementation': 'FileSystem'}]
 
 
 def test_configured_provider_conflict_is_an_error(monkeypatch):
   import sys
   from types import ModuleType
 
-  class OtherFileLocation(Location):
+  class OtherFileSystem(Provider):
     scheme = 'file'
 
   module = ModuleType('test_conflicting_provider')
-  module.OtherFileLocation = OtherFileLocation
+  module.OtherFileSystem = OtherFileSystem
   monkeypatch.setitem(sys.modules, module.__name__, module)
   with pytest.raises(ValueError, match='already registered'):
     GppuCatalog({'connections': {
-      'disk': {'provider': 'test_conflicting_provider.OtherFileLocation'},
+      'disk': {'provider': 'test_conflicting_provider.OtherFileSystem'},
     }, 'locations': {}})
 
 
 def test_runtime_location_registration_and_child_binding():
-  class Graph(Location):
-    def container(self, path=''):
-      return self.uri_of(path)
+  class Graph(Provider):
+    scheme = 'm365'
 
   config = {'connections': {'graph': {'provider': 'm365'}}, 'locations': [
     {'uid': 'graph', 'canonical': 'm365://tenant', 'connection': 'graph', 'locations': [
@@ -95,31 +96,32 @@ def test_runtime_location_registration_and_child_binding():
   catalog = GppuCatalog(config, location_types={'m365': Graph})
   root = catalog.location('graph')
   contacts = catalog.location('contacts')
-  assert isinstance(root, Graph)
+  assert isinstance(root.provider, Graph)
   assert root.ls() == [contacts]
   assert contacts.parent is root
-  assert contacts.container('folder with space/record%id') == 'm365://tenant/alex/contacts/folder%20with%20space/record%25id'
+  assert contacts.container('folder with space/record%id').uri == 'm365://tenant/alex/contacts/folder%20with%20space/record%25id'
   assert list(root.walk()) == [(root, [contacts]), (contacts, [])]
 
 
 def test_fixed_root_does_not_require_uri_subdivisions():
   catalog = GppuCatalog({'connections': {}, 'locations': {
     'plaud': {'canonical': 'plaud://'},
-  }}, location_types={'plaud': Location})
+  }}, location_types={'plaud': Provider})
   root = catalog.location('plaud')
   assert isinstance(root.uri, y2uri)
   assert root.uri_of() == 'plaud://'
   assert root.ls() == []
 
 
-def test_unknown_location_and_unregistered_scheme_fail():
+def test_unknown_location_fails_and_unregistered_scheme_has_no_container():
   catalog = GppuCatalog({'connections': {}, 'locations': {
     'remote': {'canonical': 'unknown://root'},
   }})
   with pytest.raises(KeyError):
     catalog.location('missing')
-  with pytest.raises(KeyError):
-    catalog.location('remote')
+  assert catalog.location('remote').provider is None
+  with pytest.raises(ValueError, match='no Provider'):
+    catalog.location('remote').container()
 
 
 def test_file_locations_select_independent_containers(tmp_path):
@@ -132,9 +134,9 @@ def test_file_locations_select_independent_containers(tmp_path):
   }})
   for name in ('one', 'two'):
     location = catalog.location(name)
-    assert isinstance(location, FileLocation)
+    assert isinstance(location.provider, FileSystem)
     container = location.container()
-    assert container.root == (tmp_path / name).as_posix()
+    assert container.provider.local(container.uri) == tmp_path / name
     assert container.ls(detail=False) == ['item.txt']
     obj = container.read('item.txt')
     assert obj.uri == location.uri_of('item.txt')
@@ -143,9 +145,7 @@ def test_file_locations_select_independent_containers(tmp_path):
 
 
 def test_file_write_uses_explicit_path_and_checks_source_identity(tmp_path):
-  from gppu import DataObject
-
-  container = FileLocation({'uid': 'files', 'canonical': tmp_path.as_uri()}, templates={
+  container = Location({'uid': 'files', 'canonical': tmp_path.as_uri()}, provider=FileSystem(), templates={
     'date': "{{ '2026-09-22' if 'plaud://' in uri else '' }}",
     'filename': "{{ date.year }}/{{ uri.split('://')[1] }}.json",
     'identity': "{{ it.id if uri.startswith('plaud://') else none }}",
@@ -163,10 +163,9 @@ def test_file_write_uses_explicit_path_and_checks_source_identity(tmp_path):
 
 def test_file_write_without_templates_round_trips_json_and_binary(tmp_path):
   from io import BytesIO
-  from gppu import DataObject, y2path
-  from gppu.fs import FileContainer
+  from gppu import y2path
 
-  container = FileContainer(tmp_path)
+  container = Container(FileSystem(), tmp_path.as_uri())
   obj = DataObject('file:///source/object', {'value': 'text'}, 'source')
   container.write(y2path('nested/value.json'), obj)
   assert container.read('nested/value.json').content == obj.content
@@ -184,56 +183,71 @@ def test_file_write_without_templates_round_trips_json_and_binary(tmp_path):
 
 @pytest.mark.parametrize('path', ['', '.', '../outside', '/absolute', 'C:/absolute', 'file:///outside', r'folder\file'])
 def test_file_write_rejects_invalid_destination_before_writing(tmp_path, path):
-  from gppu import DataObject
-  from gppu.fs import FileContainer
-
-  container = FileContainer(tmp_path)
+  container = Container(FileSystem(), tmp_path.as_uri())
   with pytest.raises(ValueError):
     container.write(path, DataObject('file:///source', b'data', 'source'))
   assert list(tmp_path.iterdir()) == []
 
 
-@pytest.mark.parametrize('as_text', [False, True])
-def test_file_delete_by_uri_without_loading_a_dataobject(tmp_path, as_text):
-  from gppu.fs import FileContainer
-
+def test_container_deletes_by_path_and_escapes_names(tmp_path):
   target = tmp_path / 'space #percent%.json'
   target.write_text('{"value": true}')
   sibling = tmp_path / 'keep.json'
   sibling.write_text('{}')
-  uri = target.as_uri()
-  FileContainer(tmp_path).delete(uri if as_text else y2uri(uri))
+  Container(FileSystem(), tmp_path.as_uri()).delete('space #percent%.json')
   assert not target.exists()
   assert sibling.read_text() == '{}'
 
 
-def test_file_delete_rejects_uri_outside_container(tmp_path):
-  from gppu.fs import FileContainer
-
+def test_file_provider_deletes_by_uri_and_refuses_traversal(tmp_path):
   root = tmp_path / 'container'
   root.mkdir()
+  inside = root / 'gone.json'
+  inside.write_text('{}')
   outside = tmp_path / 'keep.json'
   outside.write_text('{}')
-  container = FileContainer(root)
-  for uri in (outside.as_uri(), root.as_uri() + '/%2e%2e/keep.json'):
-    with pytest.raises(ValueError, match='outside this Container'):
-      container.delete(uri)
+  FileSystem().delete(y2uri(inside.as_uri()))
+  assert not inside.exists()
+  with pytest.raises(ValueError, match='traversal'):
+    FileSystem().delete(root.as_uri() + '/%2e%2e/keep.json')
   assert outside.read_text() == '{}'
 
 
 @pytest.mark.parametrize('suffix', ['?key=value', '#part'])
-def test_file_delete_rejects_uri_query_and_fragment(tmp_path, suffix):
-  from gppu.fs import FileContainer
-
+def test_file_provider_rejects_uri_query_and_fragment(tmp_path, suffix):
   target = tmp_path / 'keep.json'
   target.write_text('{}')
   with pytest.raises(ValueError, match='query or fragment'):
-    FileContainer(tmp_path).delete(target.as_uri() + suffix)
+    FileSystem().delete(target.as_uri() + suffix)
   assert target.read_text() == '{}'
+
+
+def test_read_only_provider_refuses_writes_and_discovers_locations():
+  class Tenant(Provider):
+    scheme = 'm365'
+    def locations(self, uri):
+      return [('users', 'Users')] if uri == 'm365://tenant' else []
+    def ls(self, uri):
+      return [{'name': 'item', 'type': 'file', 'size': None}]
+    def read(self, uri):
+      return DataObject(uri, {'id': 'native'}, 'native')
+
+  root = Location({'uid': 'tenant', 'canonical': 'm365://tenant'}, provider=Tenant())
+  users, = root.ls()
+  assert (users.uid, users.uri, users.parent, users.data['name']) == ('tenant/users', 'm365://tenant/users', root, 'Users')
+  container = users.container()
+  assert container.ls(detail=False) == ['item']
+  assert container.read('item').uri == 'm365://tenant/users/item'
+  with pytest.raises(PermissionError):
+    container.write('item', DataObject('m365://tenant/users/item', {}, 'native'))
+  with pytest.raises(PermissionError):
+    container.delete('item')
+  with pytest.raises(ValueError, match='no Provider'):
+    Location({'uid': 'group', 'canonical': 'group://'}).container()
 
 
 @pytest.mark.parametrize('path', ['D:/other', '../other', '/etc/passwd', 'smb://server/share'])
 def test_container_rejects_nonlocal_object_paths(tmp_path, path):
-  container = FileLocation({'uid': 'local', 'canonical': tmp_path.as_uri()}).container()
+  container = Location({'uid': 'local', 'canonical': tmp_path.as_uri()}, provider=FileSystem()).container()
   with pytest.raises(ValueError):
     container.read(path)
