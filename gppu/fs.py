@@ -1,8 +1,31 @@
 """gppufs: DataObjects in Containers, Containers in Locations and Collections.
 
-Two APIs, made of the public methods of these classes. /config is the Locations, by uid. /lake is the Containers
-and Collections, by uri; the Lake is the Collection loaded from configuration. Provider, Handler and GppuIndex are
-what a Container is built on. This module replaces providers.py, handlers.py and indexing.py.
+Two APIs, made of the public methods of these classes. They take over the routes admin_ui serves in production.
+
+/config: the Locations, by uid. Providers and connections are plain lists beside them.
+  GET  /config/location             Location rows as a tree         /config                         Location
+  POST /config/location             save one Location               /config/{uid}/save              Location.save
+  GET  /config/provider             Providers                       State.providers, a list
+  GET  /config/provider/schemas     schemes the Providers serve     Provider.scheme
+  GET  /config/connection           connection names                internal to a Location
+  GET  /config/file                 naming templates                a Location's templates
+  POST /config/file/preview         where an object would be saved  /lake/{uri}/path_of
+  GET  /config/process, /resource   Dagster's configuration         stays with Dagster
+
+/lake: what the Locations hold, by uri; the Lake is the Collection at lake://.
+  GET  /records/browse              children within a Location      /lake/{uri}/ls, walk            Container
+  GET  /records/record              one record and its spans        /lake/{uri}/read                Container
+  GET  /records                     search by text, Location, kind  /lake/lake://find               Collection
+  GET  /sources/resolve             the owner of a source reference /lake/lake://location_of        Collection
+  GET  /sources/record              a source object as fetched      /lake/{uri}/info, open          Container
+  Dagster, Plaud import             write, delete, refresh          /lake/{uri}/write, delete, refresh
+
+Spans, annotations and threads are links between objects, and come later with the graph. /sources/query runs
+registered SQL and stays in admin_ui. The Lake stores what it fetched at sources/<Location uid>/<path> and
+renditions under text/.
+
+Provider, Handler and GppuIndex are what a Container is built on. This module replaces providers.py, handlers.py
+and indexing.py.
 """
 from __future__ import annotations
 
@@ -54,6 +77,10 @@ class Location:
 
   def uri_of(self, path: y2path | str = '') -> y2uri:
     """The uri of path below this Location: its uri, a colon, and the path."""
+    ...
+
+  def save(self) -> Location:
+    """Write this Location to configuration, creating it when it is new, and return it as saved."""
     ...
 
   @staticmethod
@@ -155,6 +182,10 @@ class Collection(Container):
 
   def __init__(self, index: GppuIndex, uri: y2uri | str = 'lake://') -> None:
     """The Collection of the configured Locations, over index."""
+    ...
+
+  def find(self, text: str = '', location: str = '', kind: str = '', parent: str = '') -> list[DataObject]:
+    """The DataObjects the index holds that match text in their name or path, under location, of kind, in parent."""
     ...
 
   def location_of(self, uri: y2uri | str) -> tuple[Location, y2path]:
