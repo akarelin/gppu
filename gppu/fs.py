@@ -32,18 +32,14 @@ session and its Thread. The graph is not held by the objects: a Link holds uris 
 the index, and it is read around one uri at a time. The graph is what /lake adds to a file system.
 
 What is read from where: config, facts and links. Three stores, and every object is read from one of them.
-Config is tables, the ones gppu's configuration classes already define, and it holds what people write: Locations,
-Providers and their connections, as State rows read through Environment. Facts are tables of what handlers and
-sources said: DataObjects as rows with a parent; folders, files, records and spans are all rows, a span's TimeSpan
-in its row. Links are the graph: edges between uris, for what no single tree can hold -- one Container under two
-Locations, a member of a Collection, a span and the next, an annotation on an object. A graph is not needed where
-there is a single tree, so the graph holds edges only; a node is a uri, and what it names is a config row or a
-fact row. A Location is read from config, a Container reads facts only, and a Collection is a uri whose links lead
-to facts. The index holds facts and links; config is read through the configuration classes.
-
-Today the production graph meta holds configuration as nodes -- Location, Provider, Connection, Host, Tenant,
-Container -- beside Thread and Tag nodes, and IS_PART_OF, ALTERNATE_OF and TAGGED_AS edges; fact.record and
-fact.span are the facts. The configuration nodes are config tables kept in a graph.
+Config is the configuration as Environment and State define it: tables of rows keyed by uid, each resolved through
+its table's templates and built by the class its kind names. Locations, Providers and their connections are such
+rows, and /config serves them. Facts are tables of what handlers and sources said: DataObjects as rows with a
+parent; folders, files, records and spans are all rows, a span's TimeSpan in its row. Links are the graph: edges
+between uris, for what no single tree can hold -- one Container under two Locations, a member of a Collection, a
+span and the next, an annotation on an object. A graph is not needed where there is a single tree, so the graph
+holds edges only; a node is a uri, and what it names is a config row or a fact row. A Location is read from config,
+a Container reads facts only, and a Collection is a uri whose links lead to facts. The index holds facts and links.
 
 The Lake is an index and storage. gppu has no Lake: to gppu it is a Collection loaded from configuration. The upper
 levels -- Locations -- come from configuration; the lower levels are loaded from the database.
@@ -596,8 +592,7 @@ class GppuIndex:
   Today: handlers.GppuIndex, a Protocol with entry, put and moved on dict rows. CRAP's class Lake in
   lake/common/index.py implements the database side: lake.entity holds the DataObjects, lake.instance their
   references at each Location, and lake.fingerprint their ids; fact.span holds the spans. The Links are the
-  edges of the AGE graph meta: IS_PART_OF, ALTERNATE_OF and TAGGED_AS. Its configuration nodes are config, not
-  index.
+  edges of the AGE graph meta: IS_PART_OF, ALTERNATE_OF and TAGGED_AS.
   """
 
   def entry(self, path: y2path) -> tuple[DataObject, list[DataObject] | None] | None:
