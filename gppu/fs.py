@@ -7874,14 +7874,14 @@ def _json(value: Any) -> Any:
   return str(value)
 
 
-def serve(lake: Collection, identify: Callable[[Mapping], str], host: str = '127.0.0.1', port: int = 8765) -> None:
-  """Serve /config and /lake for lake. identify names the author of a write from the request's headers.
+def serve(lake: Collection, host: str = '127.0.0.1', port: int = 8765) -> None:
+  """Serve /config and /lake for lake.
 
   GET /config/locations                      every Location
   GET /config/locations?uid=U                one Location
   GET /config/locations/<method>?uid=U&...   a method of that Location
-  POST /config/locations/save?uid=U {uid, name, ...}        write that Location's configuration row
-  POST /config/locations/add {provider, uid, name, ...}      write a new Location's configuration row
+  POST /config/locations/save?uid=U {who, uid, name, ...}   write that Location's configuration row
+  POST /config/locations/add {who, provider, uid, name, ...}  write a new Location's configuration row
   GET /lake/<method>?uri=...&...             a method of the Lake
   """
   from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -7890,8 +7890,7 @@ def serve(lake: Collection, identify: Callable[[Mapping], str], host: str = '127
 
   class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
-      body = json.loads(self.rfile.read(int(self.headers['Content-Length'])) or b'{}')
-      self.do_GET(body | {'who': identify(self.headers)})
+      self.do_GET(json.loads(self.rfile.read(int(self.headers['Content-Length'])) or b'{}'))
 
     def do_GET(self, body: dict | None = None) -> None:
       url = urlsplit(self.path)
