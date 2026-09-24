@@ -150,6 +150,11 @@ class Provider:
   def __init__(self, connection: Mapping[str, Any] | None = None) -> None:
     self.connection = deepcopy(dict(connection)) if connection is not None else {}
 
+  def join(self, uri: y2uri, path: y2path | str) -> y2uri:
+    """The uri of path below uri. Each name is uri-escaped; a Provider whose paths are already escaped ids joins
+    them as they are."""
+    return _join(uri, path)
+
   def ls(self, uri: y2uri) -> list[dict[str, Any]]:
     """What is directly inside uri, each entry named by its own name with its type and size."""
     raise NotImplementedError(f'{self.scheme}: ls is not implemented')
@@ -220,7 +225,7 @@ class Container:
     self._identities: dict[str, str] = {}
 
   def _uri(self, path: y2path | str) -> y2uri:
-    return _join(self.uri, Location.relative(path))
+    return self.provider.join(self.uri, Location.relative(path))
 
   def ls(self, path: y2path | str = '', detail: bool = True) -> list[dict[str, Any]] | list[str]:
     """What is directly inside path, each entry named by its path in this Container, with type and size.
@@ -428,7 +433,7 @@ class Location:
       return children
     configured = {child.uri for child in children}
     for path, name in self.provider.locations(self.uri):
-      uri = _join(self.uri, path)
+      uri = self.provider.join(self.uri, path)
       if uri in configured:
         continue
       children.append(Location(self._row | {'uid': f"{self.uid.rstrip('/')}/{path}", 'canonical': str(uri),
@@ -447,7 +452,7 @@ class Location:
     """The Container at path below this Location. Callers: FileIndexer, Dagster jobs."""
     if self.provider is None:
       raise ValueError(f'{self.uid}: no Provider reaches this Location')
-    return Container(self.provider, self.uri_of(path), templates=self.templates)
+    return Container(self.provider, self.provider.join(self.uri, self.relative(path)), templates=self.templates)
 
   def uri_of(self, path: y2path | str = '') -> y2uri:
     """The canonical uri of path below this Location, each name uri-escaped. Caller: FileIndexer."""
