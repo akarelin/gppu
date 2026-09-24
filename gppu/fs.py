@@ -5,21 +5,27 @@ into these classes, and the API and the documentation are generated from them. T
 for now.
 
   DataObject                  metadata, with content in some cases                         /lake
+    Span                      a part of a DataObject: a stretch of a session, a passage     /lake
     Container                 holds DataObjects: a folder, an archive                       /lake
       Location                a Provider and a path-to-container                            /config
       Collection              a Container that links arbitrary DataObjects                  /lake
+  Link                        a labelled edge between two uris                              /lake
+  Annotation                  a statement about a DataObject, with evidence and author      /lake
   Handler                     where DataObjects come from: identify, probe
     Provider                  a Handler instantiated from a connection                      /config, a list
       FileSystem, M365, Postgres
     FolderHandler, ArchiveHandler, MarkdownHandler, SessionHandler, ...
   Connection                  what a Provider is instantiated from                          /config, a list
   GppuIndex                   the tree: SqliteIndex beside the data, a database in CRAP
-  Link                        between a Location and a Container
   Attribute                   file system attributes
 
 Routes. The API has two routes, /config and /lake, and every public method belongs to one of them as it is. A
 Location's own members serve /config; the Container methods it inherits serve /lake. How a Provider or a handler
 reaches and reads an object is its inner working, so those methods are protected.
+
+The tree and the graph. Containers make a tree: every DataObject is in one place. Links and Annotations make a
+graph over it: a Location and the Containers it reaches, a Collection and what it links, one Span and the next,
+a session and the Thread it belongs to. The graph is what /lake adds to a file system.
 
 The Lake is an index and storage. gppu has no Lake: to gppu it is a Collection loaded from configuration. The upper
 levels -- Locations -- come from configuration; the lower levels are loaded from the database.
@@ -86,6 +92,24 @@ class DataObject:
   """Present once a handler has read it: MarkdownFile, CSVFile, SessionFile and the other typed objects."""
   removed: datetime | None = None
   """When it was deleted. Its metadata stays held."""
+  links: tuple[Link, ...] = ()
+  """The Links from it: its edges in the graph."""
+  annotations: tuple[Annotation, ...] = ()
+  """What has been said about it."""
+
+
+class Span(DataObject):
+  """A part of a DataObject: a stretch of time in a session, a passage of text. The unit that sessions, threads,
+  the timeline and time accounting all count in.
+
+  Its uri is the uri of the DataObject it is part of, with a fragment naming the part: RFC 3986 gives the fragment
+  exactly this job. Spans follow one another by Links, and belong to a Thread by a Link to it.
+
+  Route: /lake.
+
+  Today: CRAP's span rows (fact.every_span, `pg://pg.karel.in/files/lake/span`), read and written by admin_ui's
+  spans, fact_spans and chains.
+  """
 
 
 class Container(DataObject):
@@ -102,8 +126,6 @@ class Container(DataObject):
   read runs the handlers; write, delete and refresh move to Collection; the code for each store moves to its
   Provider.
   """
-  links: tuple[Link, ...]
-  """Its links to the Locations that reach it, where more than one does."""
   _index: GppuIndex
   """Where its tree is held."""
   _source: Handler
@@ -216,18 +238,51 @@ class Collection(Container):
     """
     ...
 
+  def link(self, source: y2uri, target: y2uri, label: str) -> Link:
+    """Link the DataObject at source to the one at target. Neither has to exist: a uri names what it leads to
+    without knowing anything about it."""
+    ...
+
+  def annotate(self, uri: y2uri, annotation: Annotation) -> Annotation:
+    """Say something about the DataObject at uri. Returns the annotation as held, with its uid."""
+    ...
+
 
 @dataclass(frozen=True)
 class Link:
-  """A link between a Location and a Container, kept only where a single tree cannot hold them.
+  """A labelled, dated edge from one uri to another: the graph over the tree.
 
-  One label value, `original`, marks the source; every other label is for display.
+  Links join a Location and a Container where a single tree cannot hold them -- one label value, `original`,
+  marks the source and every other label is for display -- a Collection and what it links, one Span and the next,
+  and a session and its Thread.
 
-  Today: the typed edges of the graph database.
+  Route: /lake, in the links of a DataObject.
+
+  Today: the typed edges of the graph database, and the annotations whose predicate is declared a link in
+  admin_ui's model.
   """
   source: y2uri
   target: y2uri
   label: str
+  date: datetime
+
+
+@dataclass(frozen=True)
+class Annotation:
+  """A statement about a DataObject: a predicate and a value, with the evidence for it and who said it.
+
+  A statement that points at another DataObject is a Link instead.
+
+  Route: /lake, in the annotations of a DataObject.
+
+  Today: CRAP's annotation rows (`pg://pg.karel.in/files/lake/annotation`), written by admin_ui's say, annotate
+  and verify.
+  """
+  uid: str
+  predicate: str
+  value: str
+  evidence: str
+  who: str
   date: datetime
 
 
