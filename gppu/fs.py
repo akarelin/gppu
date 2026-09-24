@@ -79,8 +79,9 @@ class Container(DataObject):
   """A DataObject that holds DataObjects -- exactly what a zip file or a folder stores. Not storage.
 
   A Container is independent of Location: several Locations can reach one Container. TextLake is one Container,
-  reached as `laptop-data/TextLake` and on other hosts, and known globally as `textlake` or `lake://text`. One
-  Location is the original; the others are manifestations. A Container retrieves by uri and never writes.
+  reached as `laptop-data/TextLake` and on other hosts, and known globally as `textlake` or `lake://text`. Which
+  Location is the original is an annotation: a Link labelled `original`. The others are manifestations. A
+  Container retrieves by uri and never writes.
 
   Route: /lake.
 
