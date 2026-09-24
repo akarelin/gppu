@@ -1791,6 +1791,12 @@ _DC_BASE_TYPE_MAP = {'str': str, 'list': list, 'dict': dict, 'set': set, 'int': 
 
 
 class _DC(UserDict):
+  """Pseudo-dataclass base class backed by a UserDict.
+
+  Dynamically generates properties for annotated class attributes based on
+  `_DC_TYPE_MAP`, providing default values for missing or falsy values and
+  enabling dictionary-backed state management.
+  """
   _DC_TYPE_MAP: dict[str, type] = _DC_BASE_TYPE_MAP.copy()
   _DC_EXCLUDE_NAMES: list[str] = []
 

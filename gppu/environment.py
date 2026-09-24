@@ -43,6 +43,12 @@ def platform_name() -> str:
 
 
 class _Environment:
+  """The global environment and configuration registry.
+
+  Provides system attributes (os, platform, host, user, home), strict data lookups
+  via `glob`, `glob_list`, and `glob_dict`, and dynamic access to table rules and macros.
+  Initialized once at startup via `from_env` or `from_dict`.
+  """
   os = detect_os()
   platform: str = platform_name()
   host: str = socket.gethostname().split('.')[0].lower()
