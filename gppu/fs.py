@@ -504,7 +504,11 @@ class FileContainer(Container):
     rows = []
     for target in sorted(self._object_file(path).iterdir()):
       name = target.relative_to(self._root).as_posix()
-      self._object_file(name)
+      if target.is_symlink() or target.is_junction():
+        # A link is listed as itself, never followed: fsspec's islink and destination.
+        rows.append({'name': name, 'type': 'other', 'size': target.lstat().st_size, 'islink': True,
+                     'destination': os.readlink(target)})
+        continue
       rows.append({'name': name, 'type': 'directory' if target.is_dir() else 'file',
                    'size': 0 if target.is_dir() else target.stat().st_size})
     return rows if detail else [row['name'] for row in rows]
@@ -7406,7 +7410,12 @@ class GppuCatalog(AbstractFileSystem):
       head, _, name = rest.rpartition('/')
       at = f'{scheme}://{head}'
       below.insert(0, name)
-    return self.location(by_uri[at]), y2path(unquote('/'.join(below)))
+    location = self.location(by_uri[at])
+    if isinstance(location, FileLocation) and not urlsplit(at).path and below:
+      # A host has no folder of its own: the drive below it is the root of what is listed.
+      location = FileLocation({'uid': location.uid, 'canonical': f'{at}/{below.pop(0)}'}, templates=location.templates,
+                              parent=location)
+    return location, y2path(unquote('/'.join(below)))
 
   @staticmethod
   def _bare(uri: y2uri | str) -> str:
