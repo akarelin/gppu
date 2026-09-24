@@ -50,12 +50,20 @@ class DataObject:
   uri with a fragment naming the part, which is the job RFC 3986 gives the fragment. Its metadata holds the time
   it covers as gppu's TimeSpan. Sessions, threads, the timeline and time accounting all count in these parts.
 
+  A record is a DataObject: "DataObject is(?) Record that comes from handlers" is answered yes, and there is no
+  Record type. A record found in several places is one DataObject with several uris, one per Location that holds
+  a copy. Its uid is the id its own system gives it -- a Graph id, a Telegram id, never one minted from a name --
+  and any other system's id for it is in its metadata. It stays after every copy is gone, with removed set.
+
   Route: /lake returns it.
 
   Today: providers.DataObject and handlers.Record, with Probe, FileStats and HandlerError, become this one type.
   identity becomes uid; kind and name move into metadata; parent is the uri without its last segment; removed
   becomes a time. is_folder, size and modified_at, the probes, stats and errors move into
   metadata, each under its handler's name. CRAP's span rows (fact.every_span) become DataObjects with a fragment.
+  The lake's entity rows are DataObjects, instance rows their uris and fingerprint rows their ids; the stopped
+  textlake.record, records.record and public.files hold the same thing in older shapes. admin_ui's records,
+  record and records/browse become Container.ls and info.
   """
   uri: y2uri
   """Canonical uri: the Location's uri, `:`, and the path inside the Container, as in
@@ -451,7 +459,8 @@ class GppuIndex:
   Its methods are protected: an index is the inner working of a Container.
 
   Today: handlers.GppuIndex, a Protocol with entry, put and moved on dict rows. CRAP's class Lake in
-  lake/common/index.py implements the database side.
+  lake/common/index.py implements the database side: lake.entity holds the DataObjects, lake.instance their uris
+  at each Location, and lake.fingerprint their ids.
   """
 
   def _entry(self, uri: y2uri) -> tuple[DataObject, list[DataObject] | None] | None:
