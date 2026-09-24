@@ -16,7 +16,6 @@ for now.
       FileSystem, M365, Postgres
     FolderHandler, ArchiveHandler, MarkdownHandler, SessionHandler, ...
   GppuIndex                   the tree: SqliteIndex beside the data, a database in CRAP
-  Attribute                   file system attributes
 
 Routes. The API has two routes, /config and /lake, and every public method belongs to one of them as it is. A
 Location's own members serve /config; the Container methods it inherits serve /lake. How a Provider or a handler
@@ -34,31 +33,9 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import StrEnum
 from typing import IO, Any
 
 from .gppu import y2path, y2uri
-
-
-class Attribute(StrEnum):
-  """File system attributes, as named values. Part of a DataObject's metadata.
-
-  Windows names them; a file system that names none carries them as named extended attributes. A path listed and
-  never read is DIRECTORY and NOT_CONTENT_INDEXED. A handler that identified an object without reading it leaves
-  NOT_CONTENT_INDEXED set and its own name in the metadata.
-
-  Today: Record.is_folder, the signature compared to detect change, and indexing.LEVELS.
-  """
-  DIRECTORY = 'DIRECTORY'
-  """Holds other DataObjects."""
-  ARCHIVE = 'ARCHIVE'
-  """Changed since it was last read. The store sets it; whoever reads it clears it."""
-  REPARSE_POINT = 'REPARSE_POINT'
-  """A link or a placeholder, not the thing."""
-  OFFLINE = 'OFFLINE'
-  """The metadata is held; the content cannot be reached now."""
-  NOT_CONTENT_INDEXED = 'NOT_CONTENT_INDEXED'
-  """No handler has read it."""
 
 
 @dataclass(frozen=True)
@@ -74,7 +51,7 @@ class DataObject:
 
   Today: providers.DataObject and handlers.Record, with Probe, FileStats and HandlerError, become this one type.
   identity becomes uid; kind and name move into metadata; parent is the uri without its last segment; removed
-  becomes a time. is_folder becomes DIRECTORY; size and modified_at, the probes, stats and errors move into
+  becomes a time. is_folder, size and modified_at, the probes, stats and errors move into
   metadata, each under its handler's name.
   """
   uri: y2uri
@@ -83,10 +60,9 @@ class DataObject:
   uid: str
   """Unique identifier: the one its own system gives it. It is not the Index's id, but an object with no identifier
   of its own takes that id as its uid."""
-  attributes: frozenset[Attribute] = frozenset()
   metadata: dict[str, Any] = field(default_factory=dict)
-  """What the source supplies -- a file system's type, size and modified time -- and, under each handler's name,
-  what that handler returned."""
+  """What the source supplies -- for a file, its type, size, times and file system attributes -- and, under each
+  handler's name, what that handler returned."""
   content: Any = None
   """Present once a handler has read it: MarkdownFile, CSVFile, SessionFile and the other typed objects."""
   removed: datetime | None = None
@@ -144,11 +120,11 @@ class Container(DataObject):
     ...
 
   def read(self, uri: y2uri) -> DataObject:
-    """The DataObject at uri, read by its handlers: with its content, and NOT_CONTENT_INDEXED cleared."""
+    """The DataObject at uri, read by its handlers, with its content."""
     ...
 
   def open(self, uri: y2uri, mode: str = 'rb') -> IO[bytes]:
-    """The bytes of the DataObject at uri, from its source. Raises while it is OFFLINE."""
+    """The bytes of the DataObject at uri, from its source. Raises when the source cannot be reached."""
     ...
 
 
@@ -387,8 +363,8 @@ class Postgres(Provider):
 class FileHandler(Handler):
   """The set of handlers: a subclass lists them as its bases, and their order is the order they run in.
 
-  Today: FileHandler also walks trees and caches signatures; walking moves to Collection.refresh and change to
-  ARCHIVE.
+  Today: FileHandler also walks trees and caches signatures; walking moves to Collection.refresh, and the
+  signatures to the metadata.
   """
 
 
