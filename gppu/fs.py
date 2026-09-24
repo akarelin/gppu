@@ -1,49 +1,41 @@
 """gppufs: DataObjects in Containers, Containers in Locations and Collections.
 
 Declarations and docstrings. providers.py, handlers.py and indexing.py become this one module. The public methods
-are the API; the REST API is gppu's zero-code feature, mixin_Rest, on the app that serves the lake: it serves every
-public member of a registered object and generates the manifest from the signatures and these docstrings. Nothing
-here is an app, so nothing here stands on _Base; _DC is not used yet. The configuration classes live here for now.
+are the API, and gppu's mixin_Rest serves them over HTTP and generates the manifest from the signatures and these
+docstrings. The configuration classes live here for now.
 
-Three first-class objects and two APIs. Location is /config, the configurable tree. Container and Collection are
-/lake, what the tree holds. Each API is a REST registry: `config` holds the Locations by uid, `lake` the Containers
-and Collections by uri, the global Collection at the empty key. Listing a registry is the tree; an object's public
-methods are its routes, as they are.
+Three first-class objects and two APIs, /config and /lake. Location is /config: the configurable tree, by uid.
+Container and Collection are /lake: what the tree holds, by uri, the Lake itself at the root.
 
   Container                   a tree of DataObjects: ls, walk, info, read, open, find, write, delete, refresh
     Location                  a container for alike objects: a Provider, its connection and a path    /config
     Collection                a Container of arbitrary objects: the Lake is Collection()                /lake
 
-What they hold and what they are made of. A DataObject is a value: metadata, with content in some cases. A
-Provider reaches a source; a Handler is a Provider whose source is one object's bytes; an Index holds what was
-read. None of these is first class or registered: a Container is written once over a Provider and an Index, and
-that is how every Provider gets ls, read and write without a Container of its own.
+What they hold, and what they are made of:
 
-  DataObject                  uid, path, metadata, content, removed
-  Provider                    ls, info, open, write, delete, refresh, locations, on a source's paths
+  DataObject                  metadata, with content in some cases: uid, path, metadata, content, removed
+  Provider                    reaches a source: ls, info, open, write, delete, refresh, locations, on its paths
     FileSystem                in gppu; M365, Telegram, Plaud in CRAP
-    Handler                   + identify, probe
+    Handler                   a Provider whose source is one object's bytes: identify, probe
       FolderHandler, ArchiveHandler, MarkdownHandler, SessionHandler, ...
-  Index                       entry, put, moved, find
+  Index                       holds what was read: entry, put, moved, find, collect
     SqliteIndex               in gppu, beside the data; the database Index is CRAP's Lake
 
-The graph is not here yet. Links -- annotations, a Collection's members, a span and the next, the original
-Location of a Container -- will be a mixin that gives an object the property of links, over the Index. Until then
-a Collection's members are what its Index holds for it.
+A Container is written once over a Provider and an Index, so every Provider lists, reads and writes through it.
+The graph -- links between objects -- comes as a mixin over the Index, once links are taken up.
 
-Paths and uris. A DataObject is known by its Location and its path; a Container understands paths only. A uri
-names a Location, or a member of a Collection, and only a Collection resolves one. A DataObject with its own uri
-is rare. A reference, `ref`, is a path below a Container, or a uri a Collection resolves.
+Paths and uris. A DataObject is known by its Location and its path; a Container understands paths. A uri names a
+Location, or a member of a Collection, and a Collection resolves it. A reference, `ref`, is a path below a
+Container, or a uri a Collection resolves.
 
-What is read from where: config, facts and links. Config is the configuration as Environment and State define it:
-tables of rows keyed by uid, each resolved through its table's templates and built by the class its kind names.
-Locations, Providers and their connections are such rows. Facts are tables of what handlers and sources said:
-DataObjects as rows with a parent; folders, files, records and spans are all rows, a span's TimeSpan in its row.
-Links will be the graph, edges between uris, for what no single tree can hold. A Location is read from config, a
-Container reads facts, and a Collection reads its members and then the facts.
+Config, facts and links. Config is the configuration as Environment and State define it: tables of rows keyed by
+uid, resolved through templates and built by the class their kind names; Locations, Providers and connections
+are such rows. Facts are tables of what handlers and sources said: DataObjects as rows with a parent; folders,
+files, records and spans are all rows, a span's TimeSpan in its row. Links are the graph: edges between uris. A
+Location is read from config, a Container reads facts, and a Collection reads its members and then the facts.
 
-The Lake is an index and storage. gppu has no Lake: to gppu it is a Collection loaded from configuration. The upper
-levels -- Locations -- come from configuration; the lower levels are loaded from the database.
+The Lake is an index and storage. To gppu it is a Collection loaded from configuration: the upper levels, the
+Locations, come from configuration; the lower levels are loaded from the database.
 """
 from __future__ import annotations
 
@@ -64,27 +56,25 @@ Ref = y2path | y2uri | str
 class Container:
   """A tree of DataObjects -- exactly what a zip file or a folder stores. Not storage.
 
-  A Container is independent of Location: several Locations can reach one Container. TextLake is one Container,
-  reached as `laptop-data/TextLake` and on other hosts, and known globally as `textlake` or `lake://text`. A folder
-  is a DataObject in the listing that holds it, and a Container once opened; an archive is a Container whose
-  Provider is its ArchiveHandler.
+  Several Locations can reach one Container. TextLake is one Container, reached as `laptop-data/TextLake` and on
+  other hosts, and known globally as `textlake` or `lake://text`. A folder is a DataObject in the listing that
+  holds it, and a Container once opened; an archive is a Container whose Provider is its ArchiveHandler.
 
-  A Container understands paths, never uris. It answers from its Index, so it answers with nothing online. What
-  the Index lacks it reads through its Provider, and has that Provider's handlers identify; a write goes to the
-  Provider and then to the Index; a delete stays in the Index with removed set. Everything below is written once,
-  here, for every Provider.
+  A Container understands paths. It answers from its Index, so it answers with nothing online; what the Index
+  lacks it reads through its Provider, and the Provider's handlers identify what was read. A write goes to the
+  Provider and then to the Index; a deleted object stays in the Index with removed set.
 
-  Route: /lake, by the uri of the Location it was reached through; its methods take paths below it.
+  API: /lake, at the uri of the Location it was reached through; its methods take paths below it.
 
   Today: providers.Container and FileContainer, CRAP's M365Container, PlaudContainer and TelegramContainer, and
-  GppuFileSystem, each writing ls, read and write again. GppuFileSystem.ls and info (admin_ui's browser),
-  Container.ls and read (plaud_import) and FileHandler.walk_sync (LakeFileSystem.ls, admin_ui's walk_sessions)
-  become ls, info and find; probe_sync and load_sync (LakeFileSystem; admin_ui's session classify and cluster)
-  and SessionHandler(path) (RAN's preserve, list-sessions, sessions-clean) become read; the FileContainer.read
-  streams, PostgresFileSystem.cat, the gppu-rar cat_file and the pathlib reads in LakeFileSystem and
-  TextLakeResource become open; Container.write and delete (the lake's Dagster jobs, plaud_import) stay; the
-  Postgres queries FileIndexer, admin_ui and the lake run themselves become find; Container.refresh keeps its
-  contract, and plaud_import's snapshot diff, SessionHandler.invalidate and FileIndexer's indexing runs move onto it.
+  GppuFileSystem. GppuFileSystem.ls and info (admin_ui's browser), Container.ls and read (plaud_import) and
+  FileHandler.walk_sync (LakeFileSystem.ls, admin_ui's walk_sessions) become ls, info and find; probe_sync and
+  load_sync (LakeFileSystem; admin_ui's session classify and cluster) and SessionHandler(path) (RAN's preserve,
+  list-sessions, sessions-clean) become read; the FileContainer.read streams, PostgresFileSystem.cat, the gppu-rar
+  cat_file and the pathlib reads in LakeFileSystem and TextLakeResource become open; Container.write and delete
+  (the lake's Dagster jobs, plaud_import) stay; the Postgres queries FileIndexer, admin_ui and the lake run
+  themselves become find; Container.refresh keeps its contract, and plaud_import's snapshot diff,
+  SessionHandler.invalidate and FileIndexer's indexing runs move onto it.
   """
   _provider: Provider
   """The Provider it reads through: its Location's, or a Handler for an archive."""
@@ -92,7 +82,7 @@ class Container:
   """Where what was read is held."""
 
   def _resolve(self, ref: Ref) -> y2path:
-    """ref as a path below this Container. A Collection overrides this, and nothing else."""
+    """ref as a path below this Container."""
     ...
 
   def ls(self, ref: Ref = '') -> list[DataObject]:
@@ -101,7 +91,7 @@ class Container:
     ...
 
   def walk(self, ref: Ref = '') -> Iterator[tuple[DataObject, list[DataObject]]]:
-    """Every folder below ref with what it holds, parents before children, each once. Written once over ls."""
+    """Every folder below ref with what it holds, parents before children, each once."""
     ...
 
   def info(self, ref: Ref) -> DataObject:
@@ -145,16 +135,15 @@ class Location(Container):
   Locations form a tree, and each leaf references a Container of DataObjects. A root is a Location with no path:
   `laptop` is Alex-Laptop, the host, with the fileSystem Provider; `laptop-data` is its D: volume, a path below
   it; and `laptop-data/TextLake` is a path below that, known globally as `textlake`. A configured Location is
-  written in configuration; a discovered one is found by its Provider and cached, and only discovered Locations
-  are refreshed. Path-to-container and path-in-container together give the path to a DataObject. The Provider and
-  the connection are part of the Location: reading an object means invoking the Location's operation on the
-  object's path. A Location has a Provider; it is not one.
+  written in configuration; a discovered one is found by its Provider and cached, and discovered Locations are
+  what refresh re-reads. Path-to-container and path-in-container together give the path to a DataObject. Reading
+  an object means invoking the Location's operation on the object's path.
 
   Its objects are Locations: ls lists its children, configured first, then those its Provider discovers -- a
   tenant's users, a user's drives and mailboxes; walk the tree below it, which the lake's Dagster exports use to
-  export each leaf; refresh re-reads the discovered ones. container opens the DataObjects below it.
+  export each leaf. container opens the DataObjects below it.
 
-  Route: /config, by uid. Listing it is the configured tree, today catalog.locations and State.locations; one
+  API: /config, by uid. Listing it is the configured tree, today catalog.locations and State.locations; one
   entry is today's GppuCatalog.location(uid), called by FileIndexer, the lake's Dagster jobs and plaud_import.
   Providers and connections are read-only lists beside it.
 
@@ -179,7 +168,7 @@ class Location(Container):
   configured: bool
   """Written in configuration, rather than discovered."""
   _connection: dict[str, Any]
-  """The connection its Provider is instantiated from: an account, an endpoint and credentials. No route serves it."""
+  """The connection its Provider is instantiated from: an account, an endpoint and credentials."""
 
   def container(self, path: y2path | str = '') -> Container:
     """The Container of DataObjects at path below this Location, reached through its Provider."""
@@ -195,16 +184,15 @@ class Location(Container):
 
 
 class Collection(Container):
-  """A Container of arbitrary objects: it refers to DataObjects anywhere rather than holding them, so it is the
-  Container that understands uris: it resolves one to a Location and a path, and the rest is Container's.
+  """A Container of arbitrary objects: it refers to DataObjects anywhere, so it understands uris and resolves one to
+  a Location and a path.
 
   A Thread is a Collection of sessions and their spans. The Lake is a Collection loaded from configuration: its
   Locations come from configuration, and what is below them is loaded from the database. `Collection()` is that
   global Collection, the one the admin tool shows. `Collection(root)` is rooted at any Location or uri, which is
-  read, indexed beside itself and browsed the same way. How members are added is the graph, later.
+  read, indexed beside itself and browsed the same way.
 
-  Route: /lake; the global Collection is its empty key. Its inherited methods take a uri where a Container takes
-  a path; location_of is its own.
+  API: /lake; the Lake is its root. Its methods take a uri where a Container takes a path.
 
   Today: handlers.GppuCatalog, the configured Locations keyed by uid; GppuFileSystem; indexing.walk_container and
   walk_files; LakeFileSystem in CRAP. Environment.locations.location_of and its three copies -- FileIndexer's
@@ -220,8 +208,8 @@ class Collection(Container):
     ...
 
   def _resolve(self, ref: Ref) -> y2path:
-    """ref is a uri here: location_of it, and answer through that Location's Container. Empty names this
-    Collection's own members."""
+    """ref is a uri: location_of it, and answer through that Location's Container. Empty names this Collection's
+    own members."""
     ...
 
   def location_of(self, uri: y2uri | str) -> tuple[Location, y2path]:
@@ -240,17 +228,16 @@ class DataObject:
   A file is not a DataObject without a handler: a handler returns metadata, and that metadata is stored as the
   DataObject. What the source always supplies is stored for every DataObject, whether its source is online or not:
   for a file, its type, size, times and file system attributes, in metadata; what each handler returned sits
-  under the handler's name. A DataObject is a value: it is read and written through its Container, and reaches
-  nothing itself.
+  under the handler's name. A DataObject is a value, read and written through its Container.
 
   A part of a DataObject -- a span of a session, a passage of text -- is a DataObject too, at the whole's path with
   a fragment naming the part, which is the job RFC 3986 gives the fragment. Its metadata holds the time it covers
   as gppu's TimeSpan. Sessions, threads, the timeline and time accounting all count in these parts.
 
-  A record is a DataObject, and there is no Record type. A record found in several places is one DataObject with
-  one uid; the Index holds every place it was seen, and the DataObject in hand carries the path it was read at.
-  Its uid is the id its own system gives it -- a Graph id, a Telegram id, never one minted from a name -- and any
-  other system's id for it is in its metadata. It stays after every copy is gone, with removed set.
+  A record is a DataObject. A record found in several places is one DataObject with one uid; the Index holds
+  every place it was seen, and the DataObject in hand carries the path it was read at. Its uid is the id its own
+  system gives it -- a Graph id, a Telegram id -- and any other system's id for it is in its metadata. It stays
+  after every copy is gone, with removed set.
 
   Today: providers.DataObject and handlers.Record, with Probe, FileStats and HandlerError, become this one type.
   identity becomes uid; kind moves into metadata; the source uri becomes path; removed becomes a time. CRAP's
@@ -280,22 +267,14 @@ class Provider:
   """Provides access to objects by references: a source on a connection, yielding DataObjects on its own paths. A
   class, instantiated from a connection; a Location has one.
 
-  Providers are a list, not a tree: `fileSystem`, `m365`, `telegram`, `plaud`. How one reaches an object -- which
-  API, which request -- is its inner working and never a uri. Configuration names the class. Its methods answer
-  from the source, on paths, and a Container puts its Index in front of them.
+  Providers are a list: `fileSystem`, `m365`, `telegram`, `plaud`. How one reaches an object -- which API, which
+  request -- is its inner working. Configuration names the class. A Provider enumerates both Locations and
+  DataObjects, because both use one connection and one client, path-to-container and path-in-container are one
+  path answered by the same nested lists, and refresh re-reads both from the same delta state. /config lists the
+  Providers that exist.
 
-  One Provider does what two classes do today: the Location implementations, which enumerate Locations, and the
-  Container implementations with the fsspec filesystems, which enumerate DataObjects. They are one because:
-  - Both use one connection and one client. Today M365Container sends its requests through M365Location.
-  - Path-to-container and path-in-container are one path, and the source answers both with the same nested
-    lists: Graph lists a tenant's users, then a user's drives, then a drive's folders. Where a Location ends is
-    configuration; two classes would fix it in code.
-  - Refresh re-reads both from the same delta state: the discovered Locations and the changed DataObjects.
-
-  Not first class and never registered: no route serves a Provider; /config lists the ones that exist.
-
-  Today: the reaching is spread over GppuFileSystem, SharePointFileSystem and CRAP's Location/Container pairs;
-  GppuCatalog resolves the connection. No Provider for Postgres is written yet: PostgresFileSystem stays as it is.
+  Today: GppuFileSystem, SharePointFileSystem and CRAP's Location/Container pairs, with GppuCatalog resolving the
+  connection. PostgresFileSystem stays as it is.
   """
   uid: str
   """Its name in configuration: `fileSystem`, `m365`."""
@@ -347,10 +326,9 @@ class Handler(Provider):
 
   A handler has two ways of getting information about a DataObject: identify, from what the source always
   supplies and without reading it; and probe, reading it. It reads through the Container that holds the object,
-  by path, never through a local path. What it yields is what a Provider yields: ls lists an archive's members or
-  a session's spans, info and open reach them. A Provider holds its handlers in order, and that order is the
-  order they identify and probe in. A failure is kept in the metadata under the handler's name, so one bad file
-  does not stop a listing.
+  by path. What it yields is what a Provider yields: ls lists an archive's members or a session's spans, info and
+  open reach them. A Provider holds its handlers in order, and that order is the order they identify and probe
+  in. A failure is kept in the metadata under the handler's name, so one bad file does not stop a listing.
 
   Today: handlers.Handler with identify, __call__, identify_sync and call_sync on a local Path, returning a Record
   and a typed object; handlers.FileHandler composes them as bases, which the Provider's tuple replaces. The typed
@@ -373,12 +351,9 @@ class Index:
   """What was read, kept where retrieval is fast: referential integrity and ids.
 
   Two implementations answer the same questions. SqliteIndex is in the file system, beside the data it describes.
-  The other is in a database: CRAP's Lake. The id is internal to the Index. It is not a pure cache: a removed
-  DataObject stays, with the time it went. The database collects the SQLite indexes stored with the data. Every
-  entry is named by its canonical uri, as today, so one Index can hold many Containers.
-
-  Not first class and never registered: a Container asks these questions, and they are its inner machinery, not
-  the API. Config is its own tables, not the Index. The graph, when it comes, is held here too.
+  The other is in a database: CRAP's Lake. The id is internal to the Index. A removed DataObject stays, with the
+  time it went. The database collects the SQLite indexes stored with the data. Every entry is named by its
+  canonical uri, so one Index can hold many Containers. A Container asks these questions.
 
   Today: handlers.GppuIndex, a Protocol with entry, put and moved on dict rows by address. CRAP's class Lake in
   lake/common/index.py implements the database side: lake.entity holds the DataObjects, lake.instance their
