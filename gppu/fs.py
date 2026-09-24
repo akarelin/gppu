@@ -4,7 +4,7 @@ Two APIs, made of the public methods of these classes. They take over the routes
 
 /config: the configuration, as admin.karelin.ai/configuration/locations shows it today.
   GET  /config/locations            every Location, one row each, parent by uid:
-         {"uid": "file-alex-laptop/D:/TextLake", "parent": "file-alex-laptop/D:", "provider": "file://",
+         {"uid": "alex-laptop/D:/TextLake", "parent": "alex-laptop/D:", "provider": "file://",
           "uri": "file://alex-laptop/D:/TextLake", "name": "TextLake", "kind": "Location", "path": "D:/TextLake",
           "service": "file", "icon": "/machine.svg", "tags": [], "folders": {}}
   GET  /config/locations/{uid}      one Location, the same row
@@ -49,11 +49,13 @@ class Location:
   builds a Location from each row of the locations table.
   """
   uid: str
-  """Its key in configuration, readable by a person: `file-alex-laptop`, `file-alex-laptop/D:/TextLake`."""
+  """Its key in configuration, readable by a person: its root Location's uid and its path, `alex-laptop/D:/TextLake`.
+  A root is a host or an account: `alex-laptop`, `karelin`."""
   parent: Location | None
   """The Location above it, or None for a root."""
   provider: Provider
-  """The Provider that reaches its data, by its uri: `file://` for files, `m365://` for Microsoft 365."""
+  """The Provider that reaches its data, by its uri: `file://` for every Location made of files, local, on smb or
+  on Synology Drive; `m365://` for Microsoft 365."""
   uri: y2uri
   """Its canonical uri: `file://alex-laptop/D:/TextLake`, `m365://karelin/alex/onedrive`."""
   name: str
@@ -63,7 +65,7 @@ class Location:
   path: y2path
   """Its path on its Provider: `D:/TextLake`; empty for a root."""
   service: str
-  """The service that serves it: `file`, `smb`, `sd`."""
+  """How its Provider reaches it: `file` on the host itself, `smb` over a share, `sd` through Synology Drive."""
   icon: str
   """The icon admin_ui shows for it."""
   tags: list[str]
@@ -218,7 +220,8 @@ class Provider:
   connection and the same client. Paths are below the Provider's Location.
   """
   uri: y2uri
-  """Its uri, which is its scheme and nothing else: `file://`, `m365://`. Hosts are Locations, not Providers."""
+  """Its uri: `file://`, `m365://`. It is not per host or per account; hosts, tenants and accounts are Locations,
+  and each carries the connection its Provider uses to reach it."""
   handlers: tuple[Handler, ...]
   """The handlers that read what it lists, in the order they are tried. Empty when the source returns objects
   already read."""
