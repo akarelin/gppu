@@ -37,7 +37,7 @@ def test_location_and_file_container_use_types(tmp_path):
   location = FileLocation({'uid': 'test', 'canonical': tmp_path.as_uri()})
   assert isinstance(location.uri, y2uri)
   assert isinstance(Location.relative('folder'), y2path)
-  assert location.address(y2path('name #%.json')).path.tail == 'name%20%23%25.json'
+  assert location.uri_of(y2path('name #%.json')).path.tail == 'name%20%23%25.json'
   container = location.container(y2path('folder'))
   assert isinstance(container.uri, y2uri)
   assert container.ls(y2path(), detail=False) == ['item.json']
@@ -62,8 +62,8 @@ def test_dataobject_constructs_uri_type():
   assert isinstance(obj.uri / y2path('child'), y2uri)
 
 
-def test_file_write_reads_typed_source_uri_in_template(tmp_path):
-  container = FileContainer(tmp_path, templates={'filename': '{{ uri.path.tail }}.json'})
+def test_file_write_renders_source_uri_as_text_in_template(tmp_path):
+  container = FileContainer(tmp_path, templates={'filename': '{{ uri.rsplit("/", 1)[1] }}.json'})
   obj = DataObject(y2uri('m365://tenant') / y2path('item'), {'value': True}, 'item')
   container.write(obj)
   assert container.read(y2path('item.json')).content == obj.content

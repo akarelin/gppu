@@ -5,6 +5,26 @@ from gppu import FileLocation, Location, y2uri
 from gppu.handlers import GppuCatalog
 
 
+@pytest.mark.parametrize('uid', ['', None, 123])
+def test_location_requires_uid_in_configuration_and_enumeration(uid):
+  with pytest.raises(ValueError, match='nonempty uid'):
+    Location({'uid': uid, 'canonical': 'file:///'})
+
+
+def test_catalog_uses_location_uid_separately_from_uri():
+  uid = 'm365-karelin-graph/users/alex/contacts'
+  catalog = GppuCatalog({'connections': {}, 'locations': {
+    uid: {'path': 'users/alex/contacts', 'canonical': 'm365://karelin/users/alex/contacts'},
+  }}, location_types={'m365': Location})
+  location = catalog.location(uid)
+  assert location.uid == uid
+  assert catalog.location(uid) is location
+  assert location.my('path') == 'users/alex/contacts'
+  assert catalog.ls_sync(detail=False) == [uid]
+  with pytest.raises(KeyError):
+    catalog.location(str(location.uri))
+
+
 def test_file_provider_is_available_from_env_without_registration(tmp_path):
   from gppu import Env
 
@@ -65,7 +85,7 @@ def test_configured_provider_conflict_is_an_error(monkeypatch):
 def test_runtime_location_registration_and_child_binding():
   class Graph(Location):
     def container(self, path=''):
-      return self.address(path)
+      return self.uri_of(path)
 
   config = {'connections': {'graph': {'provider': 'm365'}}, 'locations': [
     {'uid': 'graph', 'canonical': 'm365://tenant', 'connection': 'graph', 'locations': [
@@ -88,7 +108,7 @@ def test_fixed_root_does_not_require_uri_subdivisions():
   }}, location_types={'plaud': Location})
   root = catalog.location('plaud')
   assert isinstance(root.uri, y2uri)
-  assert root.address() == 'plaud://'
+  assert root.uri_of() == 'plaud://'
   assert root.ls() == []
 
 
@@ -117,7 +137,7 @@ def test_file_locations_select_independent_containers(tmp_path):
     assert container.root == (tmp_path / name).as_posix()
     assert container.ls(detail=False) == ['item.txt']
     obj = container.read('item.txt')
-    assert obj.uri == location.address('item.txt')
+    assert obj.uri == location.uri_of('item.txt')
     with obj.content as stream:
       assert stream.read() == name.encode()
 

@@ -6623,12 +6623,12 @@ class SharePointFileSystem(AbstractFileSystem):
 
 
 class GppuCatalog(AbstractFileSystem):
-  """Configured Locations, exposed as a filesystem-shaped catalog.
+  """A catalog of Locations keyed by uid.
 
   After ``Env.from_env(...)`` or ``Env.from_dict(...)``, ``GppuCatalog()``
   resolves the configured connections and nested Locations. ``ls(recurse=True)``
   walks that configuration tree. ``location(uid)`` returns the Location whose
-  ``ls`` and ``walk`` enumerate children at its address. An explicit mapping
+  ``ls`` and ``walk`` enumerate its child Locations. An explicit mapping
   accepts the same data from another configuration loader.
 
   Files are built in. A connection's ``provider`` can name an external Location
@@ -6800,7 +6800,15 @@ class GppuCatalog(AbstractFileSystem):
         parent = self._parents[parent]
 
   def location(self, uid: str) -> Location:
-    """Return the configured Location itself, binding its implementation lazily."""
+    """Return the Location with this UID, binding its Provider and Connection.
+
+    Args:
+      uid (str): Location UID from the configured tree.
+
+    Returns:
+      Location: The configured Location. Repeated calls with the same UID return
+        the same instance. A missing UID raises KeyError.
+    """
     if not self._configuration:
       raise TypeError('Location operations require a configured catalog')
     with self._lock:
