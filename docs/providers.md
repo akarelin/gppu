@@ -1,7 +1,7 @@
 ---
 fileClass: Document
 created: 2026-09-22
-updated: 2026-09-22
+updated: 2026-09-24
 generated: { by: Codex/GPT-6, at: 2026-09-22 }
 ---
 # Locations, Containers and Provider operations
@@ -44,7 +44,7 @@ M365 filenames retain readable folder and object names. Native IDs remain unchan
 
 ## gppu operation contract
 
-The public classes are `Location`, `Container` and `DataObject`. Runtime registration belongs inside the catalog. `Providers` and `File` are not the caller-facing class model. Concrete implementations name the Location or Container they implement; Provider remains the implementation role bound within a Location. (Alex, current session: "So providers and file are bad class names in gppu.")
+The public classes are `Location`, `Container`, `DataObject`, `Collection` and `Provider`. Runtime registration belongs inside the catalog. `Providers` and `File` are not the caller-facing class model. A source is implemented once, as a `Provider` that takes uris: `FileSystem` in gppu, M365, Telegram and Plaud in CRAP. A Provider instance is a Connection, and every Location it reaches holds it. `Location` and `Container` are not subclassed per source; the Container turns its paths into uris for its Provider, and the Provider lists the Locations it discovers. (Alex, current session: "So providers and file are bad class names in gppu.")
 
 | Call | Input | Product |
 |---|---|---|
@@ -56,7 +56,7 @@ The public classes are `Location`, `Container` and `DataObject`. Runtime registr
 | `container.read(path)` | Object or path returned by listing | DataObject |
 | `container.refresh(state, path)` | Caller-retained state and Container path | Changed DataObjects; the implementation updates state after successful consumption |
 | `container.write(path, object)` | Relative destination path and DataObject | Completed write; no return value |
-| `container.delete(path)` | Relative object path or object URI | Completed deletion; no return value |
+| `container.delete(path)` | Relative object path | Completed deletion; no return value |
 
 These call names reflect Alex's corrections in the current session: "Yes, return Location objects"; "container has write, delete, read and ls - all makes sense". Runtime enumeration does not save Locations into configuration. Providers implement source operations; callers do not branch on Graph methods or file naming rules. Dagster retains opaque source state in successful materializations; M365 does not write SQL. Destination failure leaves the previous successful state available for the next run. No indexing or `lake://` implementation is implied. (Alex, recovered session, nested enumeration, native Dagster and file-only requirements; current session, SQL rejection.)
 

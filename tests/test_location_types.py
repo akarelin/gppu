@@ -2,8 +2,7 @@ import json
 
 import pytest
 
-from gppu import DataObject, FileLocation, Location, y2path, y2uri
-from gppu.fs import FileContainer
+from gppu import Container, DataObject, FileSystem, Location, y2path, y2uri
 
 
 @pytest.mark.parametrize('value', [
@@ -34,7 +33,7 @@ def test_uri_joins_preserve_leading_and_trailing_slashes(root, expected):
 def test_location_and_file_container_use_types(tmp_path):
   (tmp_path / 'folder').mkdir()
   (tmp_path / 'folder' / 'item.json').write_text('{"value": true}')
-  location = FileLocation({'uid': 'test', 'canonical': tmp_path.as_uri()})
+  location = Location({'uid': 'test', 'canonical': tmp_path.as_uri()}, provider=FileSystem())
   assert isinstance(location.uri, y2uri)
   assert isinstance(Location.relative('folder'), y2path)
   assert location.uri_of(y2path('name #%.json')).path.tail == 'name%20%23%25.json'
@@ -63,12 +62,12 @@ def test_dataobject_constructs_uri_type():
 
 
 def test_file_write_renders_source_uri_as_text_in_template(tmp_path):
-  container = FileContainer(tmp_path, templates={'filename': '{{ uri.rsplit("/", 1)[1] }}.json'})
+  container = Container(FileSystem(), tmp_path.as_uri(), templates={'filename': '{{ uri.rsplit("/", 1)[1] }}.json'})
   obj = DataObject(y2uri('m365://tenant') / y2path('item'), {'value': True}, 'item')
   container.write(y2path('item.json'), obj)
   assert container.read(y2path('item.json')).content == obj.content
   assert container.read(obj).uri == obj.uri
-  container.delete(container.read('item.json').uri)
+  container.delete('item.json')
   assert container.ls() == []
 
 @pytest.mark.parametrize('suffix', ['folder/item', y2path('folder/item')])

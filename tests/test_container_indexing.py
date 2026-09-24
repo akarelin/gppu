@@ -5,9 +5,12 @@ import zipfile
 
 import pytest
 
-from gppu import Container, DataObject, FileLocation, Location
+from gppu import Container, DataObject, FileSystem, Location, Provider
 from gppu.fs import GppuCatalog
-from gppu.fs import FileContainer
+
+
+def files(root):
+  return Container(FileSystem(), root.as_uri())
 
 
 def test_file_location_uses_its_container_and_keeps_child_boundaries(tmp_path):
@@ -36,7 +39,7 @@ def test_file_location_uses_its_container_and_keeps_child_boundaries(tmp_path):
 def test_refresh_reports_only_folders_without_marking_files_missing(tmp_path):
   (tmp_path / 'sub').mkdir()
   (tmp_path / 'file.txt').write_text('present')
-  rows = list(FileContainer(tmp_path).walk(level='refresh'))
+  rows = list(files(tmp_path).walk(level='refresh'))
   assert [(r['name'], r['type']) for r in rows[0][1]] == [('sub', 'directory')]
 
 
@@ -50,7 +53,7 @@ def test_archives_are_not_opened_below_archives_level(tmp_path, monkeypatch, lev
     pytest.fail('archive contents must not be read at this level')
   monkeypatch.setattr(_IndexHandlers, 'extract_sync', forbidden)
   monkeypatch.setattr(_IndexHandlers, '_archive_children', forbidden)
-  walked = list(FileContainer(tmp_path).walk(level=level, recursive=True))
+  walked = list(files(tmp_path).walk(level=level, recursive=True))
   assert len(walked) == 1
   assert walked[0][1][0]['name'] == 'data.zip'
 
@@ -59,7 +62,7 @@ def test_archive_members_have_original_paths_and_handler_readings(tmp_path):
   with zipfile.ZipFile(tmp_path / 'data.zip', 'w') as output:
     output.writestr('sub/readme.md', '---\ntitle: Archived\n---\nHello')
     output.writestr('sub/plain.txt', 'text')
-  walked = list(FileContainer(tmp_path).walk(level='archives', recursive=True))
+  walked = list(files(tmp_path).walk(level='archives', recursive=True))
   rows = {row['name']: row for _, children in walked for row in children}
   assert rows['data.zip/sub/readme.md']['markdown']
   assert rows['data.zip/sub/plain.txt']['size'] == 4
@@ -72,37 +75,38 @@ def test_a_failed_listing_is_not_a_successful_empty_directory(tmp_path, monkeypa
   error = HandlerError('file', 'list', tmp_path, 'PermissionError', 'denied')
   monkeypatch.setattr(_IndexHandlers, 'children', lambda *args: ())
   monkeypatch.setattr(_IndexHandlers, 'record', lambda *args: Record(tmp_path, True, 0, None, (), errors=(error,)))
-  walk = FileContainer(tmp_path).walk()
+  walk = files(tmp_path).walk()
   with pytest.raises(OSError, match='directory enumeration failed'):
     next(walk)
 
 
 def test_missing_and_excluded_roots_fail(tmp_path):
   with pytest.raises(NotADirectoryError):
-    list(FileContainer(tmp_path / 'absent').walk())
+    list(files(tmp_path / 'absent').walk())
   (tmp_path / '.git').mkdir()
   with pytest.raises(PermissionError, match='excluded'):
-    list(FileContainer(tmp_path / '.git').walk())
+    list(files(tmp_path / '.git').walk())
 
 
 def test_provider_container_uses_relative_listing_and_dataobject_reads():
-  class Source(Container):
-    def ls(self, path='', detail=True):
-      return [{'name': 'folder', 'type': 'directory', 'size': 0}] if not path else [
-        {'name': 'folder/item', 'type': 'file', 'size': None}]
-    def read(self, path):
-      return DataObject('provider://source/' + path, {'id': 'item'}, 'native-item')
-  walked = list(Source().walk(level='handlers', recursive=True))
+  class Source(Provider):
+    scheme = 'provider'
+    def ls(self, uri):
+      return [{'name': 'folder', 'type': 'directory', 'size': 0}] if uri == 'provider://source' else [
+        {'name': 'item', 'type': 'file', 'size': None}]
+    def read(self, uri):
+      return DataObject(uri, {'id': 'item'}, 'native-item')
+  walked = list(Container(Source(), 'provider://source').walk(level='handlers', recursive=True))
+  assert walked[1][1][0]['name'] == 'folder/item'
   assert walked[1][1][0]['object']['identity'] == 'native-item'
 
 
 def test_container_and_location_paths_cannot_escape(tmp_path):
-  location = FileLocation({'uid': 'test', 'canonical': tmp_path.as_uri()})
+  location = Location({'uid': 'test', 'canonical': tmp_path.as_uri()}, provider=FileSystem())
   for path in ('../other', '/other', 'sub/../other'):
     with pytest.raises(ValueError):
       list(location.container().walk(path))
-  with pytest.raises(ValueError):
-    location.container('%2e%2e/other')
+  assert location.container().provider.local(location.uri_of('%2e%2e/other')) == tmp_path / '%2e%2e' / 'other'
   assert location.uri_of('space and #hash.txt').path.tail == 'space%20and%20%23hash.txt'
   assert Location({'uid': 'plaud', 'canonical': 'plaud://'}).uri_of('recording') == 'plaud://recording'
 
@@ -110,9 +114,8 @@ def test_container_and_location_paths_cannot_escape(tmp_path):
 @pytest.mark.skipif(__import__('os').name != 'nt', reason='Windows drive roots')
 def test_drive_root_is_absolute_and_host_group_is_not_a_container():
   host = socket.gethostname()
-  location = FileLocation({'uid': 'drive', 'canonical': f'file://{host}/D:'})
-  assert location._root() == Path('D:/')
+  assert FileSystem().local(f'file://{host}/D:') == Path('D:/')
   with pytest.raises(ValueError, match='select a child Location'):
-    FileLocation({'uid': 'host', 'canonical': f'file://{host}'}).container()
+    Location({'uid': 'host', 'canonical': f'file://{host}'}, provider=FileSystem()).container().ls()
   with pytest.raises(ValueError, match='refers to another host'):
-    FileLocation({'uid': 'foreign', 'canonical': 'file://another-host/D:/data'}).container()
+    Location({'uid': 'foreign', 'canonical': 'file://another-host/D:/data'}, provider=FileSystem()).container().ls()

@@ -101,21 +101,18 @@ from .gppu import TimeSpan, Env, OSType, TemplateSet, _Base, detect_os, full_pat
 
 @dataclass(frozen=True)
 class DataObject:
-  """Data and its URI, read from or written to a Container.
+  """Content and the uri it was read from or is written to.
 
-  A DataObject carries source content and identity. Content can be JSON, text,
-  bytes or a binary stream.
+  A DataObject is a value. Its content is JSON, text, bytes or a binary stream, and its structure belongs to the source.
 
   Attributes:
-    uri (y2uri): Canonical source URI, converted to y2uri on construction.
-    content (dict[str, Any] | list[Any] | str | int | float | bool | None | bytes | BinaryIO): Source payload or binary content; its structure belongs to the source.
-    identity (str | None): Source-owned object identity, or None when the source supplies no identity.
-    kind (str): Source object kind; defaults to object.
-    name (str): Source object name used by destination naming templates; defaults to an empty string.
-    removed (bool): Whether refresh reports this object as removed; defaults to False.
-
-  Relationships:
-    parent (DataObject): Parent source object when one is supplied. A root object has no parent.
+    uri (y2uri): The uri of the object at its source.
+    content (dict[str, Any] | list[Any] | str | int | float | bool | None | bytes | BinaryIO): What the object holds.
+    identity (str | None): The id the source gives the object, or None when it gives none.
+    kind (str): What sort of object the source says it is; object when it says nothing.
+    name (str): The object's name, used by naming templates.
+    parent (DataObject | None): The object this one belongs to, such as the list a task is in.
+    removed (bool): True when a refresh reports the object as gone from its source.
   """
   uri: y2uri
   content: dict[str, Any] | list[Any] | str | int | float | bool | None | bytes | BinaryIO
@@ -129,114 +126,248 @@ class DataObject:
     object.__setattr__(self, 'uri', y2uri(self.uri))
 
 
-class Container:
-  """A hierarchy of DataObjects, independent of Location.
+def _join(uri: y2uri | str, path: y2path | str) -> y2uri:
+  """uri with a relative path below it, each name uri-escaped."""
+  uri = y2uri(uri)
+  return uri / quote(str(path), safe='/') if str(path) else uri
 
-  Its provider implements operations on its folders and objects. The default
-  provider is file; FileContainer can be constructed directly from a root path.
-  Container.read returns a DataObject. Container.ls lists folder and object
-  entries using the provider's filesystem metadata.
+
+class Provider:
+  """Reaches objects by their uri over one connection.
+
+  An instance is a Connection: the Provider with its connection parameters. FileSystem is the Provider of files;
+  M365, Telegram and Plaud are Providers written in CRAP. A Provider that cannot write raises PermissionError from
+  write and delete. Container and Location call these methods; nothing else needs to.
+
+  Attributes:
+    scheme (str): The uri scheme this Provider reaches: file, m365, telegram, plaud.
+    connection (dict[str, Any]): The connection parameters it was constructed with: host, account, credentials.
+  """
+  scheme = ''
+
+  def __init__(self, connection: Mapping[str, Any] | None = None) -> None:
+    self.connection = deepcopy(dict(connection)) if connection is not None else {}
+
+  def ls(self, uri: y2uri) -> list[dict[str, Any]]:
+    """What is directly inside uri, each entry named by its own name with its type and size."""
+    raise NotImplementedError(f'{self.scheme}: ls is not implemented')
+
+  def info(self, uri: y2uri) -> dict[str, Any]:
+    """What is known about the object at uri without reading its content."""
+    raise NotImplementedError(f'{self.scheme}: info is not implemented')
+
+  def open(self, uri: y2uri, mode: str = 'rb') -> BinaryIO:
+    """The bytes of the object at uri."""
+    raise NotImplementedError(f'{self.scheme}: open is not implemented')
+
+  def read(self, uri: y2uri) -> DataObject:
+    """The object at uri with its content."""
+    raise NotImplementedError(f'{self.scheme}: read is not implemented')
+
+  def write(self, uri: y2uri, obj: DataObject) -> None:
+    """Store obj's content at uri."""
+    raise PermissionError(f'{self.scheme}: objects are read-only')
+
+  def delete(self, uri: y2uri) -> None:
+    """Remove the object at uri."""
+    raise PermissionError(f'{self.scheme}: objects are read-only')
+
+  def walk(self, uri: y2uri, path: y2path | str = '', *, level: str = 'files', recursive: bool = False,
+           boundaries: Iterable[y2path | str] = ()) -> Iterator[tuple[dict, list[dict]]]:
+    """Each folder at and below path under uri, with the entries it holds; paths stay relative to uri.
+
+    A boundary is reported and never entered. The default reads each entry through ls and, at the handlers level,
+    read; FileSystem reads files through its handlers instead.
+    """
+    yield from walk_container(Container(self, uri), str(path), level, recursive, boundaries)
+
+  @contextmanager
+  def refresh(self, state: dict[str, Any], uri: y2uri) -> Iterator[tuple[Iterator[DataObject], Callable[[], None]]]:
+    """The objects changed at or below uri since state was recorded, and a callback that records the new state."""
+    raise NotImplementedError(f'{self.scheme}: refresh is not implemented')
+    yield
+
+  def locations(self, uri: y2uri) -> list[tuple[str, str]]:
+    """The Locations found directly below the Location at uri, as their path below it and their name.
+
+    A tenant lists its users and a user lists their mailbox parts; a Provider with nothing to discover lists none.
+    """
+    return []
+
+
+class Container:
+  """Alike objects kept together under one uri and reached through one Provider: a folder, a git repo, a
+  SharePoint file collection, an index file.
+
+  A Container takes paths relative to itself and never a uri. Its Provider does the reading and writing; the
+  Container adds paths and naming templates, so one Container serves every Provider. /lake reaches it through
+  its Collection.
+
+  Attributes:
+    provider (Provider): The Provider that reaches its objects.
+    uri (y2uri): The uri of the Container itself.
   """
 
+  def __init__(self, provider: Provider, uri: y2uri | str, *, templates: Mapping[str, str] | None = None) -> None:
+    """A Container at uri, reached through provider. templates name where a DataObject belongs: filename, the
+    parent object's kinds, date, identity and collision."""
+    self.provider = provider
+    self.uri = y2uri(uri)
+    self.templates = None if templates is None else TemplateSet(named={'objects': deepcopy(dict(templates))})
+    self._paths: dict[str, str] | None = None
+    self._identities: dict[str, str] = {}
+
+  def _uri(self, path: y2path | str) -> y2uri:
+    return _join(self.uri, Location.relative(path))
+
   def ls(self, path: y2path | str = '', detail: bool = True) -> list[dict[str, Any]] | list[str]:
-    """Immediate folders and objects in this Container, using fsspec entries.
+    """What is directly inside path, each entry named by its path in this Container, with type and size.
 
-    Args:
-      path (y2path | str): Relative folder path within this Container; empty selects its root.
-      detail (bool): Return entry dictionaries when True, or entry names when False.
-
-    Returns:
-      list[dict[str, Any]] | list[str]: Immediate filesystem entries with provider-defined metadata, or their names. Detailed entries use fsspec name, type and size fields.
+    Callers: FileIndexer, the Plaud Dagster job, admin_ui.
     """
-    raise NotImplementedError
+    path = str(Location.relative(path))
+    rows = [row | {'name': f"{path}/{row['name']}" if path else row['name']}
+            for row in self.provider.ls(self._uri(path))]
+    return rows if detail else [row['name'] for row in rows]
 
   def walk(self, path: y2path | str = '', *, level: str = 'files', recursive: bool = False,
            boundaries: Iterable[y2path | str] = ()) -> Iterator[tuple[dict, list[dict]]]:
-    """Yield successfully enumerated folders and their immediate indexed entries.
+    """Each folder at and below path with what it holds, read as deep as level: refresh, files, handlers or archives.
 
-    Paths remain relative to this Container. Boundary paths supplied by the
-    caller are reported but never entered. Listing errors propagate to the indexer.
-
-    Args:
-      path (y2path | str): Relative folder path within this Container; empty selects its root.
-      level (str): Indexing detail level passed to the container walker; defaults to files.
-      recursive (bool): Whether to descend into folders below the selected path.
-      boundaries (Iterable[y2path | str]): Relative folder paths to report without entering.
-
-    Returns:
-      Iterator[tuple[dict, list[dict]]]: Each enumerated folder entry paired with its immediate indexed entries.
+    A boundary path is reported and not entered. A listing error is raised, never read as an empty folder.
+    Caller: FileIndexer.
     """
-    yield from walk_container(self, str(path), level, recursive, boundaries)
+    yield from self.provider.walk(self.uri, path, level=level, recursive=recursive, boundaries=boundaries)
 
   def info(self, path: y2path | str = '') -> dict[str, Any]:
-    """What is known about path without reading its content: name, type, size."""
-    raise NotImplementedError
+    """What is known about path without reading its content: type, size, times, span and what the handlers found."""
+    return self.provider.info(self._uri(path)) | {'name': str(path)}
 
   def open(self, path: y2path | str, mode: str = 'rb') -> BinaryIO:
-    """The bytes at path."""
-    raise NotImplementedError
-
-  def path_of(self, obj: DataObject) -> y2path:
-    """Where obj belongs in this Container by its naming templates."""
-    raise NotImplementedError
+    """The bytes at path. Caller: admin_ui."""
+    return self.provider.open(self._uri(path), mode)
 
   def read(self, path: y2path | str | DataObject) -> DataObject:
-    """Read one object without changing a refresh cursor.
+    """The object at path with its content.
 
-    Args:
-      path (y2path | str | DataObject): Relative object path or a source DataObject accepted by the provider.
-
-    Returns:
-      DataObject: The selected object with its source content, identity and metadata.
+    Given a DataObject, the path is where the naming templates put it, and the result keeps its uri and identity.
+    An object whose source gives no identity is identified by its path. Callers: Dagster jobs, admin_ui.
     """
-    raise NotImplementedError
+    if isinstance(path, DataObject):
+      obj, path = path, self.path_of(path)
+      uri = self._uri(path)
+      binary = isinstance(obj.content, bytes) or hasattr(obj.content, 'read')
+      content = self.provider.open(uri) if binary else self.provider.read(uri).content
+      return replace(obj, content=content, name=PurePosixPath(str(path)).name)
+    obj = self.provider.read(self._uri(path))
+    return obj if obj.identity is not None else replace(obj, identity=str(path))
 
   def write(self, path: y2path | str, obj: DataObject) -> None:
-    """Write a DataObject at a relative path in this Container.
+    """Store obj at path. The object's uri is unchanged.
 
-    Args:
-      path (y2path | str): Destination object path relative to the Container root.
-      obj (DataObject): Object whose content is written at that path. Its source URI is unchanged.
-
-    Returns:
-      None: Completes after the provider writes the object.
-
-    Example:
-      container.write('documents/note.json', obj)
+    With an identity template, a path already holding another object's identity is refused. Caller: Dagster jobs.
     """
-    raise NotImplementedError
+    if not isinstance(obj, DataObject):
+      raise TypeError('Container.write requires a DataObject')
+    if not isinstance(path, (y2path, str)):
+      raise TypeError('Container.write requires a relative path')
+    path = str(Location.relative(path))
+    if not path:
+      raise ValueError('Container write path must name an object')
+    uri = self._uri(path)
+    binary = isinstance(obj.content, bytes) or hasattr(obj.content, 'read')
+    if not binary and self.templates is not None and 'identity' in self.templates.named:
+      identity = self.templates.render_template('identity', uri=str(obj.uri), it=obj.content, path=path)
+      if identity is not None:
+        try:
+          held = self.provider.read(uri).content
+        except FileNotFoundError:
+          held = None
+        if held is not None and identity != self.templates.render_template('identity', uri=str(obj.uri), it=held, path=path):
+          raise ValueError(f'{uri}: refusing to replace a different object identity')
+    self.provider.write(uri, obj)
 
-  def delete(self, path: y2path | y2uri | str) -> None:
-    """Delete an object by its relative path or URI.
+  def delete(self, path: y2path | str) -> None:
+    """Remove the object at path. Caller: Dagster jobs, before rewriting an object."""
+    path = str(Location.relative(path))
+    self.provider.delete(self._uri(path))
+    if self._paths is not None and path.casefold() in self._identities:
+      del self._paths[self._identities.pop(path.casefold())]
 
-    Args:
-      path (y2path | y2uri | str): Object path within the Container, or its URI.
+  def path_of(self, obj: DataObject) -> y2path:
+    """Where obj belongs in this Container by its naming templates. Callers: Dagster jobs, admin_ui's template preview."""
+    if self.templates is None:
+      raise ValueError('Container requires naming templates to place a DataObject')
+    uri = urlsplit(str(obj.uri))
+    context = dict(uri=str(obj.uri), endpoint=uri.path, tenant=uri.netloc, inside='.', it=obj.content,
+                   unquote=unquote, identity=obj.identity, filename=obj.name, kind=obj.kind)
+    if 'date' in self.templates.named:
+      value = self.templates.render_template('date', it=obj.content, uri=str(obj.uri),
+        parent=obj.parent.content if obj.parent is not None else None)
+      context['date'] = datetime.fromisoformat(value) if value else None
+    if obj.parent is not None:
+      path = self.templates.render_template(obj.kind, object_path=str(self.path_of(obj.parent)),
+                                            parent=obj.parent.content, **context)
+    else:
+      path = self.templates.render_template('filename', **context)
+    if not isinstance(path, str) or not path.strip():
+      raise ValueError('Object filename template must return a nonempty relative path')
+    path = str(Location.relative(path))
+    if 'identity' not in self.templates.named:
+      return y2path(path)
+    context['path'] = path
+    identity = self.templates.render_template('identity', **context)
+    if identity is None:
+      return y2path(path)
+    if not isinstance(identity, str) or not identity:
+      raise ValueError('Object identity template must return a nonempty string or None')
+    paths = self._saved(context)
+    if identity in paths:
+      return y2path(paths[identity])
+    original, number, attempted = path, 1, set()
+    while path.casefold() in self._identities:
+      if path.casefold() in attempted:
+        raise ValueError('Collision template must produce a new path')
+      attempted.add(path.casefold())
+      number += 1
+      path = self.templates.render_template('collision', **(context | {'path': original, 'number': number}))
+      if not isinstance(path, str) or not path.strip():
+        raise ValueError('Collision template must return a nonempty relative path')
+      path = str(Location.relative(path))
+    paths[identity] = path
+    self._identities[path.casefold()] = identity
+    return y2path(path)
 
-    Returns:
-      None: Completes after the provider removes the object.
-    """
-    raise NotImplementedError
-
-  def _refresh(self, state: dict[str, Any], path: y2path | str) -> AbstractContextManager[tuple[Iterator[DataObject], Callable[[], None]]]:
-    """Yield objects and a callback updating the caller's refresh state."""
-    raise NotImplementedError
+  def _saved(self, context: dict[str, Any]) -> dict[str, str]:
+    """The saved JSON objects in this Container by identity, read once."""
+    if self._paths is None:
+      self._paths = {}
+      folders = ['']
+      while folders:
+        for row in self.ls(folders.pop()):
+          if row['type'] == 'directory':
+            folders.append(row['name'])
+            continue
+          if not row['name'].endswith('.json'):
+            continue
+          key = self.templates.render_template('identity', **(context | {
+            'it': self.provider.read(self._uri(row['name'])).content, 'path': row['name']}))
+          if key is None:
+            continue
+          if key in self._paths:
+            raise ValueError(f"{row['name']}: duplicate saved object identity")
+          self._paths[key] = row['name']
+          self._identities[row['name'].casefold()] = key
+    return self._paths
 
   @contextmanager
   def refresh(self, state: dict[str, Any], path: y2path | str = '') -> Iterator[Iterator[DataObject]]:
-    """Commit source state only after full iteration and successful handling.
+    """The objects changed at or below path since state was recorded, removed ones marked removed.
 
-    Consume the changes inside the context manager. Each destination write
-    takes a destination path and the DataObject. An exception prevents the
-    source state from advancing.
-
-    Args:
-      state (dict[str, Any]): Caller-owned refresh state; the provider updates it only after successful full consumption.
-      path (y2path | str): Relative source path to refresh; empty selects the Container root.
-
-    Returns:
-      ContextManager[Iterator[DataObject]]: A context manager yielding changed DataObjects, including removal markers. Incomplete iteration or a handler exception prevents state advancement.
+    state belongs to the caller. It advances only when every change was consumed inside the context and nothing
+    raised, so a failed run is read again next time. Caller: Dagster jobs.
     """
-    with self._refresh(state, path) as (objects, commit):
+    with self.provider.refresh(state, self._uri(path)) as (objects, commit):
       complete = False
       def changes() -> Iterator[DataObject]:
         nonlocal complete
@@ -251,323 +382,163 @@ class Container:
       commit()
 
 
-class Location(_Base):
-  """A configured place where data is kept, keyed by its uid. A Location with no parent is a root.
+class Location:
+  """One place in the configured hierarchy, known by its uid.
 
-  uids are configuration: they are written in the configuration row, never computed from a provider or a path.
-  Alex, 2026-09-24: "Host: alex-laptop / Global locaiton uid: alex-laptop-data / Local location uid: data /
-  Global location uid: alex-laptop-dev / Local location uid: dev / Local uid of RAN repo: dev-ran / Global uid of
-  RAN repo: github-ran" / "uids are configuration."
-
-  GppuCatalog.location(uid) returns the Location with its Provider and Connection
-  bound. ls returns child Locations; walk traverses the tree. Configuration and
-  provider enumeration produce the same class and use uid for each Location.
-  The inherited my method reads configuration, including the provider-relative
-  path. container(path) opens a Container through the Provider; the Container
-  is independent of the Location.
+  The top of the hierarchy is configured; below it are Locations its Provider discovers, down to the Containers
+  that hold objects. A Location without a Provider only groups the Locations below it. /config serves Locations.
 
   Attributes:
-    uid (str): Its global uid, from configuration: `alex-laptop-data`, `github-ran`.
-    uri (y2uri): Canonical URI of the Location.
-
-  Relationships:
-    parent (Location): Parent Location. A root Location has no parent.
+    uid (str): Its uid from configuration: alex-laptop-data, github-ran.
+    uri (y2uri): Its canonical uri.
+    provider (Provider | None): The Provider, with its connection, that reaches it.
+    parent (Location | None): The Location above it; None at the top.
   """
 
-  def __init__(self, properties: dict[str, Any], *, connection: dict[str, Any] | None = None,
-               parent: 'Location | None' = None,
-               children: Callable[[], Iterable['Location']] | None = None) -> None:
-    super().__init__()
-    self._config_from_dict(properties)
-    self.uid = properties['uid']
+  def __init__(self, row: Mapping[str, Any], *, provider: Provider | None = None, parent: 'Location | None' = None,
+               children: Callable[[], Iterable['Location']] | None = None,
+               templates: Mapping[str, str] | None = None) -> None:
+    """A Location from its configuration row. children lists the configured Locations below it; templates name
+    where DataObjects go in its Container."""
+    self.uid = row['uid']
     if not isinstance(self.uid, str) or not self.uid:
       raise ValueError('every Location requires a nonempty uid')
-    self.uri = y2uri(properties['canonical'])
+    self._row = deepcopy(dict(row))
+    self.uri = y2uri(row['canonical'])
+    self.provider = provider
     self.parent = parent
-    self._connection = deepcopy(connection)
+    self.templates = deepcopy(dict(templates)) if templates is not None else None
     self._children = children
+    self._store: Callable[['Location | None', str, dict[str, Any]], None] | None = None
 
   @property
   def data(self) -> dict[str, Any]:
     """Its configuration row: uid, provider, parent, canonical, name, kind, path, service, icon, tags, folders."""
-    return deepcopy(self._my)
+    return deepcopy(self._row)
+
+  def ls(self) -> list['Location']:
+    """The Locations directly below this one: the configured ones, then those its Provider finds.
+
+    Callers: admin_ui, FileIndexer, lake Dagster.
+    """
+    children = list(self._children()) if self._children is not None else []
+    if self.provider is None:
+      return children
+    configured = {child.uri for child in children}
+    for path, name in self.provider.locations(self.uri):
+      uri = _join(self.uri, path)
+      if uri in configured:
+        continue
+      children.append(Location(self._row | {'uid': f"{self.uid.rstrip('/')}/{path}", 'canonical': str(uri),
+        'name': name, 'path': unquote(urlsplit(str(uri)).path.lstrip('/')), 'parent': self.uid},
+        provider=self.provider, parent=self, templates=self.templates))
+    return children
 
   def walk(self) -> Iterator[tuple['Location', list['Location']]]:
-    """Yield each Location and its immediate children, listing each node once.
-
-    Returns:
-      Iterator[tuple[Location, list[Location]]]: A depth-first traversal, starting with this Location, with each parent paired with its immediate children.
-    """
+    """This Location and every Location below it, each with the Locations directly below it."""
     children = self.ls()
     yield self, children
     for child in children:
       yield from child.walk()
 
-  def ls(self) -> list['Location']:
-    """List this Location's immediate children.
-
-    Returns:
-      list[Location]: Child Location objects; an empty collection when no children are supplied.
-    """
-    return list(self._children()) if self._children is not None else []
-
   def container(self, path: y2path | str = '') -> Container:
-    """Select a Container below this Location using its provider implementation.
+    """The Container at path below this Location. Callers: FileIndexer, Dagster jobs."""
+    if self.provider is None:
+      raise ValueError(f'{self.uid}: no Provider reaches this Location')
+    return Container(self.provider, self.uri_of(path), templates=self.templates)
 
-    Args:
-      path (y2path | str): Relative path below the Location; empty selects its root.
-
-    Returns:
-      Container: Provider-specific Container operations for the selected path. The base Location does not implement Containers and raises NotImplementedError.
-    """
-    raise NotImplementedError(f'{self.uid}: Containers are not implemented')
+  def uri_of(self, path: y2path | str = '') -> y2uri:
+    """The canonical uri of path below this Location, each name uri-escaped. Caller: FileIndexer."""
+    return _join(self.uri, self.relative(path))
 
   def save(self, who: str, **fields: Any) -> None:
     """Write fields into this Location's configuration row as who: uid, name, path, service, kind, icon, tags, folders."""
+    if self._store is None:
+      raise ValueError(f'{self.uid}: this Location was not loaded from a configuration it can write to')
     self._store(self, who, fields)
-
-  def uri_of(self, path: y2path | str = '') -> y2uri:
-    """Canonical URI of a relative path, with literal names URI-escaped.
-
-    Args:
-      path (y2path | str): Relative path below this Location; empty returns its own URI.
-
-    Returns:
-      y2uri: Canonical URI of the selected path.
-    """
-    path = self.relative(path)
-    if not path:
-      return self.uri
-    return self.uri / quote(str(path), safe='/')
 
   @staticmethod
   def relative(path: y2path | str) -> y2path:
-    """Validate a relative, slash-separated Location path.
-
-    Args:
-      path (y2path | str): Empty or relative path without URI, absolute, backslash, empty-segment or traversal syntax.
-
-    Returns:
-      y2path: The validated relative path. Invalid syntax raises ValueError.
-    """
+    """path, checked to be relative and slash-separated, with no drive, empty or traversal segment."""
     if isinstance(path, y2path):
       path = str(path)
-    if not isinstance(path, str) or path.startswith('/') or '\\' in path or '://' in path:
+    if not isinstance(path, str) or path.startswith('/') or '\\' in path or '://' in path or PureWindowsPath(path).drive:
       raise ValueError('Location path must be relative and slash-separated')
     if path and any(part in ('', '.', '..') for part in path.split('/')):
       raise ValueError('Location path cannot contain empty or traversal segments')
     return y2path(path)
 
 
-class FileLocation(Location):
-  """A Location served by the file Provider.
+class FileSystem(Provider):
+  """Files on this host or on a share it reaches, read through the handlers.
 
-  uid is the Location key. Its canonical file URI supplies the filesystem root.
-  container(path) opens a FileContainer with the configured naming templates.
+  A file uri names its host and path: file:///D:/Dev on this host, file://alex-pc/D:/Dev by host name. The
+  handlers say what each file is; FileSystem is their Provider.
   """
   scheme = 'file'
 
-  def __init__(self, properties: dict[str, Any], *, connection: dict[str, Any] | None = None,
-               parent: Location | None = None, children: Callable[[], Iterable[Location]] | None = None,
-               templates: dict[str, str] | None = None) -> None:
-    super().__init__(properties, connection=connection, parent=parent, children=children)
-    self.templates = deepcopy(templates)
-
-  @property
-  def root(self) -> Path:
-    """The folder on this host where this Location is."""
-    uri = urlsplit(str(self.uri))
-    if uri.scheme != 'file':
-      raise ValueError('FileLocation requires a file URI')
-    path = unquote(uri.path)
+  def local(self, uri: y2uri | str) -> Path:
+    """The path on this host that uri names."""
+    parsed = urlsplit(str(uri))
+    if parsed.scheme != self.scheme:
+      raise ValueError(f'{uri}: FileSystem reaches file uris')
+    if parsed.query or parsed.fragment:
+      raise ValueError(f'{uri}: a file uri has no query or fragment')
+    path = unquote(parsed.path)
     if not path:
-      raise ValueError(f'{self.uri}: select a child Location with a filesystem root')
+      raise ValueError(f'{uri}: select a child Location with a filesystem root')
+    if any(part in ('.', '..') for part in path.split('/')):
+      raise ValueError(f'{uri}: a file uri cannot contain traversal segments')
     if len(path) >= 3 and path[0] == '/' and path[2] == ':':
       path = path[1:]
-    if uri.netloc and uri.netloc.casefold() != socket.gethostname().split('.')[0].casefold():
+    if parsed.netloc and parsed.netloc.casefold() != socket.gethostname().split('.')[0].casefold():
       if os.name == 'nt' and not PureWindowsPath(path).drive:
-        return Path('//' + uri.netloc + unquote(uri.path))
-      raise ValueError(f'{self.uri}: file URI refers to another host')
+        return Path('//' + parsed.netloc + path)
+      raise ValueError(f'{uri}: file uri refers to another host')
     if len(path) == 2 and path[1] == ':':
       path += '/'
-    root = Path(path)
-    if not root.is_absolute():
-      raise ValueError(f'{self.uri}: file Location requires an absolute filesystem root')
-    return root
+    local = Path(path)
+    if not local.is_absolute():
+      raise ValueError(f'{uri}: a file uri requires an absolute path')
+    return local
 
-  def container(self, path: y2path | str = '') -> 'FileContainer':
-    path = str(self.relative(path))
-    root = self.root.resolve()
-    target = (root / unquote(path)).resolve()
-    if not target.is_relative_to(root):
-      raise ValueError('Container must stay within its Location')
-    return FileContainer(target, templates=self.templates, uri=self.uri_of(path))
-
-def _updated(previous: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
-  result = deepcopy(previous)
-  for key, value in incoming.items():
-    if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-      result[key] = _updated(result[key], value)
-    else:
-      result[key] = deepcopy(value)
-  return result
-
-
-class FileContainer(Container):
-  """The default Container implementation: a hierarchy of files at a root path.
-
-  Construct FileContainer(root) directly, or obtain one through a FileLocation.
-  ls, read and write use relative paths. write(path, obj) writes obj.content at
-  the supplied path. Naming templates can resolve DataObject inputs to read;
-  they do not change an explicit write path. delete accepts a relative path
-  or the file URI returned by read.
-  """
-  def __init__(self, root: str | Path, *, templates: dict[str, str] | None = None,
-               uri: y2uri | str | None = None) -> None:
-    root = Path(root)
-    if not root.is_absolute():
-      raise ValueError('File Container root must be absolute')
-    self._root = root.resolve()
-    self.root = self._root.as_posix()
-    self.uri = y2uri(self._root.as_uri() if uri is None else uri)
-    self.templates = None if templates is None else TemplateSet(named={'objects': deepcopy(templates)})
-    self._files: dict[str, Path] | None = None
-    self._paths: dict[str, str] = {}
-
-  def _object_file(self, path: y2path | str | DataObject) -> Path:
-    """Resolve an object's own URI and metadata, or a path returned by ls."""
-    if isinstance(path, DataObject):
-      obj = path
-      if self.templates is None:
-        raise ValueError('File Container requires naming templates to resolve a DataObject')
-      uri = urlsplit(str(obj.uri))
-      context = dict(uri=str(obj.uri), endpoint=uri.path, tenant=uri.netloc, inside='.',
-                     it=obj.content, unquote=unquote, identity=obj.identity, filename=obj.name, kind=obj.kind)
-      if 'date' in self.templates.named:
-        value = self.templates.render_template('date', it=obj.content, uri=str(obj.uri),
-          parent=obj.parent.content if obj.parent is not None else None)
-        context['date'] = datetime.fromisoformat(value) if value else None
-      if obj.parent is not None:
-        parent = self._object_file(obj.parent).relative_to(self._root).as_posix()
-        path = self.templates.render_template(obj.kind, object_path=parent, parent=obj.parent.content, **context)
-      else:
-        path = self.templates.render_template('filename', **context)
-      if not isinstance(path, str) or not path.strip():
-        raise ValueError('Object filename template must return a nonempty relative path')
-      context['path'] = path
-      if 'identity' in self.templates.named:
-        identity = self.templates.render_template('identity', **context)
-        if identity is not None:
-          if not isinstance(identity, str) or not identity:
-            raise ValueError('Object identity template must return a nonempty string or None')
-          if self._files is None:
-            self._files = {}
-            for saved in self._root.rglob('*.json'):
-              key = self.templates.render_template('identity',
-                **(context | {'it': json.loads(saved.read_bytes()),
-                             'path': saved.relative_to(self._root).as_posix()}))
-              if key is None:
-                continue
-              if key in self._files:
-                raise ValueError(f'{saved}: duplicate saved object identity')
-              self._files[key] = saved
-              self._paths[saved.relative_to(self._root).as_posix().casefold()] = key
-          if identity in self._files:
-            path = self._files[identity].relative_to(self._root).as_posix()
-          else:
-            original, number = path, 1
-            attempted: set[str] = set()
-            while path.casefold() in self._paths:
-              if path.casefold() in attempted:
-                raise ValueError('Collision template must produce a new path')
-              attempted.add(path.casefold())
-              number += 1
-              path = self.templates.render_template('collision', **(context | {'path': original, 'number': number}))
-              if not isinstance(path, str) or not path.strip():
-                raise ValueError('Collision template must return a nonempty relative path')
-            self._files[identity] = self._object_file(path)
-            self._paths[path.casefold()] = identity
-    if isinstance(path, y2path):
-      path = str(path)
-    if not isinstance(path, str):
-      raise TypeError('Container requires a DataObject or a relative path')
-    if '\\' in path or PureWindowsPath(path).drive or path.startswith('/') or '://' in path:
-      raise ValueError('Container path must be relative with slash-separated segments')
-    if '..' in path.split('/'):
-      raise ValueError('Container path cannot escape its root')
-    target = (self._root / path).resolve()
-    if not target.is_relative_to(self._root):
-      raise ValueError('Container path cannot escape its root')
-    return target
-
-  def ls(self, path: y2path | str = '', detail: bool = True) -> list[dict[str, Any]] | list[str]:
+  def ls(self, uri: y2uri) -> list[dict[str, Any]]:
     rows = []
-    for target in sorted(self._object_file(path).iterdir()):
-      name = target.relative_to(self._root).as_posix()
+    for target in sorted(self.local(uri).iterdir()):
       if target.is_symlink() or target.is_junction():
         # A link is listed as itself, never followed: fsspec's islink and destination.
-        rows.append({'name': name, 'type': 'other', 'size': target.lstat().st_size, 'islink': True,
+        rows.append({'name': target.name, 'type': 'other', 'size': target.lstat().st_size, 'islink': True,
                      'destination': os.readlink(target)})
         continue
-      rows.append({'name': name, 'type': 'directory' if target.is_dir() else 'file',
+      rows.append({'name': target.name, 'type': 'directory' if target.is_dir() else 'file',
                    'size': 0 if target.is_dir() else target.stat().st_size})
-    return rows if detail else [row['name'] for row in rows]
+    return rows
 
-  def walk(self, path: y2path | str = '', *, level: str = 'files', recursive: bool = False,
-           boundaries: Iterable[y2path | str] = ()) -> Iterator[tuple[dict, list[dict]]]:
-    path = str(path)
-    self._object_file(path)
-    yield from walk_files(self._root, path, level, recursive, boundaries)
+  def info(self, uri: y2uri) -> dict[str, Any]:
+    """What the handlers found at uri: type, size, times, span and each handler's metadata under its name."""
+    return _MetadataHandlers().probe_sync(self.local(uri), recursive=False)[0].metadata
 
-  def info(self, path: y2path | str = '') -> dict[str, Any]:
-    """What the handlers found at path: type, size, times, span and each handler's metadata under its name."""
-    target = self._object_file(path)
-    record = _MetadataHandlers().probe_sync(target, recursive=False)[0]
-    return record.metadata | {'name': target.relative_to(self._root).as_posix()}
-
-  def open(self, path: y2path | str, mode: str = 'rb') -> BinaryIO:
+  def open(self, uri: y2uri, mode: str = 'rb') -> BinaryIO:
     if mode not in ('rb', 'r'):
-      raise ValueError('Container.open reads; write through Container.write')
-    return self._object_file(path).open(mode)
+      raise ValueError('open reads; store objects with write')
+    return self.local(uri).open(mode)
 
-  def path_of(self, obj: DataObject) -> y2path:
-    return y2path(self._object_file(obj).relative_to(self._root).as_posix())
+  def read(self, uri: y2uri) -> DataObject:
+    """The file at uri: a JSON file's parsed value, any other file's byte stream."""
+    target = self.local(uri)
+    content = json.loads(target.read_bytes()) if target.suffix.casefold() == '.json' else target.open('rb')
+    return DataObject(uri, content, None, name=target.name)
 
-  def read(self, path: y2path | str | DataObject) -> DataObject:
-    target = self._object_file(path)
-    binary = isinstance(path, DataObject) and (isinstance(path.content, bytes) or hasattr(path.content, 'read'))
-    if target.suffix.casefold() == '.json' and not binary:
-      content = json.loads(target.read_bytes())
-    else:
-      content = target.open('rb')
-    if isinstance(path, DataObject):
-      return replace(path, content=content, name=target.name)
-    return DataObject(target.as_uri(), content, str(path), name=target.name)
+  def write(self, uri: y2uri, obj: DataObject) -> None:
+    """Store obj.content at uri: JSON values as UTF-8 JSON, bytes and streams unchanged.
 
-  def write(self, path: y2path | str, obj: DataObject) -> None:
-    """Write obj.content at path within the filesystem root.
-
-    JSON values are serialized as UTF-8 JSON. Bytes and binary streams are
-    copied unchanged. No naming template is required. A configured identity
-    template rejects replacing a different source object; different binary
-    content requires an explicit delete before replacement.
+    The file is staged beside its destination and moved into place. Identical content is left alone. Different
+    binary content at an existing file is refused until the file is deleted.
     """
-    if not isinstance(obj, DataObject):
-      raise TypeError('Container.write requires a DataObject')
-    if not isinstance(path, (y2path, str)):
-      raise TypeError('Container.write requires a relative path')
-    target = self._object_file(path)
-    if target == self._root:
-      raise ValueError('Container write path must name a file')
+    target = self.local(uri)
     target.parent.mkdir(parents=True, exist_ok=True)
     incoming = obj.content
     binary = isinstance(incoming, bytes) or hasattr(incoming, 'read')
-    if not binary and target.exists() and self.templates is not None and 'identity' in self.templates.named:
-      relative = target.relative_to(self._root).as_posix()
-      identity = self.templates.render_template('identity', uri=str(obj.uri), it=incoming, path=relative)
-      if identity is not None and identity != self.templates.render_template('identity',
-          uri=str(obj.uri), it=json.loads(target.read_bytes()), path=relative):
-        raise ValueError(f'{target}: refusing to replace a different object identity')
     if not binary:
       stream = BytesIO((json.dumps(incoming, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + '\n').encode('utf-8'))
     elif isinstance(incoming, bytes):
@@ -601,33 +572,21 @@ class FileContainer(Container):
     finally:
       pending.unlink(missing_ok=True)
 
-  def delete(self, path: y2path | y2uri | str) -> None:
-    """Delete a file by relative path or absolute file URI within this Container.
+  def delete(self, uri: y2uri) -> None:
+    self.local(uri).unlink()
 
-    URI-escaped names are decoded. URIs outside the root, or with a query or
-    fragment, are rejected. No DataObject or naming template is required.
-    """
-    if isinstance(path, y2uri) or isinstance(path, str) and (path.startswith('file:') or '://' in path):
-      uri = str(path)
-      parsed = urlsplit(uri)
-      if parsed.query or parsed.fragment:
-        raise ValueError('Object URI cannot contain a query or fragment')
-      target = Path.from_uri(uri).resolve()
-      if not target.is_relative_to(self._root):
-        raise ValueError('Object URI is outside this Container')
-    else:
-      if not isinstance(path, (y2path, str)):
-        raise TypeError('Container.delete requires an object path or URI')
-      target = self._object_file(path)
-    target.unlink()
-    relative = target.relative_to(self._root).as_posix().casefold()
-    if relative in self._paths:
-      identity = self._paths.pop(relative)
-      del self._files[identity]
+  def walk(self, uri: y2uri, path: y2path | str = '', *, level: str = 'files', recursive: bool = False,
+           boundaries: Iterable[y2path | str] = ()) -> Iterator[tuple[dict, list[dict]]]:
+    yield from walk_files(self.local(uri), str(Location.relative(path)), level, recursive, boundaries)
 
   @contextmanager
-  def _refresh(self, state: dict[str, Any], path: y2path | str) -> Iterator[tuple[Iterator[DataObject], Callable[[], None]]]:
-    root = self._object_file(path)
+  def refresh(self, state: dict[str, Any], uri: y2uri) -> Iterator[tuple[Iterator[DataObject], Callable[[], None]]]:
+    """Files changed at or below uri since state was recorded, by modification time and size.
+
+    state is keyed by the local file uri of the refreshed path; each object's identity is its path below uri.
+    """
+    root = self.local(uri).resolve()
+    base = root if root.is_dir() else root.parent
     scope = root.as_uri()
     previous = state[scope] if scope in state else {}
     pending: dict[str, list[int]] = {}
@@ -637,12 +596,11 @@ class FileContainer(Container):
       for target in targets:
         if target.is_dir() or target.suffix == '.pending':
           continue
-        name = target.relative_to(self._root).as_posix()
-        target = self._object_file(name)
+        name = target.relative_to(base).as_posix()
         stat = target.stat()
         signature = [stat.st_mtime_ns, stat.st_size]
         if name not in previous or previous[name] != signature:
-          obj = self.read(name)
+          obj = replace(self.read(_join(uri, name) if root.is_dir() else y2uri(uri)), identity=name)
           try:
             yield obj
           finally:
@@ -650,13 +608,22 @@ class FileContainer(Container):
               obj.content.close()
         pending[name] = signature
       for name in previous.keys() - pending.keys():
-        target = self._object_file(name)
-        yield DataObject(target.as_uri(), b'', name, name=target.name, removed=True)
+        yield DataObject(_join(uri, name) if root.is_dir() else y2uri(uri), b'', name, name=PurePosixPath(name).name, removed=True)
 
     def commit() -> None:
       state[scope] = pending
 
     yield objects(), commit
+
+
+def _updated(previous: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+  result = deepcopy(previous)
+  for key, value in incoming.items():
+    if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+      result[key] = _updated(result[key], value)
+    else:
+      result[key] = deepcopy(value)
+  return result
 
 # endregion
 # region handlers
@@ -7228,9 +7195,10 @@ class GppuCatalog(AbstractFileSystem):
   ``ls`` and ``walk`` enumerate its child Locations. An explicit mapping
   accepts the same data from another configuration loader.
 
-  Files are built in. A connection's ``provider`` can name an external Location
-  implementation by its Python module and class; configuration loading imports
-  it and registers its declared scheme. ``schemas`` reports the loaded schemes.
+  FileSystem is built in. A connection's ``provider`` can name an external
+  Provider by its Python module and class; configuration loading imports it and
+  registers its declared scheme. ``schemas`` reports the loaded schemes. Each
+  connection gets one Provider instance, shared by every Location it reaches.
 
   The explicit folder argument retains the existing exported-host catalog:
 
@@ -7258,10 +7226,12 @@ class GppuCatalog(AbstractFileSystem):
   cachable = False
 
   def __init__(self, catalog: str | Path | Mapping | None = None, host: str | None = None,
-               location_types: Mapping | None = None) -> None:
-    self.location_types = {'file': FileLocation}
+               location_types: Mapping | None = None, templates: Mapping[str, str] | None = None) -> None:
+    self.location_types = {'file': FileSystem}
     if location_types is not None:
       self.location_types.update(location_types)
+    self.templates = templates
+    self._providers: dict[str | None, Provider] = {}
     self._configuration = catalog is None or isinstance(catalog, Mapping)
     if self._configuration:
       if catalog is None:
@@ -7337,8 +7307,8 @@ class GppuCatalog(AbstractFileSystem):
       if not module:
         raise ValueError(f'{provider}: unknown configured provider')
       kind = getattr(importlib.import_module(module), name)
-      if not isinstance(kind, type) or not issubclass(kind, Location):
-        raise TypeError(f'{provider}: provider must implement Location')
+      if not isinstance(kind, type) or not issubclass(kind, Provider):
+        raise TypeError(f'{provider}: provider must implement Provider')
       if kind.scheme in self.location_types and self.location_types[kind.scheme] is not kind:
         raise ValueError(f'{kind.scheme}: provider already registered')
       self.location_types[kind.scheme] = kind
@@ -7396,8 +7366,17 @@ class GppuCatalog(AbstractFileSystem):
         visited.add(parent)
         parent = self._parents[parent]
 
+  def _provider(self, scheme: str, connection: str | None) -> Provider | None:
+    """The one Provider instance for a connection, or for a scheme reached without one."""
+    if scheme not in self.location_types:
+      return None
+    key = connection if connection is not None else scheme + '://'
+    if key not in self._providers:
+      self._providers[key] = self.location_types[scheme](self.connections[connection] if connection is not None else None)
+    return self._providers[key]
+
   def location(self, uid: str) -> Location:
-    """Return the Location with this UID, binding its Provider and Connection.
+    """Return the Location with this UID, with the Provider of its connection.
 
     Args:
       uid (str): Location UID from the configured tree.
@@ -7411,13 +7390,12 @@ class GppuCatalog(AbstractFileSystem):
     with self._lock:
       if uid not in self._bound_locations:
         row = self.locations[uid]
-        scheme = urlsplit(row['canonical']).scheme
-        kind = self.location_types[scheme] if scheme in self.location_types else Location
-        connection = self.connections[row['connection']] if row.get('connection') is not None else None
         parent = self._parents[uid]
-        self._bound_locations[uid] = kind(row, connection=connection,
+        self._bound_locations[uid] = Location(row,
+          provider=self._provider(urlsplit(row['canonical']).scheme, row.get('connection')),
           parent=self.location(parent) if parent is not None else None,
-          children=lambda: (self.location(child) for child, owner in self._parents.items() if owner == uid))
+          children=lambda: (self.location(child) for child, owner in self._parents.items() if owner == uid),
+          templates=self.templates)
       return self._bound_locations[uid]
 
   def location_of(self, uri: y2uri | str) -> tuple[Location, y2path]:
@@ -7432,10 +7410,10 @@ class GppuCatalog(AbstractFileSystem):
       at = f'{scheme}://{head}'
       below.insert(0, name)
     location = self.location(by_uri[at])
-    if isinstance(location, FileLocation) and not urlsplit(at).path and below:
+    if isinstance(location.provider, FileSystem) and not urlsplit(at).path and below:
       # A host has no folder of its own: the drive below it is the root of what is listed.
-      location = FileLocation({'uid': location.uid, 'canonical': f'{at}/{below.pop(0)}'}, templates=location.templates,
-                              parent=location)
+      location = Location({'uid': location.uid, 'canonical': f'{at}/{below.pop(0)}'}, provider=location.provider,
+                          parent=location, templates=location.templates)
     return location, y2path(unquote('/'.join(below)))
 
   @staticmethod
