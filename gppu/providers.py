@@ -98,14 +98,18 @@ class Container:
     """
     raise NotImplementedError
 
-  def write(self, obj: DataObject) -> None:
-    """Write a DataObject into this Container.
+  def write(self, path: y2path | str, obj: DataObject) -> None:
+    """Write a DataObject at a relative path in this Container.
 
     Args:
-      obj (DataObject): Source object to write using the destination provider's naming and content rules.
+      path (y2path | str): Destination object path relative to the Container root.
+      obj (DataObject): Object whose content is written at that path. Its source URI is unchanged.
 
     Returns:
       None: Completes after the provider writes the object.
+
+    Example:
+      container.write('documents/note.json', obj)
     """
     raise NotImplementedError
 
@@ -128,9 +132,9 @@ class Container:
   def refresh(self, state: dict[str, Any], path: y2path | str = '') -> Iterator[Iterator[DataObject]]:
     """Commit source state only after full iteration and successful handling.
 
-    with source.refresh(state, folder) as changes:
-      for obj in changes:
-        destination.write(obj)
+    Consume the changes inside the context manager. Each destination write
+    takes a destination path and the DataObject. An exception prevents the
+    source state from advancing.
 
     Args:
       state (dict[str, Any]): Caller-owned refresh state; the provider updates it only after successful full consumption.
@@ -308,8 +312,9 @@ class FileContainer(Container):
   """The default Container implementation: a hierarchy of files at a root path.
 
   Construct FileContainer(root) directly, or obtain one through a FileLocation.
-  ls and read use relative paths. Writing DataObjects uses the supplied naming
-  templates; existing files are matched by the source identity in their content.
+  ls, read and write use relative paths. write(path, obj) writes obj.content at
+  the supplied path. Naming templates can resolve DataObject inputs to read
+  and delete; they do not change an explicit write path.
   """
   def __init__(self, root: str | Path, *, templates: dict[str, str] | None = None,
                uri: y2uri | str | None = None) -> None:
@@ -416,16 +421,25 @@ class FileContainer(Container):
       return replace(path, content=content, name=target.name)
     return DataObject(target.as_uri(), content, str(path), name=target.name)
 
-  def write(self, obj: DataObject) -> None:
+  def write(self, path: y2path | str, obj: DataObject) -> None:
+    """Write obj.content at path within the filesystem root.
+
+    JSON values are serialized as UTF-8 JSON. Bytes and binary streams are
+    copied unchanged. No naming template is required. A configured identity
+    template rejects replacing a different source object; different binary
+    content requires an explicit delete before replacement.
+    """
     if not isinstance(obj, DataObject):
       raise TypeError('Container.write requires a DataObject')
-    target = self._object_file(obj)
+    if not isinstance(path, (y2path, str)):
+      raise TypeError('Container.write requires a relative path')
+    target = self._object_file(path)
     if target == self._root:
-      raise ValueError('object template must name a file')
+      raise ValueError('Container write path must name a file')
     target.parent.mkdir(parents=True, exist_ok=True)
     incoming = obj.content
     binary = isinstance(incoming, bytes) or hasattr(incoming, 'read')
-    if not binary and target.exists() and 'identity' in self.templates.named:
+    if not binary and target.exists() and self.templates is not None and 'identity' in self.templates.named:
       relative = target.relative_to(self._root).as_posix()
       identity = self.templates.render_template('identity', uri=str(obj.uri), it=incoming, path=relative)
       if identity is not None and identity != self.templates.render_template('identity',

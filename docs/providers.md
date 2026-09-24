@@ -38,7 +38,7 @@ Runtime-loaded Providers register supported URI schemas in memory. Schemas are n
 
 The M365 Provider handles authentication, token renewal, API requests, pagination, enumeration and API delta state. Authentication refresh tokens and data delta cursors have different purposes. A last-run timestamp must not replace the API's delta protocol. Reading requires only the source Location and the selected Container path. (Alex, recovered session and current session, source-interaction and cursor corrections.)
 
-The file Provider accepts DataObjects, applies its configured naming and serialization templates, and writes their content. It resolves the filesystem details internally. The caller does not obtain an operating-system path to pass to a separate custom exporter. (Alex, recovered session: "Why does dagster need a path?" and "We are still working with files"; current session: file Provider owns storage templates.)
+The file Provider writes a DataObject at the relative destination path supplied to `container.write(path, object)`. The path is within the Container; the DataObject retains its source URI. FileContainer requires no naming template for this operation. (Alex, 2026-09-24: "Write data object should accept path.")
 
 M365 filenames retain readable folder and object names. Native IDs remain unchanged in JSON and source URIs. File writes distinguish identities case-sensitively even on SMB, where filenames are case-insensitive; equal readable names receive numbered suffixes. A linked resource belongs to its task even when another task links to the same external object. File naming and identity rules belong to the file templates. (Alex, current session, 2026-09-22: "Keep original readable naming".)
 
@@ -55,7 +55,7 @@ The public classes are `Location`, `Container` and `DataObject`. Runtime registr
 | `container.ls(path)` | Path within the Container | Immediate folders and objects |
 | `container.read(path)` | Object or path returned by listing | DataObject |
 | `container.refresh(state, path)` | Caller-retained state and Container path | Changed DataObjects; the implementation updates state after successful consumption |
-| `container.write(object)` | DataObject | Completed write; no return value |
+| `container.write(path, object)` | Relative destination path and DataObject | Completed write; no return value |
 | `container.delete(object)` | DataObject or relative path | Completed deletion; no return value |
 
 These call names reflect Alex's corrections in the current session: "Yes, return Location objects"; "container has write, delete, read and ls - all makes sense". Runtime enumeration does not save Locations into configuration. Providers implement source operations; callers do not branch on Graph methods or file naming rules. Dagster retains opaque source state in successful materializations; M365 does not write SQL. Destination failure leaves the previous successful state available for the next run. No indexing or `lake://` implementation is implied. (Alex, recovered session, nested enumeration, native Dagster and file-only requirements; current session, SQL rejection.)

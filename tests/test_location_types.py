@@ -65,7 +65,7 @@ def test_dataobject_constructs_uri_type():
 def test_file_write_renders_source_uri_as_text_in_template(tmp_path):
   container = FileContainer(tmp_path, templates={'filename': '{{ uri.rsplit("/", 1)[1] }}.json'})
   obj = DataObject(y2uri('m365://tenant') / y2path('item'), {'value': True}, 'item')
-  container.write(obj)
+  container.write(y2path('item.json'), obj)
   assert container.read(y2path('item.json')).content == obj.content
   assert container.read(obj).uri == obj.uri
   container.delete(obj)

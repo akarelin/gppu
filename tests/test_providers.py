@@ -142,7 +142,7 @@ def test_file_locations_select_independent_containers(tmp_path):
       assert stream.read() == name.encode()
 
 
-def test_file_templates_receive_uri_text_and_keep_typed_objects(tmp_path):
+def test_file_write_uses_explicit_path_and_checks_source_identity(tmp_path):
   from gppu import DataObject
 
   container = FileLocation({'uid': 'files', 'canonical': tmp_path.as_uri()}, templates={
@@ -151,10 +151,46 @@ def test_file_templates_receive_uri_text_and_keep_typed_objects(tmp_path):
     'identity': "{{ it.id if uri.startswith('plaud://') else none }}",
   }).container()
   obj = DataObject(y2uri('plaud://recording'), {'id': 'recording', 'name': 'Before'}, 'recording')
-  container.write(obj)
-  container.write(DataObject(obj.uri, {'id': 'recording', 'name': 'After'}, 'recording'))
-  assert container.read('2026/recording.json').content['name'] == 'After'
+  container.write('chosen/recording.json', obj)
+  container.write('chosen/recording.json', DataObject(obj.uri, {'id': 'recording', 'name': 'After'}, 'recording'))
+  assert container.read('chosen/recording.json').content['name'] == 'After'
+  assert not (tmp_path / '2026').exists()
+  with pytest.raises(ValueError, match='different object identity'):
+    container.write('chosen/recording.json', DataObject(obj.uri, {'id': 'other'}, 'other'))
+  assert container.read('chosen/recording.json').content['id'] == 'recording'
   assert isinstance(obj.uri, y2uri)
+
+
+def test_file_write_without_templates_round_trips_json_and_binary(tmp_path):
+  from io import BytesIO
+  from gppu import DataObject, y2path
+  from gppu.providers import FileContainer
+
+  container = FileContainer(tmp_path)
+  obj = DataObject('file:///source/object', {'value': 'text'}, 'source')
+  container.write(y2path('nested/value.json'), obj)
+  assert container.read('nested/value.json').content == obj.content
+  assert str(obj.uri) == 'file:///source/object'
+  for content in (b'\x00\xff', BytesIO(b'\x00\xff')):
+    container.write('nested/value.bin', DataObject(obj.uri, content, obj.identity))
+  with container.read('nested/value.bin').content as stream:
+    assert stream.read() == b'\x00\xff'
+  with pytest.raises(FileExistsError):
+    container.write('nested/value.bin', DataObject(obj.uri, b'changed', obj.identity))
+  container.delete('nested/value.bin')
+  container.write('nested/value.bin', DataObject(obj.uri, b'changed', obj.identity))
+  assert (tmp_path / 'nested/value.bin').read_bytes() == b'changed'
+
+
+@pytest.mark.parametrize('path', ['', '.', '../outside', '/absolute', 'C:/absolute', 'file:///outside', r'folder\file'])
+def test_file_write_rejects_invalid_destination_before_writing(tmp_path, path):
+  from gppu import DataObject
+  from gppu.providers import FileContainer
+
+  container = FileContainer(tmp_path)
+  with pytest.raises(ValueError):
+    container.write(path, DataObject('file:///source', b'data', 'source'))
+  assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.parametrize('path', ['D:/other', '../other', '/etc/passwd', 'smb://server/share'])
