@@ -94,7 +94,6 @@ from fsspec.implementations.tar import TarFileSystem
 from fsspec.spec import AbstractFileSystem
 from fsspec.utils import stringify_path
 
-from .app import mixin_Rest
 from .gppu import TimeSpan, Env, OSType, TemplateSet, _Base, detect_os, full_path, sync, y2path, y2uri
 
 
@@ -7590,10 +7589,15 @@ class Collection:
   it for longest, and the rest is the path inside that Location's Container.
   """
 
-  def __init__(self, catalog: GppuCatalog, store: Callable[[Location | None, str, dict[str, Any]], None]) -> None:
-    """The Lake of catalog's Locations; store writes a Location's configuration row where the configuration is kept,
-    a new row when the Location is None."""
-    self._catalog, self._store = catalog, store
+  def __init__(self, load: Callable[[], GppuCatalog], store: Callable[[Location | None, str, dict[str, Any]], None]) -> None:
+    """The Lake of the Locations load reads from where the configuration is kept; store writes a Location's
+    configuration row there, a new row when the Location is None, and the configuration is read again after it."""
+    self._load, self._store_row = load, store
+    self._catalog = load()
+
+  def _store(self, location: Location | None, who: str, fields: dict[str, Any]) -> None:
+    self._store_row(location, who, fields)
+    self._catalog = self._load()
 
   def add(self, who: str, **fields: Any) -> None:
     """Write a new Location's configuration row as who: provider, uid, name, path, service, kind, icon, tags, folders."""
@@ -7848,16 +7852,6 @@ def walk_files(root: Path, path: str, level: str, recursive: bool,
 # endregion
 
 
-class LakeApi(mixin_Rest):
-  """/config and /lake: the public methods of the configured Locations and of the Lake, over HTTP."""
-
-  def __init__(self, lake: Collection) -> None:
-    self.lake = lake
-
-  def rest_registries(self) -> dict[str, Mapping]:
-    return {'locations': self.lake.locations, 'lake': {'lake': self.lake}}
-
-
 def _json(value: Any) -> Any:
   if isinstance(value, Location):
     return value.uid
@@ -7874,46 +7868,115 @@ def _json(value: Any) -> Any:
   return str(value)
 
 
-def serve(lake: Collection, host: str = '127.0.0.1', port: int = 8765) -> None:
-  """Serve /config and /lake for lake.
+def serve(lake: Collection, identify: Callable[[Mapping[str, str]], str], host: str = '127.0.0.1', port: int = 8765) -> None:
+  """Serve lake's configuration and content as REST resources. identify names the author of a write from the
+  request's headers, and raises when there is none.
 
-  GET /config/locations                      every Location
-  GET /config/locations?uid=U                one Location
-  GET /config/locations/<method>?uid=U&...   a method of that Location
-  POST /config/locations/save?uid=U {who, uid, name, ...}   write that Location's configuration row
-  POST /config/locations/add {who, provider, uid, name, ...}  write a new Location's configuration row
-  GET /lake/<method>?uri=...&...             a method of the Lake
+  GET    /config/locations          every Location's configuration
+  GET    /config/locations/{uid}    one Location's configuration; the uid is URL-encoded, a generated one has slashes
+  POST   /config/locations          add a Location: provider, uid, name, path, service, kind, icon, tags, folders
+  PATCH  /config/locations/{uid}    change a Location's fields; a new configured uid goes in the body
+  GET    /lake/{uri}                what the handlers found at uri; ?ls what is inside it, ?walk&level=&recursive=
+                                    everything below it, ?read the object with its content, ?content its bytes
+  PUT    /lake/{uri}                store the object in the body: content, identity, kind, name
+  DELETE /lake/{uri}                remove the object at uri
   """
   from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
   from urllib.parse import parse_qs
-  api = LakeApi(lake)
 
   class Handler(BaseHTTPRequestHandler):
-    def do_POST(self) -> None:
-      self.do_GET(json.loads(self.rfile.read(int(self.headers['Content-Length'])) or b'{}'))
-
-    def do_GET(self, body: dict | None = None) -> None:
+    def _route(self) -> tuple[str, str | None, dict[str, str]]:
       url = urlsplit(self.path)
-      parts = [part for part in url.path.split('/') if part]
-      query = {key: values[0] for key, values in parse_qs(url.query).items()} | (body or {})
-      if parts == ['config', 'locations'] and 'uid' not in query:
-        payload, status = [api.rest_payload(location) for location in api.lake.locations.values()], 200
-      elif parts == ['config', 'locations']:
-        payload, status = api.rest_read('locations', query['uid'])
-      elif parts == ['config', 'locations', 'add']:
-        payload, status = asyncio.run(api.rest_call('lake', 'lake', 'add', query))
-      elif len(parts) == 3 and parts[:2] == ['config', 'locations']:
-        uid = query.pop('uid')
-        payload, status = asyncio.run(api.rest_call('locations', uid, parts[2], query))
-      elif len(parts) == 2 and parts[0] == 'lake':
-        payload, status = asyncio.run(api.rest_call('lake', 'lake', parts[1], query))
-      else:
-        payload, status = api.rest_manifest, 200
-      body = json.dumps(payload, default=_json, ensure_ascii=False).encode('utf-8')
+      query = {key: values[0] for key, values in parse_qs(url.query, keep_blank_values=True).items()}
+      for collection in ('/config/locations', '/lake'):
+        if url.path == collection:
+          return collection, None, query
+        if url.path.startswith(collection + '/'):
+          return collection, unquote(url.path[len(collection) + 1:]), query
+      raise LookupError(f'no resource at {url.path}')
+
+    def _body(self) -> dict[str, Any]:
+      body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+      if 'who' in body:
+        raise ValueError('the author of a write is the signed-in user, never the body')
+      return body
+
+    def _reply(self, status: int, payload: Any, content_type: str = 'application/json; charset=utf-8') -> None:
+      data = payload if isinstance(payload, bytes) else json.dumps(payload, default=_json, ensure_ascii=False).encode('utf-8')
       self.send_response(status)
-      self.send_header('Content-Type', 'application/json; charset=utf-8')
-      self.send_header('Content-Length', str(len(body)))
+      self.send_header('Content-Type', content_type)
+      self.send_header('Content-Length', str(len(data)))
       self.end_headers()
-      self.wfile.write(body)
+      self.wfile.write(data)
+
+    def _answer(self, method: Callable[[], tuple[int, Any] | tuple[int, Any, str]]) -> None:
+      try:
+        self._reply(*method())
+      except LookupError as error:
+        self._reply(404, {'error': str(error)})
+      except PermissionError as error:
+        self._reply(401, {'error': str(error)})
+      except (ValueError, TypeError) as error:
+        self._reply(400, {'error': str(error)})
+
+    def do_GET(self) -> None:
+      def get():
+        collection, name, query = self._route()
+        if collection == '/config/locations':
+          if name is None:
+            return 200, [location.data for location in lake.locations.values()]
+          return 200, lake.location(name).data
+        if 'ls' in query:
+          return 200, lake.ls(name)
+        if 'walk' in query:
+          return 200, lake.walk(name, query.get('level', 'files'), query.get('recursive') == '1')
+        if 'read' in query:
+          return 200, lake.read(name)
+        if 'content' in query:
+          with lake.open(name) as stream:
+            return 200, stream.read(), 'application/octet-stream'
+        return 200, lake.info(name)
+      self._answer(get)
+
+    def do_POST(self) -> None:
+      def post():
+        collection, name, _ = self._route()
+        if collection != '/config/locations' or name is not None:
+          raise LookupError('Locations are added at /config/locations')
+        body = self._body()
+        lake.add(identify(self.headers), **body)
+        return 201, lake.location(body.get('uid') or body['provider'] + ('/' + body['path'] if body.get('path') else '')).data
+      self._answer(post)
+
+    def do_PATCH(self) -> None:
+      def patch():
+        collection, name, _ = self._route()
+        if collection != '/config/locations' or name is None:
+          raise LookupError('a Location is changed at /config/locations/{uid}')
+        body = self._body()
+        lake.location(name).save(identify(self.headers), **body)
+        return 200, lake.location(body.get('uid') or name).data
+      self._answer(patch)
+
+    def do_PUT(self) -> None:
+      def put():
+        collection, name, _ = self._route()
+        if collection != '/lake' or name is None:
+          raise LookupError('objects are stored at /lake/{uri}')
+        body = self._body()
+        identify(self.headers)
+        lake.write(name, DataObject(name, body['content'], body.get('identity'), body.get('kind', 'object'), body.get('name', '')))
+        return 204, b''
+      self._answer(put)
+
+    def do_DELETE(self) -> None:
+      def delete():
+        collection, name, _ = self._route()
+        if collection != '/lake' or name is None:
+          raise LookupError('objects are removed at /lake/{uri}')
+        identify(self.headers)
+        lake.delete(name)
+        return 204, b''
+      self._answer(delete)
 
   ThreadingHTTPServer((host, port), Handler).serve_forever()
