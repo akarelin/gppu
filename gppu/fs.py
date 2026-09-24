@@ -2,15 +2,17 @@
 
 Two APIs, made of the public methods of these classes. They take over the routes admin_ui serves in production.
 
-/config: the Locations, by uid. Providers and connections are plain lists beside them.
-  GET  /config/location             Location rows as a tree         /config                         Location
-  POST /config/location             save one Location               /config/{uid}/save              Location.save
-  GET  /config/provider             Providers                       State.providers, a list
-  GET  /config/provider/schemas     schemes the Providers serve     Provider.scheme
-  GET  /config/connection           connection names                internal to a Location
-  GET  /config/file                 naming templates                a Location's templates
-  POST /config/file/preview         where an object would be saved  /lake/{uri}/path_of
-  GET  /config/process, /resource   Dagster's configuration         stays with Dagster
+/config: the configuration, as admin.karelin.ai/configuration/locations shows it today.
+  GET  /config/locations            every Location, one row each, parent by uid:
+         {"uid": "file-alex-laptop/D:/TextLake", "parent": "file-alex-laptop/D:", "provider": "file-alex-laptop",
+          "uri": "file://alex-laptop/D:/TextLake", "name": "TextLake", "kind": "Location", "path": "D:/TextLake",
+          "service": "file", "icon": "/machine.svg", "tags": [], "folders": {}}
+  GET  /config/locations/{uid}      one Location, the same row
+  POST /config/locations/{uid}/save write it to configuration                          Location.save
+  GET  /config/locations/{uid}/ls   the Locations directly below it                    Location.ls
+  GET  /config/providers            Providers: uid, scheme, authority                  Provider
+  GET  /config/connections          connection names, without credentials
+  POST /config/locations/{uid}/uri_of, container, path_of   used by FileIndexer, Dagster and the template preview
 
 /lake: what the Locations hold, by uri; the Lake is the Collection at lake://.
   GET  /records/browse              children within a Location      /lake/{uri}/ls, walk            Container
@@ -47,15 +49,27 @@ class Location:
   builds a Location from each row of the locations table.
   """
   uid: str
-  """Its key in configuration, readable by a person: `laptop`, `laptop-data`, `laptop-data/TextLake`."""
-  name: str
-  """Its display name: `Alex-Laptop`."""
-  uri: y2uri
-  """Its canonical uri: `file://laptop/data`, `m365://karelin/alex/files`."""
+  """Its key in configuration, readable by a person: `file-alex-laptop`, `file-alex-laptop/D:/TextLake`."""
   parent: Location | None
   """The Location above it, or None for a root."""
   provider: Provider
-  """The Provider that reaches its data, connected with the connection configured for it."""
+  """The Provider that reaches its data: `file-alex-laptop`, `m365-karelin-graph`."""
+  uri: y2uri
+  """Its canonical uri: `file://alex-laptop/D:/TextLake`, `m365://karelin/alex/onedrive`."""
+  name: str
+  """Its display name: `Alex-Laptop`, `TextLake`."""
+  kind: str
+  """What it is: `Host` or `Location`."""
+  path: y2path
+  """Its path on its Provider: `D:/TextLake`; empty for a root."""
+  service: str
+  """The service that serves it: `file`, `smb`, `sd`."""
+  icon: str
+  """The icon admin_ui shows for it."""
+  tags: list[str]
+  """Tags from the vocabulary."""
+  folders: dict[str, dict[str, str]]
+  """Named folders inside it, each with a name and a path: `inbox`."""
   index: GppuIndex
   """Where what is read below it is kept."""
 
