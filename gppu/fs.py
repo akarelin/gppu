@@ -4,7 +4,7 @@ Two APIs, made of the public methods of these classes. They take over the routes
 
 /config: the configuration, as admin.karelin.ai/configuration/locations shows it today.
   GET  /config/locations            every Location, one row each, parent by uid:
-         {"uid": "alex-laptop/D:/TextLake", "parent": "alex-laptop/D:", "provider": "file://",
+         {"uid": "laptop-data/TextLake", "parent": "laptop-data", "provider": "file://",
           "uri": "file://alex-laptop/D:/TextLake", "name": "TextLake", "kind": "Location", "path": "D:/TextLake",
           "service": "file", "icon": "/machine.svg", "tags": [], "folders": {}}
   GET  /config/locations/{uid}      one Location, the same row
@@ -49,8 +49,9 @@ class Location:
   builds a Location from each row of the locations table.
   """
   uid: str
-  """Its key in configuration, readable by a person: its root Location's uid and its path, `alex-laptop/D:/TextLake`.
-  A root is a host or an account: `alex-laptop`, `karelin`."""
+  """Its key in configuration, readable by a person. A dash steps down the configured tree to a named Location, a
+  slash to a path below one: `laptop` is Alex-Laptop, `laptop-data` its D: volume, `laptop-data/TextLake` a folder
+  on it. The Provider is not part of it."""
   parent: Location | None
   """The Location above it, or None for a root."""
   provider: Provider
