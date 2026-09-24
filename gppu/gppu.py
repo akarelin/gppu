@@ -300,8 +300,8 @@ class y2uri:
 
 
   def __init__(self, o: Any, scheme: str | None = None):
-    self._prepend_slash = False
-    self._append_slash = False
+    self._path_absolute = False
+    self._last_segment_empty = False
 
     if isinstance(o, dict) and 'uri' in o: s = o['uri']
     else: s = str(o)
@@ -316,14 +316,14 @@ class y2uri:
     s, _, self._query = s.partition('?')
 
     self.path = y2path(s.split('/'))
-    self._prepend_slash = s.startswith('/')
-    self._append_slash = s.endswith('/') and bool(self.path)
+    self._path_absolute = s.startswith('/')
+    self._last_segment_empty = s.endswith('/') and bool(self.path)
 
   def __str__(self) -> str:
     result = f'{self.scheme}://'
-    if self._prepend_slash: result += '/'
+    if self._path_absolute: result += '/'
     result += str(self.path)
-    if self._append_slash: result += '/'
+    if self._last_segment_empty: result += '/'
     if self._query: result += f'?{self._query}'
     if self._fragment: result += f'#{self._fragment}'
     return result
