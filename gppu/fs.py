@@ -56,6 +56,11 @@ class Location:
     """The uri of path below this Location: its uri, a colon, and the path."""
     ...
 
+  @staticmethod
+  def relative(path: y2path | str) -> y2path:
+    """path checked to be relative, slash-separated and without `..`."""
+    ...
+
 
 # endregion
 # region /lake
@@ -88,11 +93,13 @@ class DataObject:
 class Container:
   """A tree of DataObjects, addressed by path: a folder, a drive, a mailbox, an archive.
 
-  A Container is not storage. It reads through its Location's Provider and keeps what it read in its Location's
-  GppuIndex, so it can answer from the index when the source is offline.
+  A Container is not storage. It reads through its Location's Provider and keeps what it read in its index, so it
+  can answer when the source is offline.
   """
   uri: y2uri
   """Its own uri: the uri of its root below its Location."""
+  index: GppuIndex
+  """Where it keeps what it read: its Location's index, or the one a Collection is given."""
 
   def __init__(self, location: Location, root: y2path | str = '') -> None:
     """The Container at root below location."""
@@ -199,7 +206,7 @@ class Provider:
     """Remove the object at path."""
     ...
 
-  def changes(self, state: dict[str, Any], path: y2path) -> AbstractContextManager[tuple[Iterator[DataObject], Callable[[], None]]]:
+  def refresh(self, state: dict[str, Any], path: y2path) -> AbstractContextManager[tuple[Iterator[DataObject], Callable[[], None]]]:
     """The objects that changed below path since state, and the call that moves state forward."""
     ...
 
