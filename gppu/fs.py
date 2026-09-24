@@ -373,7 +373,9 @@ class FileLocation(Location):
     super().__init__(properties, connection=connection, parent=parent, children=children)
     self.templates = deepcopy(templates)
 
-  def _root(self) -> Path:
+  @property
+  def root(self) -> Path:
+    """The folder on this host where this Location is."""
     uri = urlsplit(str(self.uri))
     if uri.scheme != 'file':
       raise ValueError('FileLocation requires a file URI')
@@ -395,7 +397,7 @@ class FileLocation(Location):
 
   def container(self, path: y2path | str = '') -> 'FileContainer':
     path = str(self.relative(path))
-    root = self._root().resolve()
+    root = self.root.resolve()
     target = (root / unquote(path)).resolve()
     if not target.is_relative_to(root):
       raise ValueError('Container must stay within its Location')
@@ -7948,8 +7950,9 @@ def serve(lake: Collection, host: str = '127.0.0.1', port: int = 8765) -> None:
         if collection != '/config/locations' or name is None:
           raise LookupError('a Location is changed at /config/locations/{uid}')
         body = self._body()
-        lake.location(name).save(identify(self.headers), **body)
-        return 200, lake.location(body.get('uid') or name).data
+        id = lake.location(name).data['id']
+        lake.location(name).save(**body)
+        return 200, next(location.data for location in lake.locations.values() if location.data['id'] == id)
       self._answer(patch)
 
     def do_PUT(self) -> None:
