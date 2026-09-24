@@ -31,17 +31,18 @@ Location and the Containers it reaches, a Collection and its members, one span o
 session and its Thread. The graph is not held by the objects: a Link holds uris only, the whole graph is kept in
 the index, and it is read around one uri at a time. The graph is what /lake adds to a file system.
 
-What is read from where. A graph is not needed where there is a single tree, so a tree is read from tables and
-only Links are read from the graph. Locations and Providers are a tree, read from configuration and never from
-the index. DataObjects are a tree: rows with a parent; folders, files, records and spans are all rows, a span's TimeSpan in its row. A Link
-is what one tree cannot hold: one Container under two Locations, a member of a Collection, a span and the next,
-an annotation on an object. The graph is edges only; a node is a uri, and the row it names is in the tables. A
-Container reads tables only. A Collection is a uri that edges lead to, and its members are found by following
-its edges to rows.
+What is read from where: config, facts and links. Three stores, and every object is read from one of them.
+Config holds the trees that people write: Locations and Providers. Facts are tables of what handlers and sources
+said: DataObjects as rows with a parent; folders, files, records and spans are all rows, a span's TimeSpan in its
+row. Links are the graph: edges between uris, for what no single tree can hold -- one Container under two
+Locations, a member of a Collection, a span and the next, an annotation on an object. A graph is not needed where
+there is a single tree, so the graph holds edges only; a node is a uri, and what it names is a Location in config
+or a row in facts. A Location is read from config, a Container reads facts only, and a Collection is a uri whose
+links lead to facts. The index holds facts and links; config is not its business.
 
 Today the production graph meta holds the configuration as nodes -- Location, Provider, Connection, Host,
 Tenant, Container -- beside Thread and Tag nodes, and IS_PART_OF, ALTERNATE_OF and TAGGED_AS edges; fact.record
-and fact.span are tables. Where configuration is kept is not the index's business.
+and fact.span are the facts.
 
 The Lake is an index and storage. gppu has no Lake: to gppu it is a Collection loaded from configuration. The upper
 levels -- Locations -- come from configuration; the lower levels are loaded from the database.
@@ -586,10 +587,10 @@ class GppuIndex:
   DataObject stays, with the time it went. The database collects the SQLite indexes stored with the data.
 
   Its methods are what Container and Collection ask, and what SqliteIndex and CRAP's Lake implement. They are
-  in two parts. entry, put, moved and find are the tree: DataObjects as rows with a parent, which is where a
-  Container reads. link and links are the graph: Links as edges between uris, which is where a Collection finds
-  its members and where annotations, spans in order and Threads live. A row is never an edge and an edge never
-  a row; the two meet only in a Collection, which follows edges to rows.
+  in two parts. entry, put, moved and find are the facts: DataObjects as rows with a parent, which is where a
+  Container reads. link and links are the links: edges between uris, which is where a Collection finds its
+  members and where annotations, spans in order and Threads live. A fact is never a link and a link never a
+  fact; the two meet only in a Collection, which follows links to facts. Config is not in the index.
 
   Today: handlers.GppuIndex, a Protocol with entry, put and moved on dict rows. CRAP's class Lake in
   lake/common/index.py implements the database side: lake.entity holds the DataObjects, lake.instance their
