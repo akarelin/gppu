@@ -8,7 +8,8 @@ for now.
     Container                 holds DataObjects: a folder, an archive                       /lake
       Location                a Provider and a path-to-container                            /config
       Collection              a Container that links arbitrary DataObjects                  /lake
-  Link                        a labelled edge from a DataObject: a link or an annotation    /lake
+  Link                        a labelled edge from a DataObject: a link, an annotation, a   /lake
+                              Collection's membership
   Handler                     where DataObjects come from: identify, probe
     Provider                  a Handler instantiated from a connection                      /config, a list
       FileSystem, M365, Postgres
@@ -163,11 +164,14 @@ class Location(Container):
 class Collection(Container):
   """A Container that links arbitrary DataObjects by uri, rather than holding them.
 
-  A Collection is loaded from configuration: its Locations come from configuration, and what is below them is
+  A Collection is a form of annotation: its members are the DataObjects linked to it, and a Link to it adds one.
+  A Thread is a Collection of sessions and their spans.
+
+  The Lake is a Collection loaded from configuration: its Locations come from configuration, and what is below them is
   loaded from the database. `Collection()` is the global Collection of configured Locations that the admin tool
   shows: the Lake. `Collection(root)` is rooted at any path or Location, which is read, indexed beside itself and
   then browsed the same way. A uri resolves to the Location whose uri begins it; the rest of the uri is the path
-  inside. Objects are saved by uri, so saving is here and not on Container.
+  inside. Objects are saved and linked by uri, so saving and linking are here and not on Container.
 
   Route: /lake.
 
@@ -218,7 +222,7 @@ class Link:
   """A labelled, dated edge from a DataObject: the graph over the tree. An annotation is a Link.
 
   Links join a Location and a Container where a single tree cannot hold them -- one label value, `original`,
-  marks the source and every other label is for display -- a Collection and what it links, one span of a session
+  marks the source and every other label is for display -- a Collection and its members, one span of a session
   and the next, and a session and its Thread. A Link whose target is a value says something about its source: a
   tag, a title, a verification.
 
