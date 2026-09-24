@@ -94,6 +94,7 @@ from fsspec.implementations.tar import TarFileSystem
 from fsspec.spec import AbstractFileSystem
 from fsspec.utils import stringify_path
 
+from .app import mixin_Rest
 from .gppu import TimeSpan, Env, OSType, TemplateSet, _Base, detect_os, full_path, sync, y2path, y2uri
 
 
@@ -252,11 +253,12 @@ class Container:
 
 
 class Location(_Base):
-  """A node in the Location tree, keyed by uid.
+  """A configured place where data is kept, keyed by its uid. A Location with no parent is a root.
 
-  A Location combines a Provider/Connection UID and a path. The UID includes
-  the Provider/Connection hierarchy, for example m365-karelin-graph, followed
-  by the Location path. A Location with no parent is a root.
+  uids are configuration: they are written in the configuration row, never computed from a provider or a path.
+  Alex, 2026-09-24: "Host: alex-laptop / Global locaiton uid: alex-laptop-data / Local location uid: data /
+  Global location uid: alex-laptop-dev / Local location uid: dev / Local uid of RAN repo: dev-ran / Global uid of
+  RAN repo: github-ran" / "uids are configuration."
 
   GppuCatalog.location(uid) returns the Location with its Provider and Connection
   bound. ls returns child Locations; walk traverses the tree. Configuration and
@@ -266,7 +268,7 @@ class Location(_Base):
   is independent of the Location.
 
   Attributes:
-    uid (str): Unique Location key, including the Provider/Connection hierarchy and Location path.
+    uid (str): Its global uid, from configuration: `alex-laptop-data`, `github-ran`.
     uri (y2uri): Canonical URI of the Location.
 
   Relationships:
@@ -285,6 +287,11 @@ class Location(_Base):
     self.parent = parent
     self._connection = deepcopy(connection)
     self._children = children
+
+  @property
+  def data(self) -> dict[str, Any]:
+    """Its configuration row: uid, provider, parent, canonical, name, kind, path, service, icon, tags, folders."""
+    return deepcopy(self._my)
 
   def walk(self) -> Iterator[tuple['Location', list['Location']]]:
     """Yield each Location and its immediate children, listing each node once.
@@ -504,10 +511,10 @@ class FileContainer(Container):
     yield from walk_files(self._root, path, level, recursive, boundaries)
 
   def info(self, path: y2path | str = '') -> dict[str, Any]:
+    """What the handlers found at path: type, size, times, span and each handler's metadata under its name."""
     target = self._object_file(path)
-    stat = target.stat()
-    return {'name': target.relative_to(self._root).as_posix(), 'type': 'directory' if target.is_dir() else 'file',
-            'size': 0 if target.is_dir() else stat.st_size, 'modified_at': datetime.fromtimestamp(stat.st_mtime)}
+    record = _MetadataHandlers().probe_sync(target, recursive=False)[0]
+    return record.metadata | {'name': target.relative_to(self._root).as_posix()}
 
   def open(self, path: y2path | str, mode: str = 'rb') -> BinaryIO:
     if mode not in ('rb', 'r'):
@@ -7375,7 +7382,7 @@ class GppuCatalog(AbstractFileSystem):
       if uid not in self._bound_locations:
         row = self.locations[uid]
         scheme = urlsplit(row['canonical']).scheme
-        kind = self.location_types[scheme]
+        kind = self.location_types[scheme] if scheme in self.location_types else Location
         connection = self.connections[row['connection']] if row.get('connection') is not None else None
         parent = self._parents[uid]
         self._bound_locations[uid] = kind(row, connection=connection,
@@ -7572,6 +7579,69 @@ class GppuCatalog(AbstractFileSystem):
         result = [self._served(fs, row) for row in fs.ls_sync(path, recurse=recurse, refresh=refresh)]
       return result if detail else [row['name'] for row in result]
 
+class Collection:
+  """The Lake: every configured Location, and whatever they hold, addressed by uri.
+
+  Its methods take a uri where a Container takes a path. A uri resolves to the configured Location whose uri begins
+  it for longest, and the rest is the path inside that Location's Container.
+  """
+
+  def __init__(self, catalog: GppuCatalog | None = None) -> None:
+    self._catalog = catalog if catalog is not None else GppuCatalog()
+
+  @property
+  def locations(self) -> dict[str, Location]:
+    """Every configured Location, by uid."""
+    return {uid: self._catalog.location(uid) for uid in self._catalog.locations}
+
+  def location(self, uid: str) -> Location:
+    """The configured Location with uid."""
+    return self._catalog.location(uid)
+
+  def location_of(self, uri: y2uri | str) -> tuple[Location, y2path]:
+    """The Location a uri falls under, and the path below it."""
+    return self._catalog.location_of(uri)
+
+  def _at(self, uri: y2uri | str) -> tuple[Container, y2path]:
+    location, path = self.location_of(uri)
+    return location.container(), path
+
+  def ls(self, uri: y2uri | str, detail: bool = True) -> list[dict[str, Any]] | list[str]:
+    """What is directly inside uri."""
+    container, path = self._at(uri)
+    return container.ls(path, detail)
+
+  def walk(self, uri: y2uri | str, level: str = 'files', recursive: bool = False) -> list[tuple[dict, list[dict]]]:
+    """Every folder at and below uri with what it holds, read as deep as level."""
+    container, path = self._at(uri)
+    return list(container.walk(path, level=level, recursive=recursive))
+
+  def info(self, uri: y2uri | str) -> dict[str, Any]:
+    """What the handlers found at uri, without its content."""
+    container, path = self._at(uri)
+    return container.info(path)
+
+  def read(self, uri: y2uri | str) -> DataObject:
+    """The object at uri with its content."""
+    container, path = self._at(uri)
+    return container.read(path)
+
+  def open(self, uri: y2uri | str, mode: str = 'rb') -> BinaryIO:
+    """The bytes at uri."""
+    container, path = self._at(uri)
+    return container.open(path, mode)
+
+  def write(self, uri: y2uri | str, obj: DataObject) -> None:
+    """Store obj at uri."""
+    container, path = self._at(uri)
+    container.write(path, obj)
+
+  def delete(self, uri: y2uri | str) -> None:
+    """Remove the object at uri."""
+    container, path = self._at(uri)
+    container.delete(path)
+
+
 # endregion
 # region indexing
 
@@ -7764,3 +7834,67 @@ def walk_files(root: Path, path: str, level: str, recursive: bool,
       scratch.cleanup()
 
 # endregion
+
+
+class LakeApi(mixin_Rest):
+  """/config and /lake: the public methods of the configured Locations and of the Lake, over HTTP."""
+
+  def __init__(self, lake: Collection) -> None:
+    self.lake = lake
+
+  def rest_registries(self) -> dict[str, Mapping]:
+    return {'locations': self.lake.locations, 'lake': {'lake': self.lake}}
+
+
+def _json(value: Any) -> Any:
+  if isinstance(value, Location):
+    return value.uid
+  if isinstance(value, DataObject):
+    content = value.content if not hasattr(value.content, 'read') and not isinstance(value.content, bytes) else None
+    return {'uri': str(value.uri), 'identity': value.identity, 'kind': value.kind, 'name': value.name,
+            'removed': value.removed, 'content': content}
+  if isinstance(value, TimeSpan):
+    return {'start': _json(value.start), 'end': _json(value.end)}
+  if isinstance(value, datetime):
+    return (value.astimezone() if value.tzinfo is not None else value).isoformat()
+  if isinstance(value, date):
+    return value.isoformat()
+  return str(value)
+
+
+def serve(lake: Collection | None = None, host: str = '127.0.0.1', port: int = 8765) -> None:
+  """Serve /config and /lake for lake, the Lake of the loaded configuration by default.
+
+  GET /config/locations                      every Location
+  GET /config/locations?uid=U                one Location
+  GET /config/locations/<method>?uid=U&...   a method of that Location
+  GET /lake/<method>?uri=...&...             a method of the Lake
+  """
+  from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+  from urllib.parse import parse_qs
+  api = LakeApi(lake if lake is not None else Collection())
+
+  class Handler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+      url = urlsplit(self.path)
+      parts = [part for part in url.path.split('/') if part]
+      query = {key: values[0] for key, values in parse_qs(url.query).items()}
+      if parts == ['config', 'locations'] and 'uid' not in query:
+        payload, status = [api.rest_payload(location) for location in api.lake.locations.values()], 200
+      elif parts == ['config', 'locations']:
+        payload, status = api.rest_read('locations', query['uid'])
+      elif len(parts) == 3 and parts[:2] == ['config', 'locations']:
+        uid = query.pop('uid')
+        payload, status = asyncio.run(api.rest_call('locations', uid, parts[2], query))
+      elif len(parts) == 2 and parts[0] == 'lake':
+        payload, status = asyncio.run(api.rest_call('lake', 'lake', parts[1], query))
+      else:
+        payload, status = api.rest_manifest, 200
+      body = json.dumps(payload, default=_json, ensure_ascii=False).encode('utf-8')
+      self.send_response(status)
+      self.send_header('Content-Type', 'application/json; charset=utf-8')
+      self.send_header('Content-Length', str(len(body)))
+      self.end_headers()
+      self.wfile.write(body)
+
+  ThreadingHTTPServer((host, port), Handler).serve_forever()
