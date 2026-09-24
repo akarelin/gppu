@@ -8,7 +8,7 @@ for now.
   Location                    a Provider, its connection and a path; the configurable tree   /config
   Container                   a tree of DataObjects, by path; reached through a Location     /lake
     Collection                links arbitrary DataObjects by uri: the Lake, a Thread         /lake
-  Link                        uri, label, uri or value: a link, an annotation, membership
+  Link                        source uri, label, target uri: a native type, like TimeSpan
   Provider                    reaches a source; instantiated from a connection              /config, a list
     FileSystem                files; its handlers are all the existing ones
     M365, Postgres
@@ -274,8 +274,8 @@ class Collection(Container):
     """
     ...
 
-  def link(self, source: y2uri, label: str, target: y2uri | str, evidence: str = '') -> Link:
-    """Link the DataObject at source to target under label: its Thread, the next span, a tag, a value.
+  def link(self, source: y2uri, label: str, target: y2uri) -> Link:
+    """Link source to target under label: a session to its Thread, a span to the next, an object to a tag.
 
     This is how people make Links; handlers make theirs while reading. Neither end has to exist: a uri names what
     it leads to without knowing anything about it. The caller is who made the Link. Returns it as held.
@@ -302,30 +302,14 @@ class Collection(Container):
 
 @dataclass(frozen=True)
 class Link:
-  """A labelled, dated edge: a uri, a label, and a uri or a value. An annotation is a Link.
+  """A graph link: a source uri, a label and a target uri. A native type, like TimeSpan.
 
-  A Link holds uris, never objects, and no object holds its Links: the whole graph is kept in the index and read
-  around one uri at a time. Links join a Location and a Container where a single tree cannot hold them -- one label
-  value, `original`, marks the source and every other label is for display -- a Collection and its members, one span
-  of a session and the next, and a session and its Thread. A Link whose target is a value says something about its
-  source: a tag, a title, a verification.
-
-  Handlers make Links as they read: a session's spans and the links between them. The important ones are made by
-  people. who tells them apart.
-
-  Route: /lake, from Collection.links.
-
-  Today: the typed edges of the graph database, and CRAP's annotation rows (`pg://pg.karel.in/files/lake/annotation`)
-  written by admin_ui's say, annotate and verify, whose declared link predicates already point at an object.
+  Annotations, a Collection's members and the original Location of a Container are all Links. The index keeps
+  them, and who made each: a handler or a person.
   """
   source: y2uri
   label: str
-  target: y2uri | str
-  """The uri it leads to, or a value."""
-  date: datetime
-  who: str
-  """Who made it: a person, or the handler that read its source."""
-  evidence: str = ''
+  target: y2uri
 
 
 class Provider:
