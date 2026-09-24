@@ -266,6 +266,10 @@ class y2list(UserList):
 
 
 class y2path(y2list):
+  """
+    A slash-separated path held as a list. An element of the list can be called a segment,
+    as in https://www.rfc-editor.org/rfc/rfc3986.html#section-3.3
+  """
   def __init__(self, *args):
     data = []
     self.token = '/'
