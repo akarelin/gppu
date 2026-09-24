@@ -230,5 +230,5 @@ __all__ = [
     'EventLoopBridge', 'SerializedControl', 'HTTPControl', 'JSONHTTPControl',
 
     # lifecycle: sync YMRO (AppDaemon/Y2)
-    '_YMRO', 'YInit', 'YLoad', 'YStart', 'YStepper', 'mixin_Stepper',
+    'YStepper', 'mixin_Stepper',
 ]

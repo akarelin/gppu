@@ -28,6 +28,12 @@ from .environment import Environment
 
 # region YMRO lifecycle
 class _YMRO:
+  """Base mixin class implementing Y2 Method Resolution Order (YMRO) lifecycle management.
+
+  Provides stepped initialization, loading, starting, and stopping mechanisms across
+  class hierarchies by discovering and invoking methods matching convention names
+  for each lifecycle step.
+  """
   POSSIBLE_STEPS = ['init', 'load', 'start', 'stop']
 
   @property
@@ -68,7 +74,13 @@ class _YMRO:
     for callback in self._ymro(method): callback(*a, **kw)
 
 
-class YInit(_YMRO):
+class _YInit(_YMRO):
+  """Mixin class providing initialization lifecycle management for YMRO components.
+
+  Requires subclasses to implement an abstract `__init` method and provides
+  an idempotent `init()` method that invokes registered lifecycle callbacks
+  and tracks initialization status via the `initialized` property.
+  """
   @abstractmethod
   def __init(self): pass
 
@@ -84,7 +96,13 @@ class YInit(_YMRO):
   def initialized(self, value: bool): self._initialized = value
 
 
-class YLoad(YInit):
+class _YLoad(_YInit):
+  """Mixin class providing loading lifecycle management for YMRO components.
+
+  Requires subclasses to implement an abstract `__load` method and provides
+  an idempotent `load()` method that asserts initialization, invokes registered
+  lifecycle callbacks, and tracks loading status via the `loaded` property.
+  """
   @abstractmethod
   def __load(self): pass
 
@@ -101,7 +119,13 @@ class YLoad(YInit):
   def loaded(self, value: bool): self._loaded = value
 
 
-class YStart(YLoad):
+class _YStart(_YLoad):
+  """Mixin class providing start and stop lifecycle management for YMRO components.
+
+  Requires subclasses to implement an abstract `__start` method and provides
+  idempotent `start()` and `stop()` methods that invoke registered lifecycle
+  callbacks and track status via the `started` and `stopped` properties.
+  """
   @abstractmethod
   def __start(self): pass
 
@@ -132,7 +156,7 @@ class YStart(YLoad):
   def stopped(self, value: bool): self._stopped = value
 
 
-YStepper = YStart
+YStepper = _YStart
 class mixin_Stepper(YStepper, _mixin): pass
 # endregion
 
