@@ -11,7 +11,7 @@ for now.
   Link                        source uri, label, target uri: a native type, like TimeSpan
   Provider                    reaches a source; instantiated from a connection              /config, a list
     FileSystem                files; its handlers are all the existing ones
-    M365, Telegram, Plaud, Postgres
+    M365, Telegram, Plaud
   Handler                     reads a DataObject for its Provider: identify, probe
     FolderHandler, ArchiveHandler, MarkdownHandler, SessionHandler, ...
   GppuIndex                   the tree and the graph, held for retrieval: SqliteIndex beside the data, a database
@@ -330,8 +330,9 @@ class Provider:
 
   Route: /config, a list, read only. Its methods are protected: how it reaches its source is its inner working.
 
-  Today: the reaching is spread over GppuFileSystem, SharePointFileSystem, PostgresFileSystem and CRAP's
-  Location/Container pairs; GppuCatalog resolves the connection. One Provider class per provider takes it over.
+  Today: the reaching is spread over GppuFileSystem, SharePointFileSystem and CRAP's Location/Container pairs;
+  GppuCatalog resolves the connection. One Provider class per provider takes it over. No Provider for Postgres is
+  written yet: PostgresFileSystem stays as it is.
   """
   uid: str
   parent: Provider | None
@@ -396,13 +397,6 @@ class Plaud(Provider):
   """The Provider for Plaud: recordings, their audio and their texts. Its root Location has no path below it.
 
   Today: CRAP's PlaudLocation and PlaudContainer, with audio and texts.
-  """
-
-
-class Postgres(Provider):
-  """The Provider for a Postgres database: its schemas and tables are Containers, their rows DataObjects.
-
-  Today: PostgresFileSystem.
   """
 
 
