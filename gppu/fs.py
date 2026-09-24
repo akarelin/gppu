@@ -7868,14 +7868,13 @@ def _json(value: Any) -> Any:
   return str(value)
 
 
-def serve(lake: Collection, identify: Callable[[Mapping[str, str]], str], host: str = '127.0.0.1', port: int = 8765) -> None:
-  """Serve lake's configuration and content as REST resources. identify names the author of a write from the
-  request's headers, and raises when there is none.
+def serve(lake: Collection, host: str = '127.0.0.1', port: int = 8765) -> None:
+  """Serve lake's configuration and content as REST resources. A write to the configuration carries its author as who.
 
   GET    /config/locations          every Location's configuration
   GET    /config/locations/{uid}    one Location's configuration; the uid is URL-encoded, a generated one has slashes
-  POST   /config/locations          add a Location: provider, uid, name, path, service, kind, icon, tags, folders
-  PATCH  /config/locations/{uid}    change a Location's fields; a new configured uid goes in the body
+  POST   /config/locations          add a Location: who, provider, uid, name, path, service, kind, icon, tags, folders
+  PATCH  /config/locations/{uid}    change a Location's fields as who; a new configured uid goes in the body
   GET    /lake/{uri}                what the handlers found at uri; ?ls what is inside it, ?walk&level=&recursive=
                                     everything below it, ?read the object with its content, ?content its bytes
   PUT    /lake/{uri}                store the object in the body: content, identity, kind, name
@@ -7896,10 +7895,7 @@ def serve(lake: Collection, identify: Callable[[Mapping[str, str]], str], host: 
       raise LookupError(f'no resource at {url.path}')
 
     def _body(self) -> dict[str, Any]:
-      body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-      if 'who' in body:
-        raise ValueError('the author of a write is the signed-in user, never the body')
-      return body
+      return json.loads(self.rfile.read(int(self.headers['Content-Length'])))
 
     def _reply(self, status: int, payload: Any, content_type: str = 'application/json; charset=utf-8') -> None:
       data = payload if isinstance(payload, bytes) else json.dumps(payload, default=_json, ensure_ascii=False).encode('utf-8')
@@ -7914,8 +7910,6 @@ def serve(lake: Collection, identify: Callable[[Mapping[str, str]], str], host: 
         self._reply(*method())
       except LookupError as error:
         self._reply(404, {'error': str(error)})
-      except PermissionError as error:
-        self._reply(401, {'error': str(error)})
       except (ValueError, TypeError) as error:
         self._reply(400, {'error': str(error)})
 
@@ -7944,7 +7938,7 @@ def serve(lake: Collection, identify: Callable[[Mapping[str, str]], str], host: 
         if collection != '/config/locations' or name is not None:
           raise LookupError('Locations are added at /config/locations')
         body = self._body()
-        lake.add(identify(self.headers), **body)
+        lake.add(**body)
         return 201, lake.location(body.get('uid') or body['provider'] + ('/' + body['path'] if body.get('path') else '')).data
       self._answer(post)
 
@@ -7964,7 +7958,6 @@ def serve(lake: Collection, identify: Callable[[Mapping[str, str]], str], host: 
         if collection != '/lake' or name is None:
           raise LookupError('objects are stored at /lake/{uri}')
         body = self._body()
-        identify(self.headers)
         lake.write(name, DataObject(name, body['content'], body.get('identity'), body.get('kind', 'object'), body.get('name', '')))
         return 204, b''
       self._answer(put)
@@ -7974,7 +7967,6 @@ def serve(lake: Collection, identify: Callable[[Mapping[str, str]], str], host: 
         collection, name, _ = self._route()
         if collection != '/lake' or name is None:
           raise LookupError('objects are removed at /lake/{uri}')
-        identify(self.headers)
         lake.delete(name)
         return 204, b''
       self._answer(delete)
