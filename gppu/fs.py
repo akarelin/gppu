@@ -7396,16 +7396,23 @@ class GppuCatalog(AbstractFileSystem):
       return self._bound_locations[uid]
 
   def location_of(self, uri: y2uri | str) -> tuple[Location, y2path]:
-    """The configured Location whose canonical uri begins uri for longest, and the path below it."""
-    uri = str(uri)
-    best = None
-    for uid, row in self.locations.items():
-      base = str(row['canonical']).rstrip('/')
-      if (uri == base or uri.startswith(base + '/')) and (best is None or len(base) > len(best[1])):
-        best = uid, base
-    if best is None:
-      raise KeyError(f'{uri}: no configured Location holds this uri')
-    return self.location(best[0]), y2path(unquote(uri[len(best[1]):].strip('/')))
+    """The nearest configured Location at or above uri, walking up one segment at a time, and the path below it."""
+    by_uri = {self._bare(row['canonical']): uid for uid, row in self.locations.items()}
+    at, below = self._bare(uri), []
+    while at not in by_uri:
+      scheme, _, rest = at.partition('://')
+      if not rest:
+        raise KeyError(f'{uri}: no configured Location holds this uri')
+      head, _, name = rest.rpartition('/')
+      at = f'{scheme}://{head}'
+      below.insert(0, name)
+    return self.location(by_uri[at]), y2path(unquote('/'.join(below)))
+
+  @staticmethod
+  def _bare(uri: y2uri | str) -> str:
+    """uri without a trailing slash; a scheme's own root keeps its '://'."""
+    scheme, _, rest = str(uri).partition('://')
+    return f'{scheme}://{rest.rstrip("/")}'
 
   @property
   def schemas(self) -> list[dict[str, str]]:
