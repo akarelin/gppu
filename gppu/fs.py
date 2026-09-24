@@ -1099,12 +1099,29 @@ class FolderHandler(Handler):
         return await asyncio.to_thread(self._safe_call, path, self.call_sync)
 
     def call_sync(self, path: Path) -> tuple[FileStats, Path]:
-        """Return empty aggregate statistics and the resolved folder path."""
+        """Return what the folder directly holds, read in one listing: files, folders, bytes and their span."""
 
         path = full_path(path)
-        if not self.identify_sync(path):
+        # Named explicitly: in a composed handler self.identify_sync is FileHandler's recursive walk.
+        if not FolderHandler.identify_sync(self, path):
             raise ValueError(f"{path}: folder is not identifiable")
-        return FileStats(0, 0, 0, None), path
+        files = folders = size = 0
+        times = []
+        with os.scandir(path) as entries:
+            for entry in entries:
+                if entry.is_dir(follow_symlinks=False):
+                    folders += 1
+                else:
+                    # A subfolder's mtime is when something was added to it, so the span is its files'.
+                    stat = entry.stat(follow_symlinks=False)
+                    times.append(stat.st_mtime)
+                    files += 1
+                    size += stat.st_size
+        span = None
+        if times:
+            span = TimeSpan(start=datetime.fromtimestamp(min(times), timezone.utc),
+                            end=datetime.fromtimestamp(max(times), timezone.utc))
+        return FileStats(files, folders, size, span), path
 
 
 @dataclass(frozen=True)
@@ -1945,10 +1962,14 @@ class FileHandler(Handler):
 
         source = self._walk_source(path)
         root = self._probe_record(source)
+        # Not walking, a folder's statistics are what the folder handler read directly inside it.
+        folder = next((probe.stats for probe in root.probes if probe.handler == "folder" and probe.stats), None)
         root = replace(
             root,
             stats=(
-                self._folder_stats(root, ())
+                self._folder_stats_from(root, folder.files, folder.folders, folder.bytes, folder.span)
+                if root.is_folder and not recursive and folder
+                else self._folder_stats(root, ())
                 if root.is_folder
                 else self._file_stats(root)
             ),
