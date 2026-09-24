@@ -1068,6 +1068,11 @@ Every time in the metadata is written in this host's local zone.
 Index files and SQLite journal companions are excluded from listings
 and aggregates. The example applications do no parsing or persistence.
 
+Archives use the same URI scheme and path format as their location.
+Appending `/outer.zip/inner.zip/note.md` addresses a nested member;
+its parent is `/outer.zip/inner.zip`. An archive's file metadata and
+member listing share its ordinary URI. Archive drivers are internal.
+
 `cat_file`, `open`, `head`, `pipe_file` and the rest of the fsspec
 surface read and write bytes: a physical file through the base filesystem,
 a member through its archive, and a write to a member is refused. A write

@@ -309,6 +309,11 @@ def test_entering_an_archive_identifies_members_and_refresh_probes_them(tmp_path
   rows = fs.ls(path.name, recurse=True)
   assert [row['gppu']['name'] for row in rows] == ['inside', 'note.md']
   folder, note = rows
+  container_uri = fs.location + '/' + path.name
+  assert folder['name'] == container_uri + '/inside'
+  assert note['name'] == container_uri + '/inside/note.md'
+  assert folder['gppu']['parent'] == container_uri
+  assert note['gppu']['parent'] == folder['name']
   assert all(row['gppu']['probed'] is False for row in rows)
   assert folder['gppu']['files'] is None
   assert note['gppu']['handlers'] == ['markdown']
@@ -368,6 +373,9 @@ def test_nested_archives_retain_addresses_after_folder_rename(tmp_path, monkeypa
   fs = GppuFileSystem(tmp_path)
   before = fs.ls(recurse=True)
   assert [row['gppu']['name'] for row in before] == ['old', 'outer.zip', 'inner.zip', 'note.md']
+  assert [row['name'] for row in before] == [fs.location + '/' + path for path in
+    ('old', 'old/outer.zip', 'old/outer.zip/inner.zip', 'old/outer.zip/inner.zip/note.md')]
+  assert [row['gppu']['parent'] for row in before[1:]] == [row['name'] for row in before[:-1]]
   assert before[-1]['gppu']['handlers'] == ['markdown']
   new = tmp_path / 'new'
   rename(old, new, tmp_path)
@@ -375,6 +383,8 @@ def test_nested_archives_retain_addresses_after_folder_rename(tmp_path, monkeypa
   after = fs.ls(recurse=True)
   assert all('/old/' not in row['name'] for row in after)
   assert [row['gppu']['name'] for row in after] == ['new', 'outer.zip', 'inner.zip', 'note.md']
+  assert after[-1]['name'] == fs.location + '/new/outer.zip/inner.zip/note.md'
+  assert fs.cat_file(after[-1]['name']) == b'---\ntitle: Nested\n---\nText'
   monkeypatch.undo()
   assert fs.info(after[-1]['name'])['gppu']['markdown']['title'] == 'Nested'
 
@@ -409,10 +419,85 @@ def test_session_paths_inside_archives_are_source_uris(tmp_path):
   row, = fs.ls('sessions.zip')
   assert row['gppu']['handlers'] == ['session']
   detail = fs.info(row['name'])
+  assert detail['name'] == fs.location + '/sessions.zip/session.jsonl'
   assert detail['gppu']['session']['path'] == detail['name']
-  assert fs.info('zip://::sessions.zip')['gppu']['files'] is None
+  container = fs.info(detail['gppu']['parent'])
+  assert container['name'] == fs.location + '/sessions.zip'
+  assert container['gppu']['is_container']
+  assert container['gppu']['bytes'] == (tmp_path / 'sessions.zip').stat().st_size
   fs.ls('sessions.zip', refresh=True)
-  assert fs.info('zip://::sessions.zip')['gppu']['files'] == 1
+  refreshed = fs.info('sessions.zip')
+  assert refreshed['gppu']['files'] == 1
+  assert refreshed['gppu']['bytes'] == container['gppu']['bytes']
+
+
+@pytest.mark.parametrize('provider', ['file', 'memory'])
+def test_nested_archive_uris_read_without_prior_listing(tmp_path, provider):
+  content = b'---\ntitle: Nested direct read\n---\nText'
+  inner, outer = io.BytesIO(), io.BytesIO()
+  with zipfile.ZipFile(inner, 'w') as archive:
+    archive.writestr('notes/note.md', content)
+  with zipfile.ZipFile(outer, 'w') as archive:
+    archive.writestr('inside/inner.zip', inner.getvalue())
+  if provider == 'file':
+    (tmp_path / 'outer.zip').write_bytes(outer.getvalue())
+    fs = GppuFileSystem(tmp_path)
+  else:
+    native = MemoryFileSystem()
+    root = '/' + tmp_path.name
+    native.makedirs(root)
+    native.pipe_file(root + '/outer.zip', outer.getvalue())
+    fs = GppuFileSystem('memory://' + root)
+  uri = fs.location + '/outer.zip/inside/inner.zip/notes/note.md'
+  assert fs.cat_file(uri) == content
+  assert fs.cat_file(fs.location + '/outer.zip/inside/inner.zip') == inner.getvalue()
+  detail = fs.info(uri)
+  assert detail['name'] == uri
+  assert detail['gppu']['markdown']['title'] == 'Nested direct read'
+  assert fs.info(detail['gppu']['parent'])['name'] == uri.rsplit('/', 1)[0]
+  assert fs.ls(uri.rsplit('/', 1)[0], detail=False) == [uri]
+
+
+def test_an_archive_can_be_the_filesystem_root(tmp_path):
+  path = tmp_path / 'root.zip'
+  with zipfile.ZipFile(path, 'w') as archive:
+    archive.writestr('note.md', 'Text')
+  fs = GppuFileSystem(path)
+  row, = fs.ls()
+  assert row['name'] == fs.location + '/note.md'
+  assert row['gppu']['parent'] == fs.location
+  assert fs.info()['gppu']['is_container']
+  assert fs.cat_file(row['name']) == b'Text'
+
+
+def test_a_folder_named_zip_remains_a_folder(tmp_path):
+  folder = tmp_path / 'notes.zip'
+  folder.mkdir()
+  (folder / 'note.txt').write_bytes(b'Text')
+  fs = GppuFileSystem(tmp_path)
+  assert fs.info(folder)['type'] == 'directory'
+  assert fs.ls(folder, detail=False) == [fs.location + '/notes.zip/note.txt']
+  assert fs.cat_file(fs.location + '/notes.zip/note.txt') == b'Text'
+
+
+def test_archive_refresh_replaces_members_at_the_same_container_uri(tmp_path):
+  path = tmp_path / 'notes.zip'
+  with zipfile.ZipFile(path, 'w') as archive:
+    archive.writestr('old.md', '---\ntitle: Old\n---\nText')
+  fs = GppuFileSystem(tmp_path)
+  fs.ls(refresh=True)
+  old, = fs.ls('notes.zip', detail=False)
+  with zipfile.ZipFile(path, 'w') as archive:
+    archive.writestr('one.md', '---\ntitle: One\n---\nText')
+    archive.writestr('two.md', '---\ntitle: Two\n---\nText')
+  rows = fs.ls('notes.zip', refresh=True)
+  assert [row['name'] for row in rows] == [fs.location + '/notes.zip/' + name for name in ('one.md', 'two.md')]
+  assert [row['gppu']['markdown']['title'] for row in rows] == ['One', 'Two']
+  assert {row['gppu']['parent'] for row in rows} == {fs.location + '/notes.zip'}
+  assert fs.info()['gppu']['files'] == 1
+  assert fs.info()['gppu']['bytes'] == path.stat().st_size
+  with pytest.raises(FileNotFoundError):
+    fs.info(old)
 
 
 @pytest.mark.parametrize('location', ['.', 'folder'])
@@ -477,6 +562,21 @@ def catalog_of(tmp_path: Path, rows: list[dict], sources: dict[str, dict] | None
 def location_row(number: int, root: Path, parent: int | None = None) -> dict:
   return {'id': number, 'path': root.name, 'parent_file_location_id': parent, 'root_path': str(root),
     'index': str(root / f'.{root.name}.gppufs.sqlite')}
+
+
+def test_catalog_routes_archive_container_uris_to_the_location(tmp_path):
+  root = tmp_path / 'source'
+  root.mkdir()
+  with zipfile.ZipFile(root / 'notes.zip', 'w') as archive:
+    archive.writestr('note.md', '---\ntitle: Through catalog\n---\nText')
+  catalog = GppuCatalog(catalog_of(tmp_path, [location_row(1, root)]), host='test-host')
+  location, = catalog.ls()
+  container_uri = location['name'] + '/notes.zip'
+  row, = catalog.ls(container_uri)
+  assert row['name'] == container_uri + '/note.md'
+  assert row['gppu']['parent'] == container_uri
+  assert catalog.info(row['name'])['gppu']['markdown']['title'] == 'Through catalog'
+  assert catalog.info(container_uri)['gppu']['is_container']
 
 
 def test_catalog_lists_locations_and_serves_each_through_its_own_index(tmp_path):
@@ -726,6 +826,29 @@ class Remembering:
       before = self.held.get(address, (None, None))
       self.held[address] = (metadata if metadata is not None else before[0],
                             children if children is not None else before[1])
+
+
+def test_archive_members_use_the_same_location_addresses_in_the_index(tmp_path, monkeypatch):
+  with zipfile.ZipFile(tmp_path / 'notes.zip', 'w') as archive:
+    archive.writestr('note.md', '---\ntitle: Indexed member\n---\nText')
+  locations = {tmp_path.as_posix(): {'location': 'work', 'canonical': 'work://'}}
+  remembered = Remembering()
+  fs = GppuFileSystem(tmp_path, locations=locations, index=remembered)
+  row, = fs.ls('work://notes.zip')
+  assert row['name'] == fs.location + '/notes.zip/note.md'
+  assert fs.info('work://notes.zip/note.md')['gppu']['markdown']['title'] == 'Indexed member'
+  assert set(remembered.held) == {'work://notes.zip', 'work://notes.zip/note.md'}
+  metadata, children = remembered.held['work://notes.zip']
+  assert metadata['gppu']['is_container']
+  assert [child['path'] for child in children] == ['work://notes.zip/note.md']
+  with sqlite3.connect(index(tmp_path)) as database:
+    assert {row[0] for row in database.execute('SELECT path FROM gppufs_entries')} == {
+      'notes.zip', 'notes.zip/note.md'}
+  monkeypatch.setattr(GppuFileSystem, '_live', no_live)
+  monkeypatch.setattr(GppuFileSystem, '_identify_members', no_live)
+  again = GppuFileSystem(tmp_path, locations=locations, index=remembered)
+  assert again.ls('work://notes.zip', detail=False, live=False) == [row['name']]
+  assert again.info('work://notes.zip/note.md')['gppu']['markdown']['title'] == 'Indexed member'
 
 
 def test_the_index_answers_first_and_the_handler_runs_for_what_it_lacks(tmp_path, monkeypatch):

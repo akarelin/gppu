@@ -1,8 +1,8 @@
 ---
 fileClass: Document
 created: 2026-09-05
-updated: 2026-09-06
-generated: { by: Codex/GPT-6, at: '2026-09-06 03:33 -07:00' }
+updated: 2026-09-23
+generated: { by: Codex/GPT-6, at: '2026-09-23' }
 ---
 
 The examples construct `GppuCatalog` and use only `ls` and `info`. `handler_ls.py` prints complete JSON metadata; `handler_browser.py` displays one tree of Locations, folders, archives and files with the highlighted entry's complete metadata. `handler_tui.py` launches the same browser. Parsing, aggregates, SQLite storage, shard routing, and external rename recovery belong to `gppu.handlers`.
@@ -31,7 +31,7 @@ Inside a running event loop the same calls are awaited: `await gppufs.ls()`. The
 
 `ls` reads the folder live. Every entry it has not seen is identified: native attributes, the handlers that match, and for a file its byte count and name span. Nothing is parsed. A folder's file, folder and byte totals and span are null until that folder is refreshed, and `gppu.probed` is false. `ls(refresh=True)` probes the folder and everything below it; `info(file)` probes that one file the first time its details are asked for. Entries already in the index keep their indexed metadata until a refresh. An entry that is gone from the folder is dropped from the listing; its row is removed by the next refresh of that folder. Entering an archive lists its members the same way: identified from their names and bytes, none probed, folder totals null. A member is probed when its details are asked for; refreshing the archive probes all of them.
 
-`ls` follows fsspec's detailed-listing shape: a list of dictionaries. `detail=False` returns names. `info` returns one dictionary, with the same metadata as its listing entry. Names are addressable URIs. ZIP and TAR.GZ members use fsspec chained URLs; RAR uses a registered `gppu-rar` archive adapter over the existing `ArchiveHandler` and installed RARLAB command. Recursion also descends into supported archives.
+`ls` follows fsspec's detailed-listing shape: a list of dictionaries. `detail=False` returns names. `info` returns one dictionary, with the same metadata as its listing entry. Names are addressable URIs. Archives use the same URI scheme and slash-separated paths as other containers: `{location}/outer.zip/inner.zip/note.md` addresses a member of a nested ZIP; its parent is `{location}/outer.zip/inner.zip`. The archive's file metadata and child listing share one address in both the external index and SQLite cache. fsspec selects the ZIP, TAR.GZ or RAR reader internally; archive syntax does not appear in public addresses. Recursion descends into supported archives.
 
 | Returned property | Presence | Source |
 | --- | --- | --- |
@@ -43,7 +43,7 @@ Inside a running event loop the same calls are awaited: `await gppufs.ls()`. The
 | --- | --- | --- |
 | `path`, `name`, `parent` | Required; `parent` is null at the location root | Current URI, display filename, and navigable parent URI. |
 | `type`, `size`, `modified_at`, `handlers` | Required; `modified_at` can be null | Existing `Record` properties; `type` is `file` or `folder`. Every time, here and in spans, is in the host's local zone. |
-| `files`, `folders`, `bytes`, `span` | Required; null for a folder that has not been probed, `span` can be null | Existing hierarchy statistics. Physical archives count as files in their containing folder; their member listings have their own aggregates. |
+| `files`, `folders`, `bytes`, `span` | Required; null for a folder that has not been probed, `span` can be null | Existing hierarchy statistics. Physical archives count as files in their containing folder; folders inside archives have their own aggregates. |
 | `probed`, `probed_at` | Required; `probed_at` null until the entry is probed | Whether the entry has been probed and, in the host's local zone, when it last was. A catalog Location row carries its index root's values; the catalog row the latest of them. |
 | `probed` | Required boolean | False for an entry the listing identified but nothing has parsed yet. |
 | `stats` | Required mapping | Each matched handler's statistics, keyed by handler name. Empty until probed. |
@@ -59,7 +59,7 @@ The location is an absolute path or a URL; a relative location is refused, so th
 
 | SQLite table | Columns | Meaning |
 | --- | --- | --- |
-| `gppufs_entries` | `path TEXT PRIMARY KEY`, `metadata TEXT NOT NULL`, `children TEXT` | Index-relative address, complete JSON metadata, and direct child references. `children` is null for files. |
+| `gppufs_entries` | `path TEXT PRIMARY KEY`, `metadata TEXT NOT NULL`, `children TEXT` | Index-relative address, complete JSON metadata, and direct child references. `children` is null for noncontainers and containers not yet listed. |
 | `gppufs_index` | `ino INTEGER` | Native folder identity, including when the first request indexed only a file. Null when the backend has no inode. |
 
 Cached entry paths and handler-owned source paths are plain relative paths. When a containing folder is renamed externally, browsing its new location discovers and renames the carried SQLite file; its rows are reused. For a renamed descendant folder, native inode identity lets gppufs update references in the parent index and retain the subtree's metadata. User frontmatter and transcript-derived text are not rewritten. This also works when the folder has no shard and all its rows are in an ancestor index. A relocated location root is opened using its new URI.

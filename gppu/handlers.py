@@ -5182,6 +5182,11 @@ class GppuFileSystem(AbstractFileSystem):
   Index files and SQLite journal companions are excluded from listings
   and aggregates. The example applications do no parsing or persistence.
 
+  Archives use the same URI scheme and path format as their location.
+  Appending ``/outer.zip/inner.zip/note.md`` addresses a nested member;
+  its parent is ``/outer.zip/inner.zip``. An archive's file metadata and
+  member listing share its ordinary URI. Archive drivers are internal.
+
   ``cat_file``, ``open``, ``head``, ``pipe_file`` and the rest of the fsspec
   surface read and write bytes: a physical file through the base filesystem,
   a member through its archive, and a write to a member is refused. A write
@@ -5304,9 +5309,6 @@ class GppuFileSystem(AbstractFileSystem):
     if path is None:
       return '.'
     value = self._located(str(path).replace('\\', '/'))
-    if '::' in value:
-      member, source = value.rsplit('::', 1)
-      return member + '::' + self._key(source)
     if '://' in value:
       value = self.fs._strip_protocol(value)
     if value == self.root or value.rstrip('/') == self.root:
@@ -5325,25 +5327,51 @@ class GppuFileSystem(AbstractFileSystem):
     return self.root if key == '.' else posixpath.join(self.root, key)
 
   def _uri(self, key: str) -> str:
-    if '::' in key:
-      member, source = key.rsplit('::', 1)
-      return member + '::' + self._uri(source)
     return self.fs.unstrip_protocol(self._path(key))
+
+  def _archive_parent(self, key: str) -> str | None:
+    """The physical archive containing this path, if it crosses an archive boundary."""
+    for parent in reversed(PurePosixPath(key).parents):
+      path = self._path(parent.as_posix())
+      if path.casefold().endswith(ArchiveHandler.extensions) and self.fs.isfile(path):
+        return parent.as_posix()
+    return None
+
+  @contextmanager
+  def _filesystem(self, key: str, *, container: bool = False):
+    """Resolve ordinary container paths; archive filesystem URLs stay inside this access operation."""
+    fs, source = self.fs, self.root
+    archive_uri = None
+    opened = []
+    parts = PurePosixPath(key).parts
+    try:
+      for position, part in enumerate(('', *parts)):
+        if part:
+          source = posixpath.join(source, part)
+        if position == len(parts) and not container:
+          break
+        if not source.casefold().endswith(ArchiveHandler.extensions) or not fs.isfile(source):
+          continue
+        uri = (fs.unstrip_protocol(source) if archive_uri is None else
+               archive_uri.replace('://', '://' + source, 1))
+        archive_uri = self._archive_key(uri)
+        fs, source = url_to_fs(archive_uri, skip_instance_cache=True)
+        opened.append(fs)
+      yield fs, source
+    finally:
+      for archive in reversed(opened):
+        archive.close()
 
   def _parent_key(self, key: str) -> str | None:
     if key == '.':
       return None
-    if '::' in key:
-      head, source = key.split('::', 1)
-      protocol, member = head.split('://', 1)
-      parent = str(PurePosixPath(member).parent)
-      return source if parent == '.' else protocol + '://' + parent + '::' + source
     return str(PurePosixPath(key).parent)
 
   def _owner(self, key: str) -> str:
     if self._cacheless:
       return '.'   # a store that will not hold the file has no folder below the root owning one
-    physical = key.rsplit('::', 1)[-1]
+    archive = self._archive_parent(key)
+    physical = key if archive is None else archive
     folder = PurePosixPath(physical)
     for candidate in (folder, *folder.parents):
       if candidate == PurePosixPath('.'):
@@ -5355,16 +5383,10 @@ class GppuFileSystem(AbstractFileSystem):
 
   @staticmethod
   def _relative(key: str, owner: str) -> str:
-    if '::' in key:
-      head, source = key.rsplit('::', 1)
-      return head + '::' + GppuFileSystem._relative(source, owner)
     return posixpath.relpath(key, owner)
 
   @staticmethod
   def _absolute(key: str, owner: str) -> str:
-    if '::' in key:
-      head, source = key.rsplit('::', 1)
-      return head + '::' + GppuFileSystem._absolute(source, owner)
     return posixpath.normpath(str(PurePosixPath(owner) / key))
 
   def _prepare(self, database: sqlite3.Connection, owner: str, exists: bool) -> None:
@@ -5462,7 +5484,7 @@ class GppuFileSystem(AbstractFileSystem):
       return None
     metadata = json.loads(row[0])
     self._metadata_paths(metadata['gppu'], lambda value:
-      value if '://' in value.rsplit('::', 1)[-1] else self._uri(self._absolute(value, owner)))
+      value if '://' in value else self._uri(self._absolute(value, owner)))
     children = None if row[1] is None else [
       {**child, 'path': self._absolute(child['path'], owner)} for child in json.loads(row[1])]
     return self._addressed(key, metadata), children
@@ -5474,7 +5496,7 @@ class GppuFileSystem(AbstractFileSystem):
     host holds it and whichever checkout asks. A place no configured location covers has only its own
     uri to be named by, and an index keyed on that is an index for this host.
     """
-    if self._locations and '::' not in key:
+    if self._locations:
       located = self._handlers.located(Path(self._path(key)))
       if located is not None:
         return located.address
@@ -5488,7 +5510,7 @@ class GppuFileSystem(AbstractFileSystem):
     """
     value = json.loads(json.dumps(metadata, default=_metadata_text))
     self._metadata_paths(value['gppu'], lambda item:
-      item if '://' in item.rsplit('::', 1)[-1] else self._uri(item))
+      item if '://' in item else self._uri(item))
     return self._addressed(key, value)
 
   def _addressed(self, key: str, metadata: dict) -> dict:
@@ -5499,9 +5521,8 @@ class GppuFileSystem(AbstractFileSystem):
     """
     metadata['name'] = self._uri(key)
     metadata['gppu']['path'] = metadata['name']
-    head = key.split('::', 1)[0]
     metadata['gppu']['name'] = (PurePosixPath(self.root).name if key == '.' else
-      PurePosixPath(head).name if not head.endswith('://') else PurePosixPath(key.rsplit('::', 1)[-1]).name)
+      PurePosixPath(key).name)
     parent = self._parent_key(key)
     metadata['gppu']['parent'] = self._uri(parent) if parent is not None else None
     return metadata
@@ -5536,13 +5557,13 @@ class GppuFileSystem(AbstractFileSystem):
         if field in stats and stats[field] is not None:
           stats[field] = datetime.fromisoformat(stats[field])
       probes.append(Probe(handler, SimpleNamespace(**stats), None))
-    return Record(PurePosixPath(value['path'].split('::', 1)[0]), value['type'] == 'folder',
+    return Record(PurePosixPath(value['path']), value['type'] == 'folder',
       value['size'], datetime.fromisoformat(value['modified_at']) if value['modified_at'] else None,
       tuple(value['handlers']), probes=tuple(probes),
       stats=None if value.get('files') is None else FileStats(value['files'], value['folders'], value['bytes'],
         TimeSpan(start=value['span'][0], end=value['span'][1]) if value['span'] else None))
 
-  def _save(self, rows: dict[str, tuple[dict, list[str] | None]], scope: str) -> None:
+  def _save(self, rows: dict[str, tuple[dict, list[str] | None]], scope: str, *, in_archive: bool = False) -> None:
     def metadata_for(key):
       if key in rows:
         return rows[key][0]
@@ -5553,7 +5574,7 @@ class GppuFileSystem(AbstractFileSystem):
 
     # Keep ancestor totals consistent with the refreshed subtree and cached siblings.
     # Archive members do not change their physical archive's byte count.
-    if '::' not in scope:
+    if not in_archive:
       child = scope
       for parent in PurePosixPath(scope).parents:
         key = parent.as_posix()
@@ -5570,8 +5591,8 @@ class GppuFileSystem(AbstractFileSystem):
         metadata['gppu'].update(json.loads(json.dumps(vars(stats), default=_metadata_text)))
         del metadata['gppu']['name'], metadata['gppu']['parent']
         self._metadata_paths(metadata['gppu'], lambda item:
-          self._key(item) if item.rsplit('::', 1)[-1] == self.location or
-          item.rsplit('::', 1)[-1].startswith(self.location.rstrip('/') + '/') else item)
+          self._key(item) if item == self.location or
+          item.startswith(self.location.rstrip('/') + '/') else item)
         rows[key] = metadata, children
         child = key
 
@@ -5594,7 +5615,7 @@ class GppuFileSystem(AbstractFileSystem):
       value['name'] = self._relative(key, owner)
       value['gppu']['path'] = value['name']
       self._metadata_paths(value['gppu'], lambda item:
-        item if '://' in item.rsplit('::', 1)[-1] else self._relative(item, owner))
+        item if '://' in item else self._relative(item, owner))
       grouped[owner].append((self._relative(key, owner), json.dumps(value, default=_metadata_text),
         None if listing is None else json.dumps([
           {**child, 'path': self._relative(child['path'], owner)} for child in listing])))
@@ -5607,21 +5628,17 @@ class GppuFileSystem(AbstractFileSystem):
           database.execute('DELETE FROM gppufs_entries')
         else:
           relative = self._relative(scope, owner)
-          database.execute('DELETE FROM gppufs_entries WHERE path=? OR substr(path,1,?)=? '
-            'OR substr(path,-?)=?', (relative, len(relative) + 1, relative + '/',
-            len(relative) + 2, '::' + relative))
+          database.execute('DELETE FROM gppufs_entries WHERE path=? OR substr(path,1,?)=?',
+            (relative, len(relative) + 1, relative + '/'))
         database.executemany('INSERT INTO gppufs_entries VALUES (?, ?, ?) '
           'ON CONFLICT(path) DO UPDATE SET metadata=excluded.metadata, children=excluded.children', grouped[owner])
 
   @staticmethod
   def _renamed_key(key: str, old: str, new: str) -> str:
-    if '::' in key:
-      head, tail = key.rsplit('::', 1)
-      return head + '::' + GppuFileSystem._renamed_key(tail, old, new)
     return new + key[len(old):] if key == old or key.startswith(old + '/') else key
 
   def _folder_renames(self, key: str, children: list[dict]) -> bool:
-    if '::' in key:
+    if self._archive_parent(key) is not None:
       return False
     folders = [child for child in children if child['type'] == 'directory' and child['ino'] is not None]
     if not folders:
@@ -5656,7 +5673,7 @@ class GppuFileSystem(AbstractFileSystem):
           value['name'] = renamed
           value['gppu']['path'] = renamed
           self._metadata_paths(value['gppu'], lambda item:
-            item if '://' in item.rsplit('::', 1)[-1] else
+            item if '://' in item else
             self._relative(self._renamed_key(self._absolute(item, owner), old, new), owner))
           database.execute('UPDATE gppufs_entries SET path=?, metadata=?, children=? WHERE path=?',
             (renamed, json.dumps(value), members, path))
@@ -5694,14 +5711,10 @@ class GppuFileSystem(AbstractFileSystem):
           del directories[name]
     return native
 
-  def _live(self, key: str) -> None:
+  def _live(self, key: str, *, container: bool = False) -> None:
     uri = self._uri(key)
-    virtual = '::' in key
-    if virtual:
-      fs, source = url_to_fs(uri, skip_instance_cache=True)
-    else:
-      fs, source = self.fs, self._path(key)
-    try:
+    archive_metadata = self._stored(key)[0] if container else None
+    with self._filesystem(key, container=container) as (fs, source):
       fs.invalidate_cache()
       native = self._inventory(fs, source)
       if isinstance(fs, LocalFileSystem):
@@ -5710,10 +5723,8 @@ class GppuFileSystem(AbstractFileSystem):
       else:
         with tempfile.TemporaryDirectory(prefix='gppufs-') as scratch:
           base = self._extract(uri, fs, source, native, Path(scratch))
-          self._parse(key, base, native, source, _MetadataHandlers({"locations": self._locations}))
-    finally:
-      if virtual:
-        fs.close()
+          self._parse(key, base, native, source, _MetadataHandlers({"locations": self._locations}),
+                      in_archive=fs is not self.fs, archive_metadata=archive_metadata)
 
   def _extract(self, uri: str, fs: AbstractFileSystem, source: str, native: dict[str, dict], scratch: Path) -> Path:
     """Write the inventoried entries below ``source`` under ``scratch`` and return their base folder.
@@ -5739,13 +5750,9 @@ class GppuFileSystem(AbstractFileSystem):
 
   @staticmethod
   def _member_address(key: str, relative: str) -> str:
-    """The address of ``relative`` below ``key``; inside an archive the member path grows and the source stays."""
+    """The address of ``relative`` below any container, including an archive."""
     if relative == '.':
       return key
-    if '::' in key:
-      head, tail = key.split('::', 1)
-      protocol, member = head.split('://', 1)
-      return protocol + '://' + str(PurePosixPath(member) / relative) + '::' + tail
     return str(PurePosixPath(key) / relative)
 
   def _identify_members(self, key: str) -> None:
@@ -5756,16 +5763,18 @@ class GppuFileSystem(AbstractFileSystem):
     child listing, so entering one later reads the index.
     """
     uri = self._uri(key)
-    fs, source = url_to_fs(uri, skip_instance_cache=True)
-    try:
+    metadata = self._stored(key)[0]
+    with self._filesystem(key, container=True) as (fs, source):
       native = self._inventory(fs, source)
       with tempfile.TemporaryDirectory(prefix='gppufs-') as scratch:
         base = full_path(self._extract(uri, fs, source, native, Path(scratch)))
-        rows: dict[str, tuple[dict, list | None]] = {}
-        members: dict[str, list[dict]] = {}
+        rows: dict[str, tuple[dict, list | None]] = {key: (metadata, [])}
+        members: dict[str, list[dict]] = {key: []}
         for record in _MetadataHandlers().identify_sync(base):
           relative = Path(record.path).relative_to(base).as_posix()
-          path = source if relative == '.' else str(PurePosixPath(source) / relative)
+          if relative == '.':
+            continue
+          path = str(PurePosixPath(source) / relative)
           if path not in native or self._index_name.fullmatch(record.name):
             continue
           address = self._member_address(key, relative)
@@ -5776,12 +5785,10 @@ class GppuFileSystem(AbstractFileSystem):
         for address, listing in members.items():
           listing.sort(key=lambda entry: (entry['type'] != 'directory', entry['path'].casefold()))
           rows[address] = rows[address][0], listing
-        self._store(key, rows, None)
-    finally:
-      fs.close()
+        self._store(key, rows, members[key])
 
   def _parse(self, key: str, local: Path, native: dict[str, dict], source: str,
-             handlers: FileHandler) -> None:
+             handlers: FileHandler, *, in_archive: bool = False, archive_metadata: dict | None = None) -> None:
     # Reuse the existing parsers; the fsspec inventory supplies native attributes.
     local = full_path(local)
     identified = handlers.probe_sync(local)
@@ -5832,8 +5839,10 @@ class GppuFileSystem(AbstractFileSystem):
       extra['probed_at'] = datetime.now().astimezone()
       metadata = {**attributes[path], 'name': self._uri(address), 'gppu': extra}
       members = [addresses[child] for child in children[path]] if record.is_folder else None
+      if path == local and archive_metadata is not None:
+        metadata = archive_metadata
       rows[address] = metadata, members
-    self._save(rows, key)
+    self._save(rows, key, in_archive=in_archive)
 
   def _archive_key(self, key: str) -> str:
     name = key.split('::', 1)[0].casefold()
@@ -5854,7 +5863,7 @@ class GppuFileSystem(AbstractFileSystem):
     that is the whole library fetched in order to list one folder. Archive members are read
     through ``_identify_members``.
     """
-    return '::' not in key and (isinstance(self.fs, LocalFileSystem)
+    return self._archive_parent(key) is None and (isinstance(self.fs, LocalFileSystem)
                                 or getattr(self.fs, 'listing_is_enough', False))
 
   def _stand_in(self, key: str, item: dict) -> Path:
@@ -6022,7 +6031,7 @@ class GppuFileSystem(AbstractFileSystem):
       key = self._key(path)
       cached = None if refresh else self._stored(key)
       if cached is None:
-        physical = key.rsplit('::', 1)[-1]
+        physical = key
         for parent in reversed(PurePosixPath(physical).parents):
           parent_key = parent.as_posix()
           listing = self._stored(parent_key)
@@ -6068,28 +6077,28 @@ class GppuFileSystem(AbstractFileSystem):
     with self._lock:
       key = self._key(path)
       metadata = self.info_sync(path, refresh=refresh)
-      if 'archive' in metadata['gppu']['handlers']:
-        key = self._archive_key(key)
+      archive = 'archive' in metadata['gppu']['handlers']
+      if archive:
         if refresh:
-          self._live(key)
-        elif self._stored(key) is None:
+          self._live(key, container=True)
+        elif self._stored(key)[1] is None:
           self._identify_members(key)
       cached = self._stored(key)
       if cached is None:
         raise FileNotFoundError(self._uri(key))
       current, children = cached
-      if current['type'] != 'directory':
+      if current['type'] != 'directory' and not archive:
         return [current] if detail else [current['name']]
       if not live:
         children = children or []                   # the index alone; the folder is not read
-      elif self._identifiable(key):
+      elif not archive and self._identifiable(key):
         if children is not None and self._folder_renames(key, children):
           current, children = self._stored(key)
         children = self._reconcile(key, children or [])
       elif children is None:
         self._live(key)
         current, children = self._stored(key)
-      elif self._folder_renames(key, children):
+      elif not archive and self._folder_renames(key, children):
         current, children = self._stored(key)
       result = []
       for child in children:
@@ -6212,7 +6221,7 @@ class GppuFileSystem(AbstractFileSystem):
 
   def _address_of(self, key: str) -> str:
     """The address an entry had, worked out from the location map rather than from the vanished path."""
-    if self._locations and '::' not in key:
+    if self._locations:
       for folder in sorted(self._locations, key=lambda item: len(item), reverse=True):
         here = full_path(Path(self._path(key))).as_posix()
         base = folder.rstrip('/')
@@ -6268,15 +6277,12 @@ class GppuFileSystem(AbstractFileSystem):
     file some other writer changed.
     """
     key = self._key(path)
-    if '::' not in key:
+    if self._archive_parent(key) is None:
       return self.fs._open(self._path(key), mode, **kwargs)
     if 'r' not in mode:
       raise ValueError(f'{self._uri(key)}: a member of an archive is read-only')
-    fs, source = url_to_fs(self._uri(key), skip_instance_cache=True)
-    try:
+    with self._filesystem(key) as (fs, source):
       return io.BytesIO(fs.cat_file(source))
-    finally:
-      fs.close()
 
 
 class PostgresFileSystem(AbstractFileSystem):
@@ -6860,7 +6866,7 @@ class GppuCatalog(AbstractFileSystem):
 
   def _location(self, path: str | Path) -> GppuFileSystem:
     """The Location serving an absolute address: the deepest one whose root contains it."""
-    physical = str(path).replace('\\', '/').rsplit('::', 1)[-1]
+    physical = str(path).replace('\\', '/')
     if '://' not in physical and not Path(physical).is_absolute():
       raise ValueError(f'{path}: catalog addresses are absolute paths or URLs')
     owners = []
@@ -6922,8 +6928,6 @@ class GppuCatalog(AbstractFileSystem):
 
   def _source(self, fs: GppuFileSystem, key: str) -> dict | None:
     """What a folder is by the catalog: the canonical location it is a replica of on this host, or None."""
-    if '::' in key:
-      return None
     return self._replicas.get(os.path.normcase(os.path.normpath(fs._path(key))))
 
   def _served(self, fs: GppuFileSystem, row: dict) -> dict:
