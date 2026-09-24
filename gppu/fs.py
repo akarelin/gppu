@@ -168,6 +168,18 @@ class Container:
     """
     yield from walk_container(self, str(path), level, recursive, boundaries)
 
+  def info(self, path: y2path | str = '') -> dict[str, Any]:
+    """What is known about path without reading its content: name, type, size."""
+    raise NotImplementedError
+
+  def open(self, path: y2path | str, mode: str = 'rb') -> BinaryIO:
+    """The bytes at path."""
+    raise NotImplementedError
+
+  def path_of(self, obj: DataObject) -> y2path:
+    """Where obj belongs in this Container by its naming templates."""
+    raise NotImplementedError
+
   def read(self, path: y2path | str | DataObject) -> DataObject:
     """Read one object without changing a refresh cursor.
 
@@ -490,6 +502,20 @@ class FileContainer(Container):
     path = str(path)
     self._object_file(path)
     yield from walk_files(self._root, path, level, recursive, boundaries)
+
+  def info(self, path: y2path | str = '') -> dict[str, Any]:
+    target = self._object_file(path)
+    stat = target.stat()
+    return {'name': target.relative_to(self._root).as_posix(), 'type': 'directory' if target.is_dir() else 'file',
+            'size': 0 if target.is_dir() else stat.st_size, 'modified_at': datetime.fromtimestamp(stat.st_mtime)}
+
+  def open(self, path: y2path | str, mode: str = 'rb') -> BinaryIO:
+    if mode not in ('rb', 'r'):
+      raise ValueError('Container.open reads; write through Container.write')
+    return self._object_file(path).open(mode)
+
+  def path_of(self, obj: DataObject) -> y2path:
+    return y2path(self._object_file(obj).relative_to(self._root).as_posix())
 
   def read(self, path: y2path | str | DataObject) -> DataObject:
     target = self._object_file(path)
@@ -7356,6 +7382,18 @@ class GppuCatalog(AbstractFileSystem):
           parent=self.location(parent) if parent is not None else None,
           children=lambda: (self.location(child) for child, owner in self._parents.items() if owner == uid))
       return self._bound_locations[uid]
+
+  def location_of(self, uri: y2uri | str) -> tuple[Location, y2path]:
+    """The configured Location whose canonical uri begins uri for longest, and the path below it."""
+    uri = str(uri)
+    best = None
+    for uid, row in self.locations.items():
+      base = str(row['canonical']).rstrip('/')
+      if (uri == base or uri.startswith(base + '/')) and (best is None or len(base) > len(best[1])):
+        best = uid, base
+    if best is None:
+      raise KeyError(f'{uri}: no configured Location holds this uri')
+    return self.location(best[0]), y2path(unquote(uri[len(best[1]):].strip('/')))
 
   @property
   def schemas(self) -> list[dict[str, str]]:
