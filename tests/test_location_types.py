@@ -68,7 +68,7 @@ def test_file_write_renders_source_uri_as_text_in_template(tmp_path):
   container.write(y2path('item.json'), obj)
   assert container.read(y2path('item.json')).content == obj.content
   assert container.read(obj).uri == obj.uri
-  container.delete(obj)
+  container.delete(container.read('item.json').uri)
   assert container.ls() == []
 
 @pytest.mark.parametrize('suffix', ['folder/item', y2path('folder/item')])

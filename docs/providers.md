@@ -56,7 +56,7 @@ The public classes are `Location`, `Container` and `DataObject`. Runtime registr
 | `container.read(path)` | Object or path returned by listing | DataObject |
 | `container.refresh(state, path)` | Caller-retained state and Container path | Changed DataObjects; the implementation updates state after successful consumption |
 | `container.write(path, object)` | Relative destination path and DataObject | Completed write; no return value |
-| `container.delete(object)` | DataObject or relative path | Completed deletion; no return value |
+| `container.delete(path)` | Relative object path or object URI | Completed deletion; no return value |
 
 These call names reflect Alex's corrections in the current session: "Yes, return Location objects"; "container has write, delete, read and ls - all makes sense". Runtime enumeration does not save Locations into configuration. Providers implement source operations; callers do not branch on Graph methods or file naming rules. Dagster retains opaque source state in successful materializations; M365 does not write SQL. Destination failure leaves the previous successful state available for the next run. No indexing or `lake://` implementation is implied. (Alex, recovered session, nested enumeration, native Dagster and file-only requirements; current session, SQL rejection.)
 

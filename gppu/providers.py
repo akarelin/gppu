@@ -113,11 +113,11 @@ class Container:
     """
     raise NotImplementedError
 
-  def delete(self, path: y2path | str | DataObject) -> None:
-    """Explicitly remove an object before a deliberate replacement.
+  def delete(self, path: y2path | y2uri | str) -> None:
+    """Delete an object by its relative path or URI.
 
     Args:
-      path (y2path | str | DataObject): Relative object path or source DataObject accepted by the provider.
+      path (y2path | y2uri | str): Object path within the Container, or its URI.
 
     Returns:
       None: Completes after the provider removes the object.
@@ -313,8 +313,9 @@ class FileContainer(Container):
 
   Construct FileContainer(root) directly, or obtain one through a FileLocation.
   ls, read and write use relative paths. write(path, obj) writes obj.content at
-  the supplied path. Naming templates can resolve DataObject inputs to read
-  and delete; they do not change an explicit write path.
+  the supplied path. Naming templates can resolve DataObject inputs to read;
+  they do not change an explicit write path. delete accepts a relative path
+  or the file URI returned by read.
   """
   def __init__(self, root: str | Path, *, templates: dict[str, str] | None = None,
                uri: y2uri | str | None = None) -> None:
@@ -478,8 +479,24 @@ class FileContainer(Container):
     finally:
       pending.unlink(missing_ok=True)
 
-  def delete(self, path: y2path | str | DataObject) -> None:
-    target = self._object_file(path)
+  def delete(self, path: y2path | y2uri | str) -> None:
+    """Delete a file by relative path or absolute file URI within this Container.
+
+    URI-escaped names are decoded. URIs outside the root, or with a query or
+    fragment, are rejected. No DataObject or naming template is required.
+    """
+    if isinstance(path, y2uri) or isinstance(path, str) and (path.startswith('file:') or '://' in path):
+      uri = str(path)
+      parsed = urlsplit(uri)
+      if parsed.query or parsed.fragment:
+        raise ValueError('Object URI cannot contain a query or fragment')
+      target = Path.from_uri(uri).resolve()
+      if not target.is_relative_to(self._root):
+        raise ValueError('Object URI is outside this Container')
+    else:
+      if not isinstance(path, (y2path, str)):
+        raise TypeError('Container.delete requires an object path or URI')
+      target = self._object_file(path)
     target.unlink()
     relative = target.relative_to(self._root).as_posix().casefold()
     if relative in self._paths:
