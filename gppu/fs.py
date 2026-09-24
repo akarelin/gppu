@@ -7590,9 +7590,14 @@ class Collection:
   it for longest, and the rest is the path inside that Location's Container.
   """
 
-  def __init__(self, catalog: GppuCatalog, store: Callable[[Location, str, dict[str, Any]], None]) -> None:
-    """The Lake of catalog's Locations; store writes a Location's configuration row where the configuration is kept."""
+  def __init__(self, catalog: GppuCatalog, store: Callable[[Location | None, str, dict[str, Any]], None]) -> None:
+    """The Lake of catalog's Locations; store writes a Location's configuration row where the configuration is kept,
+    a new row when the Location is None."""
     self._catalog, self._store = catalog, store
+
+  def add(self, who: str, **fields: Any) -> None:
+    """Write a new Location's configuration row as who: provider, uid, name, path, service, kind, icon, tags, folders."""
+    self._store(None, who, fields)
 
   @property
   def locations(self) -> dict[str, Location]:
@@ -7869,13 +7874,14 @@ def _json(value: Any) -> Any:
   return str(value)
 
 
-def serve(lake: Collection, host: str = '127.0.0.1', port: int = 8765) -> None:
-  """Serve /config and /lake for lake.
+def serve(lake: Collection, identify: Callable[[Mapping], str], host: str = '127.0.0.1', port: int = 8765) -> None:
+  """Serve /config and /lake for lake. identify names the author of a write from the request's headers.
 
   GET /config/locations                      every Location
   GET /config/locations?uid=U                one Location
   GET /config/locations/<method>?uid=U&...   a method of that Location
-  POST /config/locations/save?uid=U {who, uid, name, ...}   write that Location's configuration row
+  POST /config/locations/save?uid=U {uid, name, ...}        write that Location's configuration row
+  POST /config/locations/add {provider, uid, name, ...}      write a new Location's configuration row
   GET /lake/<method>?uri=...&...             a method of the Lake
   """
   from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -7884,7 +7890,8 @@ def serve(lake: Collection, host: str = '127.0.0.1', port: int = 8765) -> None:
 
   class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
-      self.do_GET(json.loads(self.rfile.read(int(self.headers['Content-Length'])) or b'{}'))
+      body = json.loads(self.rfile.read(int(self.headers['Content-Length'])) or b'{}')
+      self.do_GET(body | {'who': identify(self.headers)})
 
     def do_GET(self, body: dict | None = None) -> None:
       url = urlsplit(self.path)
@@ -7894,6 +7901,8 @@ def serve(lake: Collection, host: str = '127.0.0.1', port: int = 8765) -> None:
         payload, status = [api.rest_payload(location) for location in api.lake.locations.values()], 200
       elif parts == ['config', 'locations']:
         payload, status = api.rest_read('locations', query['uid'])
+      elif parts == ['config', 'locations', 'add']:
+        payload, status = asyncio.run(api.rest_call('lake', 'lake', 'add', query))
       elif len(parts) == 3 and parts[:2] == ['config', 'locations']:
         uid = query.pop('uid')
         payload, status = asyncio.run(api.rest_call('locations', uid, parts[2], query))
