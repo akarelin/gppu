@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from gppu.gppu import _DC, _DC_BASE_TYPE_MAP
-from gppu.iot import HTTPControl, JSONHTTPControl, SerializedControl, y2eid, y2topic
+from gppu.iot import HTTPControl, JSONHTTPControl, SerializedControl, SessionControl, y2eid, y2topic
 
 
 def test_y2_types_registered():
@@ -125,3 +125,26 @@ class HTTPControlTests(unittest.TestCase):
     self.assertIsNone(control._json_get(f'{self.base_url}/null'))
 
 
+
+
+class _Session(SessionControl):
+  def __init__(self) -> None: self.logins = 0
+
+  async def _login(self, session) -> tuple[int, Any]:
+    self.logins += 1
+    return self.logins, session
+
+  async def _use(self) -> tuple[int, Any]: return await self._logged_in()
+
+
+class SessionControlTests(unittest.TestCase):
+  def test_one_login_per_session_until_dropped(self) -> None:
+    control = _Session()
+    first, session = control._control_call(control._use)
+    self.assertEqual(control._control_call(control._use), (first, session))
+    control._control_call(control._session_drop)
+    self.assertTrue(session.closed)
+    second, fresh = control._control_call(control._use)
+    self.assertEqual((first, second), (1, 2))
+    self.assertIsNot(fresh, session)
+    control._control_call(control._session_drop)
