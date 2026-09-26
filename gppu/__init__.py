@@ -5,9 +5,24 @@ lifecycle), gppu.tui (terminal and web apps), gppu.data (databases and persisten
 gppu.vault (secrets).
 """
 from .gppu import *  # noqa: F401,F403  utilities, logging, Env, State, _Base, _DC
-from .gppu import Env, State, _Base, _DC, glob, glob_int, glob_list, glob_dict
+from .gppu import Env, State, _Base, _DC, _mixin, mixin_Config, mixin_Logger, glob, glob_int, glob_list, glob_dict
 from .connections import Provider, connection
 from .params import Param, parameters, schema
-from .app import App, CliApp, AsyncApp, EventLoopBridge, mixin_Rest, run, run_loop
+from .app import App, CliApp, AsyncApp, EventLoopBridge, YStepper, _YMRO, mixin_Rest, mixin_Stepper, run, run_loop
 
 Environment = Env
+
+# gppu 3 names from the submodules, imported when first used, so `import gppu` needs only PyYAML and Jinja2.
+_SUBMODULE_NAMES = {
+  'fs': ('Collection', 'Container', 'DataObject', 'FileSystem', 'Location'),
+  'iot': ('HTTPControl', 'JSONHTTPControl', 'MqttApp', 'SerializedControl', 'y2eid', 'y2slug'),
+  'vault': ('Vault', 'VaultProvider', 'VaultProviderAzure', 'VaultProviderOSEnviron'),
+}
+
+
+def __getattr__(name: str):
+  for module, names in _SUBMODULE_NAMES.items():
+    if name in names:
+      from importlib import import_module
+      return getattr(import_module(f'.{module}', __name__), name)
+  raise AttributeError(f"module 'gppu' has no attribute {name!r}")

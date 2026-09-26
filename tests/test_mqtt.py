@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from gppu import AsyncApp, Env
+from gppu import AsyncApp, Env, connection
 from gppu.iot import Mqtt, MqttApp, config_topics, topic_matches
 
 
@@ -55,7 +55,8 @@ def test_listen_before_serve_then_publish_and_config(env):
   seen = []
 
   class Service(AsyncApp):
-    async def main(self, mqtt: FakeMqtt) -> dict:
+    async def start(self) -> None:
+      mqtt = connection('mqtt-test')
       mqtt.connection['status_topic'] = 'svc/status'
       await mqtt.listen(lambda topic, payload: seen.append((str(topic), payload)), 'dev/+/state')
       self._spawn(mqtt.serve())
@@ -67,9 +68,11 @@ def test_listen_before_serve_then_publish_and_config(env):
       await mqtt.publish('dev/tv/set', {'on': False}, retain=True)
       while not seen: await asyncio.sleep(0)
       await self.stop()
-      return {'subscribed': mqtt.broker.subscribed, 'published': mqtt.broker.published}
+      self.result = {'subscribed': mqtt.broker.subscribed, 'published': mqtt.broker.published}
 
-  result = asyncio.run(Service().invoke())
+  app = Service()
+  asyncio.run(app.run())
+  result = app.result
   assert seen == [('dev/tv/state', {'on': True})]
   assert result['subscribed'] == [('dev/+/state', 0), ('cfg/dc', 1)]
   assert ('svc/status', 'online', True) in result['published'] and ('dev/tv/set', '{"on": false}', True) in result['published']
@@ -94,7 +97,7 @@ def test_mqtt_app_takes_broker_will_and_topics_from_its_table(env):
 
   async def run():
     app = Recorder()
-    running = asyncio.create_task(app.invoke())
+    running = asyncio.create_task(app.run())
     while 'mqtt' not in vars(app) or not app.mqtt.broker.subscribed: await asyncio.sleep(0)
     app.mqtt.broker.send('dev/tv/state', '{"on": true}', retain=True)
     await running
@@ -116,17 +119,17 @@ def test_mqtt_app_reads_its_configuration_from_mqtt_for_its_host(env):
 
     def __init__(self): super().__init__('panel')
 
-    async def main(self) -> dict:
-      scenes = Env.glob('panel/scenes')
+    async def start(self) -> None:
+      self.scenes = Env.glob('panel/scenes')
       await self.stop()
-      return scenes
 
   async def run():
     app = Panel()
-    running = asyncio.create_task(app.invoke())
+    running = asyncio.create_task(app.run())
     while 'mqtt' not in vars(app) or not app.mqtt.broker.subscribed: await asyncio.sleep(0)
     app.mqtt.broker.send('panel/config/scenes', 'work: 1', retain=True)
-    return await running, app.mqtt.broker
+    await running
+    return app.scenes, app.mqtt.broker
 
   scenes, broker = asyncio.run(run())
   assert scenes == {'work': 1}
@@ -142,11 +145,13 @@ def test_mqtt_app_wait_bounds_an_unreachable_broker(env):
   class Panel(MqttApp):
     mqtt_class = Unreachable
     def __init__(self): super().__init__('panel')
-    async def main(self) -> bool:
+    async def start(self) -> None:
       await self.stop()
-      return self.mqtt.connected.is_set()
+      self.connected = self.mqtt.connected.is_set()
 
-  assert asyncio.run(Panel().invoke()) is False
+  app = Panel()
+  asyncio.run(app.run())
+  assert app.connected is False
 
 
 def test_while_connected_restarts_with_each_connection(env):
@@ -158,7 +163,8 @@ def test_while_connected_restarts_with_each_connection(env):
     RECONNECT_DELAY = 0
 
   class Service(AsyncApp):
-    async def main(self, mqtt: Dropping) -> list:
+    async def start(self) -> None:
+      mqtt = Dropping(Env.glob_dict('connections/mqtt-test'))
       async def probe():
         starts.append(len(starts))
         await mqtt.publish('wan', len(starts))
@@ -168,7 +174,9 @@ def test_while_connected_restarts_with_each_connection(env):
       self._spawn(mqtt.serve())
       while len(starts) < 2: await asyncio.sleep(0)
       await self.stop()
-      return mqtt.broker.published
+      self.published = mqtt.broker.published
 
-  published = asyncio.run(Service().invoke())
+  app = Service()
+  asyncio.run(app.run())
+  published = app.published
   assert starts == [0, 1] and published == [('wan', '1', False), ('wan', '2', False)]
