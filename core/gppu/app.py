@@ -33,7 +33,7 @@ from typing import Any
 
 from .connections import close_all
 from .gppu import Env, _Base
-from .params import parser, resolve, schema
+from .params import call, parser, resolve, schema
 
 
 class App(_Base):
@@ -59,6 +59,10 @@ class App(_Base):
 
   def main(self, *a, **kw) -> Any: raise NotImplementedError(f'{type(self).__name__} defines no main')
 
+  def call_main(self, params: dict[str, Any]) -> Any:
+    """main with resolved parameters; the positional-only ones go by position."""
+    return call(self.main, params)
+
   def invoke(self, **given: Any) -> Any: raise NotImplementedError
 
   @classmethod
@@ -77,7 +81,7 @@ class App(_Base):
 class CliApp(App):
   """Runs ``main`` once. What it returns is printed as JSON on stdout; logs go to stderr."""
 
-  def invoke(self, **given: Any) -> Any: return self.main(**self.params(**given))
+  def invoke(self, **given: Any) -> Any: return self.call_main(self.params(**given))
 
   def _cli(self, given: dict) -> Any:
     result = self.invoke(**given)
@@ -145,7 +149,7 @@ class AsyncApp(App, EventLoopBridge):
   async def invoke(self, **given: Any) -> Any:
     params = self.params(**given)
     async with self._task_scope():
-      return await self.main(**params)
+      return await self.call_main(params)
 
   def _cli(self, given: dict) -> Any: return run_loop(self.invoke(**given))
 

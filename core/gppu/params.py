@@ -40,6 +40,7 @@ class Param:
   type: Any
   default: Any
   help: str
+  positional: bool = False
 
   @property
   def required(self) -> bool: return self.default is _MISSING
@@ -74,7 +75,8 @@ def _help(fn: Callable) -> tuple[str, dict[str, str]]:
 def parameters(fn: Callable) -> list[Param]:
   hints = typing.get_type_hints(fn)
   _, helps = _help(fn)
-  return [Param(name, _unwrap(hints.get(name, str)), _MISSING if p.default is p.empty else p.default, helps.get(name, ''))
+  return [Param(name, _unwrap(hints.get(name, str)), _MISSING if p.default is p.empty else p.default, helps.get(name, ''),
+                p.kind is p.POSITIONAL_ONLY)
           for name, p in inspect.signature(fn).parameters.items()
           if name not in ('self', 'cls') and p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)]
 
@@ -102,7 +104,10 @@ def parser(fn: Callable, prog: str) -> argparse.ArgumentParser:
   cli.add_argument('--schema', action='store_true', help='print the parameters as JSON Schema and exit')
   for p in parameters(fn):
     help = p.help + (f' (connection uid of {p.provider.__name__})' if p.provider else '')
-    if p.type is bool: cli.add_argument(p.option, dest=p.name, action=argparse.BooleanOptionalAction, help=help)
+    if p.positional:
+      choices = typing.get_args(p.type) if typing.get_origin(p.type) is Literal else None
+      cli.add_argument(p.name, nargs=None if p.required else '?', choices=choices, help=help)
+    elif p.type is bool: cli.add_argument(p.option, dest=p.name, action=argparse.BooleanOptionalAction, help=help)
     elif typing.get_origin(p.type) is list or p.type is list: cli.add_argument(p.option, dest=p.name, nargs='*', help=help)
     elif typing.get_origin(p.type) is Literal: cli.add_argument(p.option, dest=p.name, choices=typing.get_args(p.type), help=help)
     elif p.provider: cli.add_argument(p.option, dest=p.name, choices=of_type(p.provider), help=help)
@@ -127,6 +132,12 @@ def resolve(fn: Callable, given: Mapping[str, Any], config: Mapping[str, Any]) -
     else: raise LookupError(f'{p.name}: required; pass {p.option} or set {p.name} in configuration')
     kwargs[p.name] = convert(p, value)
   return kwargs
+
+
+def call(fn: Callable, kwargs: Mapping[str, Any]) -> Any:
+  """fn with resolved arguments: the positional-only ones by position, the rest by name."""
+  names = [p.name for p in parameters(fn) if p.positional]
+  return fn(*(kwargs[name] for name in names), **{k: v for k, v in kwargs.items() if k not in names})
 
 
 def schema(fn: Callable) -> dict:
