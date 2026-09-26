@@ -55,6 +55,11 @@ class App(_Base):
   @property
   def name(self) -> str: return self._name
 
+  @property
+  def host(self) -> str:
+    """The host the app runs on, as its configuration and its topics name it."""
+    return Env.host
+
   def params(self, **given: Any) -> dict[str, Any]:
     """main's keyword arguments: given, then configuration, then defaults, then Connections by type."""
     return resolve(self.main, given, self.config())
