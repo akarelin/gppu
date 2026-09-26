@@ -341,6 +341,17 @@ class AppItem(ListItem):
             )
 
 
+class SectionItem(ListItem):
+    """A heading on the start screen: a line between the items of one section and the next, never selected."""
+
+    def __init__(self, heading: str) -> None:
+        super().__init__(disabled=True)
+        self.heading = heading
+
+    def compose(self) -> ComposeResult:
+        yield Static(f'[bold $accent]{self.heading}[/]')
+
+
 class ModeItem(ListItem):
     """A selectable mode entry."""
 
@@ -738,6 +749,9 @@ class TUILauncher(TUIApp):
 
     TITLE = 'Launcher'
     MENU_TITLE = 'Apps'
+    # Headings of the start screen, each naming its top-level rows (an app key or a nav) in order. Rows no section
+    # names follow the last one.
+    SECTIONS: dict[str, list[str]] = {}
 
     CSS = """
     Screen {
@@ -800,6 +814,10 @@ class TUILauncher(TUIApp):
         padding: 0;
         height: 1;
     }
+    SectionItem {
+        height: 2;
+        padding-top: 1;
+    }
     ListItem > Static {
         width: 100%;
         height: 1;
@@ -851,10 +869,7 @@ class TUILauncher(TUIApp):
         yield RichLog(id='output-panel', markup=True)
         with Vertical(id='menu'):
             yield Static(self.MENU_TITLE, id='menu-title')
-            yield ListView(
-                *[AppItem(k, v) for k, v in self._rows().items()],
-                id='app-list',
-            )
+            yield ListView(*self._items(), id='app-list')
         yield Footer()
 
     # ── App / mode selection ─────────────────────────────────────────────
@@ -864,6 +879,22 @@ class TUILauncher(TUIApp):
         top = group_apps(self._apps)
         return top[self._group]['apps'] if self._group else top
 
+    def on_mount(self) -> None:
+        super().on_mount()
+        self.query_one('#app-list', ListView).focus()
+
+    def _items(self) -> list[ListItem]:
+        """The menu's items: the start screen split into its sections, or the apps of the group that is open."""
+        rows = self._rows()
+        if self._group or not self.SECTIONS:
+            return [AppItem(key, app_def) for key, app_def in rows.items()]
+        items, placed = [], set()
+        for heading, keys in self.SECTIONS.items():
+            items.append(SectionItem(heading))
+            items += [AppItem(key, rows[key]) for key in keys]
+            placed.update(keys)
+        return items + [AppItem(key, app_def) for key, app_def in rows.items() if key not in placed]
+
     def _show_apps(self) -> None:
         """Fill the menu with _rows() and go back to choosing an app."""
         self._phase = 'apps'
@@ -871,8 +902,7 @@ class TUILauncher(TUIApp):
         self.query_one('#menu-title', Static).update(self._group or self.MENU_TITLE)
         lv = self.query_one('#app-list', ListView)
         lv.clear()
-        for key, app_def in self._rows().items():
-            lv.append(AppItem(key, app_def))
+        lv.extend(self._items())
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if self._phase == 'apps':
@@ -1232,13 +1262,7 @@ class TUILauncher(TUIApp):
                 widget.remove()
         lv = self.query_one('#app-list', ListView)
         lv.display = True
-        self._phase = 'apps'
-        self._selected_app = None
-        title = self.query_one('#menu-title', Static)
-        title.update(self.MENU_TITLE)
-        lv.clear()
-        for k, v in self._apps.items():
-            lv.append(AppItem(k, v))
+        self._show_apps()
 
     def _run_inline_with_app(self, app_def: dict, cli_args: list[str]) -> None:
         """Run an inline process from a specific app_def (used after ask form)."""
