@@ -150,12 +150,11 @@ def test_tui_is_an_async_app_with_the_same_resolution(env):
   app = Screen()
   assert isinstance(app, AsyncApp) and isinstance(app, App)
   async def drive():
-    app._params = app.params(lines=3)
-    async with app._task_scope():
-      async with app.run_test() as pilot:
-        await pilot.pause()
-        await pilot.pause()
-        return list(app.query_one(Log).lines)
+    app._given = {'lines': 3}
+    async with app.run_test() as pilot:
+      await pilot.pause()
+      await pilot.pause()
+      return list(app.query_one(Log).lines)
   assert asyncio.run(drive()) == ['line 0 Queue(queue-1)', 'line 1 Queue(queue-1)', 'line 2 Queue(queue-1)']
 
 
@@ -200,12 +199,10 @@ def test_subclass_on_mount_and_main_both_run(env):
   env(CONFIG)
   app = Mounted()
   async def drive():
-    app._params = app.params()
-    async with app._task_scope():
-      async with app.run_test() as pilot:
-        await pilot.pause()
-        await pilot.pause()
-        return sorted(app.query_one(Log).lines)
+    async with app.run_test() as pilot:
+      await pilot.pause()
+      await pilot.pause()
+      return sorted(app.query_one(Log).lines)
   assert asyncio.run(drive()) == ['main queue-1', 'mounted']
 
 

@@ -71,7 +71,7 @@ classDiagram
   class Provider { scheme uid connection close() }
 ```
 
-TUIApp is an AsyncApp. `main` runs as a task in the app's TaskGroup once the screen is mounted. MQTT listeners, timers and REST run on the screen's loop, and quitting the screen cancels them.
+TUIApp is an AsyncApp. Its TaskGroup opens inside Textual's message loop, so `run`, `run_async` and `run_test` all have it, and `main` runs as a task in it once the screen is mounted. MQTT listeners, timers and REST run on the screen's loop, and quitting the screen cancels them.
 
 ## Layout
 
@@ -117,8 +117,8 @@ Core keeps the import paths that consumers use today: `from gppu.tui import TUIA
 | `OSType`, `Span`, `TimeSpan`, `y2list`, `y2path`, `y2topic`, `y2uri`, `TColor`, `JinjaEnvironment`, `JinjaDocument`, `TemplateSet` | core, unchanged | |
 | `Provider` (gppu.fs) | core `Provider` (scheme, uid, connection, close); the object methods stay on the fs Provider | Every service is a Provider now, not only object stores |
 | gppufs: `DataObject`, `Container`, `Location`, `Collection`, `FileSystem`, handlers, `GppuCatalog`, the fsspec filesystems | `gppu.fs`, unchanged | `GppuCatalog` reads `connections` through core, so a Location and an app share one Connection instance |
-| `TUILauncher`, `AppScreen`, the widgets, `Selector` | `gppu.tui`, unchanged | |
-| `DetailedSelector` | removed | No user |
+| `TUILauncher`, `AppScreen`, the widgets, `Selector` | `gppu.tui`, unchanged | `AppScreen` runs the wrapped app's `main` on the launcher's loop; `launcher_main` runs the launcher through `invoke` |
+| `DetailedSelector` | `gppu.tui`, unchanged | `ui_select_rows` is built on it |
 | `chrome` helpers | `gppu.chrome` | Optional dependency |
 
 ## Decisions for Alex
