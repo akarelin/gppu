@@ -149,12 +149,6 @@ class Mqtt(Provider):
       client = self._client if qos != old_qos else None
     if client is not None: await client.subscribe(str(topic), qos=qos)
 
-  def unlisten(self, topic: y2topic | str, callback: MqttCallback) -> None:
-    """Stop calling callback, by identity; the subscription stays. Synchronous, so a cancel handle can call it."""
-    topic = y2topic(topic)
-    if entries := self._callbacks.get(topic):
-      self._callbacks[topic] = [entry for entry in entries if entry[0] is not callback]
-
   async def publish(self, topic: y2topic | str, payload: MqttPayload = '', *, retain: bool = False, qos: int = 0,
                     expiry: int | None = None, **properties: Any) -> None:
     """Publish; a dict or list goes as JSON, keyword properties as MQTT 5 user properties. Discarded while
