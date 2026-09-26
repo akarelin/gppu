@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+from fnmatch import fnmatchcase
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -229,12 +230,16 @@ class MqttApp(AsyncApp):
       return result
 
 def topic_matches(topic: str, pattern: str) -> bool:
-  """MQTT filter matching: ``+`` one level, ``#`` the rest; ``$`` topics only by a ``$`` pattern."""
+  """MQTT filter matching: ``+`` one level, ``#`` the rest; ``$`` topics only by a ``$`` pattern. A level holding ``*``
+  globs that level (``brultech/01122089_*``), for filters applied here, such as an exclude list: the broker takes it as
+  a literal, so it matches no more than a subscription would."""
   if topic.startswith('$') and not pattern.startswith('$'): return False
   topic_parts, pattern_parts = topic.split('/'), pattern.split('/')
   for index, expected in enumerate(pattern_parts):
     if expected == '#': return index == len(pattern_parts) - 1
-    if index == len(topic_parts) or expected not in ('+', topic_parts[index]): return False
+    if index == len(topic_parts): return False
+    if expected == '+' or expected == topic_parts[index]: continue
+    if '*' not in expected or not fnmatchcase(topic_parts[index], expected): return False
   return len(topic_parts) == len(pattern_parts)
 
 
