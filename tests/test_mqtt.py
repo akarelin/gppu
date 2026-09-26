@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from gppu import AsyncApp
+from gppu import AsyncApp, Env
 from gppu.mqtt import Mqtt, MqttApp, config_topics, topic_matches
 
 
@@ -104,3 +104,46 @@ def test_mqtt_app_takes_broker_will_and_topics_from_its_table(env):
   assert seen == [('dev/tv/state', b'{"on": true}', True)]
   assert broker.subscribed == [('dev/#', 0)]
   assert broker.published[0] == ('status/recorder', 'online', True) and broker.published[-1] == ('status/recorder', 'offline', True)
+
+
+def test_mqtt_app_reads_its_configuration_from_mqtt_for_its_host(env):
+  env({'panel': {'connection': {'hostname': 'i2', 'status_topic': 'status/panel/{host}', 'wait': 1,
+                                'config': {'panel/config/scenes': 'panel/scenes'}}}})
+
+  class Panel(MqttApp):
+    mqtt_class = FakeMqtt
+    host = 'pc'
+
+    def __init__(self): super().__init__('panel')
+
+    async def main(self) -> dict:
+      scenes = Env.glob('panel/scenes')
+      await self.stop()
+      return scenes
+
+  async def run():
+    app = Panel()
+    running = asyncio.create_task(app.invoke())
+    while 'mqtt' not in vars(app) or not app.mqtt.broker.subscribed: await asyncio.sleep(0)
+    app.mqtt.broker.send('panel/config/scenes', 'work: 1', retain=True)
+    return await running, app.mqtt.broker
+
+  scenes, broker = asyncio.run(run())
+  assert scenes == {'work': 1}
+  assert broker.published[0] == ('status/panel/pc', 'online', True)
+
+
+def test_mqtt_app_wait_bounds_an_unreachable_broker(env):
+  env({'panel': {'connection': {'hostname': 'i2', 'wait': 0.05, 'config': {'panel/config/scenes': 'panel/scenes'}}}})
+
+  class Unreachable(FakeMqtt):
+    async def serve(self): await asyncio.Event().wait()
+
+  class Panel(MqttApp):
+    mqtt_class = Unreachable
+    def __init__(self): super().__init__('panel')
+    async def main(self) -> bool:
+      await self.stop()
+      return self.mqtt.connected.is_set()
+
+  assert asyncio.run(Panel().invoke()) is False

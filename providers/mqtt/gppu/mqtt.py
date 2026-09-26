@@ -40,7 +40,7 @@ class Mqtt(Provider):
   """One broker connection: ``hostname``, ``port``, ``username``, ``password``, ``identifier``, ``status_topic``.
 
   ``listen`` and ``config`` register before or after ``serve``; subscriptions are replayed on every reconnect.
-  ``connected`` is set while a client is up. Callbacks take ``(topic, payload)``, may be sync or async, and run one
+  ``connected`` is set while a client is up, ``configured`` once every ``config`` topic has delivered. Callbacks take ``(topic, payload)``, may be sync or async, and run one
   at a time; a JSON payload arrives parsed.
   """
   scheme = 'mqtt'
@@ -57,7 +57,7 @@ class Mqtt(Provider):
     self._subscriptions: dict[y2topic, int] = {}
     self._config_paths: dict[str, str] = {}
     self._config_pending: set[str] = set()
-    self._config_received = asyncio.Event()
+    self.configured = asyncio.Event()
     self._lock = asyncio.Lock()
     self._callback_lock = asyncio.Lock()
 
@@ -173,16 +173,16 @@ class Mqtt(Provider):
     if not Env.initialized: raise RuntimeError('load the bootstrap configuration with Env.from_env() first')
     self._config_paths = config_topics(self._config_paths | config_topics(topics))
     self._config_pending |= set(topics)
-    self._config_received.clear()
+    self.configured.clear()
     for topic in topics: await self.listen(self._receive_config, topic, qos=1, raise_errors=True)
-    if wait: await self._config_received.wait()
+    if wait: await self.configured.wait()
 
   async def _receive_config(self, topic: y2topic, payload: object) -> None:
     data = yaml.safe_load(payload) if isinstance(payload, str) else payload
     if not isinstance(data, dict): raise TypeError(f'MQTT configuration must be a mapping: {topic}')
     Env.update_config(data, self._config_paths[str(topic)])
     self._config_pending.discard(str(topic))
-    if not self._config_pending: self._config_received.set()
+    if not self._config_pending: self.configured.set()
 
 
 class Mqtt5(Mqtt):
@@ -193,14 +193,19 @@ class Mqtt5(Mqtt):
 class MqttApp(AsyncApp):
   """An AsyncApp whose lifecycle holds its broker: the ``connection`` row of the app's configuration table.
 
-  Before ``main`` runs, the lifecycle builds ``self.mqtt`` from that row, connects, and publishes online when the row
-  has a ``status_topic`` (the will then publishes offline if the process dies). ``main`` prepares what the app needs
-  and spawns lasting work; when it returns, ``on_message`` is subscribed to the row's ``listen`` topics. The
-  connection is kept, reconnecting, until the app stops. An app that only reacts to its configured topics writes
-  ``on_message`` and nothing else.
+  Before ``main`` runs, the lifecycle builds ``self.mqtt`` from that row, receives the configuration its ``config``
+  topics carry into Env, connects, and publishes online when the row has a ``status_topic`` (the will then publishes
+  offline if the process dies). ``{host}`` in a row's text is the app's host, so one row serves every host. ``wait``
+  bounds, in seconds, how long ``main`` waits to be connected and configured; without it, ``main`` waits until it is.
+  ``main`` prepares what the app needs and spawns lasting work, and may await ``self.serving`` to last as long as the
+  connection; when it returns, ``on_message`` is subscribed to the row's ``listen`` topics. The connection is kept,
+  reconnecting, until the app stops. An app that only reacts to its configured topics writes ``on_message`` and
+  nothing else.
 
       recorder:
         connection: {hostname: mqtt, port: 1883, identifier: recorder, status_topic: status/recorder, listen: ['#']}
+      panel:
+        connection: {hostname: mqtt, status_topic: status/panel/{host}, wait: 5, config: {panel/config/scenes: panel/scenes}}
 
       class Recorder(MqttApp):
         raw = True
@@ -213,6 +218,7 @@ class MqttApp(AsyncApp):
   raw = False
   qos = 0
   mqtt: Mqtt
+  serving: asyncio.Task
 
   async def main(self) -> None: pass
 
@@ -220,14 +226,27 @@ class MqttApp(AsyncApp):
 
   async def invoke(self, **given: Any) -> Any:
     params = self.params(**given)
-    self.mqtt = self.mqtt_class(self.my('connection'))
+    row = {key: value.replace('{host}', self.host) if isinstance(value, str) else value for key, value in self.my('connection').items()}
+    self.mqtt = self.mqtt_class(row)
     async with self._task_scope():
-      self._spawn(self.mqtt.serve())
-      await self.mqtt.connected.wait()
+      if 'config' in row: await self.mqtt.config(row['config'])
+      self.serving = self._spawn(self.mqtt.serve())
+      await self._ready(row)
       result = await self.call_main(params)
-      for topic in self.mqtt.connection['listen'] if 'listen' in self.mqtt.connection else ():
+      for topic in row['listen'] if 'listen' in row else ():
         await self.mqtt.listen(self.on_message, topic, qos=self.qos, raw=self.raw)
       return result
+
+  async def _ready(self, row: dict) -> None:
+    """Connected and configured; past the row's ``wait``, main runs on what has arrived and the rest applies live."""
+    async def ready() -> None:
+      await self.mqtt.connected.wait()
+      if 'config' in row: await self.mqtt.configured.wait()
+    if 'wait' not in row: return await ready()
+    try:
+      async with asyncio.timeout(row['wait']): await ready()
+    except TimeoutError:
+      self.Warn('after', row['wait'], 's:', 'configuration incomplete' if self.mqtt.connected.is_set() else 'broker unreachable')
 
 def topic_matches(topic: str, pattern: str) -> bool:
   """MQTT filter matching: ``+`` one level, ``#`` the rest; ``$`` topics only by a ``$`` pattern. A level holding ``*``
