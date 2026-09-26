@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT / 'core'), *(str(p) for p in sorted((ROOT / 'providers').iterdir()) if p.is_dir())]
+sys.path.insert(0, str(ROOT))
 
 from gppu.connections import close_all  # noqa: E402
 from gppu import Env  # noqa: E402

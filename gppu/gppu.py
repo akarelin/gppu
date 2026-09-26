@@ -1573,6 +1573,28 @@ class VaultProviderOSEnviron(VaultProvider):
   def list(self) -> list[str]: return sorted(k[7:].lower().replace('_', '-') for k in os.environ if k.startswith('SECRET_'))
 
 
+class VaultProviderAzure(VaultProvider):
+  def __init__(self, vault_name: str):
+    self._vault_name = vault_name
+    self._client = None
+
+  def _ensure_client(self):
+    if self._client is None:
+      from azure.identity import DefaultAzureCredential
+      from azure.keyvault.secrets import SecretClient
+      self._client = SecretClient(vault_url=f"https://{self._vault_name}.vault.azure.net", credential=DefaultAzureCredential())
+    return self._client
+
+  def get(self, name: str) -> str | None:
+    from azure.core.exceptions import ResourceNotFoundError
+    try: return self._ensure_client().get_secret(name).value
+    except ResourceNotFoundError: return None
+
+  def set(self, name: str, value: str) -> None: self._ensure_client().set_secret(name, value)
+
+  def list(self) -> list[str]: return [s.name for s in self._ensure_client().list_properties_of_secrets()]
+
+
 class Vault:
   """Static facade for secret operations.
 
@@ -1602,12 +1624,9 @@ class Vault:
 
   @staticmethod
   def _detect() -> VaultProvider:
-    """AZURE_KEYVAULT_NAME → VaultProviderAzure, a provider package (gppu.azure); else env-var fallback."""
+    """AZURE_KEYVAULT_NAME → VaultProviderAzure; else env-var fallback."""
     vault_name = os.environ.get('AZURE_KEYVAULT_NAME')
-    if vault_name:
-      from gppu.azure import VaultProviderAzure
-      return VaultProviderAzure(vault_name)
-    return Vault._env_provider
+    return VaultProviderAzure(vault_name) if vault_name else Vault._env_provider
 
   @staticmethod
   def get(name: str) -> str:

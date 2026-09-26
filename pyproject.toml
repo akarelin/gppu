@@ -43,8 +43,7 @@ tag_regex = "^(?:gppu/v)?(?P<version>.+)$"
 git_describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--match", "gppu/v*"]
 
 [tool.setuptools.packages.find]
-# next: the core package is core/gppu; providers/<name>/gppu are not packaged yet
-where = [".", "core"]
+where = ["."]
 include = ["gppu*", "statusline*", "w11*"]
 
 [tool.pytest.ini_options]

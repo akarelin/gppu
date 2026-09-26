@@ -5,7 +5,7 @@
   archive --schema             the parameters as JSON Schema
 """
 from gppu import CliApp
-from gppu.postgres import Postgres
+from gppu.data import Postgres
 
 
 class Archive(CliApp):

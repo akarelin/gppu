@@ -1,5 +1,5 @@
 dry_run: true
 connections:
-  pg-lake:  {provider: gppu.postgres.Postgres, dsn: postgresql://lake@pg.karel.in/files}
-  pg-trix:  {provider: gppu.postgres.Postgres, dsn: postgresql://lake@trix/files}
-  mqtt-i2:  {provider: gppu.mqtt.Mqtt, hostname: i2, port: 1883}
+  pg-lake:  {provider: gppu.data.Postgres, dsn: postgresql://lake@pg.karel.in/files}
+  pg-trix:  {provider: gppu.data.Postgres, dsn: postgresql://lake@trix/files}
+  mqtt-i2:  {provider: gppu.iot.Mqtt, hostname: i2, port: 1883}
