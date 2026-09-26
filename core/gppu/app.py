@@ -145,6 +145,9 @@ class AsyncApp(App, EventLoopBridge):
   threads reach the app through ``schedule``, ``submit`` and ``call``. On a host's loop, ``await app.invoke(...)``.
   """
 
+  # On Windows the selector loop, which aiomqtt needs; an app that starts asyncio subprocesses sets this False.
+  SELECTOR_LOOP = True
+
   def __init__(self, name: str = '') -> None:
     super().__init__(name)
     self._task_group: asyncio.TaskGroup | None = None
@@ -158,7 +161,7 @@ class AsyncApp(App, EventLoopBridge):
     async with self._task_scope():
       return await self.call_main(params)
 
-  def _cli(self, given: dict) -> Any: return run_loop(self.invoke(**given))
+  def _cli(self, given: dict) -> Any: return run_loop(self.invoke(**given), selector=self.SELECTOR_LOOP)
 
   @asynccontextmanager
   async def _task_scope(self):
@@ -206,11 +209,12 @@ def run(app: type[App] | str, /, **given: Any) -> Any:
   result = app().invoke(**given)
   if not inspect.iscoroutine(result): return result
   try: asyncio.get_running_loop()
-  except RuntimeError: return run_loop(result)
+  except RuntimeError: return run_loop(result, selector=app.SELECTOR_LOOP)
   return result
 
 
-def run_loop[T](coroutine: Coroutine[Any, Any, T], /) -> T:
-  """Run on a new event loop; on Windows the selector loop, because aiomqtt needs ``add_reader``, which the default
-  Proactor loop lacks. Asyncio subprocesses are what the selector loop gives up there, and no gppu app uses them."""
-  return asyncio.run(coroutine, loop_factory=asyncio.SelectorEventLoop if sys.platform == 'win32' else None)
+def run_loop[T](coroutine: Coroutine[Any, Any, T], /, *, selector: bool = True) -> T:
+  """Run on a new event loop. On Windows ``selector`` picks the selector loop, because aiomqtt needs ``add_reader``,
+  which the default Proactor loop lacks; the selector loop cannot start asyncio subprocesses there, so an app that
+  does runs on the Proactor loop."""
+  return asyncio.run(coroutine, loop_factory=asyncio.SelectorEventLoop if selector and sys.platform == 'win32' else None)

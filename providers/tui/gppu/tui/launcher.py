@@ -1390,7 +1390,7 @@ def launcher_main(
     # TUI launcher — loop back after sub-app exits
     while True:
         tui = app_class(apps, app_dir)
-        result = run_loop(tui.invoke())
+        result = run_loop(tui.invoke(), selector=tui.SELECTOR_LOOP)
         if not result:
             break
         launch_app(app_dir, result['app'], result.get('args') or None)
