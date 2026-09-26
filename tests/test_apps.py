@@ -158,12 +158,12 @@ def test_tui_is_an_async_app_with_the_same_resolution(env):
   assert asyncio.run(drive()) == ['line 0 Queue(queue-1)', 'line 1 Queue(queue-1)', 'line 2 Queue(queue-1)']
 
 
-def test_app_name_is_its_file_and_config_is_strict(env):
+def test_app_name_is_its_file_and_a_missing_key_gives_the_default(env):
   env(CONFIG)
   app = Report()
   assert app.name == 'test_apps'
-  with pytest.raises(KeyError): app.my('missing')
-  with pytest.raises(KeyError): Env.glob('missing')
+  assert app.my('missing') is None and app.my('missing', 3) == 3
+  assert Env.glob('missing') is None and Env.glob_dict('missing') == {}
 
 
 class Closing(Provider):
