@@ -40,7 +40,8 @@ class App(_Base):
   """Name, configuration and logging; a subclass defines ``main`` and is one of the kinds below.
 
   The name is the file the subclass is written in, and names the configuration beside it: ``<name>.yaml`` or
-  ``config.yaml``, searched upward. An Env already loaded is reused.
+  ``config.yaml``, searched upward. An Env already loaded is reused. The app's configuration is the table under its
+  name when the configuration has one, the whole configuration otherwise; ``my`` and ``main``'s parameters read it.
   """
 
   def __init__(self, name: str = '') -> None:
@@ -49,6 +50,7 @@ class App(_Base):
     if not Env.initialized: Env.from_env(name, source.parent)
     super().__init__()
     self._name = name
+    if isinstance(Env.data.get(name), dict): self._config_from_key(name)
 
   @property
   def name(self) -> str: return self._name
