@@ -1,221 +1,142 @@
-# GPPU — General Purpose Python Utilities
+# gppu.next
 
-<h3><code>v3</code> — <em>All the things</em></h3>
+Branch `next` of the gppu repository: the next gppu, started from the gppu.next mock-up. The released package (3.6.20) is on master; its source is kept here under `archive/gppu-3/` as the source for porting the providers.
 
-> YAML-driven configuration with `!include` and `!secret`, colored structured logging, secret management (Azure Key Vault / env-vars), type coercion, deep dict access, YAML/JSON I/O, template population, time helpers, OS detection, async-to-sync, multi-backend caching, PostgreSQL and SQLAlchemy base classes, Textual TUI framework with superapp launchers, nested apps, config editors, web UI via `--serve`, and CLI fallback, Selenium Chrome automation, and home automation types.
+Goal (Alex, 2026-09-25): gppu CLI apps get their parameters and environment the way Windmill scripts do, and reach other services as easily. Redundant classes go. A bare-minimum core is separated from providers. TUI and async apps are the same kind of app, and CliApp is another subtype of a generic App.
 
-[![CI](https://github.com/akarelin/gppu/actions/workflows/gppu.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/gppu.yml) [![release](https://img.shields.io/github/v/release/akarelin/gppu?filter=gppu/v*&label=&color=blue&style=flat-square)](https://github.com/akarelin/gppu/releases?q=gppu)
-
-
-<table>
-<tr>
-<td width="140"><strong><a href="statusline/status_line.py">Statusline</a></strong></td>
-<td><a href="https://github.com/akarelin/gppu/actions/workflows/statusline.yml"><img src="https://img.shields.io/github/actions/workflow/status/akarelin/gppu/statusline.yml?label=&style=flat-square" alt="CI"></a> <a href="https://github.com/akarelin/gppu/releases?q=statusline"><img src="https://img.shields.io/github/v/release/akarelin/gppu?filter=statusline/v*&label=&color=blue&style=flat-square" alt="release"></a></td>
-<td>Claude Code 2-line status line (Linux, macOS, Windows)</td>
-</tr>
-<tr>
-<td><strong><a href="w11/README.md">W11</a></strong></td>
-<td><a href="https://github.com/akarelin/gppu/actions/workflows/w11.yml"><img src="https://img.shields.io/github/actions/workflow/status/akarelin/gppu/w11.yml?label=&style=flat-square" alt="CI"></a> <a href="https://github.com/akarelin/gppu/releases?q=w11"><img src="https://img.shields.io/github/v/release/akarelin/gppu?filter=w11/v*&label=&color=blue&style=flat-square" alt="release"></a></td>
-<td>Windows 11 utilities &amp; diagnostics</td>
-</tr>
-<tr>
-<td><strong><a href="rust/README.md">GPRU</a></strong></td>
-<td><a href="https://github.com/akarelin/gppu/actions/workflows/rust-branch-build.yml"><img src="https://img.shields.io/github/actions/workflow/status/akarelin/gppu/rust-branch-build.yml?label=&style=flat-square" alt="CI"></a> <img src="https://img.shields.io/badge/status-in%20progress-yellow?style=flat-square" alt="in progress"></td>
-<td>Rust port of <code>gppu</code> (in progress)</td>
-</tr>
-</table>
-
----
-# Modules
-
-| Module | Purpose |
-|--------|---------|
-| `gppu` (core)<br> | **Environment**: `Env` config loader with `!include`, typed path access (`glob`, `glob_int`, `glob_list`, `glob_dict`). <br>**Logger**: colored `Info`/`Warn`/`Error`/`Debug`/`Dump`. <br>**Vault**: `Vault.get`/`create`/`update`/`list` with Azure Key Vault and `SECRET_*` env-var backends; `!secret` YAML tag.<br>Plus: type coercion, dict utilities, YAML/JSON I/O, time helpers, OS detection + `full_path` path resolution (env vars, `~`, WSL drive mapping), async helpers, template population |
-| [`gppu.handlers`](docs/handlers.md) | Generated handler API and supported-format reference. |
-| [`gppu.environment`](docs/environment.md) | `Environment`: the basic level with no file (platform, host, user, home, os, trace), strict lookups, the configuration's macros called by name (`place`, `folder`, `uri`, `location_of`, `local_of`).<br>`State`: every table of the loaded configuration resolved through its templates, checked against what it references and built into objects; `services` for the rows marked so |
-| `gppu.ymro` | YMRO lifecycle: multi-inheritance-aware init→load→start steppers (`YInit`/`YLoad`/`YStart`/`mixin_Stepper`).<br>`Tracer` flight recorder: JSONL trace of object snapshots, triggers, callbacks, and periodic state (AppDaemon hooks via `Tracer.install`); `_tracer` before/after/instead method decorators |
-| [`gppu.data`](DATA.md) | `Cache` unified caching (JSON/pickle/sqlite/diskcache/DB backends), <br>database base classes: `_PGBase` (psycopg2) and `_SQABase` (SQLAlchemy),<br>`_PersistentDC` persisted pseudo-dataclasses with `Persistence` multi-backend storage (json/pickle/sqlite/postgres) |
-| [`gppu.iot`](IOT.md) | y2 types: `y2list`, `y2path`, `y2topic`, `y2slug`, `y2eid` (token-list strings for topics/slugs/entity ids).<br>MQTT plumbing for the any2mqtt services: `mqtt_connstring`, `MqttMixin` (reconnecting aiomqtt client with callback dispatch, MQTT5 expiry/user-properties), `Transformer` (config-driven scalar transform stage).<br>Control mixins: `_IORuntime` (thread-hosted asyncio loop, per-key gating), `_HTTPControl` (aiohttp), `_SerialControl` (telnetlib3), `_SerialHTTPControl`. Third-party deps via `mqtt`/`iot` extras |
-| [`gppu.tui`](TUI.md) | `TUIApp`, `TUILauncher`, `ConfigEditorApp`, `ui_select`, `ui_select_rows`<br> Textual-based TUI framework with web mode (`--serve`), CLI fallback, app embedding. Requires `tui` extra |
-| [`gppu.chrome`](CHROME.md) | `prepare_driver`, `switch_to_mobile`, `switch_to_desktop`<br>Selenium Chrome driver setup with profile management, crash recovery, mobile/desktop emulation |
-
-## Handler listing
-
-[`examples/handler_ls.py`](examples/handler_ls.py) prints complete metadata from `GppuFileSystem.info()` and `ls(recurse=True)`. [`examples/handler_browser.py`](examples/handler_browser.py) browses the same listings and displays all metadata. Both use `location: .` in [`examples/handlers.yaml`](examples/handlers.yaml); gppufs owns the colocated SQLite indexes. See [browsing and index behavior](docs/handler-browser.md).
-
-```powershell
-python examples/handler_ls.py
-python -m examples.handler_browser
-```
-
-## Environment
+## What an app looks like
 
 ```python
-from gppu import Env
-from pathlib import Path
+from gppu import CliApp
+from gppu.postgres import Postgres
 
-# Initialize: resolves config file, loads YAML (with !include and !secret support)
-Env.from_env(name='myapp', app_path=Path(__file__).parent)
+class Archive(CliApp):
+  def main(self, since: str = '7d', dry_run: bool = False, db: Postgres = 'pg-lake') -> dict:
+    """Report what would be archived.
 
-# Typed access via "/" path
-db_host = Env.glob('database/host', default='localhost')
-port    = Env.glob_int('database/port', default=5432)
-tags    = Env.glob_list('metadata/tags')
-options = Env.glob_dict('database/options')
+    Args:
+      since: How far back to look.
+    """
+    return {'since': since, 'rows': db.scalar('select count(*) from files.lake')}
+
+if __name__ == '__main__': Archive.cli()
 ```
 
-Config file resolution: looks for `<name>.yaml` then `config.yaml` in the app path. Relative `app_path` values are resolved by walking up from the calling script's directory until a matching subpath is found.
-
-[Configuration from MQTT](docs/mqtt-config.md): startup loading, optional live updates, and `Env.on_change()` notifications for the affected configuration paths.
-
-[Environment and State](docs/environment.md): the shared configuration constructed at startup — tables of rows resolved through their templates, checked against what they reference, built into objects; the questions a utility used to answer for itself are macros of the configuration.
-
-[The REST surface](docs/rest.md): `mixin_Rest`, on `AsyncApp` — every registered object answers for its own members, walked from the classes born under `Env.app_path`; manifest, read, call.
-
-YAML `!include` support, as the value of a key or on its own line, where the included file's keys merge into the document:
-```yaml
-!include hosts.yaml
-
-app:
-  name: MyApp
-  database: !include database.yaml
+```
+archive                         everything from config.yaml and the signature
+archive --since 3d --db pg-trix   --db accepts only the configured Postgres connections
+archive --schema                the parameters as JSON Schema
 ```
 
-## Logger
+- **Parameters** come from `main`'s signature. Each one is a typed option (`str`, `int`, `float`, `bool` as `--x/--no-x`, `list[...]`, `Literal[...]`, `Path`, `dict` as JSON). The first docstring line is the description, and the `Args:` lines are the help.
+- **Values** come from the command line first. Next comes the app's configuration under the parameter's name, then the signature's default. Anything still missing raises. So an app runs with zero arguments, and flags override configuration.
+- **Services**: a parameter annotated with a Provider receives a Connection. Its value is a connection uid from the `connections` table. With no uid anywhere, the one configured Connection of that Provider is used; none or several raises.
+- **Results**: CliApp prints what `main` returns as JSON on stdout, and logs go to stderr.
+- **Other apps**: `run(Archive, since='3d')` or `run('crap.archive:Archive')` starts another app from code, with the same resolution. Connections are shared by uid, so the caller's stay open; they close when the command line that started the process returns.
 
-```python
-from gppu import Info, Warn, Error, Debug, Dump
+## Windmill → gppu
 
-Info('WBLUE', 'server', 'NONE', 'started on port', 'BG', '8080')
-Warn('WYELLOW', 'config', 'NONE', 'key missing, using default')
-Error('WRED', 'database', 'NONE', 'connection refused')
-Debug('GRAY4', 'trace', 'NONE', 'processing item')
+| Windmill | gppu.next |
+|---|---|
+| `main(a: int, db: postgresql)` | `main(self, a: int, db: Postgres)` |
+| resource type | Provider class (`gppu.postgres.Postgres`) |
+| resource `f/db/pg.resource.json` | row in the `connections` table: `pg-lake: {provider: gppu.postgres.Postgres, dsn: !secret pg-lake-dsn}` |
+| `$res:f/db/pg` as an argument | `--db pg-lake` |
+| `$var:g/all/pw`, `wmill.get_variable` | `!secret pw`, `Vault.get('pw')` |
+| `wmill.get_resource(path)` | `connection('pg-lake')` |
+| `wmill.run_script_by_path` | `run('module:Class', **args)` |
+| auto-generated input form | `schema(app.main)`, `--schema`; the same description serves gppu.rest |
+| return value is the job result | CliApp prints the return value as JSON |
 
-Dump('debug_state.yml', data)
+My reading, for Alex to correct: "easy to use other services from cli" means a service is a typed parameter, picked by uid on the command line or found in configuration. It is never code in the app.
+
+## Hierarchy
+
+```mermaid
+classDiagram
+  _Base <|-- App
+  App <|-- CliApp
+  App <|-- AsyncApp
+  EventLoopBridge <|-- AsyncApp
+  AsyncApp <|-- TUIApp
+  TextualApp <|-- TUIApp
+  Provider <|-- Postgres
+  Provider <|-- Mqtt
+  Provider <|-- FileSystem
+  class _Base { Info() Warn() Error() Debug() my(path) }
+  class App { name main() params() invoke() cli() }
+  class CliApp { invoke() prints main() as JSON }
+  class AsyncApp { invoke() awaits main() in a TaskGroup _spawn() stop() }
+  class TUIApp { invoke() runs Textual on the same loop, main() on mount }
+  class Provider { scheme uid connection close() }
 ```
 
-## Vault
+TUIApp is an AsyncApp. `main` runs as a task in the app's TaskGroup once the screen is mounted. MQTT listeners, timers and REST run on the screen's loop, and quitting the screen cancels them.
 
-Static facade over a pluggable provider chain. Provider auto-detected on first use: `AZURE_KEYVAULT_NAME` → Azure Key Vault, else `SECRET_*` env-vars. `SECRET_<NAME>` env vars always win over the persistent provider.
+## Layout
 
-```python
-from gppu import Vault
-
-token   = Vault.get('anthropic-api-key')           # checks SECRET_ANTHROPIC_API_KEY first
-Vault.create('slack-bot-token', 'xoxb-...')         # raises if it already exists
-Vault.create('slack-bot-token', 'xoxb-...', designation='T01')  # collision → slack-bot-token-t01
-Vault.update('openai-api-key', 'sk-...', create=True)
-names = Vault.list()                                # env-var union with provider listing
+```
+gppu (branch next)/
+  core/gppu/          one distribution: PyYAML + Jinja2 only
+    gppu.py           utilities, logging, Env, State, Vault, _Base, _DC
+    connections.py    Provider, the connections table, connection(uid)
+    params.py         signature → parameters, command line, JSON Schema, resolution
+    app.py            App, CliApp, AsyncApp, EventLoopBridge, run
+  providers/<name>/gppu/...   one distribution each, installing into the gppu package
+    tui  postgres  mqtt  azure  fs  iot  rest  data  chrome  y2
+  examples/  tests/  run_example.sh
 ```
 
-In YAML: `password: !secret db-pass` resolves at load time via `Vault.get`. Requires the `vault` (or `vault-azure`) extra.
+Core keeps the import paths that consumers use today: `from gppu.tui import TUIApp` and `from gppu.fs import Location` still work, because `gppu.__path__` is extended by each installed provider. In `core/gppu/gppu.py`, every region above `# region Environment` is copied unchanged from `gppu/gppu.py`. `tui`, `postgres` and `azure` are implemented. `mqtt` shows its surface only, and `fs`, `iot`, `rest`, `data`, `chrome` and `y2` are docstrings naming what moves there unchanged.
 
-## How Apps Work
+## Every current class
 
-Every app follows the same pattern: a YAML config file is the single source of truth, and `Env.from_env()` loads it at startup. The app reads all its settings from `Env.glob()`.
+| Current | gppu.next | Why |
+|---|---|---|
+| `_mixin`, `mixin_Config`, `_Config`, `mixin_Logger`, `protocol_Logger`, `_Logger` | `_Base` | They were the parts of `_Base`. `_config_from_key` and `_config_from_dict` stay; `_config_from_env` goes, because every app now loads its configuration |
+| `Logger` | `Logger.trace_folder` only | Logging functions are module-level and per-class on `_Base` |
+| `_Base` | `_Base`, strict `my`, `my_int`, `my_list`, `my_dict` | The one foundation. `my` reads the object's own table once `_config_from_key` names it, and an app's parameters read the same table |
+| `_App`, `App` | `App` | One generic app; `App` no longer inherits `_DC` |
+| — | `CliApp` | New: runs `main` once, prints the result |
+| `AsyncApp` (`setup`, `start`, `run`) | `AsyncApp` (`main`, `invoke`) | Same TaskGroup; `main` takes parameters like every app |
+| `TUIApp(mixin_Config, textual.App)` | `gppu.tui.TUIApp(AsyncApp, textual.App)` | A TUI is an AsyncApp; `TUIApp.main()`/`cli()` fallback removed |
+| `Env` (lenient) + `Environment` (strict) | `Env`, strict | Two views of one configuration. `glob(key, default)` is gone, as CLAUDE.md already requires. `Env.Info` and its siblings still log as the app |
+| `State`, `_Rules` | unchanged | |
+| `Vault`, `VaultProvider`, `VaultProviderOSEnviron` | core, unchanged | `!secret` resolves while YAML loads; AZURE_KEYVAULT_NAME imports the Azure provider |
+| `VaultProviderAzure` | `gppu.azure` | Optional dependency; it no longer swallows every exception as "not found" |
+| `_PersistentBase`, `_PGBase`, `_SQABase` | `gppu.postgres.Postgres` | A database is a Connection passed to `main`, not a base class; `_SQABase` has no user |
+| `_PersistentDC` | removed | No user |
+| `DiskCache = None` | removed | Placeholder for a removed class |
+| `Cache`, `Persistence` and their backends | `gppu.data` | Optional dependencies |
+| `mixin_Mqtt`, `MqttApp`, `_MqttConfig`, `Env.from_mqtt` | `gppu.mqtt.Mqtt` | A broker is a Connection; configuration over MQTT becomes `Mqtt.config` |
+| `EventLoopBridge` | core | AsyncApp and the IoT controls share it |
+| `mixin_Rest` | `gppu.rest` | Describes arguments with `params.schema`, so REST and the command line resolve alike |
+| `y2slug`, `y2eid`, `SerializedControl`, `HTTPControl`, `JSONHTTPControl` | `gppu.iot` | Device control is not core |
+| `_YMRO`, `_YInit`, `_YLoad`, `_YStart`, `YStepper`, `mixin_Stepper` | `gppu.ymro`, pending decision | Only Y2 uses them |
+| `_DC` | core, unchanged | State builds rows with it |
+| `OSType`, `Span`, `TimeSpan`, `y2list`, `y2path`, `y2topic`, `y2uri`, `TColor`, `JinjaEnvironment`, `JinjaDocument`, `TemplateSet` | core, unchanged | |
+| `Provider` (gppu.fs) | core `Provider` (scheme, uid, connection, close); the object methods stay on the fs Provider | Every service is a Provider now, not only object stores |
+| gppufs: `DataObject`, `Container`, `Location`, `Collection`, `FileSystem`, handlers, `GppuCatalog`, the fsspec filesystems | `gppu.fs`, unchanged | `GppuCatalog` reads `connections` through core, so a Location and an app share one Connection instance |
+| `TUILauncher`, `AppScreen`, the widgets, `Selector` | `gppu.tui`, unchanged | |
+| `DetailedSelector` | removed | No user |
+| `chrome` helpers | `gppu.chrome` | Optional dependency |
 
-### 1. Create a config — `myapp.yaml` next to your script:
+## Decisions for Alex
 
-```yaml
-logs:
-  - Application
-  - System
-level: Warning
-days: 30
-error_rules: !include error_rules.yaml
+- Where the Y2 lifecycle (`_YMRO` … `mixin_Stepper`) lives: in the y2 repo, or in a gppu provider. Only Y2 uses it.
+
+## Consumer impact when this replaces gppu
+
+- `glob(key, default)` and `my(key, default)` are gone, because lookups are strict. A few consumers still pass defaults.
+- TUIs that call `_config_from_env()` drop the call.
+- `_PGBase` subclasses take `db: Postgres` in `main`, and the `db` connection string becomes a `connections` row.
+- `MqttApp` subclasses become `AsyncApp` with `mqtt: Mqtt`.
+- Hand-rolled `argparse` in CLI scripts is replaced by `main`'s signature.
+
+## Run
+
 ```
-
-### 2. Initialize and read config:
-
-```python
-from gppu import Env, Info, glob, glob_int, glob_list
-from pathlib import Path
-
-Env.from_env(name='myapp', app_path=Path(__file__).parent)
-
-logs  = glob_list('logs')
-level = glob('level', default='Warning')
-days  = glob_int('days', default=10)
-
-Info('WBLUE', 'myapp', 'NONE', 'loaded', 'BG', str(len(logs)), 'NONE', 'logs')
+PYTHON=~/.venv/Scripts/python.exe run_example.sh archive --since 3d
+~/.venv/Scripts/python.exe -m pytest tests
+PYTHONPATH=core python -c "import gppu.app, sys; print(sorted({m.split('.')[0] for m in sys.modules} & {'textual','fsspec','psycopg2','aiomqtt','azure'}))"   # [] : core needs no provider
 ```
-
-### 3. For TUI apps — subclass `TUIApp` and use `Env` the same way:
-
-```python
-from gppu import Env
-from gppu.tui import TUIApp
-
-class MyApp(TUIApp):
-    TITLE = 'My App'
-    def compose(self):
-        ...
-
-Env.from_env(name='myapp', app_path=Path(__file__).parent)
-MyApp.main()  # TUI if terminal available, CLI fallback otherwise
-```
-
-### 4. For superapp launchers — a launcher config lists sub-apps, each with its own YAML:
-
-```yaml
-# launcher.yaml
-apps:
-  events: events.yaml
-  onedrive: onedrive.yaml
-```
-
-Each sub-app YAML has a `manifest:` section (name, icon, script, modes) plus app-specific config below it. The launcher loads all manifests and presents a menu.
-
-```python
-from gppu import Env
-from gppu.tui import TUILauncher, launcher_main, load_app_registry
-
-APP_DIR = Path(__file__).parent
-
-class MyLauncher(TUILauncher):
-    TITLE = 'My Tools'
-
-Env.from_env(name='launcher', app_path=APP_DIR)
-apps = load_app_registry(APP_DIR)
-launcher_main(apps, MyLauncher, APP_DIR, 'My Tools')
-```
-
-See [w11/app.py](w11/app.py) for a real example.
-
-# Other Products
-
-[Statusline](statusline/status_line.py) — Claude Code status line tool
-`curl -fsSL https://raw.githubusercontent.com/akarelin/gppu/master/statusline/install-statusline.sh | sh`
-
-[W11](w11/README.md) — Windows 11 utilities
-
-
-# Appendix
-## Installation
-
-```bash
-# From GitHub
-pip install "gppu @ git+ssh://git@github.com/akarelin/gppu.git@gppu/latest"
-
-# With optional extras
-pip install "gppu[pg] @ git+ssh://git@github.com/akarelin/gppu.git@gppu/latest"
-pip install "gppu[all] @ git+ssh://git@github.com/akarelin/gppu.git@gppu/latest"
-
-# Local development
-pip install -e ".[all,test]"
-```
-
-**Optional extras**: `pg` (psycopg2), `sql` (SQLAlchemy), `cache` (diskcache), `mqtt` (aiomqtt), `iot` (aiomqtt + aiohttp + telnetlib3), `chrome` (Selenium), `tui` (Textual), `serve` (textual-serve), `statusline` (Jinja2), `vault-azure`, `vault` (= `vault-azure`), `all`, `test` (pytest), `test-tui` (pytest + pytest-asyncio + textual).
-
-Requires Python >= 3.11. Core dependency: PyYAML.
-
-## TColor Reference
-
-Hex values computed from ANSI codes in `gppu/gppu.py` (xterm-256color palette).
-
-<img src="docs/tcolor-reference.svg" alt="TColor reference" width="640">
-
-
-## License
-
-Extracted from RAN project for reuse across Alex Karelin's automation and data processing tools.
