@@ -232,6 +232,13 @@ class Container:
     """What is directly inside path, each entry named by its path in this Container, with type and size.
 
     Callers: FileIndexer, the Plaud Dagster job, admin_ui.
+
+    Args:
+      path (y2path | str): Relative directory path; empty selects the Container root.
+      detail (bool): True returns metadata objects; false returns only paths.
+
+    Returns:
+      list[dict] | list[str]: Immediate children. Detailed entries contain name relative to the Container, type and size, plus Provider metadata; otherwise entries are relative path strings.
     """
     path = str(Location.relative(path))
     rows = [row | {'name': f"{path}/{row['name']}" if path else row['name']}
@@ -244,15 +251,39 @@ class Container:
 
     A boundary path is reported and not entered. A listing error is raised, never read as an empty folder.
     Caller: FileIndexer.
+
+    Args:
+      path (y2path | str): Relative starting path; empty selects the Container root.
+      level (str): Reading depth: refresh, files, handlers or archives.
+      recursive (bool): Whether to descend into child directories.
+      boundaries (Iterable[y2path | str]): Relative paths to report without entering.
+
+    Returns:
+      Iterator[tuple[dict, list[dict]]]: Pairs of folder metadata and immediate child metadata. Entries contain name, type and Provider/handler fields; boundary marks a reported traversal boundary.
     """
     yield from self.provider.walk(self.uri, path, level=level, recursive=recursive, boundaries=boundaries)
 
   def info(self, path: y2path | str = '') -> dict[str, Any]:
-    """What is known about path without reading its content: type, size, times, span and what the handlers found."""
+    """What is known about path without reading its content: type, size, times, span and what the handlers found.
+
+    Args:
+      path (y2path | str): Relative object path; empty selects the Container root.
+
+    Returns:
+      dict: Provider and handler metadata for the object, with name set to the supplied relative path. Content is not included; available metadata depends on the Provider.
+    """
     return self.provider.info(self._uri(path)) | {'name': str(path)}
 
   def open(self, path: y2path | str, mode: str = 'rb') -> BinaryIO:
-    """The bytes at path. Caller: admin_ui."""
+    """The bytes at path. Caller: admin_ui.
+
+    Args:
+      path (y2path | str): Relative object path.
+      mode (str): Stream mode passed to the Provider; rb reads bytes.
+
+    Returns:
+      BinaryIO: Open stream owned and closed by the caller.
+    """
     return self.provider.open(self._uri(path), mode)
 
   def read(self, path: y2path | str | DataObject) -> DataObject:
@@ -260,6 +291,12 @@ class Container:
 
     Given a DataObject, the path is where the naming templates put it, and the result keeps its uri and identity.
     An object whose source gives no identity is identified by its path. Callers: Dagster jobs, admin_ui.
+
+    Args:
+      path (y2path | str | DataObject): Relative object path, or a DataObject whose stored path is resolved from naming templates.
+
+    Returns:
+      DataObject: Object with uri, identity, kind, name and content. A supplied DataObject retains its identity and URI; a path read uses its relative path when the Provider supplies no identity.
     """
     if isinstance(path, DataObject):
       obj, path = path, self.path_of(path)
@@ -274,6 +311,13 @@ class Container:
     """Store obj at path. The object's uri is unchanged.
 
     With an identity template, a path already holding another object's identity is refused. Caller: Dagster jobs.
+
+    Args:
+      path (y2path | str): Nonempty relative destination path.
+      obj (DataObject): Object supplying content and identity for the Provider write.
+
+    Returns:
+      None: The Provider stores the object; conflicting stored identity raises ValueError.
     """
     if not isinstance(obj, DataObject):
       raise TypeError('Container.write requires a DataObject')
@@ -296,14 +340,28 @@ class Container:
     self.provider.write(uri, obj)
 
   def delete(self, path: y2path | str) -> None:
-    """Remove the object at path. Caller: Dagster jobs, before rewriting an object."""
+    """Remove the object at path. Caller: Dagster jobs, before rewriting an object.
+
+    Args:
+      path (y2path | str): Relative object path to remove.
+
+    Returns:
+      None: The Provider removes the object and any cached path-to-identity entry is invalidated.
+    """
     path = str(Location.relative(path))
     self.provider.delete(self._uri(path))
     if self._paths is not None and path.casefold() in self._identities:
       del self._paths[self._identities.pop(path.casefold())]
 
   def path_of(self, obj: DataObject) -> y2path:
-    """Where obj belongs in this Container by its naming templates. Callers: Dagster jobs, admin_ui's template preview."""
+    """Where obj belongs in this Container by its naming templates. Callers: Dagster jobs, admin_ui's template preview.
+
+    Args:
+      obj (DataObject): Object supplying naming-template context, including its parent when present.
+
+    Returns:
+      y2path: Nonempty relative destination path produced by the configured naming templates.
+    """
     if self.templates is None:
       raise ValueError('Container requires naming templates to place a DataObject')
     uri = urlsplit(str(obj.uri))
@@ -374,6 +432,13 @@ class Container:
 
     state belongs to the caller. It advances only when every change was consumed inside the context and nothing
     raised, so a failed run is read again next time. Caller: Dagster jobs.
+
+    Args:
+      state (dict[str, Any]): Caller-owned synchronization state; advanced only after successful full consumption.
+      path (y2path | str): Relative starting path; empty selects the Container root.
+
+    Returns:
+      Iterator[Iterator[DataObject]]: Context manager yielding changed DataObjects, including removed objects marked removed. The caller must consume the iterator inside the context for state to advance.
     """
     with self.provider.refresh(state, self._uri(path)) as (objects, commit):
       complete = False
@@ -428,6 +493,9 @@ class Location:
     """The Locations directly below this one: the configured ones, then those its Provider finds.
 
     Callers: admin_ui, FileIndexer, lake Dagster.
+
+    Returns:
+      list[Location]: Direct child Locations, configured first and provider-discovered afterward; each carries uid, uri, parent and its configuration data.
     """
     children = list(self._children()) if self._children is not None else []
     if self.provider is None:
@@ -443,31 +511,64 @@ class Location:
     return children
 
   def walk(self) -> Iterator[tuple['Location', list['Location']]]:
-    """This Location and every Location below it, each with the Locations directly below it."""
+    """This Location and every Location below it, each with the Locations directly below it.
+
+    Returns:
+      Iterator[tuple[Location, list[Location]]]: Depth-first pairs of a Location and its immediate children, starting with this Location.
+    """
     children = self.ls()
     yield self, children
     for child in children:
       yield from child.walk()
 
   def container(self, path: y2path | str = '') -> Container:
-    """The Container at path below this Location. Callers: FileIndexer, Dagster jobs."""
+    """The Container at path below this Location. Callers: FileIndexer, Dagster jobs.
+
+    Args:
+      path (y2path | str): Relative path below this Location; empty selects its root.
+
+    Returns:
+      Container: Container bound to the Location Provider, canonical URI and naming templates. A Location without a Provider raises ValueError.
+    """
     if self.provider is None:
       raise ValueError(f'{self.uid}: no Provider reaches this Location')
     return Container(self.provider, self.provider.join(self.uri, self.relative(path)), templates=self.templates)
 
   def uri_of(self, path: y2path | str = '') -> y2uri:
-    """The canonical uri of path below this Location, each name uri-escaped. Caller: FileIndexer."""
+    """The canonical uri of path below this Location, each name uri-escaped. Caller: FileIndexer.
+
+    Args:
+      path (y2path | str): Relative path below this Location; empty selects its root.
+
+    Returns:
+      y2uri: Canonical URI with each path segment escaped.
+    """
     return _join(self.uri, self.relative(path))
 
   def save(self, who: str, **fields: Any) -> None:
-    """Write fields into this Location's configuration row as who: uid, name, path, service, kind, icon, tags, folders."""
+    """Write fields into this Location's configuration row as who: uid, name, path, service, kind, icon, tags, folders.
+
+    Args:
+      who (str): Author identity written with the configuration change.
+      fields (Any): Named configuration changes: uid, name, path, service, kind, icon, tags or folders; null removes a field in the REST merge patch.
+
+    Returns:
+      None: The configured store writes the change; read the Location from its Collection again for updated values.
+    """
     if self._store is None:
       raise ValueError(f'{self.uid}: this Location was not loaded from a configuration it can write to')
     self._store(self, who, fields)
 
   @staticmethod
   def relative(path: y2path | str) -> y2path:
-    """path, checked to be relative and slash-separated, with no drive, empty or traversal segment."""
+    """path, checked to be relative and slash-separated, with no drive, empty or traversal segment.
+
+    Args:
+      path (y2path | str): Relative path; the empty string identifies a root.
+
+    Returns:
+      y2path: Validated relative path. Invalid paths raise ValueError.
+    """
     if isinstance(path, y2path):
       path = str(path)
     if not isinstance(path, str) or path.startswith('/') or '\\' in path or '://' in path or PureWindowsPath(path).drive:
