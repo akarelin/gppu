@@ -87,7 +87,7 @@ gppu (branch next)/
   examples/  tests/  run_example.sh
 ```
 
-Core keeps the import paths that consumers use today: `from gppu.tui import TUIApp` and `from gppu.fs import Location` still work, because `gppu.__path__` is extended by each installed provider. In `core/gppu/gppu.py`, every region above `# region Environment` is copied unchanged from `gppu/gppu.py`. `tui`, `postgres`, `azure`, `mqtt` and `fs` are implemented, and, `iot`, `rest`, `data`, `chrome` and `y2` are docstrings naming what moves there unchanged.
+Core keeps the import paths that consumers use today: `from gppu.tui import TUIApp` and `from gppu.fs import Location` still work, because `gppu.__path__` is extended by each installed provider. In `core/gppu/gppu.py`, every region above `# region Environment` is copied unchanged from `gppu/gppu.py`. `tui`, `postgres`, `azure`, `mqtt`, `fs`, `iot`, `rest` and `y2` are implemented; `data` and `chrome` are docstrings naming what moves there unchanged.
 
 ## Every current class
 
