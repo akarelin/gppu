@@ -95,6 +95,7 @@ from fsspec.spec import AbstractFileSystem
 from fsspec.utils import stringify_path
 
 from gppu.gppu import TimeSpan, Env, OSType, TemplateSet, _Base, detect_os, full_path, is_table_key, sync, y2path, y2uri
+from gppu.connections import Provider as _Provider, provider_class
 
 
 # region providers
@@ -132,23 +133,14 @@ def _join(uri: y2uri | str, path: y2path | str) -> y2uri:
   return uri / quote(str(path), safe='/') if str(path) else uri
 
 
-class Provider:
-  """Reaches objects by their uri over one connection.
+class Provider(_Provider):
+  """gppu's Provider that also reaches objects by their uri: file, m365, telegram, plaud.
 
-  An instance is a Connection: the Provider with its connection parameters. The same connection that reads a
-  Container's objects is the one that finds the Locations below a tenant, so one instance does both and holds the
-  session and credentials once. FileSystem is the Provider of files;
-  M365, Telegram and Plaud are Providers written in CRAP. A Provider that cannot write raises PermissionError from
-  write and delete. Container and Location call these methods; nothing else needs to.
-
-  Attributes:
-    scheme (str): The uri scheme this Provider reaches: file, m365, telegram, plaud.
-    connection (dict[str, Any]): The connection parameters it was constructed with: host, account, credentials.
+  The same connection that reads a Container's objects is the one that finds the Locations below a tenant, so one
+  instance does both and holds the session and credentials once. FileSystem is the Provider of files; M365, Telegram
+  and Plaud are Providers written in CRAP. A Provider that cannot write raises PermissionError from write and delete.
+  Container and Location call these methods; nothing else needs to.
   """
-  scheme = ''
-
-  def __init__(self, connection: Mapping[str, Any] | None = None) -> None:
-    self.connection = deepcopy(dict(connection)) if connection is not None else {}
 
   def join(self, uri: y2uri, path: y2path | str) -> y2uri:
     """The uri of path below uri. Each name is uri-escaped; a Provider whose paths are already escaped ids joins
@@ -7305,17 +7297,11 @@ class GppuCatalog(AbstractFileSystem):
       if uid not in ('templates', 'macros', 'generators') and not uid.endswith('_templates')
     }
     for connection in self.connections.values():
-      if 'provider' not in connection:
+      if 'provider' not in connection or connection['provider'] in self.location_types:
         continue
-      provider = connection['provider']
-      if provider in self.location_types:
-        continue
-      module, _, name = provider.rpartition('.')
-      if not module:
-        raise ValueError(f'{provider}: unknown configured provider')
-      kind = getattr(importlib.import_module(module), name)
-      if not isinstance(kind, type) or not issubclass(kind, Provider):
-        raise TypeError(f'{provider}: provider must implement Provider')
+      kind = provider_class(connection['provider'])
+      if not issubclass(kind, Provider):
+        raise TypeError(f"{connection['provider']}: provider must implement gppu.fs.Provider")
       if kind.scheme in self.location_types and self.location_types[kind.scheme] is not kind:
         raise ValueError(f'{kind.scheme}: provider already registered')
       self.location_types[kind.scheme] = kind
