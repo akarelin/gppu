@@ -1721,7 +1721,7 @@ class _Base:
   its parts. ``my`` is strict, as Env is, and reads the object's own table once _config_from_key names it.
   """
   _logger: logging.Logger
-  _my: dict[str, Any] = {}
+  _my: dict[str, Any] | None = None
 
   def __init_subclass__(cls, **kw):
     super().__init_subclass__(**kw)
@@ -1733,8 +1733,9 @@ class _Base:
   def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
 
   def config(self) -> dict:
-    """What ``my`` reads: the table set by _config_from_key or _config_from_dict, else the whole configuration."""
-    return self._my or Env.data
+    """What ``my`` reads: the table set by _config_from_key or _config_from_dict, else the whole configuration. A
+    bound table that is empty stays empty: an object with its own table never reads another's."""
+    return Env.data if self._my is None else self._my
 
   def my(self, path: str) -> Any:
     result = lookup(path, self.config())
