@@ -32,7 +32,7 @@ archive --schema                the parameters as JSON Schema
 - **Values** come from the command line first. Next comes the app's configuration under the parameter's name, then the signature's default. Anything still missing raises. So an app runs with zero arguments, and flags override configuration.
 - **Services**: a parameter annotated with a Provider receives a Connection. Its value is a connection uid from the `connections` table. With no uid anywhere, the one configured Connection of that Provider is used; none or several raises.
 - **Results**: CliApp prints what `main` returns as JSON on stdout, and logs go to stderr.
-- **Other apps**: `run(Archive, since='3d')` or `run('crap.archive:Archive')` starts another app from code, with the same resolution.
+- **Other apps**: `run(Archive, since='3d')` or `run('crap.archive:Archive')` starts another app from code, with the same resolution. Connections are shared by uid, so the caller's stay open; they close when the command line that started the process returns.
 
 ## Windmill → gppu
 
@@ -93,16 +93,16 @@ Core keeps the import paths that consumers use today: `from gppu.tui import TUIA
 
 | Current | gppu.next | Why |
 |---|---|---|
-| `_mixin`, `mixin_Config`, `_Config`, `mixin_Logger`, `protocol_Logger`, `_Logger` | `_Base` | They were the parts of `_Base`; nothing used them apart |
+| `_mixin`, `mixin_Config`, `_Config`, `mixin_Logger`, `protocol_Logger`, `_Logger` | `_Base` | They were the parts of `_Base`. `_config_from_key` and `_config_from_dict` stay; `_config_from_env` goes, because every app now loads its configuration |
 | `Logger` | `Logger.trace_folder` only | Logging functions are module-level and per-class on `_Base` |
-| `_Base` | `_Base`, strict `my(path)` | The one foundation |
+| `_Base` | `_Base`, strict `my`, `my_int`, `my_list`, `my_dict` | The one foundation. `my` reads the object's own table once `_config_from_key` names it, and an app's parameters read the same table |
 | `_App`, `App` | `App` | One generic app; `App` no longer inherits `_DC` |
 | — | `CliApp` | New: runs `main` once, prints the result |
 | `AsyncApp` (`setup`, `start`, `run`) | `AsyncApp` (`main`, `invoke`) | Same TaskGroup; `main` takes parameters like every app |
 | `TUIApp(mixin_Config, textual.App)` | `gppu.tui.TUIApp(AsyncApp, textual.App)` | A TUI is an AsyncApp; `TUIApp.main()`/`cli()` fallback removed |
-| `Env` (lenient) + `Environment` (strict) | `Env`, strict | Two views of one configuration. `glob(key, default)` is gone, as CLAUDE.md already requires |
+| `Env` (lenient) + `Environment` (strict) | `Env`, strict | Two views of one configuration. `glob(key, default)` is gone, as CLAUDE.md already requires. `Env.Info` and its siblings still log as the app |
 | `State`, `_Rules` | unchanged | |
-| `Vault`, `VaultProvider`, `VaultProviderOSEnviron` | core, unchanged in behaviour | `!secret` resolves while YAML loads |
+| `Vault`, `VaultProvider`, `VaultProviderOSEnviron` | core, unchanged | `!secret` resolves while YAML loads; AZURE_KEYVAULT_NAME imports the Azure provider |
 | `VaultProviderAzure` | `gppu.azure` | Optional dependency; it no longer swallows every exception as "not found" |
 | `_PersistentBase`, `_PGBase`, `_SQABase` | `gppu.postgres.Postgres` | A database is a Connection passed to `main`, not a base class; `_SQABase` has no user |
 | `_PersistentDC` | removed | No user |
@@ -128,6 +128,7 @@ Core keeps the import paths that consumers use today: `from gppu.tui import TUIA
 ## Consumer impact when this replaces gppu
 
 - `glob(key, default)` and `my(key, default)` are gone, because lookups are strict. A few consumers still pass defaults.
+- TUIs that call `_config_from_env()` drop the call.
 - `_PGBase` subclasses take `db: Postgres` in `main`, and the `db` connection string becomes a `connections` row.
 - `MqttApp` subclasses become `AsyncApp` with `mqtt: Mqtt`.
 - Hand-rolled `argparse` in CLI scripts is replaced by `main`'s signature.
@@ -137,4 +138,5 @@ Core keeps the import paths that consumers use today: `from gppu.tui import TUIA
 ```
 PYTHON=~/.venv/Scripts/python.exe gppu.next/run_example.sh archive --since 3d
 ~/.venv/Scripts/python.exe -m pytest gppu.next/tests
+PYTHONPATH=gppu.next/core python -c "import gppu.app, sys; print(sorted({m.split('.')[0] for m in sys.modules} & {'textual','fsspec','psycopg2','aiomqtt','azure'}))"   # [] : core needs no provider
 ```

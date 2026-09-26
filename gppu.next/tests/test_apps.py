@@ -165,3 +165,62 @@ def test_app_name_is_its_file_and_config_is_strict(env):
   assert app.name == 'test_apps'
   with pytest.raises(KeyError): app.my('missing')
   with pytest.raises(KeyError): Env.glob('missing')
+
+
+class Closing(Provider):
+  scheme = 'closing'
+  def close(self): self.connection['closed'] = True
+
+
+class Inner(CliApp):
+  def main(self, res: Closing) -> bool: return res.connection.get('closed', False)
+
+
+class Outer(CliApp):
+  def main(self, res: Closing) -> list:
+    return [run(Inner), res.connection.get('closed', False)]
+
+
+def test_nested_run_leaves_the_callers_connection_open(env, capsys):
+  env(CONFIG | {'connections': CONFIG['connections'] | {'res-1': {'provider': 'closing'}}})
+  assert run(Outer) == [False, False]
+  from gppu import connection
+  res = connection('res-1')
+  Outer.cli([])
+  assert res.connection['closed'] is True   # the command line is the outermost call and closes them
+
+
+class Mounted(TUIApp):
+  def compose(self): yield Log()
+  def on_mount(self): self.query_one(Log).write_line('mounted')
+  async def main(self, queue: Queue) -> None: self.query_one(Log).write_line(f'main {queue.uid}')
+
+
+def test_subclass_on_mount_and_main_both_run(env):
+  env(CONFIG)
+  app = Mounted()
+  async def drive():
+    app._params = app.params()
+    async with app._task_scope():
+      async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        return sorted(app.query_one(Log).lines)
+  assert asyncio.run(drive()) == ['main queue-1', 'mounted']
+
+
+class Scoped(CliApp):
+  def __init__(self):
+    super().__init__()
+    self._config_from_key('scoped')
+  def main(self, since: str) -> list: return [since, self.my_int('limit')]
+
+
+def test_parameters_read_the_apps_own_table(env):
+  env(CONFIG | {'since': 'root', 'scoped': {'since': '2d', 'limit': 3}})
+  assert Scoped().invoke() == ['2d', 3]
+
+
+def test_env_logs_as_the_app(env):
+  env(CONFIG)
+  Env.Info('logged')

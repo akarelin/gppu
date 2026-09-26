@@ -54,7 +54,7 @@ class App(_Base):
 
   def params(self, **given: Any) -> dict[str, Any]:
     """main's keyword arguments: given, then configuration, then defaults, then Connections by type."""
-    return resolve(self.main, given, Env.data)
+    return resolve(self.main, given, self.config())
 
   def main(self, *a, **kw) -> Any: raise NotImplementedError(f'{type(self).__name__} defines no main')
 
@@ -62,11 +62,13 @@ class App(_Base):
 
   @classmethod
   def cli(cls, argv: list[str] | None = None) -> Any:
-    """Start from the command line; ``--schema`` prints the parameters instead."""
+    """Start from the command line; ``--schema`` prints the parameters instead. The process's Connections close
+    when it returns: this is the outermost call, so nothing else still holds them."""
     app = cls()
     given = vars(parser(app.main, app.name).parse_args(argv))
     if given.pop('schema', False): return print(json.dumps(schema(app.main), indent=2))
-    return app._cli(given)
+    try: return app._cli(given)
+    finally: close_all()
 
   def _cli(self, given: dict) -> Any: return self.invoke(**given)
 
@@ -74,9 +76,7 @@ class App(_Base):
 class CliApp(App):
   """Runs ``main`` once. What it returns is printed as JSON on stdout; logs go to stderr."""
 
-  def invoke(self, **given: Any) -> Any:
-    try: return self.main(**self.params(**given))
-    finally: close_all()
+  def invoke(self, **given: Any) -> Any: return self.main(**self.params(**given))
 
   def _cli(self, given: dict) -> Any:
     result = self.invoke(**given)
@@ -160,7 +160,6 @@ class AsyncApp(App, EventLoopBridge):
     finally:
       self._task_group, self._event_loop = None, None
       self._background_tasks.clear()
-      close_all()
 
   def _get_loop(self) -> asyncio.AbstractEventLoop:
     if self._event_loop is None: raise RuntimeError(f'{self!r} is not running')
@@ -186,7 +185,7 @@ def run(app: type[App] | str, /, **given: Any) -> Any:
   """Start another app from code, as Windmill runs a script by path: its class, or ``module:Class``.
 
   Parameters resolve as on its command line, without one. An AsyncApp is awaited when called from a running loop,
-  run to completion otherwise.
+  run to completion otherwise. The Connections it used stay open: they are the caller's too, shared by uid.
   """
   if isinstance(app, str):
     import importlib

@@ -1442,11 +1442,18 @@ class _Env:
     self.config_file: Path | None = None
     self.changed_paths: frozenset[str] = frozenset()
     self._listeners: list[tuple[str, Callable[[frozenset[str]], None]]] = []
+    self._bind_logger(_logger)
+
+  def _bind_logger(self, logger: logging.Logger) -> None:
+    """``Env.Info(...)`` and its siblings log as the app."""
+    for attr, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)):
+      setattr(self, attr, partial(fn, logger=logger))
 
   # -- loading -----------------------------------------------------------------------------
   def from_env(self, name: str, app_path: Path) -> None:
     """``<name>.yaml`` then ``config.yaml``, each also as ``.j2``, searched from app_path upward."""
     self.name, self.app_path = name, app_path
+    self._bind_logger(_logger.getChild(name))
     stem = Path(name).with_suffix('.yaml').name
     names = (stem, f'{stem}.j2', 'config.yaml', 'config.yaml.j2')
     self.config_file = next((parent / n for parent in (app_path, *app_path.parents) for n in names if (parent / n).exists()), None)
@@ -1597,44 +1604,107 @@ class VaultProviderOSEnviron(VaultProvider):
 
 
 class Vault:
-  """Secrets: ``!secret`` in YAML, ``Vault.get`` in code. SECRET_<NAME> first, then the persistent provider.
+  """Static facade for secret operations.
 
-  The persistent provider is a provider package: AZURE_KEYVAULT_NAME selects ``gppu.azure.VaultProviderAzure``.
+  Resolution order on get: OSEnviron (SECRET_<NAME> env var) → persistent provider.
+  Writes go to the persistent provider (Vault.provider). OSEnviron is read-only.
   """
+
   _cache: dict[str, str] = {}
   _provider: VaultProvider | None = None
   _env_provider: VaultProvider = VaultProviderOSEnviron()
 
   @staticmethod
   def provider_set(provider: VaultProvider | None) -> None:
+    """Set the active persistent provider. Pass None to clear and re-detect from env on next use."""
     Vault._provider = provider
     Vault._cache.clear()
 
   @staticmethod
   def provider() -> VaultProvider:
+    """Return the active persistent provider, auto-detecting from env on first call.
+
+    Falls back to VaultProviderOSEnviron when AZURE_KEYVAULT_NAME is not set.
+    """
     if Vault._provider is None:
-      if name := os.environ.get('AZURE_KEYVAULT_NAME'):
-        from gppu.azure import VaultProviderAzure
-        Vault._provider = VaultProviderAzure(name)
-      else: Vault._provider = Vault._env_provider
+      Vault._provider = Vault._detect()
     return Vault._provider
+
+  @staticmethod
+  def _detect() -> VaultProvider:
+    """AZURE_KEYVAULT_NAME → VaultProviderAzure, a provider package (gppu.azure); else env-var fallback."""
+    vault_name = os.environ.get('AZURE_KEYVAULT_NAME')
+    if vault_name:
+      from gppu.azure import VaultProviderAzure
+      return VaultProviderAzure(vault_name)
+    return Vault._env_provider
 
   @staticmethod
   def get(name: str) -> str:
     if name in Vault._cache: return Vault._cache[name]
+
+    checked: list[str] = [type(Vault._env_provider).__name__]
     val = Vault._env_provider.get(name)
-    if val is None and (p := Vault.provider()) is not Vault._env_provider: val = p.get(name)
-    if val is None: raise ValueError(f"!secret '{name}' not found")
+
+    p = Vault.provider()
+    if val is None and p is not Vault._env_provider:
+      val = p.get(name)
+      checked.append(type(p).__name__)
+
+    if val is None:
+      raise ValueError(f"!secret '{name}' not found (checked {', '.join(checked)})")
+
     Vault._cache[name] = val
     return val
 
   @staticmethod
-  def set(name: str, value: str) -> None:
-    Vault.provider().set(name, value)
+  def create(name: str, value: str, designation: str | None = None) -> None:
+    """Create a new secret. Raises if name already exists — use update to overwrite.
+
+    designation: optional suffix appended as '-<designation>' (kebab-lower) to disambiguate
+    when the base name collides with an existing secret.
+    """
+    if Vault._exists(name) and designation:
+      name = f"{name}-{designation.lower().replace('_', '-')}"
+    if Vault._exists(name):
+      raise ValueError(f"Secret '{name}' already exists. Use Vault.update to overwrite.")
+    Vault._write(name, value)
+
+  @staticmethod
+  def update(name: str, value: str, create: bool = False) -> None:
+    """Update an existing secret (creates a new version).
+
+    Raises if the name does not exist, unless create=True — in which case it falls through to create.
+    """
+    if not Vault._exists(name) and not create:
+      raise ValueError(f"Secret '{name}' does not exist. Pass create=True to add it, or use Vault.create.")
+    Vault._write(name, value)
+
+  @staticmethod
+  def _exists(name: str) -> bool:
+    return Vault.provider().get(name) is not None
+
+  @staticmethod
+  def _write(name: str, value: str) -> None:
+    Vault.provider().set(name, value)  # raises NotImplementedError if provider is read-only
     Vault._cache[name] = value
 
   @staticmethod
-  def list() -> list[str]: return sorted(set(Vault._env_provider.list()) | set(Vault.provider().list()))
+  def list() -> list[str]:
+    """List secret names available from the active provider.
+
+    Union of env-var fallback names + persistent provider names; sorted, deduped.
+    """
+    names = set(Vault._env_provider.list())
+    p = Vault.provider()
+    if p is not Vault._env_provider:
+      try: names.update(p.list())
+      except NotImplementedError: pass
+    return sorted(names)
+
+  @staticmethod
+  def cache_clear() -> None:
+    Vault._cache.clear()
 # endregion
 
 
@@ -1648,7 +1718,7 @@ class _Base:
   """Anything that logs as its class and reads configuration: ``self.Info(...)``, ``self.my('key')``.
 
   gppu.next: this is the one foundation; _Logger, _Config, mixin_Logger, mixin_Config and protocol_Logger were
-  its parts. ``my`` is strict, as Env is.
+  its parts. ``my`` is strict, as Env is, and reads the object's own table once _config_from_key names it.
   """
   _logger: logging.Logger
   _my: dict[str, Any] = {}
@@ -1659,9 +1729,26 @@ class _Base:
     for name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)):
       setattr(cls, name, staticmethod(partial(fn, logger=cls._logger)))
 
+  def _config_from_key(self, key: str) -> None: self._my = Env.glob_dict(key)   # this object's own table
+  def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
+
+  def config(self) -> dict:
+    """What ``my`` reads: the table set by _config_from_key or _config_from_dict, else the whole configuration."""
+    return self._my or Env.data
+
   def my(self, path: str) -> Any:
-    result = lookup(path, self._my or Env.data)
+    result = lookup(path, self.config())
     if result is _MISSING: raise KeyError(path)
+    return result
+
+  def my_int(self, path: str) -> int: return int(self.my(path))
+
+  def my_list(self, path: str) -> list:
+    if not isinstance(result := self.my(path), list): raise TypeError(f'{path} is not a list')
+    return result
+
+  def my_dict(self, path: str) -> dict:
+    if not isinstance(result := self.my(path), dict): raise TypeError(f'{path} is not a mapping')
     return result
 # endregion
 
