@@ -41,6 +41,8 @@ CONFIG = {'connections': {'mqtt-test': {'provider': 'fake-mqtt', 'hostname': 'i2
 def test_topic_matching():
   assert topic_matches('a/b/c', 'a/+/c') and topic_matches('a/b/c', 'a/#') and topic_matches('a', 'a/#')
   assert not topic_matches('a/b', 'a/+/c') and not topic_matches('$SYS/x', '#')
+  assert topic_matches('systems/brultech/01122089_ch1', 'systems/brultech/01122089_*')
+  assert not topic_matches('systems/brultech/feed_A', 'systems/brultech/01122089_*')
 
 
 def test_config_topics_reject_overlap():
