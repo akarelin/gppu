@@ -57,6 +57,7 @@ class OSType(Enum):
   MACOS = "MacOS"
   OTHER = "Other"
 
+
 def detect_os() -> OSType:
   sysname = platform.system()
   if sysname == "Windows": return OSType.W11
@@ -65,6 +66,7 @@ def detect_os() -> OSType:
     if "microsoft" in release or "wsl" in release: return OSType.WSL
     return OSType.LINUX
   else: return OSType.OTHER
+
 
 def full_path(path: str | Path, base_dir: str | Path | None = None, *, strict: bool = False) -> Path:
   """
@@ -1597,14 +1599,7 @@ glob_dict = Env.glob_dict
 
 
 # region Vault / Secrets
-# Vault is a static facade over a VaultProvider chain. The default chain assembles
-# VaultProviderOSEnviron + VaultProviderAzure, auto-detected from env
-# (AZURE_KEYVAULT_NAME) on first use. Override the active provider via
-# Vault.provider_set(...). Class names follow the subject-hierarchy convention:
-# VaultProvider, VaultProviderAzure, etc.
-
 class VaultProvider:
-  """Abstract secret-backend provider. Subclass and override get; override set/list if writable/enumerable."""
   def get(self, name: str) -> str | None: raise NotImplementedError
   def set(self, name: str, value: str) -> None: raise NotImplementedError(f"{type(self).__name__} is read-only")
   def list(self) -> list[str]: raise NotImplementedError(f"{type(self).__name__} does not support listing")
