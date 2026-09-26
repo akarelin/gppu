@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import sys
 from collections.abc import Callable, Coroutine
 from concurrent.futures import Future
 from contextlib import asynccontextmanager
@@ -146,7 +147,7 @@ class AsyncApp(App, EventLoopBridge):
     async with self._task_scope():
       return await self.main(**params)
 
-  def _cli(self, given: dict) -> Any: return asyncio.run(self.invoke(**given))
+  def _cli(self, given: dict) -> Any: return run_loop(self.invoke(**given))
 
   @asynccontextmanager
   async def _task_scope(self):
@@ -194,5 +195,11 @@ def run(app: type[App] | str, /, **given: Any) -> Any:
   result = app().invoke(**given)
   if not inspect.iscoroutine(result): return result
   try: asyncio.get_running_loop()
-  except RuntimeError: return asyncio.run(result)
+  except RuntimeError: return run_loop(result)
   return result
+
+
+def run_loop[T](coroutine: Coroutine[Any, Any, T], /) -> T:
+  """Run on a new event loop; on Windows the selector loop, because aiomqtt needs ``add_reader``, which the default
+  Proactor loop lacks. Asyncio subprocesses are what the selector loop gives up there, and no gppu app uses them."""
+  return asyncio.run(coroutine, loop_factory=asyncio.SelectorEventLoop if sys.platform == 'win32' else None)

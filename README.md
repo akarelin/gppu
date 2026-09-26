@@ -87,7 +87,7 @@ gppu (branch next)/
   examples/  tests/  run_example.sh
 ```
 
-Core keeps the import paths that consumers use today: `from gppu.tui import TUIApp` and `from gppu.fs import Location` still work, because `gppu.__path__` is extended by each installed provider. In `core/gppu/gppu.py`, every region above `# region Environment` is copied unchanged from `gppu/gppu.py`. `tui`, `postgres` and `azure` are implemented. `mqtt` shows its surface only, and `fs`, `iot`, `rest`, `data`, `chrome` and `y2` are docstrings naming what moves there unchanged.
+Core keeps the import paths that consumers use today: `from gppu.tui import TUIApp` and `from gppu.fs import Location` still work, because `gppu.__path__` is extended by each installed provider. In `core/gppu/gppu.py`, every region above `# region Environment` is copied unchanged from `gppu/gppu.py`. `tui`, `postgres`, `azure` and `mqtt` are implemented, and `fs`, `iot`, `rest`, `data`, `chrome` and `y2` are docstrings naming what moves there unchanged.
 
 ## Every current class
 
@@ -108,7 +108,7 @@ Core keeps the import paths that consumers use today: `from gppu.tui import TUIA
 | `_PersistentDC` | removed | No user |
 | `DiskCache = None` | removed | Placeholder for a removed class |
 | `Cache`, `Persistence` and their backends | `gppu.data` | Optional dependencies |
-| `mixin_Mqtt`, `MqttApp`, `_MqttConfig`, `Env.from_mqtt` | `gppu.mqtt.Mqtt` | A broker is a Connection; configuration over MQTT becomes `Mqtt.config` |
+| `mixin_Mqtt`, `MqttApp`, `_MqttConfig`, `Env.from_mqtt` | `gppu.mqtt.Mqtt` | A broker is a Connection; configuration over MQTT becomes `Mqtt.config`, and `config(..., wait=True)` replaces `Env.from_mqtt`. An AsyncApp runs on the selector loop on Windows, because aiomqtt needs it |
 | `EventLoopBridge` | core | AsyncApp and the IoT controls share it |
 | `mixin_Rest` | `gppu.rest` | Describes arguments with `params.schema`, so REST and the command line resolve alike |
 | `y2slug`, `y2eid`, `SerializedControl`, `HTTPControl`, `JSONHTTPControl` | `gppu.iot` | Device control is not core |

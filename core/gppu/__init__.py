@@ -10,4 +10,4 @@ from .gppu import *  # noqa: F401,F403  utilities, logging, Env, State, Vault, _
 from .gppu import Env, State, Vault, _Base, _DC, glob, glob_int, glob_list, glob_dict
 from .connections import Provider, connection
 from .params import Param, parameters, schema
-from .app import App, CliApp, AsyncApp, EventLoopBridge, run
+from .app import App, CliApp, AsyncApp, EventLoopBridge, run, run_loop
