@@ -28,7 +28,7 @@ import yaml
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.properties import Properties
 
-from gppu import Env, Info, Provider, Warn, y2topic
+from gppu import AsyncApp, Env, Info, Provider, Warn, y2topic
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 type MqttPayload = JsonValue | bytes
@@ -112,12 +112,15 @@ class Mqtt(Provider):
         except json.JSONDecodeError: pass
 
       async with self._lock:
-        callbacks = [(callback, raise_errors) for pattern, entries in self._callbacks.items()
+        callbacks = [(callback, raise_errors, raw) for pattern, entries in self._callbacks.items()
                      if topic_matches(topic, str(pattern))
-                     for callback, expected, ignore_retained, raise_errors in entries
+                     for callback, expected, ignore_retained, raise_errors, raw in entries
                      if not (ignore_retained and message.retain) and (expected is None or expected == payload)]
-      for callback, raise_errors in callbacks:
-        self._tasks.create_task(self._callback(callback, y2topic(topic), payload, raise_errors))
+      for callback, raise_errors, raw in callbacks:
+        if raw:
+          result = callback(message)
+          if inspect.isawaitable(result): await result
+        else: self._tasks.create_task(self._callback(callback, y2topic(topic), payload, raise_errors))
 
   async def _callback(self, callback: MqttCallback, topic: y2topic, payload: object, raise_errors: bool) -> None:
     async with self._callback_lock:
@@ -130,12 +133,15 @@ class Mqtt(Provider):
 
   # -- what an app does with it ------------------------------------------------------------
   async def listen(self, callback: MqttCallback, topic: y2topic | str, payload: object = None, *,
-                   ignore_retained: bool = False, raise_errors: bool = False, qos: int = 0) -> None:
-    """Call callback for messages on topic (wildcards allowed), only those equal to payload when it is given."""
+                   ignore_retained: bool = False, raise_errors: bool = False, qos: int = 0, raw: bool = False) -> None:
+    """Call callback for messages on topic (wildcards allowed), only those equal to payload when it is given.
+
+    With ``raw``, callback receives the aiomqtt message itself (bytes, retain, MQTT 5 properties) and is awaited in
+    the dispatch loop, in arrival order: what a recorder of the wire needs, at the rate of the wire."""
     topic = y2topic(topic)
     async with self._lock:
       entries = self._callbacks.setdefault(topic, [])
-      entry = (callback, payload, ignore_retained, raise_errors)
+      entry = (callback, payload, ignore_retained, raise_errors, raw)
       if entry not in entries: entries.append(entry)
       old_qos = self._subscriptions[topic] if topic in self._subscriptions else -1
       qos = max(old_qos, qos)
@@ -148,11 +154,6 @@ class Mqtt(Provider):
     topic = y2topic(topic)
     if entries := self._callbacks.get(topic):
       self._callbacks[topic] = [entry for entry in entries if entry[0] is not callback]
-
-  def clear(self) -> None:
-    """Forget every listener and subscription."""
-    self._callbacks.clear()
-    self._subscriptions.clear()
 
   async def publish(self, topic: y2topic | str, payload: MqttPayload = '', *, retain: bool = False, qos: int = 0,
                     expiry: int | None = None, **properties: Any) -> None:
@@ -188,6 +189,50 @@ class Mqtt(Provider):
     self._config_pending.discard(str(topic))
     if not self._config_pending: self._config_received.set()
 
+
+class Mqtt5(Mqtt):
+  """MQTT 5: message expiry and user properties."""
+  PROTOCOL = aiomqtt.ProtocolVersion.V5
+
+
+class MqttApp(AsyncApp):
+  """An AsyncApp whose lifecycle holds its broker: the ``connection`` row of the app's configuration table.
+
+  Before ``main`` runs, the lifecycle builds ``self.mqtt`` from that row, connects, and publishes online when the row
+  has a ``status_topic`` (the will then publishes offline if the process dies). ``main`` prepares what the app needs
+  and spawns lasting work; when it returns, ``on_message`` is subscribed to the row's ``listen`` topics. The
+  connection is kept, reconnecting, until the app stops. An app that only reacts to its configured topics writes
+  ``on_message`` and nothing else.
+
+      recorder:
+        connection: {hostname: mqtt, port: 1883, identifier: recorder, status_topic: status/recorder, listen: ['#']}
+
+      class Recorder(MqttApp):
+        raw = True
+        def on_message(self, message) -> None: ...
+
+  ``mqtt_class`` is the Provider (Mqtt5 for MQTT 5). ``on_message`` takes ``(topic, payload)``, or the aiomqtt
+  message itself when ``raw`` (bytes, retain, MQTT 5 properties, in arrival order); ``qos`` is the listen topics'.
+  """
+  mqtt_class: type[Mqtt] = Mqtt
+  raw = False
+  qos = 0
+  mqtt: Mqtt
+
+  async def main(self) -> None: pass
+
+  def on_message(self, *message: Any) -> Any: raise NotImplementedError(f'{type(self).__name__} listens but defines no on_message')
+
+  async def invoke(self, **given: Any) -> Any:
+    params = self.params(**given)
+    self.mqtt = self.mqtt_class(self.my('connection'))
+    async with self._task_scope():
+      self._spawn(self.mqtt.serve())
+      await self.mqtt.connected.wait()
+      result = await self.call_main(params)
+      for topic in self.mqtt.connection['listen'] if 'listen' in self.mqtt.connection else ():
+        await self.mqtt.listen(self.on_message, topic, qos=self.qos, raw=self.raw)
+      return result
 
 def topic_matches(topic: str, pattern: str) -> bool:
   """MQTT filter matching: ``+`` one level, ``#`` the rest; ``$`` topics only by a ``$`` pattern."""

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from gppu import AsyncApp
-from gppu.mqtt import Mqtt, config_topics, topic_matches
+from gppu.mqtt import Mqtt, MqttApp, config_topics, topic_matches
 
 
 class Broker:
@@ -74,3 +74,31 @@ def test_listen_before_serve_then_publish_and_config(env):
   assert ('svc/status', 'offline', True) in result['published']
   from gppu import Env
   assert Env.glob('dc/scenes/work') == 1 and 'old' not in Env.glob_dict('dc')
+
+
+def test_mqtt_app_takes_broker_will_and_topics_from_its_table(env):
+  env({'recorder': {'connection': {'hostname': 'i2', 'status_topic': 'status/recorder', 'listen': ['dev/#']}}})
+  seen = []
+
+  class Recorder(MqttApp):
+    mqtt_class = FakeMqtt
+    raw = True
+
+    def __init__(self): super().__init__('recorder')
+
+    def on_message(self, message) -> None:
+      seen.append((message.topic, message.payload, message.retain))
+      asyncio.get_running_loop().create_task(self.stop())
+
+  async def run():
+    app = Recorder()
+    running = asyncio.create_task(app.invoke())
+    while 'mqtt' not in vars(app) or not app.mqtt.broker.subscribed: await asyncio.sleep(0)
+    app.mqtt.broker.send('dev/tv/state', '{"on": true}', retain=True)
+    await running
+    return app.mqtt.broker
+
+  broker = asyncio.run(run())
+  assert seen == [('dev/tv/state', b'{"on": true}', True)]
+  assert broker.subscribed == [('dev/#', 0)]
+  assert broker.published[0] == ('status/recorder', 'online', True) and broker.published[-1] == ('status/recorder', 'offline', True)
