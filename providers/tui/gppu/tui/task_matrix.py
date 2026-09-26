@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widget import Widget
@@ -20,7 +21,11 @@ class TaskMatrix(Widget):
 
   Applicable cells start selected unless the caller says which ones do; the
   application's configuration is where that belongs. Space or Enter toggles the
-  current task cell; using either key in the host column toggles that whole row.
+  current task cell; using either key in the first column toggles that whole row.
+
+  ``transposed`` puts tasks in rows and hosts in columns, for more tasks than fit
+  across; a host's status and selection mark then sit in its column header, and
+  clicking the header toggles the host.
   """
 
   DEFAULT_CSS = """
@@ -42,6 +47,7 @@ class TaskMatrix(Widget):
     *,
     selected: Iterable[tuple[str, str]] | None = None,
     id: str | None = None,
+    transposed: bool = False,
   ) -> None:
     super().__init__(id=id)
     self.hosts = tuple(hosts)
@@ -56,13 +62,22 @@ class TaskMatrix(Widget):
     self._states = {cell: 'pending' for cell in self.applicable}
     self._host_status = {}
     self.locked = False
+    self.transposed = transposed
 
   def compose(self) -> ComposeResult:
     yield DataTable(cursor_type='cell', zebra_stripes=True)
 
   def on_mount(self) -> None:
     table = self.query_one(DataTable)
-    table.add_column('Host', key=HOST_COLUMN)
+    if self.transposed:
+      table.add_column('Step', key=HOST_COLUMN, width=max(map(len, self.tasks), default=0) + 2)
+      for host in self.hosts:
+        table.add_column(self._host_label(host), key=host, width=len(host) + 2)
+      for task in self.tasks:
+        table.add_row(self._row_cell(task), *(self._task_cell(host, task) for host in self.hosts), key=task)
+      return
+    # Status glyph, selection mark and name: the status arrives later, so the width is set, not measured.
+    table.add_column('Host', key=HOST_COLUMN, width=max(map(len, self.hosts), default=0) + 4)
     for task in self.tasks:
       table.add_column(task, key=task)
     for host in self.hosts:
@@ -71,6 +86,10 @@ class TaskMatrix(Widget):
         *(self._task_cell(host, task) for task in self.tasks),
         key=host,
       )
+
+  def _update(self, host: str, task: str) -> None:
+    row, column = (task, host) if self.transposed else (host, task)
+    self.query_one(DataTable).update_cell(row, column, self._task_cell(host, task))
 
   @property
   def selected(self) -> tuple[tuple[str, str], ...]:
@@ -90,7 +109,7 @@ class TaskMatrix(Widget):
     if state not in STATES:
       raise ValueError(f'unsupported task state: {state}')
     self._states[cell] = state
-    self.query_one(DataTable).update_cell(host, task, self._task_cell(host, task))
+    self._update(host, task)
 
   def toggle_cursor(self) -> None:
     """Toggle the selected cell, or the whole row from the host column."""
@@ -98,12 +117,11 @@ class TaskMatrix(Widget):
       return
     table = self.query_one(DataTable)
     key = table.coordinate_to_cell_key(table.cursor_coordinate)
-    host = str(key.row_key.value)
-    task = str(key.column_key.value)
-    if task == HOST_COLUMN:
-      self.toggle_host(host)
+    row, column = str(key.row_key.value), str(key.column_key.value)
+    if column == HOST_COLUMN:
+      self.toggle_task(row) if self.transposed else self.toggle_host(row)
     else:
-      self.toggle(host, task)
+      self.toggle(*((column, row) if self.transposed else (row, column)))
 
   def action_toggle_cursor(self) -> None:
     self.toggle_cursor()
@@ -124,13 +142,44 @@ class TaskMatrix(Widget):
       for task in self.tasks
       if (host, task) in self.applicable and self._states[(host, task)] == 'pending'
     )
+    self._flip(cells)
+
+  def toggle_task(self, task: str) -> None:
+    """Select or clear one task on every applicable pending host."""
+    if self.locked:
+      return
+    self._flip(tuple(
+      (host, task)
+      for host in self.hosts
+      if (host, task) in self.applicable and self._states[(host, task)] == 'pending'
+    ))
+
+  def select(self, cells: Iterable[tuple[str, str]]) -> None:
+    """Make exactly these applicable pending cells the selection, as a preset does."""
+    if self.locked:
+      return
+    wanted = set(cells) & self.applicable
+    for cell in self.applicable:
+      if self._states[cell] == 'pending' and (cell in wanted) != (cell in self._selected):
+        self._selected.symmetric_difference_update({cell})
+        self._update(*cell)
+    for host in self.hosts:
+      self._refresh_host(host)
+    for task in self.tasks:
+      self._refresh_task(task)
+
+  def _flip(self, cells: tuple) -> None:
     select = any(cell not in self._selected for cell in cells)
     for cell in cells:
       if select:
         self._selected.add(cell)
       else:
         self._selected.discard(cell)
-    self._refresh_host(host)
+      self._update(*cell)
+    for host in dict.fromkeys(host for host, _ in cells):
+      self._refresh_host(host)
+    for task in dict.fromkeys(task for _, task in cells):
+      self._refresh_task(task)
 
   def toggle(self, host: str, task: str) -> None:
     """Toggle one applicable pending task cell."""
@@ -143,12 +192,30 @@ class TaskMatrix(Widget):
       self._selected.remove(cell)
     else:
       self._selected.add(cell)
-    table = self.query_one(DataTable)
-    table.update_cell(host, task, self._task_cell(host, task))
+    self._update(host, task)
     self._refresh_host(host)
+    self._refresh_task(task)
 
   def _refresh_host(self, host: str) -> None:
-    self.query_one(DataTable).update_cell(host, HOST_COLUMN, self._host_cell(host))
+    table = self.query_one(DataTable)
+    if not self.transposed:
+      table.update_cell(host, HOST_COLUMN, self._host_cell(host))
+      return
+    table.columns[host].label = Text.from_markup(self._host_label(host))
+    table.refresh()
+
+  def _refresh_task(self, task: str) -> None:
+    if self.transposed:
+      self.query_one(DataTable).update_cell(task, HOST_COLUMN, self._row_cell(task))
+
+  def _host_label(self, host: str) -> str:
+    """A column header: the host's status, then its name. Its selection shows in its cells."""
+    return f"{self._host_status.get(host, ' ')} {host}"
+
+  def _row_cell(self, task: str) -> str:
+    cells = tuple((host, task) for host in self.hosts if (host, task) in self.applicable)
+    selected = sum(cell in self._selected for cell in cells)
+    return f"{'☐' if selected == 0 else '☑' if selected == len(cells) else '◪'} {task}"
 
   def _host_cell(self, host: str) -> str:
     cells = tuple((host, task) for task in self.tasks if (host, task) in self.applicable)
@@ -173,3 +240,8 @@ class TaskMatrix(Widget):
   def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
     event.stop()
     self.toggle_cursor()
+
+  def on_data_table_header_selected(self, event: DataTable.HeaderSelected) -> None:
+    event.stop()
+    if self.transposed and event.column_key.value != HOST_COLUMN:
+      self.toggle_host(str(event.column_key.value))
