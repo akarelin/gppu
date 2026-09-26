@@ -1,0 +1,1726 @@
+from __future__ import annotations
+
+import pprint
+import yaml
+from yaml.dumper import Dumper
+from yaml.representer import SafeRepresenter
+from yaml.loader import FullLoader
+from yaml.nodes import Node
+import re
+import os
+
+import inspect
+import logging
+import sys
+import platform
+import asyncio
+import builtins
+import json
+import getpass
+import socket
+from jinja2 import DictLoader, FileSystemLoader, StrictUndefined
+from jinja2.nativetypes import NativeEnvironment
+from jinja2.sandbox import SandboxedEnvironment
+
+from typing import Union, Any, Literal, List, Optional, Tuple, Dict, DefaultDict
+from typing import TypeAlias, ClassVar, Callable, Protocol
+from collections import defaultdict, UserDict, UserList
+from enum import Enum
+from functools import wraps, partial, cache
+from datetime import datetime as dt, timezone
+from zoneinfo import ZoneInfo
+
+from copy import copy, deepcopy
+from pathlib import Path, PurePosixPath, PureWindowsPath
+
+from string import Template
+
+from contextlib import contextmanager
+
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+try: _ver_full = _pkg_version('gppu')
+except PackageNotFoundError: _ver_full = '0.0.0'
+
+
+_ver_parts = _ver_full.split('.')
+VER_GPPU_BASE = '.'.join(_ver_parts[:3])
+VER_GPPU_BUILD = _ver_parts[3] if len(_ver_parts) > 3 else '0'
+VER_GPPU = _ver_full
+
+
+# region OS
+class OSType(Enum):
+  """Operating System type enumeration"""
+  W11 = "W11"
+  LINUX = "Linux"
+  WSL = "WSL"
+  MACOS = "MacOS"
+  OTHER = "Other"
+
+
+def detect_os() -> OSType:
+  sysname = platform.system()
+  if sysname == "Windows": return OSType.W11
+  elif sysname == "Linux":
+    release = platform.release().lower()
+    if "microsoft" in release or "wsl" in release: return OSType.WSL
+    return OSType.LINUX
+  else: return OSType.OTHER
+
+
+def full_path(path: str | Path, base_dir: str | Path | None = None, *, strict: bool = False) -> Path:
+  """
+    Resolve a user-supplied path to a local Path suitable for open()/read/write.
+
+    Expands environment variables and ~. Leaves native absolute paths absolute.
+    Resolves relative paths against base_dir, or cwd when base_dir is None.
+    On Windows, maps WSL-style drive paths like /mnt/d/x to D:\\x.
+
+    If strict=True, requires the resolved path to exist.
+  """
+  raw = os.path.expandvars(str(path))
+
+  if detect_os() == OSType.W11 and len(raw) >= 7 and raw.startswith('/mnt/') and raw[5].isalpha() and raw[6] == '/': result = Path(f'{raw[5].upper()}:\\') / raw[7:]
+  else: result = Path(raw)
+  result = result.expanduser()
+
+  if not result.is_absolute(): result = (Path.cwd() if base_dir is None else full_path(base_dir)) / result
+  
+  return result.resolve(strict=strict)
+# endregion
+
+# region Safe typecasting
+def safe_float(o, default: float = float("NaN")) -> float:
+  if o is None: return default
+  if isinstance(o, str):
+    o = o.removesuffix("°c")
+    o = o.removesuffix("%")
+  try: result = float(o)
+  except: result = default
+  return result
+def safe_int(o, default: int = 0) -> int: return int(_) if (_ := safe_float(o, default)) else default
+def safe_list(o) -> list:
+  result = []
+  if isinstance(o, str): result = [o]
+  elif isinstance(o, list): result = [element for element in o if element]
+  elif isinstance(o, dict): result = list(o.keys())
+  return result
+def safe_timedelta(o: object) -> float:
+  try: then = dt.fromisoformat(str(o)).timestamp()
+  except: then = 0.0
+  return now_ts() - then
+
+MY_TZ = ZoneInfo("America/Los_Angeles")
+def safe_datetime(o: object) -> dt | None:
+  if isinstance(o, int | float): 
+    try: result = dt.fromtimestamp(o, MY_TZ)
+    except (OverflowError, OSError, ValueError): return None
+    return result
+  
+  if isinstance(o, dt):
+    if o.tzinfo is None: return o.replace(tzinfo=MY_TZ)
+    return o.astimezone(MY_TZ)
+
+  if isinstance(o, str):
+    try: result = dt.fromisoformat(o)
+    except: return None
+    if result.tzinfo is None: return result.replace(tzinfo=MY_TZ)
+    return result.astimezone(MY_TZ)
+
+# endregion
+
+
+
+# region Time helpers
+def now_str(): return dt.now().strftime("%Y%m%d.%H%M%S")
+def now_ts(): return dt.now().timestamp()
+
+def timestamp(): return dt.now().strftime("%y%m%d-%H%M")
+def datestamp(): return dt.now().strftime("%y%m%d")
+
+def prepend_datestamp(path, separator=" ") -> Path:
+  datestamp_str = datestamp()  
+  _ = Path(path)
+  return _.parent / f"{datestamp_str}{separator}{_.name}"
+
+def append_timestamp(path, separator=" ") -> Path:
+  timestamp_str = timestamp()
+  _ = Path(path)
+  return _.parent / f"{_.stem}{separator}{timestamp_str}{_.suffix}"
+
+
+def pretty_timedelta(ts) -> str:
+  delta = now_ts() - ts
+  seconds = int(delta)
+  days, seconds = divmod(seconds, 86400)
+  hours, seconds = divmod(seconds, 3600)
+  minutes, seconds = divmod(seconds, 60)
+  if days > 0: return '%dd %dh %dm %ds' % (days, hours, minutes, seconds)
+  elif hours > 0: return '%dh %dm %ds' % (hours, minutes, seconds)
+  elif minutes > 0: return '%dm %ds' % (minutes, seconds)
+  else: return '%ds' % (seconds,)
+# endregion
+
+
+# region Native Types
+class Span:
+  def __contains__(self, value: Span) -> bool:
+    ...
+
+class TimeSpan(Span):
+  start: dt
+  end: dt
+
+  def __init__(self, **kw):
+    self.start = safe_datetime(kw['start'])
+    self.end = safe_datetime(kw['end'])
+    if self.start is None or self.end is None: raise ValueError('TimeSpan requires valid start and end values')
+    if self.end < self.start: raise ValueError('TimeSpan end precedes start')
+
+
+class y2list(UserList):
+  data: List[Any]
+  token: str
+
+  def _any2list(self, o) -> list:
+    result = []
+    if o:
+      if hasattr(o, 'data'): o = o.data
+      if isinstance(o, (list, tuple)): result = [_ for _ in o if _]
+      elif self.token: result = str(o).split(self.token)
+      else: result = re.findall('[a-zA-Z0-9]+', str(o))
+    return result
+
+  def __init__(self, o: Optional[Any] = None) -> None:
+    super().__init__()
+    self.token = ""
+    self.data = self._any2list(o)
+
+
+  def __str__(self): return self.token.join(self.data)
+  def __repr__(self): return self.token.join(self.data)
+  def __eq__(self, other: Any) -> bool:
+    if hasattr(other, 'data'): return self.data == other.data
+    else: return str(self) == str(other)
+  def __hash__(self): return hash(str(self))  # type: ignore
+
+
+  def upper(self): return str(self).upper()
+  def lower(self): return str(self).lower()
+  def encode(self, encoding='utf-8', errors='strict'): return str(self.data).encode(encoding, errors)
+  def iadd(self, o): self.data += self._any2list(o)
+  def to_json(self): return str(self)
+
+
+  @property
+  def head(self) -> Optional[str]: return self.data[0] if len(self.data) > 0 else None
+  @property
+  def tail(self) -> Optional[str]: return self.data[-1] if len(self.data) > 0 else None
+
+
+  def endswith(self, ix) -> bool:
+    slow = str(self).lower()
+    if isinstance(ix, list):
+      for element in ix:
+        if slow.endswith(element.lower()): return True
+      return False
+    if '_' in ix: six = ix.replace('_',self.token)
+    elif '/' in ix: six = ix.replace('/',self.token)
+    else: six = ix.lower()
+    return slow.endswith(six)
+  def startswith(self, ix) -> bool:
+    slow = str(self).lower()
+    if isinstance(ix, list):
+      for element in ix:
+        if slow.startswith(element.lower()): return True
+      return False
+    if '_' in ix: six = ix.replace('_', self.token)
+    elif '/' in ix: six = ix.replace('/', self.token)
+    else: six = ix.lower()
+    return slow.startswith(six)
+
+
+  def extract(self, s:str, default=None):
+    """
+    Removes element by value and returns it or default
+    ! modifies self.data
+    """
+    if s in self.data: return self.data.pop(self.data.index(s))
+    return default
+
+
+  def discard(self, element): self.data = [e for e in self.data if not e == element]
+  def pophead(self) -> Optional[str]: return self.data.pop(0) if len(self.data) > 0 else None
+  def poptail(self) -> Optional[str]: return self.data.pop(-1) if len(self.data) > 0 else None
+  def popsuffix(self, ix):
+    if self.endswith(ix):
+      if '_' in ix and self.token != '_': ix = ix.replace('_',self.token)
+      elif '/' in ix and self.token != '/': ix = ix.replace('/',self.token)
+      self.data = self._any2list(str(self).replace(ix, ''))
+      return self.token.join(self._any2list(ix))
+  def popprefix(self, ix):
+    if self.startswith(ix):
+      if '_' in ix and self.token != '_': ix = ix.replace('_', self.token)
+      elif '/' in ix and self.token != '/': ix = ix.replace('/', self.token)
+      self.data = self._any2list(str(self).replace(ix, ''))
+      return self.token.join(self._any2list(ix))
+  def popxfix(self, ix): return self.popsuffix(ix) or self.popprefix(ix)
+
+
+class y2path(y2list):
+  """
+    A slash-separated path held as a list. An element of the list can be called a segment,
+    as in https://www.rfc-editor.org/rfc/rfc3986.html#section-3.3
+
+    Path methods and properties operate on the current segments: p.read_text(), p.parent.
+    Return values follow pathlib; supplied targets can remain y2path. Segment operators stay unchanged.
+    copy() copies the segments; copy(target, **kwargs) copies the filesystem entry.
+  """
+  def __init__(self, *args):
+    data = []
+    self.token = '/'
+    self._root = ''
+    self._drive_root = False
+
+    for i, a in enumerate(args):
+      if isinstance(a, os.PathLike): a = os.fspath(a)
+      if isinstance(a, str):
+        if os.sep != '/': a = a.replace(os.sep, '/')
+        if i == 0:
+          self._root = '//' if a.startswith('//') else '/' if a.startswith('/') else ''
+          self._drive_root = bool(PureWindowsPath(a).drive and PureWindowsPath(a).root)
+      data += self._any2list(a)
+    self.data = self._any2list(data)
+
+  def __str__(self):
+    result = self._root + super().__str__()
+    if self._drive_root and len(self.data) == 1 and result.endswith(':'): result += '/'
+    return result
+
+  def __fspath__(self) -> str: return str(self)
+
+  def __getattr__(self, name):
+    if name.startswith('__') or 'data' not in self.__dict__: raise AttributeError(name)
+    return getattr(Path(self), name)
+
+  def copy(self, *args, **kwargs):
+    if not args and not kwargs: return super().copy()
+    return Path(self).copy(*args, **kwargs)
+
+  @classmethod
+  def cwd(cls): return cls(Path.cwd())
+
+  @classmethod
+  def home(cls): return cls(Path.home())
+
+  @classmethod
+  def from_uri(cls, uri): return cls(Path.from_uri(uri))
+
+  def __truediv__(self, other: str | y2path) -> y2path:
+    return y2path(self, other)
+
+
+class y2topic(y2path):
+  def is_wildcard(self) -> bool: return bool(set(self.data) & {"#", "+"})
+
+
+class y2uri:
+  """
+    Implements:
+      https://www.rfc-editor.org/info/rfc3986/
+      https://www.w3.org/TR/media-frags/
+      https://www.w3.org/TR/fragid-best-practices
+      https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Query
+      https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Fragment/Media_fragments
+      https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Fragment/Text_fragments
+  
+  """
+  scheme: str
+  path: y2path
+
+  _fragment: str | None
+  _query: str | None
+
+
+  def __init__(self, o: Any, scheme: str | None = None):
+    self._path_absolute = False
+    self._last_segment_empty = False
+
+    if isinstance(o, dict) and 'uri' in o: s = o['uri']
+    else: s = str(o)
+
+    if '://' in s:
+      head, _, s = s.partition('://')
+      if scheme and head and head != scheme: raise ValueError(f"Two schemas in uri {head} {scheme}")
+      self.scheme = head or scheme or 'null'
+    else: self.scheme = scheme or 'null'
+    
+    s, _, self._fragment = s.partition('#')
+    s, _, self._query = s.partition('?')
+
+    self.path = y2path(s.split('/'))
+    self._path_absolute = s.startswith('/')
+    self._last_segment_empty = s.endswith('/') and bool(self.path)
+
+  def __str__(self) -> str:
+    result = f'{self.scheme}://'
+    if self._path_absolute: result += '/'
+    result += str(self.path)
+    if self._last_segment_empty: result += '/'
+    if self._query: result += f'?{self._query}'
+    if self._fragment: result += f'#{self._fragment}'
+    return result
+
+  def __repr__(self) -> str: return str(self)
+  def __hash__(self) -> int: return hash(str(self))
+  def __eq__(self, other): return str(self) == str(other)
+  def to_json(self) -> str: return str(self)
+
+  def __truediv__(self, path: y2path | str) -> 'y2uri':
+    result = copy(self)
+    result.path = self.path / path
+    return result
+
+  @property
+  def query(self) -> str: return self._query
+
+  @query.setter
+  def query(self, value: str) -> None: self._query = value
+
+  @property
+  def fragment(self) -> str | None: return self._fragment
+  
+  @fragment.setter
+  def fragment(self, value: str) -> None: self._fragment = value
+    # elif ':~:' in value:
+    #   anchor, _, directives = value.partition(':~:')
+    #   fields = {}
+    #   if anchor: fields['anchor'] = unquote(anchor)
+    #   fields['text'] = []
+    #   for directive in directives.split('&'):
+    #     name, separator, selector = directive.partition('=')
+    #     if name != 'text' or not separator:
+    #       raise ValueError('Unsupported text fragment directive')
+    #     parts, text = selector.split(','), {}
+    #     if parts[0].endswith('-'): text['prefix'] = unquote(parts.pop(0)[:-1])
+    #     if parts and parts[-1].startswith('-'): text['suffix'] = unquote(parts.pop()[1:])
+    #     if not 1 <= len(parts) <= 2 or not all(parts):
+    #       raise ValueError('Text fragment requires textStart and optional textEnd')
+    #     text['textStart'] = unquote(parts[0])
+    #     if len(parts) == 2: text['textEnd'] = unquote(parts[1])
+    #     fields['text'].append(text)
+    #   self._fragment = fields
+    # elif '=' in value:
+    #   self._fragment = {key: values[0] if len(values) == 1 else values
+    #     for key, values in parse_qs(value.replace('+', '%2B'), keep_blank_values=True).items()}
+    # else:
+      # self._fragment = {'anchor': unquote(value)} if value else {}
+    # fields = self.fragment
+    # if not fields: return ''
+    # if set(fields) == {'anchor'}: return quote(fields['anchor'], safe='')
+    # if 'text' not in fields:
+    #   return urlencode(fields, doseq=True, quote_via=quote, safe=',:')
+    # def escaped(value): return quote(value, safe='').replace('-', '%2D')
+    # directives = []
+    # for text in fields['text']:
+    #   parts = []
+    #   if 'prefix' in text: parts.append(escaped(text['prefix']) + '-')
+    #   parts.append(escaped(text['textStart']))
+    #   if 'textEnd' in text: parts.append(escaped(text['textEnd']))
+    #   if 'suffix' in text: parts.append('-' + escaped(text['suffix']))
+    #   directives.append('text=' + ','.join(parts))
+    # anchor = quote(fields['anchor'], safe='') if 'anchor' in fields else ''
+    # return anchor + ':~:' + '&'.join(directives)
+
+  # def endswith(self, suffix) -> bool: return self.path.endswith(suffix)
+
+  # def __truediv__(self, path: y2path | str) -> 'y2uri':
+  #   if not isinstance(path, (str, y2path)):
+  #     return NotImplemented
+  #   value = str(path)
+  #   if '://' in value:
+  #     raise ValueError('Join a path, not another URI')
+  #   if '?' in value or '#' in value:
+  #     raise ValueError('Join an escaped path; set params and fragment separately')
+  #   if not value:
+  #     return y2uri(self)
+  #   tail = str(self.path)
+  #   base = self.scheme + '://' + (tail.rstrip('/') + '/' if tail else '')
+  #   result = y2uri(base + value.lstrip('/'))
+  #   result.query = self.query
+  #   result.fragment = self.fragment
+  #   return result
+
+  # def __add__(self, path: y2path | str) -> 'y2uri':
+  #   return self / path
+
+# endregion
+
+
+# region Dict utils: deepget, dict_all_paths
+deepdict: Callable[[], DefaultDict[Any, Any]] = lambda: defaultdict(deepdict)
+
+
+def deepget(path: str, d: dict, default=None):
+  if '/' in path and path not in d.keys():
+    _ = dict(d)
+    for pp in path.split('/'):
+      _ = _.get(pp)
+      if not _: break
+    return _ if _ else default
+  return d.get(path, default)
+  # if '/' not in path or path in d: return d.get(path, default)
+  # for p in path.split('/'):
+  #   d = d.get(p)
+  #   if not d: return default
+  # return d  
+  # return reduce(lambda x, k: x.get(k) if x else None, path.split('/'), dict(d)) or default  
+def deepget_int(path: str, d: dict, default: int = 0) -> int:
+  """ Returns int at path, or default if not found """
+  _ = deepget(path, d, default)
+  return _ if isinstance(_, int) else default
+def deepget_float(path: str, d: dict, default: float = float("NaN")) -> float:
+  """ Returns float at path, or default if not found """
+  _ = deepget(path, d, default)
+  return _ if isinstance(_, float) else default
+def deepget_list(path: str, d: dict, default: list = []) -> list:
+  """ Returns list at path, or default if not found """
+  return _ if isinstance(_ := deepget(path, d, default), list) else default
+def deepget_dict(path: str, d: dict, default: dict = {}) -> dict:
+  """ Returns dict at path, or default if not found """
+  return _ if isinstance(_ := deepget(path, d, default), dict) else default
+
+
+def dict_sort_keylen(d, reverse: bool = True) -> dict:
+  if not isinstance(d,dict): return {}
+  return dict(sorted(d.items(), key=lambda key: len(key[0]), reverse=reverse))
+
+
+def dict_element_append(d: dict, key: str, value, unique=False) -> None:
+  """ coerces key value in dict to list, than appends value to it
+      Replaces safe_add_unique """
+  key = str(key)
+  if isinstance(value, list):
+    for v in value: dict_element_append(d, key, v, unique)
+  elif not d.get(key): d[key] = [value]
+  elif isinstance(d[key], str): d[key] = [d[key], value]
+  elif isinstance(d[key], list):
+    if unique and value in d[key]: pass
+    else: d[key] += [value]
+  else: raise Exception(f"Unrecognized type: {type(d[key])}")
+
+
+def dict_all_paths(d: dict) -> list:
+  """Returns all paths in a dict as a list of strings"""
+  result: list = []
+  for key, value in d.items():
+    if isinstance(value, dict):
+      new_keys: list = dict_all_paths(value)
+      result.append(key)
+      for innerkey in new_keys: result.append(f'{key}/{innerkey}')
+    else: result.append(key)
+  return result
+# endregion
+
+
+# region working with yaml files: dict_to_yml, dict_from_yml, dict_sanitize
+KEYS_FORCE_STRING = ['parent', '']
+KEYS_DROP = ['api', 'adapi', 'AD', 'context', 'hide_attributes']
+KEYS_FIRST = ['name', 'seid', 'path']
+
+
+def dict_sanitize(data: dict | list, sort_keys=False) -> dict | list:
+  """Convert nested complex data types for json.dumps or yaml.dumps"""
+  def _sanitize_list(o) -> list:
+    result = []
+  
+    for e in sorted(o, key=lambda x: str(x)):
+      if _isdict(e): _ = _sanitize_dict(e)
+      elif _islist(e): _ = _sanitize_list(e)
+      elif _isnumber(e): _ = e
+      else: _ = str(e) if e else None
+      result.append(_)
+    return result
+
+  def _sanitize_dict(o) -> dict:
+    result = {}
+    if hasattr(o, 'as_dict'): d = o.as_dict()
+    elif hasattr(o, 'data') and isinstance(o.data, dict): d = o.data
+    else: d = dict(o)
+
+    first_keys = [k for k in KEYS_FIRST if k in d]
+    rest_keys = sorted(
+      (k for k in d.keys() if k not in KEYS_FIRST and k not in KEYS_DROP),
+      key=lambda k: str(k) if k else '?',
+    )
+    for k in first_keys + rest_keys:
+      if k in KEYS_DROP: continue
+      v = d.get(k)
+      display_k = str(k) if k else '?'
+      if display_k in KEYS_FORCE_STRING: _ = str(v)
+      elif _isdict(v): _ = _sanitize_dict(v)
+      elif _islist(v): _ = _sanitize_list(v)
+      elif _isnumber(v): _ = v
+      else: _ = str(v) if v else None
+      result[display_k] = _
+    return result
+
+  def _isstring(o) -> bool:
+    relatives = {type(o).__qualname__}
+    relatives |= {c.__qualname__ for c in o.__class__.__mro__}
+    return bool({'y2list', 'str', 'y2topic', 'y2path', 'ADBase'} & relatives)
+  _islist = lambda o: not _isstring(o) and isinstance(o, (list, set))
+  _isdict = lambda o: not _isstring(o) and (isinstance(o, (dict, defaultdict, UserDict)) or hasattr(o, 'as_dict') or (hasattr(o, 'data') and isinstance(o.data, dict)))
+  _isnumber = lambda o: isinstance(o, (float, int))
+
+  if _islist(data): return _sanitize_list(data)
+  elif _isdict(data): return _sanitize_dict(data)
+  else: raise ValueError(f"Unable to sanitize {data}")
+
+
+# def _tuple_representer(dumper: yaml.Dumper, data: tuple) -> yaml.nodes.Node:
+#   return dumper.represent_dict(dict(enumerate(data)))
+def _tuple_representer(dumper: Dumper, data: tuple) -> Node:
+  return dumper.represent_dict(dict(enumerate(data)))
+
+def dict_to_yml(filename: str | Path, data=None, sort_keys=False):
+  class IndentedListDumper(yaml.Dumper):
+    def increase_indent(self, flow=False, indentless=False):
+      return super(IndentedListDumper, self).increase_indent(flow, False)
+
+  assert filename
+  if not data: return
+  redata = dict_sanitize(data, sort_keys=sort_keys)
+
+  yaml.add_representer(defaultdict, SafeRepresenter.represent_dict)
+  yaml.add_representer(UserDict, SafeRepresenter.represent_dict)
+  yaml.add_representer(set, SafeRepresenter.represent_list)
+  yaml.add_representer(tuple, _tuple_representer)
+
+  with open(filename,'w+', encoding='utf-8') as f:
+    try: yaml.dump(redata, f, indent=2, Dumper=IndentedListDumper, sort_keys=False, width=2147483647)
+    except Exception as err:
+      error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(redata)}\n\n"
+      with open(str(filename) + '_error.txt', 'w+', encoding='utf-8') as ferr: ferr.write(error)
+
+
+YML_BARE_INCLUDE = re.compile(r"^!include\s+\S.*$", re.MULTILINE)
+YML_BARE_KEY = '__include_'
+
+
+def dict_from_yml(filename: str | Path, /, **context) -> dict:
+  filename = full_path(filename)
+  dir_stack: list[Path] = [filename.parent]
+  bare_seq = iter(range(1 << 30))
+
+  class YmlLoader(FullLoader): pass
+    # def __init__(self, stream: Any) -> None:
+    #   super().__init__(stream)
+
+
+  def yml_keyed(text: str) -> str:                                                         # `!include` alone on a line has no
+    def key(m): return f'{YML_BARE_KEY}{next(bare_seq)}: {m.group()}'                      # key, which YAML rejects next to
+    return YML_BARE_INCLUDE.sub(key, text)                                                 # other keys; give it a private one
+
+  def yml_merged(data: Any) -> Any:                                                        # ... and merge what it loaded into
+    if not isinstance(data, dict): return data                                             # the document that included it
+    merged: dict = {}
+    for k, v in data.items():
+      if isinstance(k, str) and k.startswith(YML_BARE_KEY): merged.update(v)
+      else: merged[k] = v
+    return merged
+
+  def yml_load(text: str) -> Any: return yml_merged(yaml.load(yml_keyed(text), Loader=YmlLoader))
+
+  def yml_text(fn: Path) -> str:                                                           # a `.j2` document is rendered
+    if fn.suffix.lower() == '.j2': return jinja_document(fn, **context)                    # before YAML reads it, so its
+    with open(fn, encoding='utf-8') as f: return f.read()                                  # macros write the document
+
+  def yml_include(loader: FullLoader, node: Node) -> Any:
+    fn = full_path(loader.construct_scalar(node), dir_stack[-1])
+
+    dir_stack.append(fn.parent)
+
+    try:
+      if fn.suffix.lower().endswith('.json'):                                              # JSON (tabs/escapes YAML rejects)
+        with open(fn, "r", encoding='utf-8') as f: return json.load(f)
+      return yml_load(yml_text(fn))
+    finally: dir_stack.pop()
+
+  def yml_secret(loader: FullLoader, node: Node) -> Any: return Vault.get(loader.construct_scalar(node))
+
+  YmlLoader.add_constructor("!include", yml_include)
+  YmlLoader.add_constructor("!secret", yml_secret)
+
+  data = yml_load(yml_text(filename))
+
+  return dict(data or {})
+
+
+  # with open(filename, encoding='utf-8') as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
+
+
+def dict_to_json(filename: str | Path, data=None, indent=2):
+  assert filename
+  if not data: return
+  with open(filename, 'w', encoding='utf-8') as f:
+    try: json.dump(data, f, indent=indent, ensure_ascii=False, default=str)
+    except Exception as err:
+      error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(data)}\n\n"
+      with open(str(filename)+'_error.txt', 'w', encoding='utf-8') as ferr: ferr.write(error)
+
+
+def dict_from_json(filename: str | Path):
+  with open(filename, encoding='utf-8') as f: return json.load(f)
+
+## _________Code below has deviated from the golden rule                                                  
+## !! templates are simple inline functtions that return lists, dicts or scalars to be merged into dicts.
+def dict_template_populate(o, data: dict = {}, excludes:list = []) -> dict:
+  _ = template_populate(o, data, excludes)
+  return _ if isinstance(_, dict) else {}
+
+
+def template_populate(o, data: dict = {}, excludes:list = []) -> Any:
+  def __tp(o: dict | str, data: dict) -> Any:
+    result: Any = None
+    if not data: data = {}
+
+    if not o: return None
+    if isinstance(o, dict):
+      result = {}
+      for k, old in o.items():
+        if k in excludes or inspect.isfunction(old): new = old
+        else: new = __tp(old, o | data)
+        result[k] = new
+    elif isinstance(o, list):
+      result = []
+      for old in o:
+        new = __tp(old, data)
+        result.append(new)
+    elif isinstance(o, (int, bool, float)): result = o
+    elif inspect.isfunction(o): result = o
+    else:
+      if str(o) == 'DEL': result = None
+      elif '$' in str(o): 
+        _ = str(Template(str(o)).safe_substitute(data))
+        if _[0] == '[' and _[-1] == ']':
+          result = []
+          _ = _[1:-1]
+          for element in _.split(','):
+            element = element.strip()
+            if element.isdecimal(): element = int(element)
+            elif element.isnumeric(): element = float(element)
+            result.append(element)
+        else: result = _
+      else: result = o
+    return result
+
+  if isinstance(o, dict): _ = o.get('data', {}) | o
+  else: _ = str(o)
+  return __tp(_, data)
+
+
+
+def jinja_helpers() -> dict:
+  """gppu's own filters, offered to every Jinja environment it builds."""
+  return {
+    'safe_int': safe_int, 'safe_float': safe_float, 'safe_list': safe_list,
+    'safe_timedelta': safe_timedelta, 'dict_sanitize': dict_sanitize,
+    'pretty_timedelta': pretty_timedelta, 'pfy': pfy, 'slugify': slugify,
+  }
+
+
+class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
+  """Jinja templates with native values and gppu's formatting helpers."""
+
+  def __init__(self, **options):
+    super().__init__(undefined=StrictUndefined, autoescape=False, **options)
+    self.filters.update(jinja_helpers())
+    self.globals.update(jinja_helpers())
+
+
+class JinjaDocument(SandboxedEnvironment):
+  """Jinja templates that write a document rather than a value.
+
+  A value is rendered natively, so `{{ 1 }}` is the number. A document must not be:
+  a macro that writes `"seven"` would have its quotes evaluated away and the YAML it
+  was building would stop being YAML. This renders text, and reaches the files beside
+  the template so a document can import macros and read the facts it applies them to.
+  """
+
+  def __init__(self, search_path: Path, **options):
+    super().__init__(loader=FileSystemLoader(str(search_path)), undefined=StrictUndefined, autoescape=False,
+                     trim_blocks=True, lstrip_blocks=True, keep_trailing_newline=True, **options)
+    self.filters.update(jinja_helpers())
+    self.globals.update(jinja_helpers())
+    self.filters['from_yaml'] = lambda name: dict_from_yml(full_path(name, search_path))
+    self.filters['to_yaml'] = lambda value: yaml.safe_dump(value, default_flow_style=True).strip()
+    self.globals['hostname'] = lambda: socket.gethostname().split('.')[0].casefold()
+    # The builtins a document needs to merge a row onto its template and count what
+    # it loops over; the same set Y2 gives its own templates.
+    self.globals.update({name: getattr(builtins, name) for name in
+                         ('dict', 'list', 'int', 'float', 'str', 'len', 'sorted', 'min', 'max', 'range')})
+
+
+@cache
+def _jinja_compile(template: str):
+  return JinjaEnvironment().from_string(template)
+
+
+def jinja_template(template: str, /, **data) -> Any:
+  """Render Jinja to a string, scalar, list or mapping; missing inputs raise."""
+  value = _jinja_compile(template).render(**data)
+  if isinstance(value, StrictUndefined): str(value)
+  return value
+
+
+def jinja_document(filename: str | Path, /, **data) -> str:
+  """Render a template file to text, with its own directory as the search path."""
+  filename = full_path(filename)
+  return JinjaDocument(filename.parent).get_template(filename.name).render(**data)
+
+
+class TemplateSet:
+  """The macros, generators and templates of one configuration, compiled once.
+
+  A template generates the dict an object is built from, at startup only. A row names
+  the template it is an instance of — one name, or a list applied in order — and
+  carries only what differs. A template value written in Jinja renders against the
+  merged row, so the template says in one place what it computes; a value the row
+  carries is data and is never rendered. Resolving a row is
+
+      1. template = the named templates, in order          (rightmost wins)
+      2. values   = template | row
+      3. data     = generator(values) | template | row      (rightmost wins)
+      4. each Jinja value of the template renders against data, in template order
+      5. data     = data | behavior(data)
+
+  so an explicit value always beats a computed one. A generator and a behavior are
+  named Jinja templates that return an object, never text; a behavior runs after the
+  merge and so is the only thing that can rewrite a key the row itself carries. A row
+  un-inherits a key its template carries by setting it to null.
+
+  A `*_templates` block holds named templates that render later — the grammar of an
+  address, the payload of a command — with what a rule knows then:
+  `render_template(name, **values)`. A row names one; it is data until rendered. The
+  blocks are the configuration's, not one table's, so any rule may render any of them.
+
+  A template declares what its rows reference with `refs`, field to table:
+  `{connections: connections}` says the field's value (or each of its values, or each
+  of its keys) is a row of the `connections` table; `{'smb/*': connections}` says every
+  key of the row shaped `smb/<name>` references one. A table is a mapping at a slash
+  path of the context, or a list of such paths. A reference nothing answers fails the
+  resolution naming row, field and value.
+  """
+
+  RESERVED = ('template', 'generator', 'behavior', 'refs')
+  BUILTINS = ('dict', 'list', 'int', 'float', 'str', 'bool', 'len', 'round', 'sorted', 'min', 'max', 'range')
+
+  def __init__(self, macros: str = '', generators: dict | None = None, templates: dict | None = None,
+               context: dict | None = None, named: dict[str, dict] | None = None, **globals):
+    self.environment = JinjaEnvironment()
+    self.environment.globals.update(context or {})
+    self.environment.globals.update(globals)
+    self.environment.globals.update({name: getattr(builtins, name) for name in self.BUILTINS})
+    self.environment.globals['re'] = re
+    self.named = {name: source for block in (named or {}).values() for name, source in block.items()}   # the table's
+    self.environment.loader = DictLoader(self.named)                                                    # *_templates
+    self.environment.globals.update(named or {})                                                        # blocks, by name
+    self.environment.globals['render_template'] = self.render_template
+    if macros:                                                                             # every macro the block
+      module = self.environment.from_string(macros).make_module()                          # defines, callable by
+      self.environment.globals.update({name: getattr(module, name)                         # name from any generator
+                                       for name in dir(module) if not name.startswith('_')})
+    self.templates = dict(templates or {})
+    self.generators = {name: self.environment.from_string(source)
+                       for name, source in (generators or {}).items()}
+
+  def render_template(self, name: str, /, **values) -> Any:
+    """A named template of the table, rendered with these values: the grammar a row names,
+    filled in later by a rule with what it knows then."""
+    if name not in self.named: raise KeyError(f'no named template {name!r}')
+    return self.environment.get_template(name).render(values)
+
+  def _computed(self, name: str, values: dict) -> dict:
+    if name not in self.generators: raise KeyError(f'no generator named {name!r}')
+    computed = self.generators[name].render(values)
+    if not isinstance(computed, dict): raise TypeError(f'generator {name!r} returned {type(computed).__name__}, not an object')
+    return computed
+
+  def layers(self, row: dict) -> list[dict]:
+    """The templates a row names, in the order they apply."""
+    names = row.get('template') or []
+    if isinstance(names, str): names = [names]
+    for name in names:
+      if name not in self.templates: raise KeyError(f'{self._label(row)}: no template named {name!r}')
+    return [self.templates[name] for name in names]
+
+  def template(self, row: dict) -> dict:
+    """The row's templates merged, rightmost winning; `refs` merged across them."""
+    merged, refs = {}, {}
+    for layer in self.layers(row):
+      merged |= layer
+      refs |= layer.get('refs') or {}
+    if refs: merged['refs'] = refs
+    return merged
+
+  def values(self, row: dict) -> dict:
+    """The template's data with the row over it: what the generator is given."""
+    return self.template(row) | row
+
+  def resolve(self, row: dict) -> dict:
+    template = self.template(row)
+    values = template | row
+    computed = self._computed(values['generator'], values) if values.get('generator') else {}
+    data = computed | template | row
+    pending = [key for key, value in template.items()                                      # a Jinja value of the template
+               if key not in row and key not in self.RESERVED and self._is_jinja(value)]    # renders against the merged row;
+    while pending:                                                                         # the row's own value is data and
+      key = pending.pop(0)                                                                 # is never rendered. It sees what
+      settled = {k: v for k, v in data.items() if k != key and k not in pending}           # is settled: a value still to be
+      data[key] = self.environment.from_string(template[key]).render(settled)              # rendered is not a name yet
+    if name := values.get('behavior'): data = data | self._computed(name, data)
+    self.check(self._label(row), data, template.get('refs') or {})
+    return {k: v for k, v in data.items() if k not in self.RESERVED and v is not None}
+
+  def resolve_all(self, rows) -> list[dict] | dict:
+    """Every row of a list, or every value of a mapping keyed by name."""
+    if isinstance(rows, dict): return {name: self.resolve(row) for name, row in rows.items()}
+    return [self.resolve(row) for row in rows]
+
+  def check(self, label: str, data: dict, refs: dict) -> None:
+    """Every reference the row makes is a row of the table it names."""
+    for field, tables in refs.items():
+      tables = [tables] if isinstance(tables, str) else list(tables)
+      if '*' in field:
+        prefix, _, suffix = field.partition('*')
+        names = [key[len(prefix):len(key) - len(suffix)] for key in data
+                 if key.startswith(prefix) and key.endswith(suffix) and len(key) > len(prefix) + len(suffix)]
+      else:
+        value = data.get(field)
+        names = [] if value is None else [value] if isinstance(value, str) else list(value)
+      for name in names:
+        if not any(name in self.table(path) for path in tables):
+          raise KeyError(f'{label}: {field} names {name!r}, which is not in {" or ".join(tables)}')
+
+  def table(self, path: str) -> dict:
+    """The mapping at a slash path of the context."""
+    table = deepget(path, self.environment.globals)
+    if not isinstance(table, dict): raise KeyError(f'no table at {path!r}')
+    return table
+
+  @staticmethod
+  def _is_jinja(value) -> bool: return isinstance(value, str) and ('{{' in value or '{%' in value)
+
+  @staticmethod
+  def _label(row: dict) -> str: return str(row.get('uid') or row.get('name') or 'row')
+# endregion
+
+
+
+# region Human-readable formatters
+def pfy(object) -> str: return "\n"+pprint.pformat(object, indent=4, width=40, compact=True)
+def slugify(o) -> str:
+  """Converts any object to string, then slugifies it"""
+  return re.sub(r'[^a-zA-Z0-9_]', '_', str(o).lower())
+
+def format_size(size: int | float) -> str:
+  """Format byte count as '0 B', '1.5 KB', '2.3 MB', '4.5 GB', '7.8 TB'.
+
+  Powers-of-1024 (binary). One decimal for KB+, two for TB.
+  """
+  size = float(size)
+  if size < 1024:                  return f"{int(size)} B"
+  if size < 1024 ** 2:             return f"{size / 1024:.1f} KB"
+  if size < 1024 ** 3:             return f"{size / 1024 ** 2:.1f} MB"
+  if size < 1024 ** 4:             return f"{size / 1024 ** 3:.1f} GB"
+  return f"{size / 1024 ** 4:.2f} TB"
+
+
+def format_duration(seconds: int | float) -> str:
+  """Format a duration as '0s' / '5s' / '12m 30s' / '2h 5m'.
+
+  Input is seconds (use ``ms / 1000`` for millisecond inputs).  Returns
+  ``'-'`` for negative values; ``0`` formats as ``'0s'`` so callers using
+  this for uptime get a legitimate zero rather than a placeholder.
+  """
+  seconds = float(seconds)
+  if seconds < 0: return "-"
+  if seconds < 60: return f"{seconds:.0f}s"
+  if seconds < 3600:
+    m, s = divmod(seconds, 60)
+    return f"{int(m)}m {int(s)}s"
+  h, rem = divmod(seconds, 3600)
+  m, _ = divmod(rem, 60)
+  return f"{int(h)}h {int(m)}m"
+
+
+def format_since(when) -> str:
+  """Compact "time since" — '5s', '5m', '2h', '3d', '4w', '6mo', '2y'.
+
+  Accepts ISO-8601 string, ``datetime``, or epoch seconds (int/float).
+  Returns empty string on parse failure.  Negative deltas (future timestamps)
+  return ``'0s'``.
+  """
+
+  moment = None
+  if isinstance(when, dt):
+    moment = when
+  elif isinstance(when, (int, float)):
+    moment = dt.fromtimestamp(float(when), tz=timezone.utc)
+  elif isinstance(when, str):
+    s = when.strip()
+    if not s: return ""
+    if s.endswith('Z'): s = s[:-1] + '+00:00'
+    try: moment = dt.fromisoformat(s)
+    except ValueError: return ""
+  else:
+    return ""
+
+  if moment.tzinfo is None:
+    moment = moment.replace(tzinfo=dt.now().astimezone().tzinfo)
+
+  secs = int((dt.now(timezone.utc) - moment).total_seconds())
+  if secs < 0:    return "0s"
+  if secs < 60:   return f"{secs}s"
+  mins = secs // 60
+  if mins < 60:   return f"{mins}m"
+  hrs = mins // 60
+  if hrs < 24:    return f"{hrs}h"
+  days = hrs // 24
+  if days < 7:    return f"{days}d"
+  if days < 30:   return f"{days // 7}w"
+  if days < 365:  return f"{days // 30}mo"
+  return f"{days // 365}y"
+# endregion
+
+
+
+
+# region Async helpers
+def sync(func: Callable) -> Callable:
+  """Wrapper to call async functions without await from synchronous code."""
+  @wraps(func)
+  def wrapper(*args, **kwargs):
+    coro = func(*args, **kwargs)
+    try:
+      loop = asyncio.get_running_loop()
+    except RuntimeError:
+      return asyncio.run(coro)
+    return loop.create_task(coro)
+  return wrapper
+# endregion
+
+
+# region PCP - Pretty Colored Print and colorize - utility
+class _TColorHack(type):
+  def __getitem__(cls, key): return getattr(cls, str(key), None)
+  def __contains__(cls, key): return hasattr(cls, str(key))
+
+  def print(cls):
+    l = []
+    for name in dir(cls):
+      colorcode = getattr(cls, name)
+      if isinstance(colorcode, str): l.append(colorcode)
+      l.append(name)
+    print(_colorize_list(l))
+
+
+class TColor(metaclass=_TColorHack):
+  NONE = '0m'             # No color (text)
+  DIM = '38;5;8;1'        # Dim gray (text)
+  BRIGHT = '36;1'         # Bright cyan (text)
+  BW = '38;5;15;1'        # Bright white (text)
+  DW = '38;5;7;1'         # Dark white (text)
+  INFO = '34;1'           # Bright blue (text, for info messages)
+  WHITE = '0;30;47'       # Black on White (background)
+  YELLOW = '0;30;43'      # Black on Yellow (background)
+  RED = '0;30;41'         # Black on Red (background)
+  BLUE = '0;30;44'        # Black on Blue (background)
+  GREEN = '0;30;42'       # Black on Green (background)
+
+  GRAY0 = '38;5;237'      # Darkest gray (text)
+  GRAY1 = '38;5;238'      # Gray (text)
+  # GRAY2 = '38;5;239'      # Gray (text)
+  GRAY2 = '38;5;243'      # Gray (text)
+  GRAY3 = '38;5;246'      # Gray (text)
+  GRAY4 = '38;5;249'      # Lightest gray (text)
+
+  BY = '38;5;11;1'        # Bright yellow (text)
+  DY = '38;5;3;1'         # Dark yellow (text)
+  BG = '38;5;10;1'        # Bright green (text)
+  DG = '38;5;2;1'         # Dark green (text)
+ 
+  # BB = '3;30;44'          # Black on Blue (background)
+  DB = '38;5;4;1'         # Dark blue (text)
+
+  BC = '38;5;6;1'         # Bright cyan (text)
+  DC = '38;5;14;1'        # Dark cyan (text)
+  BM = '38;5;13;1'        # Bright magenta (text)
+  DM = '38;5;5;1'         # Dark magenta (text)
+  BR = '38;5;9;1'         # Bright red (text)
+  DR = '38;5;1;1'         # Dark red (text)
+  BP = '38;5;129;1'       # New: Bright purple (text)
+  DP = '38;5;90;1'        # New: Dark purple (text)
+  BO = '38;5;130;1'       # New: Bright orange (text)
+  DO = '38;5;130;1'       # New: Dark orange (text)
+  PINK = '38;5;200;1'     # New: Bright pink (text)
+  DPINK = '38;5;132;1'    # New: Dark pink (text)
+  BGOLD = '38;5;220;1'    # New: Bright gold (text)
+  DGOLD = '38;5;178;1'    # New: Dark gold (text)
+
+  ORANGE = BO   # New: Bright orange (text)
+  PURPLE = BP   # New: Bright purple (text)
+
+  WRED = '0;37;41'        # White on Red (background)
+  WBLUE = '0;37;44'       # White on Blue (background)
+  WGREEN = '0;37;42'      # White on Green (background)
+  WGRAY = '0;30;47'       # Black on Light Gray (background)
+  WPINK = '0;30;45'       # Black on Pink (background)
+  WPURPLE = '0;37;45'     # White on Purple (background)
+  #WYELLOW = '0;37;43'     # White on Yellow (background)
+  WYELLOW = '7;49;93'     # White on Yellow (background)
+
+
+def pcp(*a: str | List[Any] | Tuple[Any, ...], **kw: Any) -> str:
+  """
+  Pretty colored print. Returns: colored string
+  
+  Parameters:
+    verbose: adds pfy(kwargs) to output
+    silent: suppresses local print output
+    
+  """
+  if len(a) == 1 and isinstance(a[0], tuple): a = tuple(a[0])
+  out: str = ""
+  verbose = kw.pop('verbose', False)
+  silent = kw.pop('silent', False)
+  level = kw.pop('level', None)
+  
+  if 'msg' in kw:
+    msg = kw.get('msg')
+    out = _colorize_log(msg=msg, level=level)
+    if a: out += _colorize_list(a) # type: ignore
+  else: out = _colorize_list(a) # type: ignore
+  if kw and verbose: out += pfy(kw)
+
+  # if not silent: print(out)
+  if not out.endswith('\u001b[0m'): out = out + '\u001b[0m' # Check if color reset is already present
+  return out
+
+
+_remove_prefixes = lambda s, prefixes: next((s.removeprefix(prefix) for prefix in prefixes if s.startswith(prefix)), s)
+_SHORTEN_BY_PREFIX = ['process_', '_cb_']
+_IGNORE_FUNCTIONS = ['dpcp', 'trace', 'pcp', 'Trace', 'Info', 'Debug', 'Warn', 'Error', '_LogColorizer', '_PlainFormatter']
+_SEVERITY_COLORS = {'Error': 'WRED', 'Warn': 'WYELLOW', 'Info': 'WBLUE', 'Debug': 'GRAY4', None: 'WPURPLE'}
+def dpcp(*a: Any, conditional: Optional[bool] = None, rules: Dict[str, bool] = {}, no_prefix: bool = False, severity: Optional[str] = None, **kw: Any) -> str | None:
+  """ Version of pcp that adds info on where it was called from """
+  def is_traced(name : Optional[str] = None) -> bool:
+    if not conditional: return True
+    if not name or name not in rules: return rules.get('all', False)
+    else: return rules.get(name, False)
+
+  def is_ignored(f, fi) -> bool:
+    if 'python' in fi.filename: return True # !!! Ignoring all python3 libraries
+    elif fi.function in _IGNORE_FUNCTIONS: return True
+    elif 'self' in f.f_locals and f.f_locals['self'].__class__.__name__ in _IGNORE_FUNCTIONS: return True
+    return False
+
+  print = lambda *a, **kw: None
+
+  if not conditional and rules: conditional = True
+  frame = inspect.currentframe()
+  if frame is None: return None
+  frame_info = inspect.getframeinfo(frame)
+  func_name = frame_info.function
+  filename = frame_info.filename
+
+  frame = frame.f_back
+  while frame and frame.f_back:
+    frame = frame.f_back
+    frame_info = inspect.getframeinfo(frame)
+    filename = frame_info.filename
+    func_name = frame_info.function
+    if not is_ignored(frame, frame_info): break
+
+    func_name = _remove_prefixes(func_name, _SHORTEN_BY_PREFIX)
+
+  if frame is None: print(f"\tframe is None"); return None
+
+  if not is_traced(func_name): print(f"\tis_traced({func_name}) is False"); return None
+  module = filename.rsplit('/', 1)[-1].rsplit('.', 1)[0]
+  if not is_traced(module) or not is_traced(f"{module}.{func_name}"): print(f"\tis_traced({module}.{func_name}) is False"); return None
+
+  if 'self' in frame.f_locals: 
+    if not is_traced(class_name := frame.f_locals["self"].__class__.__name__): print(f"\tis_traced({class_name}) is False"); return None
+    if not is_traced(f"{class_name}.{func_name}"): print(f"\tis_traced({class_name}.{func_name}) is False"); return None
+    _ = ['GRAY0', f"{class_name}.", 'GRAY1', f".{func_name}"]
+  else: _ = ['GRAY1', f".{func_name}"]
+  _ += ['NONE']
+
+  if severity: _ = [_SEVERITY_COLORS.get(severity, _SEVERITY_COLORS[None]), severity] + _
+  if no_prefix: _ = list(a)
+  else: _ += list(a)
+
+  result = pcp(*_, **kw)
+  # Never return None - return empty string instead to prevent logging issues
+  return result if result is not None else ''
+
+
+def _colorize_log(msg, level=None, *args) -> str:
+  if isinstance(msg, tuple): msg = _colorize_list(msg) # type: ignore
+  elif level:
+    if level in ['CRITICAL', 'ERROR']: c1, c2 = 'BR', 'BRIGHT'
+    elif level in ['WARN', 'WARNING']: c1, c2 = 'BY', 'BRIGHT'
+    elif level in ['INFO']: c1, c2 = 'BLUE', 'INFO'
+    elif level in ['DEBUG']: c1, c2 = 'DIM', 'DIM'
+    else: c1, c2 = 'DIM', 'INFO'
+    msg_list = [c1, level, c2, msg] + list(args)
+    msg = _colorize_list(msg_list)
+  return msg
+
+
+def _colorize_list(l: List[Union[str, TColor]]) -> str:
+  """ Colorizes list of strings. Strings separated with space unless start with . or / """
+  result: List[str] = []
+  colorcode = None
+
+  for e in [e for e in l if e]:
+    if isinstance(e, TColor): colorcode = e; continue
+    e = str(e)
+    if e[0] in "./": separator = ''; e = e[1:]
+    else: separator = ' '
+
+    if e in TColor: colorcode = TColor[e]; continue
+    elif colorcode: elem = _colorize(text=str(e), colorcode=colorcode) # type: ignore
+    else: elem = str(e)
+
+    if e[0] in "./" and result: result += [elem]
+    elif not result: result += [elem]
+    else: result += [separator+elem]
+    
+  return ''.join(result)  # Reset color at the end
+
+
+def _colorize(text: str, colorcode:str, fmt=None):
+  """
+    Print a string in a given color.
+    fmt: accepts formatting syntax with < and > anchors
+  """
+  # ESC = '\u001b'
+  ESC = '\033'  # ANSI escape code for terminal colors
+  NOP = ESC + '[0m'
+  if (color := colorcode):
+    if color[0] == ESC and color[1] == '[': pass
+    elif color[0] == ESC: color = ESC + '[' + color[1:]
+    else: color = ESC + '[' + color
+
+    if color[-1] == 'm': pass
+    else: color += 'm'
+  else: color = NOP
+  right, pad = False, ''
+  text = str(text)
+  if fmt:
+    if fmt[0] in "<>": right = fmt[0] == '>'; fmt = fmt[1:]
+    maxlen = safe_int(fmt)
+
+    text = text[-maxlen:] if right else text[0:maxlen]
+    if (l := len(text)) < maxlen: pad = ' ' * (maxlen - l)
+
+  text = color + text + NOP
+  return pad + text if right else text + pad
+
+
+
+_ANSI = re.compile(r'\x1b\[[0-9;]*m')
+
+
+def _traced(record: logging.LogRecord) -> bool:
+  if record.levelno != logging.DEBUG: return True
+  function = _remove_prefixes(record.funcName or '', _SHORTEN_BY_PREFIX)
+  names = [function, record.module, f'{record.module}.{function}']
+  if class_name := getattr(record, 'gppu_class', ''):
+    names += [class_name, f'{class_name}.{function}']
+  return all(TRACE_RULES[name] if name in TRACE_RULES else TRACE_RULES.get('all', False) for name in names)
+
+
+def _fmt(record: logging.LogRecord, *, no_prefix: bool = False) -> str:
+  args = list(record.gppu_args) if hasattr(record, 'gppu_args') else [record.getMessage()]
+  if not no_prefix:
+    function = _remove_prefixes(record.funcName or '', _SHORTEN_BY_PREFIX)
+    class_name = getattr(record, 'gppu_class', '')
+    caller = f'{class_name}.{function}' if class_name else function
+    severity = 'Warn' if record.levelno == logging.WARNING else record.levelname.title()
+    color = _SEVERITY_COLORS.get(severity, _SEVERITY_COLORS[None])
+    args = [color, severity, 'GRAY1', caller, 'NONE'] + args
+  text = pcp(*args)
+  if record.exc_info:
+    text += '\n' + logging.Formatter().formatException(record.exc_info)
+  if record.stack_info: text += '\n' + record.stack_info
+  return text
+
+
+class _LogColorizer(logging.Formatter):
+  def format(self, record: logging.LogRecord) -> str:
+    return _fmt(record)
+# endregion
+
+
+# region Logger
+# ^~            Logger                                            
+TRACE_RULES: dict = {}
+
+_log_root = logging.getLogger('gppu')
+_log_root.setLevel(logging.DEBUG)
+_logger = _log_root
+
+
+class _EmptyMessageFilter(logging.Filter):
+  def filter(self, record: logging.LogRecord) -> bool:
+    return _traced(record) and bool(record.getMessage().strip() or record.exc_info)
+
+
+_sh = logging.StreamHandler(sys.stderr)
+_sh.setLevel(logging.DEBUG)
+_sh.setFormatter(_LogColorizer())
+_sh.addFilter(_EmptyMessageFilter())
+_logger.addHandler(_sh)
+
+
+class _PlainFormatter(logging.Formatter):
+  def format(self, record: logging.LogRecord) -> str:
+    return _ANSI.sub('', _fmt(record, no_prefix=True))
+
+
+# File handlers live on the shared parent so pre-existing mixins receive them.
+_file_handlers: dict[str, logging.Handler] = {}
+
+
+def enable_file_logging(name: str | None = None, log_dir: str | Path | None = None,
+                        level: int = logging.DEBUG) -> Path:
+  """Mirror logs to Env's explicit `log_file`, or an explicit name + log_dir.
+
+  Env enables this automatically when YAML declares `log_file`. No directory
+  or filename is inferred. Creation errors propagate to the caller.
+  """
+  if log_dir is not None:
+    if not name: raise ValueError('File logging with log_dir requires a name')
+    path = full_path(Path(log_dir) / f'{name}.log')
+  else:
+    value = Env.glob('log_file')
+    if not isinstance(value, str) or not value.strip():
+      raise ValueError('File logging requires an explicit log_file in configuration')
+    path = full_path(value)
+  path.parent.mkdir(parents=True, exist_ok=True)
+  key = str(path)
+  if key in _file_handlers:
+    return path
+  from logging.handlers import RotatingFileHandler
+  fh = RotatingFileHandler(path, maxBytes=4_000_000, backupCount=5, encoding='utf-8')
+  fh.setLevel(level)
+  fh.setFormatter(_PlainFormatter())
+  fh.addFilter(_EmptyMessageFilter())
+  _log_root.addHandler(fh)
+  _file_handlers[key] = fh
+  return path
+
+
+def file_log(msg: str, *args, level: int = logging.INFO) -> None:
+  """Emit a line only to gppu's file handler(s), bypassing the console handler.
+
+  For Textual TUI apps whose visible "console" is the on-screen panel: this
+  mirrors panel lines into the log file without writing to stderr (which would
+  corrupt the live TUI). No-op when file logging isn't enabled.
+  """
+  if not _file_handlers:
+    return
+  record = _logger.makeRecord(_logger.name, level, '(app)', 0,
+                              _ANSI.sub('', pcp(msg, *args)), (), None,
+                              func='file_log', extra={'gppu_args': (msg, *args)})
+  for h in _file_handlers.values():
+    if record.levelno >= h.level:
+      h.handle(record)
+
+
+def _init_logger_base(name: str = 'gppu', trace_rules: dict | None = None) -> None:
+  """Initialize global logger with a specific name and optional trace rules."""
+  global _logger
+  if trace_rules is not None:
+    trace_rules = dict(trace_rules)
+    TRACE_RULES.clear()
+    TRACE_RULES.update(trace_rules)
+  _logger = _log_root if name == 'gppu' else _log_root.getChild(name)
+
+init_logger = _init_logger_base
+
+
+def _log(level: int, args: tuple, logger, options: dict) -> None:
+  target = _logger if logger is None else logger
+  if not target.isEnabledFor(level): return
+  frame = inspect.currentframe().f_back.f_back
+  extra = dict(options.pop('extra')) if 'extra' in options else {}
+  extra['gppu_args'] = args
+  extra['gppu_class'] = type(frame.f_locals['self']).__name__ if 'self' in frame.f_locals else ''
+  del frame
+  stacklevel = options.pop('stacklevel') if 'stacklevel' in options else 1
+  target.log(level, _ANSI.sub('', pcp(*args)), extra=extra, stacklevel=stacklevel + 2, **options)
+
+
+def Debug(*a, logger=None, **kw): _log(logging.DEBUG, a, logger, kw)
+def Info(*a, logger=None, **kw): _log(logging.INFO, a, logger, kw)
+def Warn(*a, logger=None, **kw): _log(logging.WARNING, a, logger, kw)
+def Error(*a, logger=None, **kw): _log(logging.ERROR, a, logger, kw)
+@sync
+async def Dump(filename: str, data={}, **kw) -> None:
+  """ Saves data object to yml file in trace folder """
+  if '.' not in filename or not filename.endswith('.yml'): filename += '.yml'
+  if Logger.trace_folder:
+    filename = f"{Logger.trace_folder}/{filename}"
+  dict_to_yml(filename=filename, data=data)
+
+
+# endregion
+
+
+# region Environment
+# gppu.next: Env and Environment were two views of one configuration, one lenient and one strict. They are
+# one strict Env now: a missing key raises, nothing has a default. State constructs the tables on top of it.
+_MISSING = object()
+
+
+def lookup(path: str, d: dict) -> Any:
+  """The value at a slash path, falsy values included; _MISSING when any step is absent."""
+  if path in d: return d[path]
+  for part in path.split('/'):
+    if not isinstance(d, dict) or part not in d: return _MISSING
+    d = d[part]
+  return d
+
+
+def is_table_key(name: str) -> bool:   # what a table holds beside its rows: its macros, its generators, its templates and
+  return name in ('macros', 'generators', 'templates') or name.endswith('_templates')   # its named templates
+
+
+def platform_name() -> str:
+  """The platform vocabulary of the shared configuration: windows, wsl, debian, macos."""
+  system = platform.system()
+  if system == 'Windows': return 'windows'
+  if system == 'Darwin': return 'macos'
+  if 'WSL_DISTRO_NAME' in os.environ or 'microsoft' in platform.release().lower(): return 'wsl'
+  return 'debian'
+
+
+def _config_changes(before: dict, after: dict, prefix: str = '') -> frozenset[str]:
+  changed = set()
+  for key in before.keys() | after.keys():
+    path = f'{prefix}/{key}' if prefix else str(key)
+    if key not in before or key not in after:
+      changed.add(path)
+    elif isinstance(before[key], dict) and isinstance(after[key], dict):
+      changed.update(_config_changes(before[key], after[key], path))
+    elif json.dumps(before[key], sort_keys=True, default=str) != json.dumps(after[key], sort_keys=True, default=str):
+      changed.add(path)
+  return frozenset(changed)
+
+
+class _Env:
+  """What an app knows at startup: the machine, and the configuration loaded beside it.
+
+  One instance, as in Y2. ``Env.<table>.<rule>(...)`` calls a macro of a configured table.
+  """
+  os: OSType = detect_os()
+  platform: str = platform_name()
+  host: str = socket.gethostname().split('.')[0].lower()
+  user: str = getpass.getuser()
+  home: Path = Path.home()
+
+  def __init__(self) -> None:
+    self.data: dict[str, Any] = {}
+    self.initialized = False
+    self.name = ''
+    self.app_path = Path('.')
+    self.config_file: Path | None = None
+    self.changed_paths: frozenset[str] = frozenset()
+    self._listeners: list[tuple[str, Callable[[frozenset[str]], None]]] = []
+
+  # -- loading -----------------------------------------------------------------------------
+  def from_env(self, name: str, app_path: Path) -> None:
+    """``<name>.yaml`` then ``config.yaml``, each also as ``.j2``, searched from app_path upward."""
+    self.name, self.app_path = name, app_path
+    stem = Path(name).with_suffix('.yaml').name
+    names = (stem, f'{stem}.j2', 'config.yaml', 'config.yaml.j2')
+    self.config_file = next((parent / n for parent in (app_path, *app_path.parents) for n in names if (parent / n).exists()), None)
+    if self.config_file is None: raise FileNotFoundError(f"Config ({' or '.join(names)}) not found walking up from '{app_path}'")
+    self.from_dict(dict_from_yml(self.config_file))
+
+  def from_dict(self, d: dict) -> None:
+    """A ``topology`` key (a yaml path) is the base data; ``tunables`` and the remaining keys override it."""
+    config = dict(d)
+    topology, tunables = config.pop('topology', None), config.pop('tunables', None)
+    data = dict_from_yml(topology) if topology else {}
+    if isinstance(tunables, dict): data.update(tunables)
+    data.update(config)
+    self._load(data)
+
+  def _load(self, data: dict) -> None:
+    data = json.loads(Template(json.dumps(data)).safe_substitute())
+    changed = _config_changes(self.data, data)
+    self.data, self.initialized, self.changed_paths = data, True, changed
+    TRACE_RULES.clear()
+    TRACE_RULES.update(data.get('trace_rules') or {})
+    if 'log_file' in data: enable_file_logging()
+    State.load()
+    for path, callback in tuple(self._listeners):
+      relevant = frozenset(k for k in changed if not path or k == path or k.startswith(path + '/') or path.startswith(k + '/'))
+      if relevant: callback(relevant)
+
+  def reset(self) -> None:
+    self.data, self.initialized, self.changed_paths = {}, False, frozenset()
+    State.reset()
+
+  def update_config(self, data: dict, path: str = '') -> None:
+    """Replace one configuration subtree; an empty path replaces the whole config."""
+    if not path: return self._load(data)
+    updated = deepcopy(self.data)
+    *parents, key = path.split('/')
+    node = updated
+    for parent in parents: node = node.setdefault(parent, {})
+    node[key] = data
+    self._load(updated)
+
+  def on_change(self, callback: Callable[[frozenset[str]], None], path: str = '') -> Callable[[], None]:
+    """Observe changed slash paths after loading; return a callable to unsubscribe."""
+    entry = (path.strip('/'), callback)
+    self._listeners.append(entry)
+    return lambda: entry in self._listeners and self._listeners.remove(entry)
+
+  # -- lookups: strict ---------------------------------------------------------------------
+  def glob(self, path: str) -> Any:
+    if path == '': return self.data
+    result = lookup(path, self.data)
+    if result is _MISSING: raise KeyError(path)
+    return result
+
+  def glob_int(self, path: str) -> int: return int(self.glob(path))
+
+  def glob_list(self, path: str) -> list:
+    if not isinstance(result := self.glob(path), list): raise TypeError(f'{path} is not a list')
+    return result
+
+  def glob_dict(self, path: str) -> dict:
+    if not isinstance(result := self.glob(path), dict): raise TypeError(f'{path} is not a mapping')
+    return result
+
+  # -- tables ------------------------------------------------------------------------------
+  def template_set(self, path: str = '', **context) -> TemplateSet:
+    """The macros, generators and templates of one table; the root's macros are offered to every table."""
+    table = self.glob_dict(path) if path else self.data
+    macros = chr(10).join(b for b in (self.data.get('macros', '') if path else '', table.get('macros', '')) if b)
+    return TemplateSet(macros=macros, generators=table.get('generators'), templates=table.get('templates'),
+                       named=self.named_templates(), context=self.data | context)
+
+  def named_templates(self) -> dict[str, dict]:
+    blocks: dict[str, dict] = {}
+    for holder in (self.data, *(c for c in self.data.values() if isinstance(c, dict))):
+      for key, block in holder.items():
+        if not (key.endswith('_templates') and isinstance(block, dict)): continue
+        if clash := set(blocks.get(key, {})) & set(block): raise ValueError(f'{key}: {sorted(clash)} defined twice')
+        blocks.setdefault(key, {}).update(block)
+    return blocks
+
+  def rows(self, table: str) -> dict[str, dict]:
+    """The rows of a table: every mapping under its key that is not macros, generators or templates."""
+    return {uid: row for uid, row in self.glob_dict(table).items() if not is_table_key(uid) and isinstance(row, dict)}
+
+  def __getattr__(self, table: str):
+    if table in State.templates: return _Rules(table, State.templates[table])
+    raise AttributeError(f'no table named {table!r}')
+
+
+class _Rules:
+  def __init__(self, table: str, templates: TemplateSet):
+    self._table, self._globals = table, templates.environment.globals
+
+  def __getattr__(self, name: str):
+    rule = self._globals.get(name)
+    if not callable(rule): raise AttributeError(f'{self._table} defines no rule {name!r}')
+    return rule
+
+
+class _State:
+  """What the configuration constructs. Every key carrying ``templates`` is a table; each row resolves through the
+  table's TemplateSet and is built by the class its ``kind`` names, a plain _DC otherwise."""
+  def __init__(self) -> None:
+    self.tables: dict[str, dict[str, Any]] = {}
+    self.templates: dict[str, TemplateSet] = {}
+    self.services: dict[str, Any] = {}
+    self.kinds: dict[str, type] = {}
+
+  def register(self, **kinds: type) -> None: self.kinds.update(kinds)
+
+  def reset(self) -> None:
+    for table in self.tables: delattr(self, table)
+    self.tables, self.templates, self.services = {}, {}, {}
+
+  def load(self) -> None:
+    self.reset()
+    names = [n for n, c in Env.data.items() if isinstance(c, dict) and 'templates' in c]
+    rows = {n: Env.rows(n) for n in names}
+    for name in names:
+      if hasattr(self, name): raise ValueError(f'{name}: a table cannot be named after a State member')
+      templates = Env.template_set(name, Env=Env, State=self, **rows)
+      resolved = {uid: templates.resolve({'uid': uid, **row}) for uid, row in rows[name].items()}
+      rows[name].clear(); rows[name].update(resolved)
+      table = {uid: self.kinds.get(data.get('kind'), _DC)(data=data) for uid, data in resolved.items()}
+      self.services.update({uid: obj for uid, obj in table.items() if resolved[uid].get('service')})
+      self.tables[name], self.templates[name] = table, templates
+      setattr(self, name, table)
+
+
+Env = _Env()
+State = _State()
+glob, glob_int, glob_list, glob_dict = Env.glob, Env.glob_int, Env.glob_list, Env.glob_dict
+# endregion
+
+
+# region Vault / Secrets
+class VaultProvider:
+  def get(self, name: str) -> str | None: raise NotImplementedError
+  def set(self, name: str, value: str) -> None: raise NotImplementedError(f"{type(self).__name__} is read-only")
+  def list(self) -> list[str]: raise NotImplementedError(f"{type(self).__name__} does not support listing")
+
+
+class VaultProviderOSEnviron(VaultProvider):
+  """Reads SECRET_<NAME> (hyphens → underscores, uppercased). Read-only."""
+  def get(self, name: str) -> str | None: return os.environ.get('SECRET_' + name.upper().replace('-', '_'))
+  def list(self) -> list[str]: return sorted(k[7:].lower().replace('_', '-') for k in os.environ if k.startswith('SECRET_'))
+
+
+class Vault:
+  """Secrets: ``!secret`` in YAML, ``Vault.get`` in code. SECRET_<NAME> first, then the persistent provider.
+
+  The persistent provider is a provider package: AZURE_KEYVAULT_NAME selects ``gppu.azure.VaultProviderAzure``.
+  """
+  _cache: dict[str, str] = {}
+  _provider: VaultProvider | None = None
+  _env_provider: VaultProvider = VaultProviderOSEnviron()
+
+  @staticmethod
+  def provider_set(provider: VaultProvider | None) -> None:
+    Vault._provider = provider
+    Vault._cache.clear()
+
+  @staticmethod
+  def provider() -> VaultProvider:
+    if Vault._provider is None:
+      if name := os.environ.get('AZURE_KEYVAULT_NAME'):
+        from gppu.azure import VaultProviderAzure
+        Vault._provider = VaultProviderAzure(name)
+      else: Vault._provider = Vault._env_provider
+    return Vault._provider
+
+  @staticmethod
+  def get(name: str) -> str:
+    if name in Vault._cache: return Vault._cache[name]
+    val = Vault._env_provider.get(name)
+    if val is None and (p := Vault.provider()) is not Vault._env_provider: val = p.get(name)
+    if val is None: raise ValueError(f"!secret '{name}' not found")
+    Vault._cache[name] = val
+    return val
+
+  @staticmethod
+  def set(name: str, value: str) -> None:
+    Vault.provider().set(name, value)
+    Vault._cache[name] = value
+
+  @staticmethod
+  def list() -> list[str]: return sorted(set(Vault._env_provider.list()) | set(Vault.provider().list()))
+# endregion
+
+
+# region Foundation
+class Logger:
+  """Where Dump writes."""
+  trace_folder: str = '.'
+
+
+class _Base:
+  """Anything that logs as its class and reads configuration: ``self.Info(...)``, ``self.my('key')``.
+
+  gppu.next: this is the one foundation; _Logger, _Config, mixin_Logger, mixin_Config and protocol_Logger were
+  its parts. ``my`` is strict, as Env is.
+  """
+  _logger: logging.Logger
+  _my: dict[str, Any] = {}
+
+  def __init_subclass__(cls, **kw):
+    super().__init_subclass__(**kw)
+    cls._logger = _logger.getChild(cls.__name__)
+    for name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)):
+      setattr(cls, name, staticmethod(partial(fn, logger=cls._logger)))
+
+  def my(self, path: str) -> Any:
+    result = lookup(path, self._my or Env.data)
+    if result is _MISSING: raise KeyError(path)
+    return result
+# endregion
+
+
+# region DC - pseudo DataClass
+_DC_BASE_TYPE_MAP = {'str': str, 'list': list, 'dict': dict, 'set': set, 'int': int, 'float': float, 'bool': bool, 'None': type(None)}
+# Custom types register themselves here (e.g. iot.py adds y2eid/y2topic)
+
+
+class _DC(UserDict):
+  """Pseudo-dataclass base class backed by a UserDict.
+
+  Dynamically generates properties for annotated class attributes based on
+  `_DC_TYPE_MAP`, providing default values for missing or falsy values and
+  enabling dictionary-backed state management.
+  """
+  _DC_TYPE_MAP: dict[str, type] = _DC_BASE_TYPE_MAP.copy()
+  _DC_EXCLUDE_NAMES: list[str] = []
+
+
+  def _init_from_kw(self, **kw) -> None:
+    data = kw.pop('data', {})
+    if isinstance(data, str): data = {'data': data}
+    self.data = kw | data
+
+
+  _INIT_STEPS: list[Callable] = [_init_from_kw]
+
+
+  def __init_subclass__(cls, **kw) -> None:
+    def _simple_type(typ: type | str) -> str:
+      typ = str(typ)
+      origin, bracket, _ = typ.partition('[')
+      return origin if bracket and origin in cls._DC_TYPE_MAP else typ
+
+    super().__init_subclass__(**kw)
+
+    annotations_raw = [(n, t if type(t) == str else str(t.__name__)) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items() if n[0] != '_' and n not in cls._DC_EXCLUDE_NAMES]
+    annotations = {n: _simple_type(t) for n, t in annotations_raw}
+
+    mro = [(n, t) for n, t in annotations.items() if n[0] != '_' and t in cls._DC_TYPE_MAP]
+    for aname, atype in mro:
+      def getter(self, name=aname, atype=atype):
+        result = self.data.get(name)
+        if result is not None and isinstance(result, cls._DC_TYPE_MAP[atype]): return result
+        if not result:
+          if atype == 'str': result = ''
+          elif atype == 'list': result = []
+          elif atype == 'dict': result = {}
+          elif atype == 'set': result = set()
+        return result
+      def setter(self, value, name=aname, type_hint=atype, _owner_mod=sys.modules[cls.__module__]):
+        if not hasattr(self, 'data'): self.data = {}
+        self.data[name] = value
+      setattr(cls, aname, property(getter, setter))
+
+
+  def __init__(self, **kw):
+    self.data = {}
+    for step in self._INIT_STEPS: step(self, **kw)
+
+# endregion
