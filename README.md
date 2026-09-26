@@ -30,6 +30,7 @@ archive --schema                the parameters as JSON Schema
 
 - **Parameters** come from `main`'s signature. A positional-only one (before `/`) is a positional argument, as in `dc pc/laptop`; every other is a typed option (`str`, `int`, `float`, `bool` as `--x/--no-x`, `list[...]`, `Literal[...]`, `Path`, `dict` as JSON). The first docstring line is the description, and the `Args:` lines are the help.
 - **Values** come from the command line first. Next comes the app's configuration under the parameter's name, then the signature's default. Anything still missing raises. So an app runs with zero arguments, and flags override configuration.
+- **The app's configuration** is the table named after the app when the configuration has one, the whole configuration otherwise. `self.my` and `main`'s parameters read it.
 - **Services**: a parameter annotated with a Provider receives a Connection. Its value is a connection uid from the `connections` table. With no uid anywhere, the one configured Connection of that Provider is used; none or several raises.
 - **Results**: CliApp prints what `main` returns as JSON on stdout, and logs go to stderr.
 - **Other apps**: `run(Archive, since='3d')` or `run('crap.archive:Archive')` starts another app from code, with the same resolution. Connections are shared by uid, so the caller's stay open; they close when the command line that started the process returns.
@@ -108,9 +109,10 @@ Core keeps the import paths that consumers use today: `from gppu.tui import TUIA
 | `_PersistentDC` | removed | No user |
 | `DiskCache = None` | removed | Placeholder for a removed class |
 | `Cache`, `Persistence` and their backends | `gppu.data` | Optional dependencies |
-| `mixin_Mqtt`, `MqttApp`, `_MqttConfig`, `Env.from_mqtt` | `gppu.mqtt.Mqtt` | A broker is a Connection; configuration over MQTT becomes `Mqtt.config`, and `config(..., wait=True)` replaces `Env.from_mqtt`. An AsyncApp runs on the selector loop on Windows, because aiomqtt needs it |
+| `MqttApp` | `gppu.mqtt.MqttApp` | An AsyncApp whose lifecycle holds its broker: the `connection` row of its table gives the broker, the optional will (`status_topic`) and the `listen` topics, which reach `on_message`. An app that only reacts to its topics writes `on_message` and nothing else |
+| `mixin_Mqtt`, `_MqttConfig`, `Env.from_mqtt` | `gppu.mqtt.Mqtt`, `Mqtt5` | A broker is a Connection; configuration over MQTT becomes `Mqtt.config`, and `config(..., wait=True)` replaces `Env.from_mqtt`. An AsyncApp runs on the selector loop on Windows, because aiomqtt needs it |
 | `EventLoopBridge` | core | AsyncApp and the IoT controls share it |
-| `mixin_Rest` | `gppu.rest` | Describes arguments with `params.schema`, so REST and the command line resolve alike |
+| `mixin_Rest` | `gppu.rest`, unchanged | Planned: describe arguments with `params.schema`, so REST and the command line resolve alike |
 | `y2slug`, `y2eid`, `SerializedControl`, `HTTPControl`, `JSONHTTPControl` | `gppu.iot` | Device control is not core |
 | `_YMRO`, `_YInit`, `_YLoad`, `_YStart`, `YStepper`, `mixin_Stepper` | `gppu.ymro`, pending decision | Only Y2 uses them |
 | `_DC` | core, unchanged | State builds rows with it |
@@ -131,7 +133,7 @@ Core keeps the import paths that consumers use today: `from gppu.tui import TUIA
 - TUIs that call `_config_from_env()` drop the call.
 - The gppufs classes are imported from `gppu.fs`, no longer from `gppu`.
 - `_PGBase` subclasses take `db: Postgres` in `main`, and the `db` connection string becomes a `connections` row.
-- `MqttApp` subclasses become `AsyncApp` with `mqtt: Mqtt`.
+- `MqttApp` subclasses drop their connstring, will and reconnect code; `setup`/`start` become `main`, and a message handler becomes `on_message`.
 - Hand-rolled `argparse` in CLI scripts is replaced by `main`'s signature.
 
 ## Run
