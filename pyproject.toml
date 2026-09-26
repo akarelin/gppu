@@ -10,11 +10,11 @@ requires-python = ">=3.11"
 dependencies = [
     "tzdata; platform_system == 'Windows'",
     "PyYAML",
-    "fsspec",
     "Jinja2",
 ]
 
 [project.optional-dependencies]
+fs = ["fsspec"]
 m365 = ["msal", "requests", "azure-identity", "azure-keyvault-secrets"]
 pg = ["psycopg2-binary"]
 sql = ["sqlalchemy"]
@@ -43,7 +43,8 @@ tag_regex = "^(?:gppu/v)?(?P<version>.+)$"
 git_describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--match", "gppu/v*"]
 
 [tool.setuptools.packages.find]
-where = ["."]
+# next: the core package is core/gppu; providers/<name>/gppu are not packaged yet
+where = [".", "core"]
 include = ["gppu*", "statusline*", "w11*"]
 
 [tool.pytest.ini_options]
