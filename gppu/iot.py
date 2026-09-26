@@ -1,8 +1,7 @@
 """gppu.iot — devices and the broker: entity names, device controls, MQTT, the Y2 lifecycle.
 
 y2slug and y2eid name an entity; SerializedControl runs a device's coroutines on one daemon loop, one at a time per
-instance, for synchronous callers. SessionControl keeps one HTTP session and its login across calls; HTTPControl and
-JSONHTTPControl make a request each. Mqtt is a broker Connection and MqttApp an app whose lifecycle holds one.
+instance, for synchronous callers; HTTPControl and JSONHTTPControl make a request each. Mqtt is a broker Connection and MqttApp an app whose lifecycle holds one.
 _YMRO and its steps are the Y2 init→load→start→stop lifecycle.
 """
 from __future__ import annotations
@@ -135,32 +134,6 @@ class SerializedControl(EventLoopBridge):
     lock = self._control_lock
     if lock is None: lock = self._control_lock = asyncio.Lock()
     async with lock: return await function(*args, **kwargs)
-
-
-class SessionControl(SerializedControl):
-  """Serialized calls on one aiohttp session, opened on first use with ``_session_options``. A service that logs in
-  says how in ``_login``; ``_logged_in`` returns that login, made once per session. ``_session_drop`` closes the
-  session and forgets the login, so the next call starts both afresh: the recovery after a failed call."""
-
-  _control_session: aiohttp.ClientSession | None = None
-  _control_login: Any = None
-
-  def _session_options(self) -> dict[str, Any]: return {}
-
-  async def _session(self) -> aiohttp.ClientSession:
-    if self._control_session is None or self._control_session.closed:
-      self._control_session = aiohttp.ClientSession(**self._session_options())
-    return self._control_session
-
-  async def _login(self, session: aiohttp.ClientSession) -> Any: raise NotImplementedError(f'{type(self).__name__} defines no _login')
-
-  async def _logged_in(self) -> Any:
-    if self._control_login is None: self._control_login = await self._login(await self._session())
-    return self._control_login
-
-  async def _session_drop(self) -> None:
-    session, self._control_session, self._control_login = self._control_session, None, None
-    if session is not None: await session.close()
 
 
 # $$
