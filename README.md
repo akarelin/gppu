@@ -116,7 +116,7 @@ Core keeps the import paths that consumers use today: `from gppu.tui import TUIA
 | `y2slug`, `y2eid`, `SerializedControl`, `HTTPControl`, `JSONHTTPControl` | `gppu.iot` | Device control is not core |
 | `_YMRO`, `_YInit`, `_YLoad`, `_YStart`, `YStepper`, `mixin_Stepper` | `gppu.ymro`, pending decision | Only Y2 uses them |
 | `_DC` | core, unchanged | State builds rows with it |
-| `OSType`, `Span`, `TimeSpan`, `y2list`, `y2path`, `y2topic`, `y2uri`, `TColor`, `JinjaEnvironment`, `JinjaDocument`, `TemplateSet` | core, unchanged | |
+| `OSType`, `Span`, `TimeSpan`, `y2list`, `y2path`, `y2topic`, `y2uri`, `TColor`, `JinjaEnvironment`, `TemplateSet` | core, unchanged | |
 | `Provider` (gppu.fs) | core `Provider` (scheme, uid, connection, close); the object methods stay on the fs Provider | Every service is a Provider now, not only object stores |
 | gppufs: `DataObject`, `Container`, `Location`, `Collection`, `FileSystem`, handlers, `GppuCatalog`, the fsspec filesystems | `gppu.fs`, unchanged | `GppuCatalog` reads `connections` through core, so a Location and an app share one Connection instance |
 | `TUILauncher`, `AppScreen`, the widgets, `Selector` | `gppu.tui`, unchanged | `AppScreen` runs the wrapped app's `main` on the launcher's loop; `launcher_main` runs the launcher through `invoke` |
