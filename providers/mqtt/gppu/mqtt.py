@@ -29,7 +29,7 @@ import yaml
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.properties import Properties
 
-from gppu import AsyncApp, Env, Info, Provider, Warn, y2topic
+from gppu import AsyncApp, Env, Info, Provider, Warn, jinja_template, y2topic
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 type MqttPayload = JsonValue | bytes
@@ -195,7 +195,7 @@ class MqttApp(AsyncApp):
 
   Before ``main`` runs, the lifecycle builds ``self.mqtt`` from that row, receives the configuration its ``config``
   topics carry into Env, connects, and publishes online when the row has a ``status_topic`` (the will then publishes
-  offline if the process dies). ``{host}`` in a row's text is the app's host, so one row serves every host. ``wait``
+  offline if the process dies). A row's Jinja renders with the app's ``host``, so one row serves every host. ``wait``
   bounds, in seconds, how long ``main`` waits to be connected and configured; without it, ``main`` waits until it is.
   ``main`` prepares what the app needs and spawns lasting work, and may await ``self.serving`` to last as long as the
   connection; when it returns, ``on_message`` is subscribed to the row's ``listen`` topics. The connection is kept,
@@ -205,7 +205,7 @@ class MqttApp(AsyncApp):
       recorder:
         connection: {hostname: mqtt, port: 1883, identifier: recorder, status_topic: status/recorder, listen: ['#']}
       panel:
-        connection: {hostname: mqtt, status_topic: status/panel/{host}, wait: 5, config: {panel/config/scenes: panel/scenes}}
+        connection: {hostname: mqtt, status_topic: 'status/panel/{{ host }}', wait: 5, config: {panel/config/scenes: panel/scenes}}
 
       class Recorder(MqttApp):
         raw = True
@@ -226,7 +226,8 @@ class MqttApp(AsyncApp):
 
   async def invoke(self, **given: Any) -> Any:
     params = self.params(**given)
-    row = {key: value.replace('{host}', self.host) if isinstance(value, str) else value for key, value in self.my('connection').items()}
+    row = {key: jinja_template(value, host=self.host) if isinstance(value, str) and '{{' in value else value
+           for key, value in self.my('connection').items()}
     self.mqtt = self.mqtt_class(row)
     async with self._task_scope():
       if 'config' in row: await self.mqtt.config(row['config'])

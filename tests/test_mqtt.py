@@ -107,7 +107,7 @@ def test_mqtt_app_takes_broker_will_and_topics_from_its_table(env):
 
 
 def test_mqtt_app_reads_its_configuration_from_mqtt_for_its_host(env):
-  env({'panel': {'connection': {'hostname': 'i2', 'status_topic': 'status/panel/{host}', 'wait': 1,
+  env({'panel': {'connection': {'hostname': 'i2', 'status_topic': 'status/panel/{{ host }}', 'wait': 1,
                                 'config': {'panel/config/scenes': 'panel/scenes'}}}})
 
   class Panel(MqttApp):
