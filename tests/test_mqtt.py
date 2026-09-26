@@ -73,7 +73,7 @@ def test_listen_before_serve_then_publish_and_config(env):
   assert seen == [('dev/tv/state', {'on': True})]
   assert result['subscribed'] == [('dev/+/state', 0), ('cfg/dc', 1)]
   assert ('svc/status', 'online', True) in result['published'] and ('dev/tv/set', '{"on": false}', True) in result['published']
-  assert ('svc/status', 'offline', True) in result['published']
+  assert ('svc/status', 'offline', True) not in result['published']
   from gppu import Env
   assert Env.glob('dc/scenes/work') == 1 and 'old' not in Env.glob_dict('dc')
 
@@ -103,7 +103,7 @@ def test_mqtt_app_takes_broker_will_and_topics_from_its_table(env):
   broker = asyncio.run(run())
   assert seen == [('dev/tv/state', b'{"on": true}', True)]
   assert broker.subscribed == [('dev/#', 0)]
-  assert broker.published[0] == ('status/recorder', 'online', True) and broker.published[-1] == ('status/recorder', 'offline', True)
+  assert broker.published == [('status/recorder', 'online', True)]
 
 
 def test_mqtt_app_reads_its_configuration_from_mqtt_for_its_host(env):

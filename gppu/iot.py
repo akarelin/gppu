@@ -270,9 +270,6 @@ class Mqtt(Provider):
           self._session = None
           self.connected.clear()
           self._client = None
-          if status:
-            try: await client.publish(status, 'offline', qos=1, retain=True)   # a clean DISCONNECT does not fire the will
-            except aiomqtt.MqttError: pass
     except* aiomqtt.MqttError as errors:
       Warn(f'mqtt error, reconnect in {self.RECONNECT_DELAY}s:', *errors.exceptions)
 
