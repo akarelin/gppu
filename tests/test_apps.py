@@ -221,3 +221,15 @@ def test_parameters_read_the_apps_own_table(env):
 def test_env_logs_as_the_app(env):
   env(CONFIG)
   Env.Info('logged')
+
+
+class Positional(CliApp):
+  def main(self, command: Literal['run', 'install'] = 'run', /, *, since: str = '7d') -> list: return [command, since]
+
+
+def test_positional_only_parameter_is_a_positional_argument(env, capsys):
+  env(CONFIG)
+  assert Positional.cli([]) == ['run', '7d']
+  assert Positional.cli(['install', '--since', '3d']) == ['install', '3d']
+  assert run(Positional, command='install') == ['install', '7d']
+  with pytest.raises(SystemExit): Positional.cli(['nope'])

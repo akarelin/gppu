@@ -597,10 +597,10 @@ class TUIApp(AsyncApp, TextualApp):
     """``main`` with its parameters and TaskGroup on the loop of the launcher that shows this app."""
     params = self.params()
     async with self._task_scope():
-      return await self.main(**params)
+      return await self.call_main(params)
 
   def on_mount(self) -> None:
-    if self._screen_wrapper is None: self._spawn(self.main(**self.params(**self._given)))
+    if self._screen_wrapper is None: self._spawn(self.call_main(self.params(**self._given)))
 
   async def _process_messages(self, *args, **kwargs):
     # Every way Textual runs an app (run, run_async, run_test) passes here, so the app's TaskGroup opens here.

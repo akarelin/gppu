@@ -28,7 +28,7 @@ archive --since 3d --db pg-trix   --db accepts only the configured Postgres conn
 archive --schema                the parameters as JSON Schema
 ```
 
-- **Parameters** come from `main`'s signature. Each one is a typed option (`str`, `int`, `float`, `bool` as `--x/--no-x`, `list[...]`, `Literal[...]`, `Path`, `dict` as JSON). The first docstring line is the description, and the `Args:` lines are the help.
+- **Parameters** come from `main`'s signature. A positional-only one (before `/`) is a positional argument, as in `dc pc/laptop`; every other is a typed option (`str`, `int`, `float`, `bool` as `--x/--no-x`, `list[...]`, `Literal[...]`, `Path`, `dict` as JSON). The first docstring line is the description, and the `Args:` lines are the help.
 - **Values** come from the command line first. Next comes the app's configuration under the parameter's name, then the signature's default. Anything still missing raises. So an app runs with zero arguments, and flags override configuration.
 - **Services**: a parameter annotated with a Provider receives a Connection. Its value is a connection uid from the `connections` table. With no uid anywhere, the one configured Connection of that Provider is used; none or several raises.
 - **Results**: CliApp prints what `main` returns as JSON on stdout, and logs go to stderr.
