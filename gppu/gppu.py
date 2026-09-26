@@ -1422,8 +1422,15 @@ class _Env:
       setattr(self, attr, partial(fn, logger=logger))
 
   # -- loading -----------------------------------------------------------------------------
-  def from_env(self, name: str, app_path: Path) -> None:
-    """``<name>.yaml`` then ``config.yaml``, searched from app_path upward. Jinja lives in the YAML's values."""
+  def from_env(self, name: str | None = None, app_path: Path | None = None) -> None:
+    """``<name>.yaml`` then ``config.yaml``, searched from app_path upward. Jinja lives in the YAML's values.
+    Without arguments, name and app_path are the running script's; a relative app_path is found walking up from it."""
+    import __main__
+    main_file = Path(getattr(__main__, '__file__', 'app')).resolve()
+    name = name or (Path(sys.executable).stem if getattr(sys, 'frozen', False) else main_file.stem)
+    app_path = Path(app_path) if app_path else main_file.parent
+    if not app_path.is_absolute():
+      app_path = next((parent / app_path for parent in (main_file.parent, *main_file.parents) if (parent / app_path).exists()), main_file.parent / app_path)
     self.name, self.app_path = name, app_path
     self._bind_logger(_logger.getChild(name))
     stem = Path(name).with_suffix('.yaml').name
@@ -1574,6 +1581,8 @@ class _Base:
 
   def _config_from_key(self, key: str) -> None: self._my = Env.glob_dict(key)   # this object's own table
   def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
+  def _config_from_env(self) -> None: self._my = deepcopy(Env.data)
+  def _config_copy(self, other: _Base) -> None: self._my = dict(other.config())
 
   def config(self) -> dict:
     """What ``my`` reads: the table set by _config_from_key or _config_from_dict, else the whole configuration. A
@@ -1585,6 +1594,22 @@ class _Base:
   def my_float(self, path, default: float = float('nan')) -> float: return deepget_float(path, self.config(), default=default)
   def my_list(self, path, default: list = []) -> list: return deepget_list(path, self.config(), default=default or [])
   def my_dict(self, path, default: dict = {}) -> dict: return deepget_dict(path, self.config(), default=default or {})
+# endregion
+
+
+# region gppu 3 names for _Base's parts
+class _mixin: pass
+class mixin_Config(_Base): pass
+class mixin_Logger(_Base): pass
+_Config = mixin_Config
+_Logger = mixin_Logger
+
+
+def __getattr__(name: str) -> Any:   # gppu 3 kept the Vault here; it lives in gppu.vault
+  if name.startswith('Vault'):
+    from . import vault
+    return getattr(vault, name)
+  raise AttributeError(f"module 'gppu.gppu' has no attribute {name!r}")
 # endregion
 
 

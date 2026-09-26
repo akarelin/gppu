@@ -1,13 +1,14 @@
-"""gppu.app — the kinds of application.
+"""gppu.app — the kinds of application, and their two lifecycles.
 
-    App                     name, configuration, logging, and the parameters of ``main``
-    ├── CliApp              runs ``main`` once and prints what it returns
-    └── AsyncApp            runs ``main`` on an event loop with a TaskGroup for long-lived work
+    mixin_Stepper           the sync lifecycle: init → load → start → stop, each class's __init/__load/__start/__stop
+    App                     name, configuration, logging
+    ├── CliApp              runs ``main`` once; the command line gives its parameters, and prints what it returns
+    └── AsyncApp            the async lifecycle: setup() at construction, async start(), run() with a TaskGroup
+        ├── MqttApp         (gppu.iot) the same, holding the broker its configuration names
         └── TUIApp          (gppu.tui) the same, with a Textual screen on the same loop
 
-Every kind is started the same way, ``MyApp.cli()``: the command line becomes ``main``'s parameters (gppu.params),
-and a parameter annotated with a Provider receives a configured Connection (gppu.connections). From code, another
-app is started with ``run(MyApp, since='3d')``, with the same resolution and no command line.
+A CliApp's ``main`` parameters come from the command line (gppu.params), and a parameter annotated with a Provider
+receives a configured Connection (gppu.connections). From code, another app is started with ``run(MyApp, since='3d')``.
 
     from gppu import CliApp
     from gppu.data import Postgres
@@ -25,23 +26,159 @@ import asyncio
 import inspect
 import json
 import sys
+from abc import abstractmethod
 from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, final
 
 from .connections import close_all
 from .gppu import Env, _Base, _DC
 from .params import call, parser, resolve, schema
 
 
+# region YMRO lifecycle
+class _YMRO:
+  """Base mixin class implementing Y2 Method Resolution Order (YMRO) lifecycle management.
+
+  Provides stepped initialization, loading, starting, and stopping mechanisms across
+  class hierarchies by discovering and invoking methods matching convention names
+  for each lifecycle step.
+  """
+  POSSIBLE_STEPS = ['init', 'load', 'start', 'stop']
+
+  @property
+  def _trace_mro(self) -> bool:
+    return bool(getattr(self, 'args', {}).get('trace_mro', False))
+
+
+  def print_ymro(self):
+    Debug('BY', self.__class__.__qualname__)
+    siblings = [c for c in reversed(self.__class__.__mro__) if c != _YMRO and issubclass(c, _YMRO)]
+    step = 'init'
+    for sibling in siblings:
+      Debug('DG', f"  {sibling.__qualname__}")
+      qname = f"{sibling.__qualname__}__{step}"
+      if qname[0] != '_': qname = '_' + qname
+      method = getattr(self, qname, None)
+      if method:
+        Debug('INFO', f"  {method.__qualname__}")
+        initers = getattr(sibling, '_initers', [])
+        for initer in initers: Debug('DIM', f"     {initer.__qualname__}")
+
+
+  def _ymros(self):
+    result = {}
+    siblings = [c for c in reversed(self.__class__.__mro__) if c != _YMRO and issubclass(c, _YMRO)]
+    for step in self.POSSIBLE_STEPS:
+      result[step] = []
+      for sibling in siblings:
+        qname = f"{sibling.__qualname__}__{step}"
+        if qname[0] != '_': qname = '_' + qname
+        method = getattr(self, qname, None)
+        if method: result[step].append(method)
+    return result
+
+  def _ymro(self, method: str) -> list: return self._ymros().get(method, [])
+
+  def _callall(self, method, *a, **kw):
+    for callback in self._ymro(method): callback(*a, **kw)
+
+
+class _YInit(_YMRO):
+  """Mixin class providing initialization lifecycle management for YMRO components.
+
+  Requires subclasses to implement an abstract `__init` method and provides
+  an idempotent `init()` method that invokes registered lifecycle callbacks
+  and tracks initialization status via the `initialized` property.
+  """
+  @abstractmethod
+  def __init(self): pass
+
+  @final
+  def init(self):
+    if self.initialized: return
+    self._callall('init')
+    self.initialized = True
+
+  @property
+  def initialized(self) -> bool: return getattr(self, '_initialized', False)
+  @initialized.setter
+  def initialized(self, value: bool): self._initialized = value
+
+
+class _YLoad(_YInit):
+  """Mixin class providing loading lifecycle management for YMRO components.
+
+  Requires subclasses to implement an abstract `__load` method and provides
+  an idempotent `load()` method that asserts initialization, invokes registered
+  lifecycle callbacks, and tracks loading status via the `loaded` property.
+  """
+  @abstractmethod
+  def __load(self): pass
+
+  @final
+  def load(self):
+    if self.loaded: return
+    assert self.initialized
+    self._callall('load')
+    self.loaded = True
+
+  @property
+  def loaded(self) -> bool: return getattr(self, '_loaded', False)
+  @loaded.setter
+  def loaded(self, value: bool): self._loaded = value
+
+
+class _YStart(_YLoad):
+  """Mixin class providing start and stop lifecycle management for YMRO components.
+
+  Requires subclasses to implement an abstract `__start` method and provides
+  idempotent `start()` and `stop()` methods that invoke registered lifecycle
+  callbacks and track status via the `started` and `stopped` properties.
+  """
+  @abstractmethod
+  def __start(self): pass
+
+  @final
+  def start(self):
+    if self.started: return
+    self._callall('start')
+    self.started = True
+
+  @property
+  def started(self) -> bool: return getattr(self, '_started', False)
+  @started.setter
+  def started(self, value: bool): self._started = value
+
+
+  @final
+  def stop(self):
+    if self.stopped: return
+    self._callall('stop')
+    self.started = False
+    self.stopped = True
+    self.loaded = False
+
+
+  @property
+  def stopped(self) -> bool: return getattr(self, '_stopped', False)
+  @stopped.setter
+  def stopped(self, value: bool): self._stopped = value
+
+
+YStepper = _YStart
+class mixin_Stepper(YStepper, _Base): pass
+# endregion
+
+
 class App(_Base):
-  """Name, configuration and logging; a subclass defines ``main`` and is one of the kinds below.
+  """Name, configuration and logging; a subclass is one of the kinds below.
 
   The name is the file the subclass is written in, and names the configuration beside it: ``<name>.yaml`` or
   ``config.yaml``, searched upward. An Env already loaded is reused. The app's configuration is the table under its
-  name when the configuration has one, the whole configuration otherwise; ``my`` and ``main``'s parameters read it.
+  name when the configuration has one, the whole configuration otherwise; ``my`` reads it.
   """
 
   def __init__(self, name: str = '') -> None:
@@ -60,17 +197,18 @@ class App(_Base):
     """The host the app runs on, as its configuration and its topics name it."""
     return Env.host
 
+
+class CliApp(App):
+  """Runs ``main`` once; the command line gives its parameters. What it returns is printed as JSON on stdout; logs
+  go to stderr."""
+
+  def main(self, *a, **kw) -> Any: raise NotImplementedError(f'{type(self).__name__} defines no main')
+
   def params(self, **given: Any) -> dict[str, Any]:
     """main's keyword arguments: given, then configuration, then defaults, then Connections by type."""
     return resolve(self.main, given, self.config())
 
-  def main(self, *a, **kw) -> Any: raise NotImplementedError(f'{type(self).__name__} defines no main')
-
-  def call_main(self, params: dict[str, Any]) -> Any:
-    """main with resolved parameters; the positional-only ones go by position."""
-    return call(self.main, params)
-
-  def invoke(self, **given: Any) -> Any: raise NotImplementedError
+  def invoke(self, **given: Any) -> Any: return call(self.main, self.params(**given))
 
   @classmethod
   def cli(cls, argv: list[str] | None = None) -> Any:
@@ -79,19 +217,8 @@ class App(_Base):
     app = cls()
     given = vars(parser(app.main, app.name).parse_args(argv))
     if given.pop('schema', False): return print(json.dumps(schema(app.main), indent=2))
-    try: return app._cli(given)
+    try: result = app.invoke(**given)
     finally: close_all()
-
-  def _cli(self, given: dict) -> Any: return self.invoke(**given)
-
-
-class CliApp(App):
-  """Runs ``main`` once. What it returns is printed as JSON on stdout; logs go to stderr."""
-
-  def invoke(self, **given: Any) -> Any: return self.call_main(self.params(**given))
-
-  def _cli(self, given: dict) -> Any:
-    result = self.invoke(**given)
     if result is not None: print(json.dumps(result, indent=2, default=str))
     return result
 
@@ -139,10 +266,11 @@ class EventLoopBridge:
 
 
 class AsyncApp(App, EventLoopBridge):
-  """Runs ``async def main`` inside one TaskGroup; ``self._spawn(coro)`` adds long-lived work to it.
-
-  ``invoke`` returns when main and everything it spawned have finished; ``stop()`` cancels the spawned work. Off-loop
-  threads reach the app through ``schedule``, ``submit`` and ``call``. On a host's loop, ``await app.invoke(...)``.
+  """A long-lived asyncio service: ``setup()`` runs at construction with configuration ready, ``async start()`` does
+  the work. ``run()`` runs start inside one TaskGroup and returns when start and everything it spawned with
+  ``self._spawn(coro)`` have finished; ``stop()`` cancels the spawned work. Off-loop threads reach the app through
+  ``schedule``, ``submit`` and ``call``. ``asyncio.run(MyApp().run())``, ``MyApp.cli()``, or on a host's loop
+  ``await app.run()``.
   """
 
   # On Windows the selector loop, which aiomqtt needs; an app that starts asyncio subprocesses sets this False.
@@ -153,15 +281,19 @@ class AsyncApp(App, EventLoopBridge):
     self._task_group: asyncio.TaskGroup | None = None
     self._background_tasks: set[asyncio.Task[Any]] = set()
     self._event_loop: asyncio.AbstractEventLoop | None = None
+    self.setup()
 
-  async def main(self, *a, **kw) -> Any: raise NotImplementedError(f'{type(self).__name__} defines no main')
+  def setup(self) -> None: pass
+  async def start(self) -> None: pass
 
-  async def invoke(self, **given: Any) -> Any:
-    params = self.params(**given)
-    async with self._task_scope():
-      return await self.call_main(params)
+  async def run(self) -> None:
+    """``start`` inside the app's TaskGroup; returns when start and everything it spawned have finished."""
+    async with self._task_scope(): await self.start()
 
-  def _cli(self, given: dict) -> Any: return run_loop(self.invoke(**given), selector=self.SELECTOR_LOOP)
+  @classmethod
+  def cli(cls, argv: list[str] | None = None) -> None:
+    try: run_loop(cls().run(), selector=cls.SELECTOR_LOOP)
+    finally: close_all()
 
   @asynccontextmanager
   async def _task_scope(self):
@@ -199,14 +331,15 @@ class AsyncApp(App, EventLoopBridge):
 def run(app: type[App] | str, /, **given: Any) -> Any:
   """Start another app from code, as Windmill runs a script by path: its class, or ``module:Class``.
 
-  Parameters resolve as on its command line, without one. An AsyncApp is awaited when called from a running loop,
-  run to completion otherwise. The Connections it used stay open: they are the caller's too, shared by uid.
+  A CliApp's parameters resolve as on its command line, without one. An AsyncApp is awaited when called from a
+  running loop, run to completion otherwise. The Connections it used stay open: they are the caller's too, shared by
+  uid.
   """
   if isinstance(app, str):
     import importlib
     module, _, attr = app.partition(':')
     app = getattr(importlib.import_module(module), attr)
-  result = app().invoke(**given)
+  result = app().invoke(**given) if issubclass(app, CliApp) else app().run()
   if not inspect.iscoroutine(result): return result
   try: asyncio.get_running_loop()
   except RuntimeError: return run_loop(result, selector=app.SELECTOR_LOOP)

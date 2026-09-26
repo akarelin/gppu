@@ -47,19 +47,19 @@ class UsesStore(CliApp):
 
 
 class Service(AsyncApp):
-  async def main(self, queue: Queue, ticks: int = 3) -> list:
-    seen = []
+  def setup(self) -> None: self.seen = []
+
+  async def start(self) -> None:
     async def tick(n):
       await asyncio.sleep(0)
-      seen.append(n)
-    for n in range(ticks): self._spawn(tick(n))
-    return seen   # the TaskGroup is still open; invoke returns after the ticks finish
+      self.seen.append(n)
+    for n in range(self.my_int('ticks', 3)): self._spawn(tick(n))   # the TaskGroup is still open; run waits for them
 
 
 class Screen(TUIApp):
   def compose(self): yield Log()
-  async def main(self, queue: Queue, lines: int = 2) -> None:
-    for n in range(lines): self.query_one(Log).write_line(f'line {n} {queue}')
+  async def start(self) -> None:
+    for n in range(self.my_int('lines', 2)): self.query_one(Log).write_line(f'line {n}')
 
 
 def test_defaults_from_signature(env):
@@ -140,22 +140,24 @@ def test_run_starts_another_app_from_code(env):
   assert run('test_apps:UsesQueue') == 'queue-1'
 
 
-def test_async_app_resolves_as_cli_and_waits_for_spawned_work(env):
-  env(CONFIG)
-  assert run(Service, ticks=4) == [0, 1, 2, 3]
+def test_async_app_sets_up_at_construction_and_runs_start_until_its_work_is_done(env):
+  env(CONFIG | {'ticks': 4})
+  app = Service()
+  assert app.seen == []
+  asyncio.run(app.run())
+  assert app.seen == [0, 1, 2, 3]
 
 
-def test_tui_is_an_async_app_with_the_same_resolution(env):
-  env(CONFIG)
+def test_tui_is_an_async_app_whose_start_runs_once_mounted(env):
+  env(CONFIG | {'lines': 3})
   app = Screen()
   assert isinstance(app, AsyncApp) and isinstance(app, App)
   async def drive():
-    app._given = {'lines': 3}
     async with app.run_test() as pilot:
       await pilot.pause()
       await pilot.pause()
       return list(app.query_one(Log).lines)
-  assert asyncio.run(drive()) == ['line 0 Queue(queue-1)', 'line 1 Queue(queue-1)', 'line 2 Queue(queue-1)']
+  assert asyncio.run(drive()) == ['line 0', 'line 1', 'line 2']
 
 
 def test_app_name_is_its_file_and_a_missing_key_gives_the_default(env):
@@ -192,10 +194,10 @@ def test_nested_run_leaves_the_callers_connection_open(env, capsys):
 class Mounted(TUIApp):
   def compose(self): yield Log()
   def on_mount(self): self.query_one(Log).write_line('mounted')
-  async def main(self, queue: Queue) -> None: self.query_one(Log).write_line(f'main {queue.uid}')
+  async def start(self) -> None: self.query_one(Log).write_line('started')
 
 
-def test_subclass_on_mount_and_main_both_run(env):
+def test_subclass_on_mount_and_start_both_run(env):
   env(CONFIG)
   app = Mounted()
   async def drive():
@@ -203,7 +205,7 @@ def test_subclass_on_mount_and_main_both_run(env):
       await pilot.pause()
       await pilot.pause()
       return sorted(app.query_one(Log).lines)
-  assert asyncio.run(drive()) == ['main queue-1', 'mounted']
+  assert asyncio.run(drive()) == ['mounted', 'started']
 
 
 class Scoped(CliApp):
@@ -233,3 +235,16 @@ def test_positional_only_parameter_is_a_positional_argument(env, capsys):
   assert Positional.cli(['install', '--since', '3d']) == ['install', '3d']
   assert run(Positional, command='install') == ['install', '7d']
   with pytest.raises(SystemExit): Positional.cli(['nope'])
+
+def test_gppu_3_names_are_where_apps_import_them():
+  import sys
+  import gppu
+  from gppu import (Collection, Container, DataObject, FileSystem, Location, Vault, VaultProviderAzure, MqttApp,
+                    SerializedControl, HTTPControl, JSONHTTPControl, y2eid, YStepper, mixin_Stepper, _mixin,
+                    mixin_Config, mixin_Logger)
+  from gppu.gppu import Vault as vault, VaultProviderAzure as azure
+  from gppu.environment import Environment, State, is_table_key
+  from gppu.app import YStepper as stepper
+  class Both(mixin_Config, mixin_Logger): pass
+  assert vault is Vault and azure is VaultProviderAzure and stepper is YStepper and Environment is gppu.Env
+  assert Both().my('missing') is None

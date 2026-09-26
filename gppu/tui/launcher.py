@@ -564,10 +564,10 @@ class _DebugScreen(Screen):
 class TUIApp(AsyncApp, TextualApp):
   """A Textual application that is a gppu AsyncApp, imported from ``gppu.tui``.
 
-  A TUI is started, configured and given Connections exactly as a service is: ``MyApp.cli()``, its parameters from
-  ``main``'s signature. ``main`` runs as a task once the screen is mounted, and anything a service does (``_spawn``,
-  MQTT, timers) runs on the screen's loop; quitting the screen cancels what is still running. Embedded in a
-  TUILauncher through AppScreen, ``main`` runs on the launcher's loop instead.
+  ``MyApp.main()`` shows the screen, or runs ``cli()`` when there is no terminal; ``app.run()`` is Textual's. ``start``
+  runs as a task once the screen is mounted, and anything a service does (``_spawn``, MQTT, timers) runs on the
+  screen's loop; quitting the screen cancels what is still running. Embedded in a TUILauncher through AppScreen,
+  ``start`` runs on the launcher's loop instead.
 
   ``self.done(result)`` finishes, as an exit or a dismiss depending on context.
 
@@ -590,7 +590,6 @@ class TUIApp(AsyncApp, TextualApp):
 
   def __init__(self, name: str = '') -> None:
     super().__init__(name)
-    self._given: dict[str, Any] = {}
     self._debug_lines: list[str] = []
     self._log_handler = _DebugLogHandler(self._debug_lines)
     self._log_handler.setLevel(logging.DEBUG)
@@ -598,20 +597,24 @@ class TUIApp(AsyncApp, TextualApp):
     self._log_handler.setFormatter(_LogColorizer())
     logging.getLogger().addHandler(self._log_handler)
 
-  async def main(self, **params: Any) -> Any: return None
+  run = TextualApp.run   # Textual's, as on gppu 3: the app's TaskGroup opens in _process_messages
 
-  async def invoke(self, **given: Any) -> Any:
-    self._given = given
-    return await TextualApp.run_async(self)
+  @classmethod
+  def main(cls, **kwargs: Any) -> Any:
+    """Run this app: the screen when a terminal can show it, else its ``cli()``."""
+    app = cls(**kwargs)
+    return run_loop(app.run_async(), selector=cls.SELECTOR_LOOP) if _tui_available() else app.cli()
 
-  async def embedded(self) -> Any:
-    """``main`` with its parameters and TaskGroup on the loop of the launcher that shows this app."""
-    params = self.params()
-    async with self._task_scope():
-      return await self.call_main(params)
+  def cli(self) -> Any:
+    """The fallback without a terminal; a subclass overrides it."""
+    print(f'{type(self).__name__}: no CLI mode defined')
+
+  async def embedded(self) -> None:
+    """``start`` and its TaskGroup on the loop of the launcher that shows this app."""
+    async with self._task_scope(): await self.start()
 
   def on_mount(self) -> None:
-    if self._screen_wrapper is None: self._spawn(self.call_main(self.params(**self._given)))
+    if self._screen_wrapper is None: self._spawn(self.start())
 
   async def _process_messages(self, *args, **kwargs):
     # Every way Textual runs an app (run, run_async, run_test) passes here, so the app's TaskGroup opens here.
@@ -690,7 +693,7 @@ class TUIApp(AsyncApp, TextualApp):
 
 
 class AppScreen(Screen):
-  """Wraps a TUIApp instance as a pushable Screen within a TUILauncher; the app's ``main`` runs as a worker."""
+  """Wraps a TUIApp instance as a pushable Screen within a TUILauncher; the app's ``start`` runs as a worker."""
 
   BINDINGS = [Binding('escape', 'back', 'Back')]
 
@@ -1390,7 +1393,7 @@ def launcher_main(
     # TUI launcher — loop back after sub-app exits
     while True:
         tui = app_class(apps, app_dir)
-        result = run_loop(tui.invoke(), selector=tui.SELECTOR_LOOP)
+        result = run_loop(tui.run_async(), selector=tui.SELECTOR_LOOP)
         if not result:
             break
         launch_app(app_dir, result['app'], result.get('args') or None)

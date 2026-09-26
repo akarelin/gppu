@@ -24,7 +24,7 @@ from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.properties import Properties
 
 from gppu import AsyncApp, Env, EventLoopBridge, Info, Provider, Warn, _Base, _DC, jinja_template
-from gppu.app import AsyncSubmission
+from gppu.app import AsyncSubmission, YStepper, _YMRO, mixin_Stepper
 from gppu.gppu import _DC_BASE_TYPE_MAP, Debug, y2list, y2path, y2topic, y2uri
 
 
@@ -375,14 +375,13 @@ class Mqtt5(Mqtt):
 class MqttApp(AsyncApp):
   """An AsyncApp whose lifecycle holds its broker: the ``connection`` row of the app's configuration table.
 
-  Before ``main`` runs, the lifecycle builds ``self.mqtt`` from that row, receives the configuration its ``config``
-  topics carry into Env, connects, and publishes online when the row has a ``status_topic`` (the will then publishes
-  offline if the process dies). A row's Jinja renders with the app's ``host``, so one row serves every host. ``wait``
-  bounds, in seconds, how long ``main`` waits to be connected and configured; without it, ``main`` waits until it is.
-  ``main`` prepares what the app needs and spawns lasting work, and may await ``self.serving`` to last as long as the
-  connection; when it returns, ``on_message`` is subscribed to the row's ``listen`` topics. The connection is kept,
-  reconnecting, until the app stops. An app that only reacts to its configured topics writes ``on_message`` and
-  nothing else.
+  ``run`` builds ``self.mqtt`` from that row, receives the configuration its ``config`` topics carry into Env,
+  connects, and publishes online when the row has a ``status_topic`` (its will publishes offline). Then ``start``
+  runs, as in any AsyncApp: it prepares what the app needs and spawns lasting work; when it returns, ``on_message`` is
+  subscribed to the row's ``listen`` topics. A row's Jinja renders with
+  the app's ``host``, so one row serves every host. ``wait`` bounds, in seconds, how long ``start`` waits to be
+  connected and configured; without it, ``start`` waits until it is. The connection is kept, reconnecting, until the
+  app stops. An app that only reacts to its configured topics writes ``on_message`` and nothing else.
 
       recorder:
         connection: {hostname: mqtt, port: 1883, identifier: recorder, status_topic: status/recorder, listen: ['#']}
@@ -402,12 +401,9 @@ class MqttApp(AsyncApp):
   mqtt: Mqtt
   serving: asyncio.Task
 
-  async def main(self) -> None: pass
-
   def on_message(self, *message: Any) -> Any: raise NotImplementedError(f'{type(self).__name__} listens but defines no on_message')
 
-  async def invoke(self, **given: Any) -> Any:
-    params = self.params(**given)
+  async def run(self) -> None:
     row = {key: jinja_template(value, host=self.host) if isinstance(value, str) and '{{' in value else value
            for key, value in self.my('connection').items()}
     self.mqtt = self.mqtt_class(row)
@@ -415,13 +411,12 @@ class MqttApp(AsyncApp):
       if 'config' in row: await self.mqtt.config(row['config'])
       self.serving = self._spawn(self.mqtt.serve())
       await self._ready(row)
-      result = await self.call_main(params)
+      await self.start()
       for topic in row['listen'] if 'listen' in row else ():
         await self.mqtt.listen(self.on_message, topic, qos=self.qos, raw=self.raw)
-      return result
 
   async def _ready(self, row: dict) -> None:
-    """Connected and configured; past the row's ``wait``, main runs on what has arrived and the rest applies live."""
+    """Connected and configured; past the row's ``wait``, start runs on what has arrived and the rest applies live."""
     async def ready() -> None:
       await self.mqtt.connected.wait()
       if 'config' in row: await self.mqtt.configured.wait()
@@ -460,136 +455,4 @@ def config_topics(topics: dict[str, str]) -> dict[str, str]:
   return dict(topics)
 
 
-# region YMRO lifecycle
-class _YMRO:
-  """Base mixin class implementing Y2 Method Resolution Order (YMRO) lifecycle management.
 
-  Provides stepped initialization, loading, starting, and stopping mechanisms across
-  class hierarchies by discovering and invoking methods matching convention names
-  for each lifecycle step.
-  """
-  POSSIBLE_STEPS = ['init', 'load', 'start', 'stop']
-
-  @property
-  def _trace_mro(self) -> bool:
-    return bool(getattr(self, 'args', {}).get('trace_mro', False))
-
-
-  def print_ymro(self):
-    Debug('BY', self.__class__.__qualname__)
-    siblings = [c for c in reversed(self.__class__.__mro__) if c != _YMRO and issubclass(c, _YMRO)]
-    step = 'init'
-    for sibling in siblings:
-      Debug('DG', f"  {sibling.__qualname__}")
-      qname = f"{sibling.__qualname__}__{step}"
-      if qname[0] != '_': qname = '_' + qname
-      method = getattr(self, qname, None)
-      if method:
-        Debug('INFO', f"  {method.__qualname__}")
-        initers = getattr(sibling, '_initers', [])
-        for initer in initers: Debug('DIM', f"     {initer.__qualname__}")
-
-
-  def _ymros(self):
-    result = {}
-    siblings = [c for c in reversed(self.__class__.__mro__) if c != _YMRO and issubclass(c, _YMRO)]
-    for step in self.POSSIBLE_STEPS:
-      result[step] = []
-      for sibling in siblings:
-        qname = f"{sibling.__qualname__}__{step}"
-        if qname[0] != '_': qname = '_' + qname
-        method = getattr(self, qname, None)
-        if method: result[step].append(method)
-    return result
-
-  def _ymro(self, method: str) -> list: return self._ymros().get(method, [])
-
-  def _callall(self, method, *a, **kw):
-    for callback in self._ymro(method): callback(*a, **kw)
-
-
-class _YInit(_YMRO):
-  """Mixin class providing initialization lifecycle management for YMRO components.
-
-  Requires subclasses to implement an abstract `__init` method and provides
-  an idempotent `init()` method that invokes registered lifecycle callbacks
-  and tracks initialization status via the `initialized` property.
-  """
-  @abstractmethod
-  def __init(self): pass
-
-  @final
-  def init(self):
-    if self.initialized: return
-    self._callall('init')
-    self.initialized = True
-
-  @property
-  def initialized(self) -> bool: return getattr(self, '_initialized', False)
-  @initialized.setter
-  def initialized(self, value: bool): self._initialized = value
-
-
-class _YLoad(_YInit):
-  """Mixin class providing loading lifecycle management for YMRO components.
-
-  Requires subclasses to implement an abstract `__load` method and provides
-  an idempotent `load()` method that asserts initialization, invokes registered
-  lifecycle callbacks, and tracks loading status via the `loaded` property.
-  """
-  @abstractmethod
-  def __load(self): pass
-
-  @final
-  def load(self):
-    if self.loaded: return
-    assert self.initialized
-    self._callall('load')
-    self.loaded = True
-
-  @property
-  def loaded(self) -> bool: return getattr(self, '_loaded', False)
-  @loaded.setter
-  def loaded(self, value: bool): self._loaded = value
-
-
-class _YStart(_YLoad):
-  """Mixin class providing start and stop lifecycle management for YMRO components.
-
-  Requires subclasses to implement an abstract `__start` method and provides
-  idempotent `start()` and `stop()` methods that invoke registered lifecycle
-  callbacks and track status via the `started` and `stopped` properties.
-  """
-  @abstractmethod
-  def __start(self): pass
-
-  @final
-  def start(self):
-    if self.started: return
-    self._callall('start')
-    self.started = True
-
-  @property
-  def started(self) -> bool: return getattr(self, '_started', False)
-  @started.setter
-  def started(self, value: bool): self._started = value
-
-
-  @final
-  def stop(self):
-    if self.stopped: return
-    self._callall('stop')
-    self.started = False
-    self.stopped = True
-    self.loaded = False
-
-
-  @property
-  def stopped(self) -> bool: return getattr(self, '_stopped', False)
-  @stopped.setter
-  def stopped(self, value: bool): self._stopped = value
-
-
-YStepper = _YStart
-class mixin_Stepper(YStepper, _Base): pass
-# endregion
