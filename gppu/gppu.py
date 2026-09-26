@@ -269,13 +269,50 @@ class y2path(y2list):
   """
     A slash-separated path held as a list. An element of the list can be called a segment,
     as in https://www.rfc-editor.org/rfc/rfc3986.html#section-3.3
+
+    Path methods and properties operate on the current segments: p.read_text(), p.parent.
+    Return values follow pathlib; supplied targets can remain y2path. Segment operators stay unchanged.
+    copy() copies the segments; copy(target, **kwargs) copies the filesystem entry.
   """
   def __init__(self, *args):
     data = []
     self.token = '/'
+    self._root = ''
+    self._drive_root = False
 
-    for a in args: data += self._any2list(a)
+    for i, a in enumerate(args):
+      if isinstance(a, os.PathLike): a = os.fspath(a)
+      if isinstance(a, str):
+        if os.sep != '/': a = a.replace(os.sep, '/')
+        if i == 0:
+          self._root = '//' if a.startswith('//') else '/' if a.startswith('/') else ''
+          self._drive_root = bool(PureWindowsPath(a).drive and PureWindowsPath(a).root)
+      data += self._any2list(a)
     self.data = self._any2list(data)
+
+  def __str__(self):
+    result = self._root + super().__str__()
+    if self._drive_root and len(self.data) == 1 and result.endswith(':'): result += '/'
+    return result
+
+  def __fspath__(self) -> str: return str(self)
+
+  def __getattr__(self, name):
+    if name.startswith('__') or 'data' not in self.__dict__: raise AttributeError(name)
+    return getattr(Path(self), name)
+
+  def copy(self, *args, **kwargs):
+    if not args and not kwargs: return super().copy()
+    return Path(self).copy(*args, **kwargs)
+
+  @classmethod
+  def cwd(cls): return cls(Path.cwd())
+
+  @classmethod
+  def home(cls): return cls(Path.home())
+
+  @classmethod
+  def from_uri(cls, uri): return cls(Path.from_uri(uri))
 
   def __truediv__(self, other: str | y2path) -> y2path:
     return y2path(self, other)
