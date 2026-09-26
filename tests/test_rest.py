@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from gppu import Env, _DC
-from gppu.rest import mixin_Rest
+from gppu import mixin_Rest
 
 
 HERE = Path(__file__).resolve().parent               # the classes below are "born here"

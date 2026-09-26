@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from gppu import AsyncApp, Env
-from gppu.mqtt import Mqtt, MqttApp, config_topics, topic_matches
+from gppu.iot import Mqtt, MqttApp, config_topics, topic_matches
 
 
 class Broker:

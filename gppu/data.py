@@ -1,9 +1,9 @@
-"""gppu.postgres — provider: PostgreSQL through psycopg2.
+"""gppu.data — databases and local persistence: PostgreSQL through psycopg2.
 
 Replaces _PersistentBase, _PGBase and _SQABase: an app no longer inherits a database, it asks for one.
 
     connections:
-      pg-lake: {provider: gppu.postgres.Postgres, dsn: !secret pg-lake-dsn}
+      pg-lake: {provider: gppu.data.Postgres, dsn: !secret pg-lake-dsn}
 
     class Count(CliApp):
       def main(self, db: Postgres = 'pg-lake') -> int:

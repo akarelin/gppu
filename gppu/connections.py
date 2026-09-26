@@ -7,7 +7,7 @@ Connection. The ``connections`` table of the configuration holds one row per Con
 ``$var:`` (``!secret``).
 
     connections:
-      pg-lake:  {provider: gppu.postgres.Postgres, dsn: !secret pg-lake-dsn}
+      pg-lake:  {provider: gppu.data.Postgres, dsn: !secret pg-lake-dsn}
       mqtt-i2:  {provider: mqtt, host: i2, port: 1883}
 
 An app asks for one by annotating a parameter of ``main`` with the Provider class (see gppu.params); code asks with
