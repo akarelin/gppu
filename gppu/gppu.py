@@ -469,6 +469,12 @@ def deepget(path: str, d: dict, default=None):
       if not _: break
     return _ if _ else default
   return d.get(path, default)
+  # if '/' not in path or path in d: return d.get(path, default)
+  # for p in path.split('/'):
+  #   d = d.get(p)
+  #   if not d: return default
+  # return d  
+  # return reduce(lambda x, k: x.get(k) if x else None, path.split('/'), dict(d)) or default  
 def deepget_int(path: str, d: dict, default: int = 0) -> int:
   """ Returns int at path, or default if not found """
   _ = deepget(path, d, default)
