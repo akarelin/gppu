@@ -226,6 +226,8 @@ class Mqtt(Provider):
     self.connected = asyncio.Event()
     self._client: aiomqtt.Client | None = None
     self._tasks: asyncio.TaskGroup | None = None
+    self._session: asyncio.TaskGroup | None = None
+    self._while_connected: list[Callable[[], Awaitable[Any]]] = []
     self._callbacks: dict[y2topic, list[tuple[MqttCallback, object, bool, bool]]] = {}
     self._subscriptions: dict[y2topic, int] = {}
     self._config_paths: dict[str, str] = {}
@@ -260,15 +262,19 @@ class Mqtt(Provider):
           for topic, qos in subscriptions: await client.subscribe(str(topic), qos=qos)
           if status: await client.publish(status, 'online', qos=1, retain=True)
           self.connected.set()
-          await self._dispatch(client)
+          async with asyncio.TaskGroup() as session:
+            self._session = session
+            for factory in self._while_connected: session.create_task(factory())
+            await self._dispatch(client)
         finally:
+          self._session = None
           self.connected.clear()
           self._client = None
           if status:
             try: await client.publish(status, 'offline', qos=1, retain=True)   # a clean DISCONNECT does not fire the will
             except aiomqtt.MqttError: pass
-    except aiomqtt.MqttError as error:
-      Warn(f'mqtt error, reconnect in {self.RECONNECT_DELAY}s:', error)
+    except* aiomqtt.MqttError as errors:
+      Warn(f'mqtt error, reconnect in {self.RECONNECT_DELAY}s:', *errors.exceptions)
 
   def _client_for(self, status: str) -> aiomqtt.Client:
     options = {key: self.connection[key] for key in self.CLIENT_KEYS if key in self.connection}
@@ -322,6 +328,12 @@ class Mqtt(Provider):
       self._subscriptions[topic] = qos
       client = self._client if qos != old_qos else None
     if client is not None: await client.subscribe(str(topic), qos=qos)
+
+  def while_connected(self, factory: Callable[[], Awaitable[Any]]) -> None:
+    """Run ``factory()`` on every connection: started once connected, cancelled when the connection drops. An
+    ``MqttError`` it raises drops the connection, which reconnects; any other error ends ``serve``."""
+    self._while_connected.append(factory)
+    if self._session is not None: self._session.create_task(factory())
 
   async def publish(self, topic: y2topic | str, payload: MqttPayload = '', *, retain: bool = False, qos: int = 0,
                     expiry: int | None = None, **properties: Any) -> None:

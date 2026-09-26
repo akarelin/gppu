@@ -147,3 +147,28 @@ def test_mqtt_app_wait_bounds_an_unreachable_broker(env):
       return self.mqtt.connected.is_set()
 
   assert asyncio.run(Panel().invoke()) is False
+
+
+def test_while_connected_restarts_with_each_connection(env):
+  env(CONFIG)
+  import aiomqtt
+  starts = []
+
+  class Dropping(FakeMqtt):
+    RECONNECT_DELAY = 0
+
+  class Service(AsyncApp):
+    async def main(self, mqtt: Dropping) -> list:
+      async def probe():
+        starts.append(len(starts))
+        await mqtt.publish('wan', len(starts))
+        if len(starts) == 1: raise aiomqtt.MqttError('dropped mid-publish')
+        await asyncio.Event().wait()
+      mqtt.while_connected(probe)
+      self._spawn(mqtt.serve())
+      while len(starts) < 2: await asyncio.sleep(0)
+      await self.stop()
+      return mqtt.broker.published
+
+  published = asyncio.run(Service().invoke())
+  assert starts == [0, 1] and published == [('wan', '1', False), ('wan', '2', False)]
