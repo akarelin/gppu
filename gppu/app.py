@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 from abc import abstractmethod
 from pathlib import Path
 from collections.abc import Callable, Coroutine, Mapping
@@ -25,6 +26,7 @@ from typing import Any, final
 
 from .gppu import Env, Logger, _Base, _DC, _mixin
 from .environment import Environment
+from .params import call, parser, resolve, schema
 
 # region YMRO lifecycle
 class _YMRO:
@@ -193,6 +195,40 @@ class App(_App, _DC):
       Hello().main()
   """
   pass
+
+
+class CliApp(App):
+  """Runs ``main`` once; the command line gives its parameters (gppu.params). What it returns is printed as JSON on
+  stdout; logs go to stderr. A parameter the command line does not give comes from the app's table in the
+  configuration, named after the app, or from the whole configuration when there is no such table.
+
+  Usage::
+
+      from gppu import CliApp
+      class Archive(CliApp):
+        def main(self, since: str = '7d', dry_run: bool = False) -> dict:
+          '''Archive what changed.'''
+      if __name__ == '__main__': Archive.cli()
+  """
+
+  def main(self, *a, **kw) -> Any: raise NotImplementedError(f'{type(self).__name__} defines no main')
+
+  def params(self, **given: Any) -> dict[str, Any]:
+    """main's keyword arguments: given, then configuration, then defaults."""
+    table = Env.data.get(self.name)
+    return resolve(self.main, given, table if isinstance(table, dict) else Env.data)
+
+  def invoke(self, **given: Any) -> Any: return call(self.main, self.params(**given))
+
+  @classmethod
+  def cli(cls, argv: list[str] | None = None) -> Any:
+    """Start from the command line; ``--schema`` prints the parameters instead."""
+    app = cls()
+    given = vars(parser(app.main, app.name).parse_args(argv))
+    if given.pop('schema', False): return print(json.dumps(schema(app.main), indent=2))
+    result = app.invoke(**given)
+    if result is not None: print(json.dumps(result, indent=2, default=str))
+    return result
 # endregion
 
 
