@@ -1,0 +1,2 @@
+# The configuration an app under test finds beside it; a test that needs its own loads it with Env.from_dict.
+tests: {}

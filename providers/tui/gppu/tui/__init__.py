@@ -1,48 +1,182 @@
-"""gppu.tui — provider: a Textual screen on an AsyncApp.
+"""gppu.tui — Reusable TUI superapp launcher framework, widgets, and helpers.
 
-TUIApp is an AsyncApp, so a TUI is started, configured and given Connections exactly as a service is, and anything
-a service does — ``_spawn``, MQTT, timers — runs on the same loop as the screen. ``main`` runs once the screen is
-mounted and may run for as long as the screen does; quitting the screen cancels what is still running.
+Public surface is organized as:
 
-    class Browser(TUIApp):
-      def compose(self): yield Log()
-      async def main(self, folder: Path = Path('.'), db: Postgres = 'pg-lake'):
-        for row in db.rows('select ...'): self.query_one(Log).write_line(str(row))
+- **Launcher / base classes** (``launcher``) — ``TUIApp``, ``TUILauncher``,
+  ``AppScreen``; the sub-app registry + launch plumbing.
+- **Selectors** (``selectors``) — list-style pickers with an optional detail
+  pane (``ui_select``, ``ui_select_rows``, ``Selector``, ``DetailedSelector``).
+- **Config editor** (``config_editor``) — ``ConfigEditorApp`` for editing YAML
+  config via TUI.
+- **Progress** (``progress``) — streaming per-item indicators
+  (``TickProgress`` dim dots, ``MarkerProgress`` classified colored glyphs).
+- **Workers** (``workers``) — ``WorkerPool`` + ``WorkerRow`` for rendering
+  concurrent task state in a stack with aggregate footer.
+- **Icons** (``icons``) — canonical state glyphs + spinner frame sets.
+- **Viz** (``viz``) — ``Heatmap`` activity grid (and any future widgets).
 
-    if __name__ == '__main__': Browser.cli()
-
-The widgets, the launcher and the sidecar move here unchanged from gppu/tui; they are not repeated in the mock-up.
+If your app needs a reusable pattern and it isn't here, the place to add it
+is inside this package — not inside the app.  See
+``_/inbox/gppu-tui-sessionmanager.md`` for the scratch on what's planned.
 """
-from __future__ import annotations
 
-from typing import Any
+from .launcher import (
+    _tui_available,
+    TUIApp,
+    TUILauncher,
+    AppScreen,
+    AppItem,
+    InfoScreen,
+    ModeItem,
+    ProcessRow,
+    SpinnerIndicator,
+    StatusHeader,
+    build_args,
+    resolve_cwd,
+    launch_app,
+    load_app_registry,
+    load_registry,
+    read_manifest,
+    launcher_main,
+)
 
-from textual.app import App as TextualApp
-from textual.binding import Binding
+from .sidecar import (
+    inject_source,
+    load_sidecar_registry,
+    read_sidecar,
+    run_sidecar,
+    sidecar_command,
+    sidecar_main,
+)
 
-from gppu import AsyncApp
+from .config_editor import ConfigEditorApp
+
+from .selectors import (
+    Selector,
+    DetailedSelector,
+    DetailScreen,
+    ui_select,
+    ui_select_rows,
+)
+
+from .progress import (
+    Marker,
+    TickProgress,
+    MarkerProgress,
+    marker_rich,
+    marker_ansi,
+    legend_rich,
+    legend_ansi,
+)
+
+from .workers import (
+    WorkerPool,
+    WorkerRow,
+    WorkerState,
+)
+
+from .icons import (
+    Glyph,
+    STATE_GLYPHS,
+    SPINNERS,
+    glyph_rich,
+    glyph_ansi,
+    spinner_frames,
+)
+
+from .viz import Heatmap, render_heatmap_lines
+
+from .modals import ConfirmScreen, InputScreen
+
+from .loaders import LoaderMixin
+
+from .cache import CachedFetcher, PaginatedFetcher, CacheRefreshMixin
+
+from .tree import (
+    TreeEntry,
+    TreeAdapter,
+    FilesystemAdapter,
+    GDriveAdapter,
+    TreeBrowser,
+)
+
+from .tree_table import TreeTable, TreeTableColumn
+
+from .task_matrix import TaskMatrix
 
 
-class TUIApp(AsyncApp, TextualApp):
-  """A Textual application that is a gppu AsyncApp. ``q`` quits; ``done(result)`` quits with a result."""
-
-  BINDINGS = [Binding('q', 'done', 'Quit', show=False)]
-
-  def __init__(self, name: str = '') -> None:
-    super().__init__(name)
-    self._params: dict[str, Any] = {}
-
-  async def main(self, **params: Any) -> Any: return None
-
-  async def invoke(self, **given: Any) -> Any:
-    self._params = self.params(**given)
-    async with self._task_scope():
-      result = await TextualApp.run_async(self)
-      await self.stop()
-      return result
-
-  def on_mount(self) -> None: self._spawn(self.main(**self._params))
-
-  def action_done(self) -> None: self.done()
-
-  def done(self, result: Any = None) -> None: self.exit(result=result)
+__all__ = [
+    # Base TUI classes
+    'TUIApp',
+    'TUILauncher',
+    'AppScreen',
+    # Launcher framework
+    'AppItem',
+    'InfoScreen',
+    'ModeItem',
+    'ProcessRow',
+    'SpinnerIndicator',
+    'StatusHeader',
+    'build_args',
+    'resolve_cwd',
+    'launch_app',
+    'load_app_registry',
+    'load_registry',
+    'read_manifest',
+    'launcher_main',
+    # Sidecar manifests
+    'inject_source',
+    'load_sidecar_registry',
+    'read_sidecar',
+    'run_sidecar',
+    'sidecar_command',
+    'sidecar_main',
+    # Config editor
+    'ConfigEditorApp',
+    # Selector widgets
+    'Selector',
+    'DetailedSelector',
+    'DetailScreen',
+    'ui_select',
+    'ui_select_rows',
+    # Progress
+    'Marker',
+    'TickProgress',
+    'MarkerProgress',
+    'marker_rich',
+    'marker_ansi',
+    'legend_rich',
+    'legend_ansi',
+    # Workers
+    'WorkerPool',
+    'WorkerRow',
+    'WorkerState',
+    # Icons
+    'Glyph',
+    'STATE_GLYPHS',
+    'SPINNERS',
+    'glyph_rich',
+    'glyph_ansi',
+    'spinner_frames',
+    # Viz
+    'Heatmap',
+    'render_heatmap_lines',
+    # Modals
+    'ConfirmScreen',
+    'InputScreen',
+    # Loaders
+    'LoaderMixin',
+    # Cache
+    'CachedFetcher',
+    'PaginatedFetcher',
+    'CacheRefreshMixin',
+    # Tree
+    'TreeEntry',
+    'TreeAdapter',
+    'FilesystemAdapter',
+    'GDriveAdapter',
+    'TreeBrowser',
+    'TreeTable',
+    'TreeTableColumn',
+    'TaskMatrix',
+]
