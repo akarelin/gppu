@@ -1,8 +1,8018 @@
-"""gppu.fs — provider: gppufs. Moves here unchanged from gppu/fs.py: DataObject, Container, Location, Collection,
-FileSystem, the Handlers, GppuFileSystem, GppuCatalog, PostgresFileSystem, SharePointFileSystem.
+r"""gppufs: DataObjects in Containers, Containers in Locations and Collections.
 
-One change: its Provider subclasses core ``gppu.Provider``, which now holds only what every Connection has (scheme,
-uid, parameters, close). The object methods — ls, info, open, read, write, delete, walk, refresh, locations — stay
-here on the fs Provider. GppuCatalog reads its connections through ``gppu.connections`` instead of resolving the
-``connections`` table itself, so a Location's Connection and an app's Connection are the same instance.
+A Location is one place in the configured hierarchy, known by its uid. A Container holds alike objects and takes
+paths relative to itself. A Collection holds the Locations by uid and reaches their objects by uri; the Lake is a
+Collection. A Provider reaches objects by uri over one connection, and an instance of it is that Connection:
+FileSystem is the Provider of files, and M365, Telegram and Plaud are Providers in CRAP. A DataObject is content
+with its uri.
+
+The public methods are the API. /config serves the Locations; /lake serves the Collection and its Containers.
+
+Handlers:
+Typed, caller-composed handlers for large file hierarchies.
+
+A domain handler receives one :class:`pathlib.Path` and returns ``(stats,
+typed_object)``. Statistics are derived from the complete typed object. Users
+select behavior with normal multiple inheritance::
+
+    class MyFiles(
+        FileHandler,
+        IgnoredHandler,
+        MarkdownHandler,
+        CSVHandler,
+        LogHandler,
+        FolderHandler,
+    ):
+        pass
+
+    files = MyFiles(metadata={"source": "local"})
+
+``GppuFileSystem(location)`` composes the implemented parsers behind fsspec
+``ls`` and ``info``, with SQLite metadata indexes beside the source folders.
+
+Every handler copies the optional metadata mapping supplied by its caller.
+``Probe.metadata`` combines that mapping with metadata detected by the typed
+object. Caller metadata wins when the same key exists in both mappings.
+
+Default calls do not stop a hierarchy scan. A read failure is represented by
+:class:`HandlerError`; a composed probe stores it on ``Probe.error`` and
+``Record.errors``. Construct a handler with ``strict=True`` when an exception
+and traceback are required. Cancellation and process-exit exceptions are not
+captured.
+
+Public I/O calls decorated with :func:`gppu.sync` return directly outside an
+event loop and are awaitable inside one. Their ``*_sync`` methods are the
+strict worker implementations. All local paths are resolved by
+:func:`gppu.full_path`.
+
+Archive members use the same :class:`Record` hierarchy as filesystem entries,
+with the archive path in ``location``. Ignored folders remain visible but are
+not descended into. ``GitHandler`` reads only local history and configuration;
+it never fetches or contacts an upstream.
 """
+from __future__ import annotations
+
+import asyncio
+import csv
+import filecmp
+import fnmatch
+import hashlib
+import importlib
+import io
+import json
+import os
+import posixpath
+import re
+import shutil
+import socket
+import sqlite3
+import stat as stat_module
+import subprocess
+import tarfile
+import time
+import tempfile
+import zipfile
+from collections.abc import AsyncIterator, Callable, Collection, Iterable, Iterator, Mapping, Sequence
+from contextlib import AbstractContextManager, closing, contextmanager, nullcontext
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
+from datetime import date, datetime, timedelta, timezone, tzinfo
+from io import BytesIO
+from pathlib import Path, PurePosixPath, PureWindowsPath
+from types import SimpleNamespace
+from typing import Any, BinaryIO, Literal, Protocol, TypeVar, runtime_checkable
+from urllib.parse import quote, unquote, urlsplit
+from zoneinfo import ZoneInfo
+from threading import RLock
+
+import yaml
+from fsspec import open as open_uri, register_implementation
+from fsspec.archive import AbstractArchiveFileSystem
+from fsspec.core import url_to_fs
+from fsspec.implementations.local import LocalFileSystem
+from fsspec.implementations.tar import TarFileSystem
+from fsspec.spec import AbstractFileSystem
+from fsspec.utils import stringify_path
+
+from gppu.gppu import TimeSpan, Env, OSType, TemplateSet, _Base, detect_os, full_path, is_table_key, sync, y2path, y2uri
+
+
+# region providers
+
+@dataclass(frozen=True)
+class DataObject:
+  """Content and the uri it was read from or is written to.
+
+  A DataObject is a value. Its content is JSON, text, bytes or a binary stream, and its structure belongs to the source.
+
+  Attributes:
+    uri (y2uri): The uri of the object at its source.
+    content (dict[str, Any] | list[Any] | str | int | float | bool | None | bytes | BinaryIO): What the object holds.
+    identity (str | None): The id the source gives the object, or None when it gives none.
+    kind (str): What sort of object the source says it is; object when it says nothing.
+    name (str): The object's name, used by naming templates.
+    parent (DataObject | None): The object this one belongs to, such as the list a task is in.
+    removed (bool): True when a refresh reports the object as gone from its source.
+  """
+  uri: y2uri
+  content: dict[str, Any] | list[Any] | str | int | float | bool | None | bytes | BinaryIO
+  identity: str | None
+  kind: str = 'object'
+  name: str = ''
+  parent: 'DataObject | None' = None
+  removed: bool = False
+
+  def __post_init__(self) -> None:
+    object.__setattr__(self, 'uri', y2uri(self.uri))
+
+
+def _join(uri: y2uri | str, path: y2path | str) -> y2uri:
+  """uri with a relative path below it, each name uri-escaped."""
+  uri = y2uri(uri)
+  return uri / quote(str(path), safe='/') if str(path) else uri
+
+
+class Provider:
+  """Reaches objects by their uri over one connection.
+
+  An instance is a Connection: the Provider with its connection parameters. The same connection that reads a
+  Container's objects is the one that finds the Locations below a tenant, so one instance does both and holds the
+  session and credentials once. FileSystem is the Provider of files;
+  M365, Telegram and Plaud are Providers written in CRAP. A Provider that cannot write raises PermissionError from
+  write and delete. Container and Location call these methods; nothing else needs to.
+
+  Attributes:
+    scheme (str): The uri scheme this Provider reaches: file, m365, telegram, plaud.
+    connection (dict[str, Any]): The connection parameters it was constructed with: host, account, credentials.
+  """
+  scheme = ''
+
+  def __init__(self, connection: Mapping[str, Any] | None = None) -> None:
+    self.connection = deepcopy(dict(connection)) if connection is not None else {}
+
+  def join(self, uri: y2uri, path: y2path | str) -> y2uri:
+    """The uri of path below uri. Each name is uri-escaped; a Provider whose paths are already escaped ids joins
+    them as they are."""
+    return _join(uri, path)
+
+  def ls(self, uri: y2uri) -> list[dict[str, Any]]:
+    """What is directly inside uri, each entry named by its own name with its type and size."""
+    raise NotImplementedError(f'{self.scheme}: ls is not implemented')
+
+  def info(self, uri: y2uri) -> dict[str, Any]:
+    """What is known about the object at uri without reading its content."""
+    raise NotImplementedError(f'{self.scheme}: info is not implemented')
+
+  def open(self, uri: y2uri, mode: str = 'rb') -> BinaryIO:
+    """The bytes of the object at uri."""
+    raise NotImplementedError(f'{self.scheme}: open is not implemented')
+
+  def read(self, uri: y2uri) -> DataObject:
+    """The object at uri with its content."""
+    raise NotImplementedError(f'{self.scheme}: read is not implemented')
+
+  def write(self, uri: y2uri, obj: DataObject) -> None:
+    """Store obj's content at uri."""
+    raise PermissionError(f'{self.scheme}: objects are read-only')
+
+  def delete(self, uri: y2uri) -> None:
+    """Remove the object at uri."""
+    raise PermissionError(f'{self.scheme}: objects are read-only')
+
+  def walk(self, uri: y2uri, path: y2path | str = '', *, level: str = 'files', recursive: bool = False,
+           boundaries: Iterable[y2path | str] = ()) -> Iterator[tuple[dict, list[dict]]]:
+    """Each folder at and below path under uri, with the entries it holds; paths stay relative to uri.
+
+    A boundary is reported and never entered. The default reads each entry through ls and, at the handlers level,
+    read; FileSystem reads files through its handlers instead.
+    """
+    yield from walk_container(Container(self, uri), str(path), level, recursive, boundaries)
+
+  @contextmanager
+  def refresh(self, state: dict[str, Any], uri: y2uri) -> Iterator[tuple[Iterator[DataObject], Callable[[], None]]]:
+    """The objects changed at or below uri since state was recorded, and a callback that records the new state."""
+    raise NotImplementedError(f'{self.scheme}: refresh is not implemented')
+    yield
+
+  def locations(self, uri: y2uri) -> list[tuple[str, str]]:
+    """The Locations found directly below the Location at uri, as their path below it and their name.
+
+    A tenant lists its users and a user lists their mailbox parts; a Provider with nothing to discover lists none.
+    """
+    return []
+
+
+class Container:
+  """Alike objects kept together under one uri and reached through one Provider: a folder, a git repo, a
+  SharePoint file collection, an index file.
+
+  A Container takes paths relative to itself and never a uri. Its Provider does the reading and writing; the
+  Container adds paths and naming templates, so one Container serves every Provider. /lake reaches it through
+  its Collection.
+
+  Attributes:
+    provider (Provider): The Provider that reaches its objects.
+    uri (y2uri): The uri of the Container itself.
+  """
+
+  def __init__(self, provider: Provider, uri: y2uri | str, *, templates: Mapping[str, str] | None = None) -> None:
+    """A Container at uri, reached through provider. templates name where a DataObject belongs: filename, the
+    parent object's kinds, date, identity and collision."""
+    self.provider = provider
+    self.uri = y2uri(uri)
+    self.templates = None if templates is None else TemplateSet(named={'objects': deepcopy(dict(templates))})
+    self._paths: dict[str, str] | None = None
+    self._identities: dict[str, str] = {}
+
+  def _uri(self, path: y2path | str) -> y2uri:
+    return self.provider.join(self.uri, Location.relative(path))
+
+  def ls(self, path: y2path | str = '', detail: bool = True) -> list[dict[str, Any]] | list[str]:
+    """What is directly inside path, each entry named by its path in this Container, with type and size.
+
+    Callers: FileIndexer, the Plaud Dagster job, admin_ui.
+    """
+    path = str(Location.relative(path))
+    rows = [row | {'name': f"{path}/{row['name']}" if path else row['name']}
+            for row in self.provider.ls(self._uri(path))]
+    return rows if detail else [row['name'] for row in rows]
+
+  def walk(self, path: y2path | str = '', *, level: str = 'files', recursive: bool = False,
+           boundaries: Iterable[y2path | str] = ()) -> Iterator[tuple[dict, list[dict]]]:
+    """Each folder at and below path with what it holds, read as deep as level: refresh, files, handlers or archives.
+
+    A boundary path is reported and not entered. A listing error is raised, never read as an empty folder.
+    Caller: FileIndexer.
+    """
+    yield from self.provider.walk(self.uri, path, level=level, recursive=recursive, boundaries=boundaries)
+
+  def info(self, path: y2path | str = '') -> dict[str, Any]:
+    """What is known about path without reading its content: type, size, times, span and what the handlers found."""
+    return self.provider.info(self._uri(path)) | {'name': str(path)}
+
+  def open(self, path: y2path | str, mode: str = 'rb') -> BinaryIO:
+    """The bytes at path. Caller: admin_ui."""
+    return self.provider.open(self._uri(path), mode)
+
+  def read(self, path: y2path | str | DataObject) -> DataObject:
+    """The object at path with its content.
+
+    Given a DataObject, the path is where the naming templates put it, and the result keeps its uri and identity.
+    An object whose source gives no identity is identified by its path. Callers: Dagster jobs, admin_ui.
+    """
+    if isinstance(path, DataObject):
+      obj, path = path, self.path_of(path)
+      uri = self._uri(path)
+      binary = isinstance(obj.content, bytes) or hasattr(obj.content, 'read')
+      content = self.provider.open(uri) if binary else self.provider.read(uri).content
+      return replace(obj, content=content, name=PurePosixPath(str(path)).name)
+    obj = self.provider.read(self._uri(path))
+    return obj if obj.identity is not None else replace(obj, identity=str(path))
+
+  def write(self, path: y2path | str, obj: DataObject) -> None:
+    """Store obj at path. The object's uri is unchanged.
+
+    With an identity template, a path already holding another object's identity is refused. Caller: Dagster jobs.
+    """
+    if not isinstance(obj, DataObject):
+      raise TypeError('Container.write requires a DataObject')
+    if not isinstance(path, (y2path, str)):
+      raise TypeError('Container.write requires a relative path')
+    path = str(Location.relative(path))
+    if not path:
+      raise ValueError('Container write path must name an object')
+    uri = self._uri(path)
+    binary = isinstance(obj.content, bytes) or hasattr(obj.content, 'read')
+    if not binary and self.templates is not None and 'identity' in self.templates.named:
+      identity = self.templates.render_template('identity', uri=str(obj.uri), it=obj.content, path=path)
+      if identity is not None:
+        try:
+          held = self.provider.read(uri).content
+        except FileNotFoundError:
+          held = None
+        if held is not None and identity != self.templates.render_template('identity', uri=str(obj.uri), it=held, path=path):
+          raise ValueError(f'{uri}: refusing to replace a different object identity')
+    self.provider.write(uri, obj)
+
+  def delete(self, path: y2path | str) -> None:
+    """Remove the object at path. Caller: Dagster jobs, before rewriting an object."""
+    path = str(Location.relative(path))
+    self.provider.delete(self._uri(path))
+    if self._paths is not None and path.casefold() in self._identities:
+      del self._paths[self._identities.pop(path.casefold())]
+
+  def path_of(self, obj: DataObject) -> y2path:
+    """Where obj belongs in this Container by its naming templates. Callers: Dagster jobs, admin_ui's template preview."""
+    if self.templates is None:
+      raise ValueError('Container requires naming templates to place a DataObject')
+    uri = urlsplit(str(obj.uri))
+    context = dict(uri=str(obj.uri), endpoint=uri.path, tenant=uri.netloc, inside='.', it=obj.content,
+                   unquote=unquote, identity=obj.identity, filename=obj.name, kind=obj.kind)
+    if 'date' in self.templates.named:
+      value = self.templates.render_template('date', it=obj.content, uri=str(obj.uri),
+        parent=obj.parent.content if obj.parent is not None else None)
+      context['date'] = datetime.fromisoformat(value) if value else None
+    if obj.parent is not None:
+      path = self.templates.render_template(obj.kind, object_path=str(self.path_of(obj.parent)),
+                                            parent=obj.parent.content, **context)
+    else:
+      path = self.templates.render_template('filename', **context)
+    if not isinstance(path, str) or not path.strip():
+      raise ValueError('Object filename template must return a nonempty relative path')
+    path = str(Location.relative(path))
+    if 'identity' not in self.templates.named:
+      return y2path(path)
+    context['path'] = path
+    identity = self.templates.render_template('identity', **context)
+    if identity is None:
+      return y2path(path)
+    if not isinstance(identity, str) or not identity:
+      raise ValueError('Object identity template must return a nonempty string or None')
+    paths = self._saved(context)
+    if identity in paths:
+      return y2path(paths[identity])
+    original, number, attempted = path, 1, set()
+    while path.casefold() in self._identities:
+      if path.casefold() in attempted:
+        raise ValueError('Collision template must produce a new path')
+      attempted.add(path.casefold())
+      number += 1
+      path = self.templates.render_template('collision', **(context | {'path': original, 'number': number}))
+      if not isinstance(path, str) or not path.strip():
+        raise ValueError('Collision template must return a nonempty relative path')
+      path = str(Location.relative(path))
+    paths[identity] = path
+    self._identities[path.casefold()] = identity
+    return y2path(path)
+
+  def _saved(self, context: dict[str, Any]) -> dict[str, str]:
+    """The saved JSON objects in this Container by identity, read once."""
+    if self._paths is None:
+      self._paths = {}
+      folders = ['']
+      while folders:
+        for row in self.ls(folders.pop()):
+          if row['type'] == 'directory':
+            folders.append(row['name'])
+            continue
+          if not row['name'].endswith('.json'):
+            continue
+          key = self.templates.render_template('identity', **(context | {
+            'it': self.provider.read(self._uri(row['name'])).content, 'path': row['name']}))
+          if key is None:
+            continue
+          if key in self._paths:
+            raise ValueError(f"{row['name']}: duplicate saved object identity")
+          self._paths[key] = row['name']
+          self._identities[row['name'].casefold()] = key
+    return self._paths
+
+  @contextmanager
+  def refresh(self, state: dict[str, Any], path: y2path | str = '') -> Iterator[Iterator[DataObject]]:
+    """The objects changed at or below path since state was recorded, removed ones marked removed.
+
+    state belongs to the caller. It advances only when every change was consumed inside the context and nothing
+    raised, so a failed run is read again next time. Caller: Dagster jobs.
+    """
+    with self.provider.refresh(state, self._uri(path)) as (objects, commit):
+      complete = False
+      def changes() -> Iterator[DataObject]:
+        nonlocal complete
+        for obj in objects:
+          if not isinstance(obj, DataObject):
+            raise TypeError('Container refresh must return DataObjects')
+          yield obj
+        complete = True
+      yield changes()
+      if not complete:
+        raise RuntimeError('refresh was not fully consumed; source state was not advanced')
+      commit()
+
+
+class Location:
+  """One place in the configured hierarchy, known by its uid.
+
+  The top of the hierarchy is configured; below it are Locations its Provider discovers, down to the Containers
+  that hold objects. A Location without a Provider only groups the Locations below it. /config serves Locations.
+
+  Attributes:
+    uid (str): Its uid from configuration: alex-laptop-data, github-ran.
+    uri (y2uri): Its canonical uri.
+    provider (Provider | None): The Provider, with its connection, that reaches it.
+    parent (Location | None): The Location above it; None at the top.
+  """
+
+  def __init__(self, row: Mapping[str, Any], *, provider: Provider | None = None, parent: 'Location | None' = None,
+               children: Callable[[], Iterable['Location']] | None = None,
+               templates: Mapping[str, str] | None = None) -> None:
+    """A Location from its configuration row. children lists the configured Locations below it; templates name
+    where DataObjects go in its Container."""
+    self.uid = row['uid']
+    if not isinstance(self.uid, str) or not self.uid:
+      raise ValueError('every Location requires a nonempty uid')
+    self._row = deepcopy(dict(row))
+    self.uri = y2uri(row['canonical'])
+    self.provider = provider
+    self.parent = parent
+    self.templates = deepcopy(dict(templates)) if templates is not None else None
+    self._children = children
+    self._store: Callable[['Location | None', str, dict[str, Any]], None] | None = None
+
+  @property
+  def data(self) -> dict[str, Any]:
+    """Its configuration row: uid, provider, parent, canonical, name, kind, path, service, icon, tags, folders."""
+    return deepcopy(self._row)
+
+  def ls(self) -> list['Location']:
+    """The Locations directly below this one: the configured ones, then those its Provider finds.
+
+    Callers: admin_ui, FileIndexer, lake Dagster.
+    """
+    children = list(self._children()) if self._children is not None else []
+    if self.provider is None:
+      return children
+    configured = {child.uri for child in children}
+    for path, name in self.provider.locations(self.uri):
+      uri = self.provider.join(self.uri, path)
+      if uri in configured:
+        continue
+      children.append(Location(self._row | {'uid': f"{self.uid.rstrip('/')}/{path}", 'canonical': str(uri),
+        'name': name, 'path': unquote(urlsplit(str(uri)).path.lstrip('/')), 'parent': self.uid},
+        provider=self.provider, parent=self, templates=self.templates))
+    return children
+
+  def walk(self) -> Iterator[tuple['Location', list['Location']]]:
+    """This Location and every Location below it, each with the Locations directly below it."""
+    children = self.ls()
+    yield self, children
+    for child in children:
+      yield from child.walk()
+
+  def container(self, path: y2path | str = '') -> Container:
+    """The Container at path below this Location. Callers: FileIndexer, Dagster jobs."""
+    if self.provider is None:
+      raise ValueError(f'{self.uid}: no Provider reaches this Location')
+    return Container(self.provider, self.provider.join(self.uri, self.relative(path)), templates=self.templates)
+
+  def uri_of(self, path: y2path | str = '') -> y2uri:
+    """The canonical uri of path below this Location, each name uri-escaped. Caller: FileIndexer."""
+    return _join(self.uri, self.relative(path))
+
+  def save(self, who: str, **fields: Any) -> None:
+    """Write fields into this Location's configuration row as who: uid, name, path, service, kind, icon, tags, folders."""
+    if self._store is None:
+      raise ValueError(f'{self.uid}: this Location was not loaded from a configuration it can write to')
+    self._store(self, who, fields)
+
+  @staticmethod
+  def relative(path: y2path | str) -> y2path:
+    """path, checked to be relative and slash-separated, with no drive, empty or traversal segment."""
+    if isinstance(path, y2path):
+      path = str(path)
+    if not isinstance(path, str) or path.startswith('/') or '\\' in path or '://' in path or PureWindowsPath(path).drive:
+      raise ValueError('Location path must be relative and slash-separated')
+    if path and any(part in ('', '.', '..') for part in path.split('/')):
+      raise ValueError('Location path cannot contain empty or traversal segments')
+    return y2path(path)
+
+
+class FileSystem(Provider):
+  """Files on this host or on a share it reaches, read through the handlers.
+
+  A file uri names its host and path: file:///D:/Dev on this host, file://alex-pc/D:/Dev by host name. The
+  handlers say what each file is; FileSystem is their Provider.
+  """
+  scheme = 'file'
+
+  def local(self, uri: y2uri | str) -> Path:
+    """The path on this host that uri names."""
+    parsed = urlsplit(str(uri))
+    if parsed.scheme != self.scheme:
+      raise ValueError(f'{uri}: FileSystem reaches file uris')
+    if parsed.query or parsed.fragment:
+      raise ValueError(f'{uri}: a file uri has no query or fragment')
+    path = unquote(parsed.path)
+    if not path:
+      raise ValueError(f'{uri}: select a child Location with a filesystem root')
+    if any(part in ('.', '..') for part in path.split('/')):
+      raise ValueError(f'{uri}: a file uri cannot contain traversal segments')
+    if len(path) >= 3 and path[0] == '/' and path[2] == ':':
+      path = path[1:]
+    if parsed.netloc and parsed.netloc.casefold() != socket.gethostname().split('.')[0].casefold():
+      if os.name == 'nt' and not PureWindowsPath(path).drive:
+        return Path('//' + parsed.netloc + path)
+      raise ValueError(f'{uri}: file uri refers to another host')
+    if len(path) == 2 and path[1] == ':':
+      path += '/'
+    local = Path(path)
+    if not local.is_absolute():
+      raise ValueError(f'{uri}: a file uri requires an absolute path')
+    return local
+
+  def ls(self, uri: y2uri) -> list[dict[str, Any]]:
+    rows = []
+    for target in sorted(self.local(uri).iterdir()):
+      if target.is_symlink() or target.is_junction():
+        # A link is listed as itself, never followed: fsspec's islink and destination.
+        rows.append({'name': target.name, 'type': 'other', 'size': target.lstat().st_size, 'islink': True,
+                     'destination': os.readlink(target)})
+        continue
+      rows.append({'name': target.name, 'type': 'directory' if target.is_dir() else 'file',
+                   'size': 0 if target.is_dir() else target.stat().st_size})
+    return rows
+
+  def info(self, uri: y2uri) -> dict[str, Any]:
+    """What the handlers found at uri: type, size, times, span and each handler's metadata under its name."""
+    return _MetadataHandlers().probe_sync(self.local(uri), recursive=False)[0].metadata
+
+  def open(self, uri: y2uri, mode: str = 'rb') -> BinaryIO:
+    if mode not in ('rb', 'r'):
+      raise ValueError('open reads; store objects with write')
+    return self.local(uri).open(mode)
+
+  def read(self, uri: y2uri) -> DataObject:
+    """The file at uri: a JSON file's parsed value, any other file's byte stream."""
+    target = self.local(uri)
+    content = json.loads(target.read_bytes()) if target.suffix.casefold() == '.json' else target.open('rb')
+    return DataObject(uri, content, None, name=target.name)
+
+  def write(self, uri: y2uri, obj: DataObject) -> None:
+    """Store obj.content at uri: JSON values as UTF-8 JSON, bytes and streams unchanged.
+
+    The file is staged beside its destination and moved into place. Identical content is left alone. Different
+    binary content at an existing file is refused until the file is deleted.
+    """
+    target = self.local(uri)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    incoming = obj.content
+    binary = isinstance(incoming, bytes) or hasattr(incoming, 'read')
+    if not binary:
+      stream = BytesIO((json.dumps(incoming, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + '\n').encode('utf-8'))
+    elif isinstance(incoming, bytes):
+      stream = BytesIO(incoming)
+    else:
+      stream = incoming
+    if isinstance(stream, BytesIO) and target.is_file() and target.read_bytes() == stream.getvalue():
+      return
+    # Stage beside the object so replacement stays on its filesystem.
+    with tempfile.NamedTemporaryFile(dir=target.parent, prefix='.', suffix='.pending', delete=False) as staged:
+      pending = Path(staged.name)
+      try:
+        shutil.copyfileobj(stream, staged)
+        staged.flush()
+        os.fsync(staged.fileno())
+      except BaseException:
+        staged.close()
+        pending.unlink()
+        raise
+    try:
+      if not binary:
+        if target.exists() and filecmp.cmp(pending, target, shallow=False):
+          return
+        os.replace(pending, target)
+      else:
+        try:
+          os.link(pending, target)
+        except FileExistsError:
+          if not filecmp.cmp(pending, target, shallow=False):
+            raise FileExistsError(f'{target}: different content requires delete then write') from None
+    finally:
+      pending.unlink(missing_ok=True)
+
+  def delete(self, uri: y2uri) -> None:
+    self.local(uri).unlink()
+
+  def walk(self, uri: y2uri, path: y2path | str = '', *, level: str = 'files', recursive: bool = False,
+           boundaries: Iterable[y2path | str] = ()) -> Iterator[tuple[dict, list[dict]]]:
+    yield from walk_files(self.local(uri), str(Location.relative(path)), level, recursive, boundaries)
+
+  @contextmanager
+  def refresh(self, state: dict[str, Any], uri: y2uri) -> Iterator[tuple[Iterator[DataObject], Callable[[], None]]]:
+    """Files changed at or below uri since state was recorded, by modification time and size.
+
+    state is keyed by the local file uri of the refreshed path; each object's identity is its path below uri.
+    """
+    root = self.local(uri).resolve()
+    base = root if root.is_dir() else root.parent
+    scope = root.as_uri()
+    previous = state[scope] if scope in state else {}
+    pending: dict[str, list[int]] = {}
+
+    def objects() -> Iterator[DataObject]:
+      targets = root.rglob('*') if root.is_dir() else [root]
+      for target in targets:
+        if target.is_dir() or target.suffix == '.pending':
+          continue
+        name = target.relative_to(base).as_posix()
+        stat = target.stat()
+        signature = [stat.st_mtime_ns, stat.st_size]
+        if name not in previous or previous[name] != signature:
+          obj = replace(self.read(_join(uri, name) if root.is_dir() else y2uri(uri)), identity=name)
+          try:
+            yield obj
+          finally:
+            if hasattr(obj.content, 'close'):
+              obj.content.close()
+        pending[name] = signature
+      for name in previous.keys() - pending.keys():
+        yield DataObject(_join(uri, name) if root.is_dir() else y2uri(uri), b'', name, name=PurePosixPath(name).name, removed=True)
+
+    def commit() -> None:
+      state[scope] = pending
+
+    yield objects(), commit
+
+
+def _updated(previous: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+  result = deepcopy(previous)
+  for key, value in incoming.items():
+    if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+      result[key] = _updated(result[key], value)
+    else:
+      result[key] = deepcopy(value)
+  return result
+
+# endregion
+# region handlers
+
+ObjectT = TypeVar("ObjectT")
+StatsT = TypeVar("StatsT")
+Signature = tuple[int, int, int]
+Harness = Literal[
+    "chatgpt",
+    "cx",
+    "claude",
+    "cc",
+    "gemini",
+    "agy",
+    "hermes",
+    "openclaw",
+    "manus",
+]
+
+# A Gemini CLI chat says when it began and when it was last written in its own header, as startTime
+# and lastUpdated; every other key here is some other harness's name for the same record-level time.
+TIME_KEYS = ("timestamp", "ts", "started_at", "session_start", "time", "created_at",
+             "startTime", "lastUpdated")
+MODEL_KEYS = ("model", "modelId", "model_slug", "default_model_slug")
+ID_KEYS = ("sessionId", "session_id", "id", "remoteSessionId")
+ROLES = ("user", "assistant")
+SNIFF = 8
+# How many read things are kept, in the session cache and in the probe cache. A walk reads each file
+# once, so both are there for a caller who asks about the same thing again, not for the walk. A probe
+# holds what the handler made of the file — for a session, every record and turn of it — so unbounded
+# they hold the whole location in memory, which on a folder of a hundred thousand sessions is the
+# folder. Measured: a walk of D:\[RELOG] passed 9 GB with only the session cache bounded.
+SESSION_CACHE = 512
+UNITS = (("d", 86400), ("h", 3600), ("m", 60), ("s", 1))
+UNSAFE = '\\/:*?"<>|\r\n\t'
+NAME_LIMIT = 254
+FRONTMATTER_TIMEZONE = ZoneInfo("America/Los_Angeles")
+PREAMBLE = ("# AGENTS.md instructions",)
+# User-role text the harness or a tool generated (sessions-clean, list-sessions): matching text was not typed by a person.
+NON_HUMAN = (
+    re.compile(r"^\s*\*{0,2}you are a memory relevance compressor utility\b", re.I),
+    re.compile(r"^\s*Apply the current project instructions to this scenario:", re.I),
+    re.compile(
+        r"^\s*</?(?:system-reminder|command-message|command-name|local-command-caveat|local-command-stdout|local-command-stderr|environment_context|recommended_plugins|turn_aborted|scheduled-task|ide_opened_file|ide_selection|bash-input|bash-stdout|bash-stderr|task-notification|subagent_notification|codex_delegation|codex_internal_context|user_shell_command|image)\b",
+        re.I,
+    ),
+    # A slash command carrying no prompt of its own, mistypes included.
+    re.compile(r"^\s*/\S*\s*$"),
+    # The same command recorded without its slash.
+    re.compile(r"^\s*(?:upgrade|login|exit|plugins|marketplace)\s*$", re.I),
+    # An instruction file the harness prepends to the first turn.
+    re.compile(r"^\s*#\s*AGENTS\.md instructions\b", re.I),
+    # A probe that verifies a session's setup by demanding a fixed token back.
+    re.compile(
+        r"\b(?:reply|respond|output|answer)(?:\s+with)?(?:\s+the)?(?:\s+single)?"
+        r"(?:\s+word)?\s+(?:exactly\s+)?[A-Z][A-Z0-9_]{2,}[.!]?\s*$",
+        re.I | re.M,
+    ),
+    # The summary the harness writes in place of a turn when context runs out.
+    re.compile(
+        r"^\s*This session is being continued from a previous conversation\b", re.I
+    ),
+    # The harness reporting that a dispatched plan never started.
+    re.compile(r"^\s*ultraplan(?:\s+terminated|:\s*session creation failed)\b", re.I),
+    # The shell integration asking for a diagnosis of a failed command.
+    re.compile(r"^\s*A command failed\. Diagnose the error\b", re.I),
+    # A request relayed into a dispatched session, quoted rather than typed.
+    re.compile(r"^\s*[Uu]ser['’]s request:"),
+    # The harness marking a turn cut short, in place of anything typed.
+    re.compile(r"^\s*\[Request interrupted by user\b"),
+    # The link a hand-off from ChatGPT opens the session with.
+    re.compile(r"^\s*Continuing from \[[^\]]*\]\(chatgpt-conversation://", re.I),
+)
+# The Chrome extension and the ChatGPT hand-off wrap a typed request in a block of page and conversation context;
+# only what follows was typed. A realtime delegation carries the typed request inside <input>.
+ENVELOPE = re.compile(r"\A.*?^##\s*My request for Codex:[^\S\n]*$", re.S | re.M)
+REALTIME_INPUT = re.compile(
+    r"<realtime_delegation>\s*<input>(.*?)</input>", re.I | re.S
+)
+PLACEHOLDER_TIMES = (
+    (1601, 1, 1, 0, 0, 0),  # Windows FILETIME zero
+    (1970, 1, 1, 0, 0, 0),  # Unix epoch zero
+    (1980, 1, 1, 0, 0, 0),  # DOS zero: the archiver stored no time
+    (1981, 1, 1, 1, 1, 2),  # the constant Android build tools stamp on every APK member
+)
+FUTURE_TOLERANCE = timedelta(days=1)
+
+FILENAME_GMT_TIMES = re.compile(
+    r"(?<![A-Za-z0-9])(\d{2}-\d{2}-\d{4},\s*\d{2}\.\d{2}\.\d{2})\s*GMT([+-]\d{1,2})(?!\d)",
+    re.I,
+)
+FILENAME_SHORT_DATE_SPAN = re.compile(r"(?<![A-Za-z0-9])(\d{6})-(\d{6})(?![A-Za-z0-9])")
+FILENAME_DATETIMES = (
+    (re.compile(r"(?<![A-Za-z0-9])(\d{17})(?![A-Za-z0-9])"), "%Y%m%d%H%M%S%f"),
+    (re.compile(r"(?<![A-Za-z0-9])(\d{14})(?![A-Za-z0-9])"), "%Y%m%d%H%M%S"),
+    (re.compile(r"(?<![A-Za-z0-9])(\d{8}-\d{6})(?![A-Za-z0-9])"), "%Y%m%d-%H%M%S"),
+    (
+        re.compile(
+            r"(?<![A-Za-z0-9])(\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2})(?![A-Za-z0-9])"
+        ),
+        "%Y-%m-%d-%H-%M-%S",
+    ),
+    (re.compile(r"(?<![A-Za-z0-9])(\d{6}\.\d{6})(?![A-Za-z0-9])"), "%y%m%d.%H%M%S"),
+    (re.compile(r"(?<![A-Za-z0-9])(\d{6}-\d{4})(?![A-Za-z0-9])"), "%y%m%d-%H%M"),
+)
+FILENAME_EPOCHS = re.compile(r"(?<![A-Za-z0-9])([1-9]\d{9})(?![A-Za-z0-9])")
+FILENAME_ISO_DATES = re.compile(r"(?<![A-Za-z0-9])(\d{4}-\d{2}-\d{2})(?![A-Za-z0-9])")
+FILENAME_SHORT_DATES = re.compile(r"(?<![A-Za-z0-9])(\d{6})(?![A-Za-z0-9])")
+FILENAME_DURATION = re.compile(r"(?:~|\()\s*(\d+)\s*([dhms])\)?", re.I)
+LOG_TIMESTAMP = re.compile(
+    r"^\s*[\[(]?(?P<timestamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}"
+    r"(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)"
+)
+IGNORED_NAME_PATTERNS = (
+    "*.tmp",
+    "*.bak",
+    "*.swp",
+    "~$*",
+    "Thumbs.db",
+    ".DS_Store",
+    "desktop.ini",
+)
+IGNORED_FOLDER_PATTERNS = (
+    ".git",
+    ".svn",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "node_modules",
+    ".idea",
+    ".vscode",
+    ".SynologyWorking Directory",
+    ".SynologyWorkingDirectory",
+    "$RECYCLE.BIN",
+    "RECYCLE.BIN",
+    "System Volume Information",
+    "OneDriveTemp",
+    "Cache",
+    ".cache",
+)
+WINDOWS_SYSTEM = 4
+
+HOMES: dict[Harness, tuple[str, ...]] = {
+    "hermes": ("state.db",),
+    "agy": ("antigravity_state.pbtxt", "jetski_state.pbtxt"),
+}
+SESSION_UID = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.I,
+)
+EXPORT_MEMBER = re.compile(r"conversations(?:-\d+)?\.json", re.I)
+
+
+@dataclass(frozen=True)
+class HandlerError:
+    """A handler failure retained as data so a hierarchy scan can continue."""
+
+    handler: str
+    operation: str
+    path: Path | PurePosixPath
+    error_type: str
+    message: str
+
+
+class Handler:
+    """Cooperative base for caller-composed domain handler mixins.
+
+    ``metadata`` is copied, so later changes to the caller's dictionary do not
+    change results. With the default ``strict=False``, public handler calls
+    return ``(None, HandlerError)`` on a load failure and ``False`` on an
+    identification failure. ``strict=True`` re-raises the original exception.
+    Worker-facing ``identify_sync`` and ``call_sync`` implementations remain
+    strict; :class:`FileHandler` captures their failures per record.
+    """
+
+    name: str
+
+    def __init__(
+        self,
+        metadata: Mapping[str, Any] | None = None,
+        *,
+        strict: bool = False,
+    ) -> None:
+        """Copy caller metadata and set the public-call error policy."""
+
+        super().__init__()
+        self.metadata = dict(metadata) if metadata is not None else {}
+        self.strict = strict
+
+    def _error(
+        self,
+        path: Path | PurePosixPath,
+        operation: str,
+        error: Exception,
+    ) -> HandlerError:
+        """Describe one failed operation without retaining a traceback."""
+
+        return HandlerError(
+            handler=self.name,
+            operation=operation,
+            path=path,
+            error_type=type(error).__name__,
+            message=str(error),
+        )
+
+    def _safe_identify(
+        self,
+        path: Path,
+        identify: Callable[[Path], bool],
+    ) -> bool:
+        """Run a strict recognizer under the configured public error policy."""
+
+        try:
+            return identify(path)
+        except Exception:
+            if self.strict:
+                raise
+            return False
+
+    def _safe_call(
+        self,
+        path: Path,
+        call: Callable[[Path], tuple[Any, Any]],
+    ) -> tuple[Any | None, Any | HandlerError]:
+        """Run a strict loader and represent its default failure as data."""
+
+        try:
+            return call(path)
+        except Exception as error:
+            if self.strict:
+                raise
+            return None, self._error(path, "load", error)
+
+    def _safe_operation(
+        self,
+        path: Path | PurePosixPath,
+        operation: str,
+        call: Callable[..., Any],
+        *arguments: Any,
+    ) -> Any | HandlerError:
+        """Run any public operation and return a typed error by default."""
+
+        try:
+            return call(*arguments)
+        except Exception as error:
+            if self.strict:
+                raise
+            return self._error(path, operation, error)
+
+    def _probe_metadata(self, obj: Any) -> dict[str, Any]:
+        """Combine copied caller metadata with metadata exposed by ``obj``."""
+
+        metadata: dict[str, Any] = {}
+        detected = getattr(obj, "metadata", None)
+        if isinstance(detected, Mapping):
+            metadata.update(detected)
+        metadata.update(self.metadata)
+        return metadata
+
+
+@runtime_checkable
+class _SyncHandler(Protocol[ObjectT, StatsT]):
+    """Synchronous implementation used while a handler runs in a worker thread."""
+
+    def identify_sync(self, path: Path) -> bool:
+        """Recognize ``path`` without entering another event loop."""
+        ...
+
+    def call_sync(self, path: Path) -> tuple[StatsT, ObjectT]:
+        """Load ``path`` without entering another event loop."""
+        ...
+
+
+@dataclass(frozen=True)
+class Probe:
+    """One named handler's result, contextual metadata, and optional error."""
+
+    handler: str
+    stats: Any | None
+    obj: Any | None = field(repr=False, compare=False)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    error: HandlerError | None = None
+
+
+@dataclass(frozen=True)
+class FileStats:
+    """File count, folder count, byte count, and span for one hierarchy."""
+
+    files: int
+    folders: int
+    bytes: int
+    span: TimeSpan | None
+
+
+@dataclass(frozen=True)
+class Record:
+    """One filesystem or archive entry and the handlers that matched it.
+
+    ``path`` is absolute for a filesystem entry and archive-relative for an
+    archive member. ``location`` identifies the containing archive when set.
+    """
+
+    path: Path | PurePosixPath
+    is_folder: bool
+    size: int
+    modified_at: datetime | None
+    handlers: tuple[str, ...]
+    location: str | Path | None = None
+    probes: tuple[Probe, ...] = ()
+    stats: FileStats | None = None
+    errors: tuple[HandlerError, ...] = ()
+    target: Path | None = None
+
+    @property
+    def name(self) -> str:
+        """Return the final path component, or the complete root path."""
+
+        return self.path.name or str(self.path)
+
+    @property
+    def label(self) -> str:
+        """Return the display name with a trailing slash for folders."""
+
+        return self.name + ("/" if self.is_folder else "")
+
+    @property
+    def display_path(self) -> str:
+        """Return a filesystem path or ``archive::member`` display path."""
+
+        if self.location is None:
+            return str(self.path)
+        return f"{self.location}::{self.path.as_posix()}"
+
+    @property
+    def span(self) -> TimeSpan | None:
+        """Return the derived hierarchy span when statistics are available."""
+
+        return self.stats.span if self.stats is not None else None
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Return serializable display metadata for this record."""
+
+        value: dict[str, Any] = {
+            "path": self.display_path,
+            "type": "folder" if self.is_folder else "file",
+            "size": self.size,
+            "modified_at": self.modified_at,
+            "handlers": self.handlers,
+        }
+        if self.location is not None:
+            value["location"] = str(self.location)
+        if self.target is not None:
+            value["target"] = str(self.target)
+        if self.stats is not None:
+            value.update(
+                {
+                    "files": self.stats.files,
+                    "folders": self.stats.folders,
+                    "bytes": self.stats.bytes,
+                    "span": self.stats.span,
+                }
+            )
+        for probe in self.probes:
+            if probe.metadata:
+                value[probe.handler] = probe.metadata
+        if self.errors:
+            value["errors"] = tuple(
+                {
+                    "handler": error.handler,
+                    "operation": error.operation,
+                    "error_type": error.error_type,
+                    "message": error.message,
+                }
+                for error in self.errors
+            )
+        return value
+
+
+@dataclass
+class _FolderFrame:
+    """Incremental statistics for one folder currently being traversed."""
+
+    record: Record
+    index: int | None
+    files: int = 0
+    folders: int = 0
+    bytes: int = 0
+    span: TimeSpan | None = None
+
+    def add(self, child: Record) -> None:
+        """Accumulate one completed direct child record."""
+
+        if child.stats is None:
+            return
+        self.files += child.stats.files
+        self.folders += child.stats.folders + int(child.is_folder)
+        self.bytes += child.stats.bytes
+        if child.stats.span is not None:
+            self.span = (
+                child.stats.span
+                if self.span is None
+                else TimeSpan(
+                    start=min(self.span.start, child.stats.span.start),
+                    end=max(self.span.end, child.stats.span.end),
+                )
+            )
+
+
+class FolderHandler(Handler):
+    """Identify a physical directory as a folder object.
+
+    A supported folder is an existing local directory that is not a symbolic
+    link. The typed object is its resolved :class:`Path`; its own statistics
+    are empty because recursive navigation and aggregation belong to
+    :class:`FileHandler`.
+    """
+
+    name = "folder"
+
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Return whether ``path`` is a directory in either call mode."""
+
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Return whether ``path`` is a non-symlink directory."""
+
+        path = full_path(path)
+        return path.is_dir() and not path.is_symlink()
+
+    @sync
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[FileStats | None, Path | HandlerError]:
+        """Return folder statistics and its resolved path in either call mode."""
+
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
+
+    def call_sync(self, path: Path) -> tuple[FileStats, Path]:
+        """Return what the folder directly holds, read in one listing: files, folders, bytes and their span."""
+
+        path = full_path(path)
+        # Named explicitly: in a composed handler self.identify_sync is FileHandler's recursive walk.
+        if not FolderHandler.identify_sync(self, path):
+            raise ValueError(f"{path}: folder is not identifiable")
+        files = folders = size = 0
+        times = []
+        with os.scandir(path) as entries:
+            for entry in entries:
+                if entry.is_dir(follow_symlinks=False):
+                    folders += 1
+                else:
+                    # A subfolder's mtime is when something was added to it, so the span is its files'.
+                    stat = entry.stat(follow_symlinks=False)
+                    times.append(stat.st_mtime)
+                    files += 1
+                    size += stat.st_size
+        span = None
+        if times:
+            span = TimeSpan(start=datetime.fromtimestamp(min(times), timezone.utc),
+                            end=datetime.fromtimestamp(max(times), timezone.utc))
+        return FileStats(files, folders, size, span), path
+
+
+@dataclass(frozen=True)
+class IgnoredPath:
+    """A visible ignored file or a visible folder that must not be descended."""
+
+    path: Path | PurePosixPath
+    reason: str
+    no_descent: bool
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Return the canonical classification and the matched rule."""
+
+        return {
+            "classification": "Ignored",
+            "reason": self.reason,
+            "no_descent": self.no_descent,
+        }
+
+
+class IgnoredHandler(Handler):
+    """Identify ignored names and no-descent folder boundaries.
+
+    The native rules are the global ones from the FileIndexer configuration
+    and TextLake traversal; exclusions that belong to one host, such as
+    Alex-PC's ``EL.now`` and ``monero-gui-*``, are not among them. These
+    case-sensitive file-or-folder patterns match: ``*.tmp``, ``*.bak``,
+    ``*.swp``, ``~$*``, ``Thumbs.db``, ``.DS_Store``, and ``desktop.ini``.
+
+    These case-sensitive folder patterns are visible but never descended:
+    ``.git``, ``.svn``, ``__pycache__``, ``.venv``, ``venv``,
+    ``node_modules``, ``.idea``, ``.vscode``, ``.SynologyWorking Directory``,
+    ``.SynologyWorkingDirectory``, ``$RECYCLE.BIN``, ``RECYCLE.BIN``,
+    ``System Volume Information``, ``OneDriveTemp``, ``Cache``, and
+    ``.cache``. A Windows folder carrying ``FILE_ATTRIBUTE_SYSTEM`` is also an
+    ignored no-descent boundary. A filesystem root is never ignored: it has no
+    name to match, and a Windows drive root carries the system attribute of the
+    volume itself.
+
+    A folder is not ignored for starting with a dot, and not for carrying
+    ``FILE_ATTRIBUTE_HIDDEN``. Alex, 2026-09-17 03:51: "Yes, all files can be
+    potentially indexd., It is critical that secrets are indexed. I have lost
+    lots of secrets because of ignored dot files" and "venv, .git are ignored".
+    Both are named above, so the named list is the whole rule; a harness
+    session store, an ``.ssh`` and a hidden ``.gemini`` are walked like any
+    other folder.
+
+    Matching entries remain :class:`Record` objects. This differs from a path
+    exclusion, which would remove the entry from the hierarchy entirely.
+    Archive-member folders use the name rules alone because archive listings do
+    not expose Windows filesystem attributes.
+    """
+
+    name = "ignored"
+    name_patterns = IGNORED_NAME_PATTERNS
+    folder_patterns = IGNORED_FOLDER_PATTERNS
+
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Recognize an ignored path synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Return whether a physical file or folder matches an ignored rule."""
+
+        return self.reason(full_path(path)) is not None
+
+    @sync
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[FileStats | None, IgnoredPath | HandlerError]:
+        """Return ignored-path metadata synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
+
+    def call_sync(self, path: Path) -> tuple[FileStats, IgnoredPath]:
+        """Return the matched rule and zero descent statistics for ``path``."""
+
+        path = full_path(path)
+        reason = self.reason(path)
+        if reason is None:
+            raise ValueError(f"{path}: ignored path is not identifiable")
+        is_folder = path.is_dir() and not path.is_symlink()
+        size = 0 if is_folder else path.stat().st_size
+        ignored = IgnoredPath(path, reason, is_folder)
+        return FileStats(0 if is_folder else 1, 0, size, None), ignored
+
+    @classmethod
+    def reason(cls, path: Path) -> str | None:
+        """Return the first active rule matching a physical path."""
+
+        if not path.name:
+            return None
+        is_folder = path.is_dir() and not path.is_symlink()
+        if not is_folder and not path.is_file():
+            return None
+        if pattern := cls.match(path.name, cls.name_patterns):
+            return f"name:{pattern}"
+        if not is_folder:
+            return None
+        if pattern := cls.match(path.name, cls.folder_patterns):
+            return f"folder:{pattern}"
+        attributes = getattr(path.stat(follow_symlinks=False), "st_file_attributes", 0)
+        if attributes & WINDOWS_SYSTEM:
+            return "folder:FILE_ATTRIBUTE_SYSTEM"
+        return None
+
+    @staticmethod
+    def match(name: str, patterns: Sequence[str]) -> str | None:
+        """Return the first case-sensitive FileIndexer pattern matching ``name``."""
+
+        return next(
+            (pattern for pattern in patterns if fnmatch.fnmatchcase(name, pattern)),
+            None,
+        )
+
+    @classmethod
+    def member_reason(cls, path: PurePosixPath, is_folder: bool) -> str | None:
+        """Return the name-only ignored rule for one archive member."""
+
+        if pattern := cls.match(path.name, cls.name_patterns):
+            return f"name:{pattern}"
+        if not is_folder:
+            return None
+        return f"folder:{pattern}" if (pattern := cls.match(path.name, cls.folder_patterns)) else None
+
+
+@dataclass(frozen=True)
+class SqliteDatabase:
+  """What one SQLite file holds, read once and never written."""
+
+  path: Path
+  tables: tuple[str, ...]
+  columns: dict[str, tuple[str, ...]]
+
+  @property
+  def metadata(self) -> dict[str, Any]:
+    """The tables this database has, and the columns of each."""
+    return {"tables": list(self.tables), "columns": {name: list(self.columns[name]) for name in self.tables}}
+
+
+class SqliteHandler(Handler):
+  """Identify a SQLite file and read what it holds: its tables and their columns.
+
+  Alex's rule for these, from his own index architecture: an old location index is discovered material,
+  "read like .rar files, never written" and "read once via handler, never reopened". So an index that
+  stands beside files now sealed in an archive is still known — what it was an index of, and what it
+  recorded — without opening the archive beside it.
+
+  It is opened immutable, which is what keeps SQLite from writing the `-wal` and `-shm` companions
+  beside it; those companions churning in a synced folder is a thing he has had to chase before.
+  Nothing here writes, and no row is read: the tables and their columns are what a file is, and what
+  is in them is the file's content, which is not a handler's business.
+  """
+
+  name = "sqlite"
+  extensions = (".sqlite", ".sqlite3", ".db")
+  MAGIC = b"SQLite format 3\x00"
+
+  @sync
+  async def identify(self, path: Path) -> bool:
+    """Recognize a SQLite file in either call mode."""
+
+    return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
+
+  def identify_sync(self, path: Path) -> bool:
+    """Whether this file opens with SQLite's own header. The name is not asked; the bytes are."""
+
+    path = full_path(path)
+    if not path.is_file():
+      return False
+    try:
+      with path.open("rb") as handle:
+        return handle.read(len(self.MAGIC)) == self.MAGIC
+    except OSError:
+      return False
+
+  @sync
+  async def __call__(self, path: Path) -> tuple[FileStats | None, SqliteDatabase | HandlerError]:
+    """Read one SQLite file in either call mode."""
+
+    return await asyncio.to_thread(self._safe_call, path, self.call_sync)
+
+  def call_sync(self, path: Path) -> tuple[FileStats, SqliteDatabase]:
+    """Return the file's statistics and the tables and columns it holds."""
+
+    path = full_path(path)
+    # as_uri() keeps the path absolute on both platforms. Building the URI by hand and
+    # stripping the leading slash made every POSIX path relative, so sqlite looked for the
+    # database under the working directory and refused to open it.
+    uri = path.as_uri() + "?mode=ro&immutable=1"
+    with closing(sqlite3.connect(uri, uri=True)) as database:
+      names = tuple(str(name) for (name,) in database.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"))
+      columns = {name: tuple(str(row[1]) for row in database.execute(f'PRAGMA table_info("{name}")'))
+                 for name in names}
+    stat = path.stat()
+    return (FileStats(1, 0, stat.st_size, None),
+            SqliteDatabase(path, names, columns))
+
+
+class FileHandler(Handler):
+    """Public base for a caller-selected set of domain handler mixins.
+
+    Put ``FileHandler`` first and domain handlers after it in a subclass. The
+    domain handler order in that base list is the identification and probing
+    order. ``handler_types`` is derived from the resulting MRO; users neither
+    pass constructed handlers nor repeat a registry tuple.
+
+    Identification records every matching handler. Probing loads their typed
+    objects and derives recursive :class:`FileStats`. Handler and filesystem
+    failures remain attached to their :class:`Record`, so another entry in a
+    large tree can still be processed. An ``IgnoredHandler`` match on a folder
+    retains that folder as a boundary and prevents descent into its contents.
+    ``.git`` is visible during navigation but remains excluded from normalized
+    copies.
+    """
+
+    name = "file"
+
+    def __init__(
+        self,
+        metadata: Mapping[str, Any] | None = None,
+        *,
+        strict: bool = False,
+    ) -> None:
+        """Initialize mixed-in handlers, caller metadata, and hierarchy caches."""
+
+        super().__init__(metadata, strict=strict)
+        self.handler_types = self._handler_types()
+        names = [handler.name for handler in self.handler_types]
+        if len(names) != len(set(names)):
+            raise ValueError("handler names must be unique")
+        self.configured = self.handler_types
+        self._identified: dict[
+            Path,
+            tuple[Signature, tuple[str, ...], tuple[HandlerError, ...]],
+        ] = {}
+        self._probed: dict[Path, tuple[Signature, tuple[Probe, ...]]] = {}
+        self._children: dict[Path, tuple[Signature, tuple[Path, ...]]] = {}
+        self._walk_errors: dict[Path, HandlerError] = {}
+
+    def _handler_types(self) -> tuple[type[Handler], ...]:
+        """Return the most-specific named handler classes in composition order."""
+
+        selected: list[type[Handler]] = []
+        names: set[str] = set()
+        for handler in type(self).__mro__[1:]:
+            if handler in (FileHandler, Handler, _LLMExportHandler):
+                continue
+            if not issubclass(handler, Handler):
+                continue
+            name = getattr(handler, "name", None)
+            if not isinstance(name, str) or name in names:
+                continue
+            selected.append(handler)
+            names.add(name)
+        return tuple(selected)
+
+    @sync
+    async def identify(
+        self,
+        path: Path,
+        recursive: bool = True,
+    ) -> list[Record] | HandlerError:
+        """Identify a hierarchy synchronously or asynchronously.
+
+        Return the root and, by default, all descendants without loading typed
+        handler objects.
+        """
+
+        return await asyncio.to_thread(
+            self._safe_operation,
+            path,
+            "identify",
+            self.identify_sync,
+            path,
+            recursive,
+        )
+
+    def identify_sync(self, path: Path, recursive: bool = True) -> list[Record]:
+        """Return metadata and matching handler names without probing objects."""
+
+        root = self._walk_source(path)
+        records = [root]
+        entered: list[int] = []
+
+        def enter(record: Record) -> bool:
+            entered.append(len(records) - 1)
+            return True
+
+        def on_folder_done(record: Record) -> None:
+            records[entered.pop()] = record
+
+        if recursive and root.is_folder and "ignored" not in root.handlers:
+            for record in self.walk_sync(
+                root,
+                enter=enter,
+                on_folder_done=on_folder_done,
+            ):
+                records.append(record)
+        records[0] = self._walk_completed(root)
+        return records
+
+    @sync
+    async def probe(
+        self,
+        path: Path,
+        recursive: bool = True,
+    ) -> list[Record] | HandlerError:
+        """Probe a hierarchy synchronously or asynchronously.
+
+        Matching handlers are loaded and folder statistics are accumulated
+        from their descendants.
+        """
+
+        return await asyncio.to_thread(
+            self._safe_operation,
+            path,
+            "probe",
+            self.probe_sync,
+            path,
+            recursive,
+        )
+
+    def probe_sync(self, path: Path, recursive: bool = True) -> list[Record]:
+        """Probe matching handlers and derive recursive folder statistics."""
+
+        _, records = self._probe_hierarchy(path, recursive, retain_records=True)
+        return records
+
+    def record(self, path: Path) -> Record:
+        """Return one cached identification record or a record carrying failure."""
+
+        path = full_path(path)
+        try:
+            stat = path.stat()
+        except Exception as error:
+            if self.strict:
+                raise
+            failure = self._error(path, "stat", error)
+            self._walk_errors[path] = failure
+            return Record(path, False, 0, None, (), errors=(failure,))
+        signature = _signature(stat)
+        cached = self._identified.get(path)
+        if cached is None or cached[0] != signature:
+            identified = tuple(
+                (handler, *self._handler_identify(handler, path))
+                for handler in self.handler_types
+            )
+            names = tuple(handler.name for handler, matched, _ in identified if matched)
+            errors = tuple(error for _, _, error in identified if error is not None)
+            self._identified[path] = signature, names, errors
+            self._probed.pop(path, None)
+        else:
+            names = cached[1]
+            errors = cached[2]
+            if any(handler.name == "git" for handler in self.handler_types):
+                git = next(
+                    handler for handler in self.handler_types if handler.name == "git"
+                )
+                matched, git_error = self._handler_identify(git, path)
+                names = tuple(
+                    handler.name
+                    for handler in self.handler_types
+                    if (matched if handler.name == "git" else handler.name in names)
+                )
+                errors = tuple(error for error in errors if error.handler != "git")
+                if git_error is not None:
+                    errors += (git_error,)
+                self._identified[path] = signature, names, errors
+        is_folder = path.is_dir() and not path.is_symlink()
+        walk_error = self._walk_errors.get(path)
+        if walk_error is not None and walk_error not in errors:
+            errors += (walk_error,)
+        located = self.located(path) if "location" in names else None
+        return Record(
+            path=path,
+            is_folder=is_folder,
+            size=0 if is_folder else stat.st_size,
+            modified_at=valid_time(datetime.fromtimestamp(stat.st_mtime, timezone.utc)),
+            handlers=names,
+            # which location and folder this is costs a lookup, so a listing already knows it
+            probes=() if located is None else (
+                Probe(handler="location", stats=None, obj=located, metadata=located.metadata),
+            ),
+            errors=errors,
+        )
+
+    def children(self, path: Path | Record) -> tuple[Record, ...]:
+        """Return direct children, or an empty tuple after a retained read error."""
+
+        current: Record | None = None
+        if isinstance(path, Record):
+            if path.target is not None:
+                return ()
+            if path.location is not None:
+                if not path.is_folder or not isinstance(path.location, Path):
+                    return ()
+                return self._archive_children(path.location, path.path)
+            if "archive" in path.handlers:
+                return self._archive_children(Path(path.path), PurePosixPath("."))
+            if "ignored" in path.handlers:
+                return ()
+            current = path
+            path = Path(path.path)
+        if path.is_symlink() or path.is_junction():
+            return ()
+        path = full_path(path)
+        if not path.is_dir() or path.is_symlink():
+            return ()
+        if current is None:
+            current = self.record(path)
+            if "ignored" in current.handlers:
+                return ()
+        try:
+            signature = _signature(path.stat())
+        except Exception as error:
+            if self.strict:
+                raise
+            self._walk_errors[path] = self._error(path, "list", error)
+            return ()
+        cached = self._children.get(path)
+        if cached is None or cached[0] != signature:
+            try:
+                paths = tuple(sorted(path.iterdir(), key=_display_order))
+            except Exception as error:
+                if self.strict:
+                    raise
+                self._walk_errors[path] = self._error(path, "list", error)
+                return ()
+            self._children[path] = (signature, paths)
+        else:
+            paths = cached[1]
+        return tuple(
+            record for child in paths if (record := self._child(child)) is not None
+        )
+
+    def _child(self, path: Path) -> Record | None:
+        """Return one child, or ``None`` if it vanished after directory listing."""
+
+        try:
+            if path.is_symlink() or path.is_junction():
+                link_stat = path.lstat()
+                try:
+                    record = self.record(path)
+                except Exception as error:
+                    if self.strict:
+                        raise
+                    record = Record(path, False, 0, None, (), errors=(self._error(path, "stat", error),))
+                target, errors = None, record.errors
+                try:
+                    target = Path(os.readlink(path))
+                except FileNotFoundError:
+                    raise
+                except OSError as error:
+                    if self.strict:
+                        raise
+                    errors += (self._error(path, "readlink", error),)
+                return replace(
+                    record, path=path, target=target, errors=errors,
+                    is_folder=record.is_folder or path.is_junction(),
+                    size=link_stat.st_size,
+                    modified_at=valid_time(datetime.fromtimestamp(link_stat.st_mtime, timezone.utc)),
+                )
+            path.stat()
+            return self.record(path)
+        except Exception as error:
+            if self.strict:
+                raise
+            self._walk_errors[path] = self._error(path, "stat", error)
+            return None
+
+    def _archive_children(
+        self,
+        archive: Path,
+        parent: Path | PurePosixPath,
+    ) -> tuple[Record, ...]:
+        """Return direct archive members beneath ``parent``."""
+
+        record = self._probe_record(full_path(archive))
+        probe = next(
+            (probe for probe in record.probes if probe.handler == "archive"), None
+        )
+        if probe is None or probe.error is not None or not isinstance(probe.obj, tuple):
+            if self.strict:
+                raise ValueError(f"{archive}: archive handler did not return records")
+            return ()
+        parent = PurePosixPath(parent.as_posix())
+        return tuple(child for child in probe.obj if child.path.parent == parent)
+
+    def _archive_records(
+        self,
+        archive: Path,
+        records: tuple[Record, ...],
+    ) -> tuple[Record, ...]:
+        """Apply configured ignored rules to archive members and their descent."""
+
+        ignored_handler = next(
+            (handler for handler in self.handler_types if handler.name == "ignored"),
+            None,
+        )
+        if ignored_handler is None:
+            return records
+        skipped: set[PurePosixPath] = set()
+        selected: list[Record] = []
+        for record in sorted(records, key=lambda item: len(item.path.parts)):
+            if any(parent in skipped for parent in record.path.parents):
+                continue
+            reason = ignored_handler.member_reason(record.path, record.is_folder)
+            if reason is not None:
+                ignored = IgnoredPath(record.path, reason, record.is_folder)
+                probe = Probe(
+                    "ignored",
+                    FileStats(0 if record.is_folder else 1, 0, record.size, None),
+                    ignored,
+                    metadata=self._probe_metadata(ignored),
+                )
+                record = replace(
+                    record,
+                    handlers=("ignored",),
+                    probes=(probe,),
+                )
+                if record.is_folder:
+                    skipped.add(record.path)
+            selected.append(record)
+        return _complete_archive_records(archive, selected)
+
+    @sync
+    async def load(self, path: Path) -> Any | HandlerError:
+        """Load the first matching typed object synchronously or asynchronously."""
+
+        return await asyncio.to_thread(
+            self._safe_operation,
+            path,
+            "load",
+            self.load_sync,
+            path,
+        )
+
+    def load_sync(self, path: Path) -> Any:
+        """Return the first matching typed object, or ``None`` when unrecognized."""
+
+        result = self._probe_record(full_path(path))
+        if not result.probes:
+            return None
+        probe = result.probes[0]
+        return probe.error if probe.error is not None else probe.obj
+
+    @sync
+    async def normalize(
+        self,
+        source: Path,
+        destination: Path | None = None,
+        recursive: bool = True,
+        exclude_handlers: Sequence[str] = (),
+    ) -> Path | HandlerError:
+        """Normalize a source in place or copy it to an exact destination.
+
+        With no destination, the first matching handler that defines
+        ``normalize_name`` supplies the new filename. With a destination, the
+        source hierarchy is copied and ``.git`` is excluded.
+        """
+
+        return await asyncio.to_thread(
+            self._safe_operation,
+            source,
+            "normalize",
+            self.normalize_sync,
+            source,
+            destination,
+            recursive,
+            exclude_handlers,
+        )
+
+    def normalize_sync(
+        self,
+        source: Path,
+        destination: Path | None = None,
+        recursive: bool = True,
+        exclude_handlers: Sequence[str] = (),
+    ) -> Path | HandlerError:
+        """Rename by handler naming or copy to an exact destination hierarchy."""
+
+        source = full_path(source)
+        if destination is None:
+            result = self._probe_record(source)
+            selected = next(
+                (
+                    (probe, handler)
+                    for probe in result.probes
+                    for handler in self.handler_types
+                    if probe.handler == handler.name
+                    and probe.error is None
+                    and probe.handler not in exclude_handlers
+                    and callable(getattr(handler, "normalize_name", None))
+                ),
+                None,
+            )
+            if selected is None:
+                raise ValueError(f"{source}: no naming handler")
+            probe, handler = selected
+            destination = source.with_name(handler.normalize_name(self, probe.obj))
+            if destination == source:
+                return source
+            if destination.exists():
+                raise FileExistsError(destination)
+            source.rename(destination)
+        else:
+            destination = full_path(destination)
+            if destination.exists():
+                raise FileExistsError(destination)
+            if source.is_dir() and not source.is_symlink():
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if recursive:
+                    shutil.copytree(
+                        source, destination, ignore=shutil.ignore_patterns(".git")
+                    )
+                else:
+                    destination.mkdir(parents=True)
+                    for child in self.children(source):
+                        target = destination / child.path.name
+                        if child.is_folder:
+                            target.mkdir()
+                        else:
+                            shutil.copy2(child.path, target)
+            else:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
+        self.invalidate_sync(source)
+        self.invalidate_sync(destination)
+        return destination
+
+    @sync
+    async def archive_path(
+        self,
+        source: Path,
+        destination: Path,
+        name: str,
+        extension: str,
+        local_time: tzinfo,
+    ) -> Path:
+        """Build a dated archive destination synchronously or asynchronously."""
+
+        return await asyncio.to_thread(
+            self._safe_operation,
+            source,
+            "archive_path",
+            self.archive_path_sync,
+            source,
+            destination,
+            name,
+            extension,
+            local_time,
+        )
+
+    def archive_path_sync(
+        self,
+        source: Path,
+        destination: Path,
+        name: str,
+        extension: str,
+        local_time: tzinfo,
+    ) -> Path:
+        """Name an archive from the complete source hierarchy span."""
+
+        root = self._probe_root_sync(source)
+        if root.span is None:
+            raise ValueError(f"{source}: hierarchy has no span")
+        return full_path(destination) / ArchiveHandler.archive_name(
+            root.span,
+            name,
+            extension,
+            local_time,
+        )
+
+    @sync
+    async def invalidate(self, path: Path | None = None) -> None | HandlerError:
+        """Invalidate cached state synchronously or asynchronously."""
+
+        selected = path if path is not None else PurePosixPath(".")
+        return await asyncio.to_thread(
+            self._safe_operation,
+            selected,
+            "invalidate",
+            self.invalidate_sync,
+            path,
+        )
+
+    def invalidate_sync(self, path: Path | None = None) -> None:
+        """Discard one cached branch, or the complete hierarchy cache."""
+
+        if path is None:
+            self._identified.clear()
+            self._probed.clear()
+            self._children.clear()
+            self._walk_errors.clear()
+            for handler in self.handler_types:
+                invalidate = handler.__dict__.get("invalidate")
+                if invalidate is not None:
+                    invalidate(self)
+            return
+        path = full_path(path)
+        for cache in (self._identified, self._probed, self._children):
+            for cached in tuple(cache):
+                if cached == path or path in cached.parents:
+                    cache.pop(cached, None)
+        for cached in tuple(self._walk_errors):
+            if cached == path or path in cached.parents:
+                self._walk_errors.pop(cached, None)
+        for handler in self.handler_types:
+            invalidate = handler.__dict__.get("invalidate")
+            if invalidate is not None:
+                invalidate(self, path)
+
+    def walk_sync(
+        self,
+        path: Path | Record,
+        recursive: bool = True,
+        enter: Callable[[Record], bool] | None = None,
+        on_folder_done: Callable[[Record], None] | None = None,
+    ) -> Iterator[Record]:
+        """Yield descendants while reporting folder traversal boundaries.
+
+        Direct children are yielded in display order. With ``recursive=True``,
+        ``enter(record)`` decides whether each non-ignored folder is descended;
+        a refused folder remains in the stream. ``on_folder_done(record)`` is
+        called after an entered folder has been completely yielded, and only
+        for folders that were entered. The starting path is not yielded and
+        does not produce either callback.
+        """
+
+        _, children = self._walk_children(path)
+        for child in children:
+            yield child
+            if (
+                not recursive
+                or not child.is_folder
+                or "ignored" in child.handlers
+                or (enter is not None and not enter(child))
+            ):
+                continue
+            yield from self.walk_sync(
+                child,
+                recursive=True,
+                enter=enter,
+                on_folder_done=on_folder_done,
+            )
+            if on_folder_done is not None:
+                on_folder_done(self._walk_completed(child))
+
+    async def walk(
+        self,
+        path: Path | Record,
+        recursive: bool = True,
+        enter: Callable[[Record], bool] | None = None,
+        on_folder_done: Callable[[Record], None] | None = None,
+    ) -> AsyncIterator[Record]:
+        """Asynchronously yield descendants with the ``walk_sync`` semantics.
+
+        Filesystem identification and listing run in a worker thread once per
+        visited folder. The callbacks run in the consuming event-loop thread.
+        """
+
+        _, children = await asyncio.to_thread(self._walk_children, path)
+        for child in children:
+            yield child
+            if (
+                not recursive
+                or not child.is_folder
+                or "ignored" in child.handlers
+                or (enter is not None and not enter(child))
+            ):
+                continue
+            async for found in self.walk(
+                child,
+                recursive=True,
+                enter=enter,
+                on_folder_done=on_folder_done,
+            ):
+                yield found
+            if on_folder_done is not None:
+                on_folder_done(self._walk_completed(child))
+
+    def _walk_source(self, path: Path | Record) -> Record:
+        """Return the starting record after clearing an earlier walk failure."""
+
+        if isinstance(path, Record):
+            if path.location is not None:
+                return path
+            physical = Path(path.path)
+            self._walk_errors.pop(physical, None)
+            return self._walk_completed(path)
+        physical = full_path(path)
+        self._walk_errors.pop(physical, None)
+        return self.record(physical)
+
+    def _walk_children(
+        self,
+        path: Path | Record,
+    ) -> tuple[Record, tuple[Record, ...]]:
+        """Prepare one traversal source and identify its direct children."""
+
+        source = self._walk_source(path)
+        return source, self.children(source)
+
+    def _walk_completed(self, record: Record) -> Record:
+        """Return ``record`` with only the current filesystem walk failure."""
+
+        if record.location is not None:
+            return record
+        physical = Path(record.path)
+        failure = self._walk_errors.get(physical)
+        errors = tuple(
+            error
+            for error in record.errors
+            if not (
+                error.handler == self.name
+                and error.operation in ("list", "stat")
+                and error.path == physical
+            )
+        )
+        if failure is not None:
+            errors += (failure,)
+        return record if errors == record.errors else replace(record, errors=errors)
+
+    def _probe_hierarchy(
+        self,
+        path: Path,
+        recursive: bool,
+        *,
+        retain_records: bool,
+    ) -> tuple[Record, list[Record]]:
+        """Probe a stream, retaining either all records or only its root."""
+
+        source = self._walk_source(path)
+        root = self._probe_record(source)
+        # Not walking, a folder's statistics are what the folder handler read directly inside it.
+        folder = next((probe.stats for probe in root.probes if probe.handler == "folder" and probe.stats), None)
+        root = replace(
+            root,
+            stats=(
+                self._folder_stats_from(root, folder.files, folder.folders, folder.bytes, folder.span)
+                if root.is_folder and not recursive and folder
+                else self._folder_stats(root, ())
+                if root.is_folder
+                else self._file_stats(root)
+            ),
+        )
+        records = [root] if retain_records else []
+        if not recursive or not root.is_folder or "ignored" in root.handlers:
+            return root, records
+
+        frames = [_FolderFrame(root, 0 if retain_records else None)]
+        pending: Record | None = None
+
+        def enter(record: Record) -> bool:
+            if pending is None or pending.path != record.path:
+                raise RuntimeError("walk yielded a folder without its probe record")
+            frames.append(
+                _FolderFrame(
+                    pending,
+                    len(records) - 1 if retain_records else None,
+                )
+            )
+            return True
+
+        def on_folder_done(record: Record) -> None:
+            frame = frames.pop()
+            completed = self._finish_folder(frame, record)
+            if retain_records:
+                if frame.index is None:
+                    raise RuntimeError("retained folder has no record index")
+                records[frame.index] = completed
+            frames[-1].add(completed)
+
+        for identified in self.walk_sync(
+            source,
+            enter=enter,
+            on_folder_done=on_folder_done,
+        ):
+            probed = self._probe_record(identified)
+            pending = replace(
+                probed,
+                stats=(
+                    self._folder_stats(probed, ())
+                    if probed.is_folder
+                    else self._file_stats(probed)
+                ),
+            )
+            if retain_records:
+                records.append(pending)
+            if not pending.is_folder or "ignored" in pending.handlers:
+                frames[-1].add(pending)
+
+        completed_root = self._finish_folder(
+            frames.pop(),
+            self._walk_completed(source),
+        )
+        if frames:
+            raise RuntimeError("walk ended before every folder was completed")
+        if retain_records:
+            records[0] = completed_root
+        return completed_root, records
+
+    def _probe_root_sync(self, path: Path) -> Record:
+        """Return one recursively aggregated root without retaining its stream."""
+
+        root, _ = self._probe_hierarchy(path, True, retain_records=False)
+        return root
+
+    @staticmethod
+    def _finish_folder(frame: _FolderFrame, walked: Record) -> Record:
+        """Merge late traversal errors and finish one folder's statistics."""
+
+        errors = tuple(
+            error
+            for error in frame.record.errors
+            if not (
+                error.handler == FileHandler.name
+                and error.operation in ("list", "stat")
+                and error.path == frame.record.path
+            )
+        )
+        errors += tuple(error for error in walked.errors if error not in errors)
+        record = replace(frame.record, errors=errors)
+        return replace(
+            record,
+            stats=FileHandler._folder_stats_from(
+                record,
+                frame.files,
+                frame.folders,
+                frame.bytes,
+                frame.span,
+            ),
+        )
+
+    def _probe_record(self, path: Path | Record) -> Record:
+        """Load each matching handler while retaining individual failures."""
+
+        if isinstance(path, Record):
+            if path.location is not None:
+                raise ValueError(f"{path.display_path}: archive member is not physical")
+            record = path
+            if record.target is not None or record.path.is_symlink() or record.path.is_junction():
+                return replace(record, stats=FileStats(0, 0, record.size, None))
+            path = full_path(Path(path.path))
+        else:
+            path = full_path(path)
+            record = self.record(path)
+        try:
+            signature = _signature(path.stat())
+        except Exception:
+            return replace(record, stats=FileStats(0, 0, 0, None))
+        cached = self._probed.get(path)
+        if cached is None or cached[0] != signature or "git" in record.handlers:
+            selected = {handler.name: handler for handler in self.handler_types}
+            probes = tuple(
+                self._handler_probe(selected[name], path) for name in record.handlers
+            )
+            self._probed[path] = (signature, probes)
+            while len(self._probed) > SESSION_CACHE:
+                self._probed.pop(next(iter(self._probed)), None)    # the least recently probed
+        else:
+            probes = cached[1]
+            self._probed[path] = self._probed.pop(path)             # keep what is being asked for
+        errors = record.errors + tuple(
+            probe.error for probe in probes if probe.error is not None
+        )
+        return replace(record, probes=probes, errors=errors)
+
+    def _handler_identify(
+        self,
+        handler: type[Handler],
+        path: Path,
+    ) -> tuple[bool, HandlerError | None]:
+        """Call one recognizer and retain its failure without stopping the tree."""
+
+        try:
+            identify_sync = getattr(handler, "identify_sync", None)
+            if identify_sync is not None:
+                return identify_sync(self, path), None
+            return handler.identify(self, path), None
+        except Exception as error:
+            if self.strict:
+                raise
+            return False, HandlerError(
+                handler.name,
+                "identify",
+                path,
+                type(error).__name__,
+                str(error),
+            )
+
+    def _handler_probe(self, handler: type[Handler], path: Path) -> Probe:
+        """Call one loader and return either its result or a typed error."""
+
+        try:
+            call_sync = getattr(handler, "call_sync", None)
+            if call_sync is not None:
+                stats, obj = call_sync(self, path)
+            else:
+                stats, obj = handler.__call__(self, path)
+            if handler.name == "archive" and isinstance(obj, tuple):
+                obj = self._archive_records(path, obj)
+                stats = _archive_stats(obj)
+            return Probe(
+                handler.name,
+                stats,
+                obj,
+                metadata=self._probe_metadata(obj),
+            )
+        except Exception as error:
+            if self.strict:
+                raise
+            failure = HandlerError(
+                handler.name,
+                "load",
+                path,
+                type(error).__name__,
+                str(error),
+            )
+            return Probe(
+                handler.name,
+                None,
+                None,
+                metadata=dict(self.metadata),
+                error=failure,
+            )
+
+    @staticmethod
+    def _file_stats(record: Record) -> FileStats:
+        """Derive statistics for one file from probes, its name, and mtime."""
+
+        spans = [span for probe in record.probes if (span := _stats_span(probe.stats))]
+        span = _combine_spans(spans) or FileHandler._name_span(record.name)
+        modified = (
+            TimeSpan(start=record.modified_at, end=record.modified_at) if record.modified_at else None
+        )
+        return FileStats(1, 0, record.size, span or modified)
+
+    @staticmethod
+    def _folder_stats(record: Record, children: Sequence[Record]) -> FileStats:
+        """Aggregate direct child statistics and the folder's own span evidence."""
+
+        child_spans = [
+            child.stats.span for child in children if child.stats and child.stats.span
+        ]
+        return FileHandler._folder_stats_from(
+            record,
+            sum(child.stats.files for child in children if child.stats),
+            sum(
+                child.stats.folders + int(child.is_folder)
+                for child in children
+                if child.stats
+            ),
+            sum(child.stats.bytes for child in children if child.stats),
+            _combine_spans(child_spans),
+        )
+
+    @staticmethod
+    def _folder_stats_from(
+        record: Record,
+        files: int,
+        folders: int,
+        size: int,
+        child_span: TimeSpan | None,
+    ) -> FileStats:
+        """Combine incremental child totals with a folder's own span evidence."""
+
+        git_spans = [
+            span
+            for probe in record.probes
+            if probe.handler == "git" and (span := _stats_span(probe.stats))
+        ]
+        if git_spans:
+            spans = git_spans
+        else:
+            spans = [
+                span for probe in record.probes if (span := _stats_span(probe.stats))
+            ]
+            if named := FileHandler._name_span(record.name):
+                spans.append(named)
+            if child_span is not None:
+                spans.append(child_span)
+        modified = (
+            TimeSpan(start=record.modified_at, end=record.modified_at) if record.modified_at else None
+        )
+        return FileStats(files, folders, size, _combine_spans(spans) or modified)
+
+    @classmethod
+    def _name_span(cls, name: str) -> TimeSpan | None:
+        """Derive a span from supported dates, timestamps, epochs, and durations."""
+
+        if match := FILENAME_SHORT_DATE_SPAN.search(name):
+            dates = tuple(
+                moment
+                for value in match.groups()
+                if (moment := cls._filename_time(value, "%y%m%d")) is not None
+            )
+            if len(dates) != 2:
+                return None
+            return cls._date_span(dates)
+
+        times = cls._filename_times(name)
+        if times:
+            span = TimeSpan(start=min(times), end=max(times))
+            if len(times) == 1 and (duration := FILENAME_DURATION.search(name)):
+                seconds = int(duration.group(1)) * next(
+                    size for unit, size in UNITS if unit == duration.group(2).casefold()
+                )
+                if (
+                    end := valid_time(span.start + timedelta(seconds=seconds))
+                ) is not None:
+                    span = TimeSpan(start=span.start, end=end)
+            return span
+
+        dates = cls._filename_dates(name)
+        if not dates:
+            return None
+        return cls._date_span(dates)
+
+    @staticmethod
+    def _date_span(dates: Sequence[datetime]) -> TimeSpan:
+        """Inclusive span covering every representable instant of each date."""
+
+        return TimeSpan(start=min(dates), end=max(dates) + timedelta(days=1, microseconds=-1))
+
+    @classmethod
+    def _filename_times(cls, name: str) -> tuple[datetime, ...]:
+        """Parse explicit datetimes or Unix epochs embedded in a filename."""
+
+        if values := FILENAME_GMT_TIMES.findall(name):
+            parsed: list[datetime] = []
+            for value, offset in values:
+                try:
+                    zone = timezone(timedelta(hours=int(offset)))
+                except ValueError:
+                    continue
+                if moment := cls._filename_time(value, "%m-%d-%Y, %H.%M.%S", zone):
+                    parsed.append(moment)
+            return tuple(parsed)
+
+        for pattern, format_string in FILENAME_DATETIMES:
+            if values := pattern.findall(name):
+                parsed = tuple(
+                    moment
+                    for value in values
+                    if (moment := cls._filename_time(value, format_string)) is not None
+                )
+                if parsed:
+                    return parsed
+
+        if values := FILENAME_EPOCHS.findall(name):
+            return tuple(
+                moment
+                for value in values
+                if (moment := cls._epoch_time(value)) is not None
+            )
+        return ()
+
+    @staticmethod
+    def _epoch_time(value: str) -> datetime | None:
+        """Ten digits read as Unix seconds, or None when they are not a time at all.
+
+        The pattern matches any ten digits, so an order number, an account number or a phone
+        number reaches here as readily as a timestamp, and one outside what this host can
+        represent raises instead of returning a date. A number that is not a time is not a
+        time: it is dropped, the way ``valid_time`` drops an implausible one.
+        """
+
+        try:
+            return valid_time(datetime.fromtimestamp(int(value), timezone.utc))
+        except (OSError, OverflowError, ValueError):
+            return None
+
+    @classmethod
+    def _filename_dates(cls, name: str) -> tuple[datetime, ...]:
+        """Parse date-only values embedded in a filename."""
+
+        for pattern, format_string in (
+            (FILENAME_ISO_DATES, "%Y-%m-%d"),
+            (FILENAME_SHORT_DATES, "%y%m%d"),
+        ):
+            if values := pattern.findall(name):
+                return tuple(
+                    moment
+                    for value in values
+                    if (moment := cls._filename_time(value, format_string)) is not None
+                )
+        return ()
+
+    @staticmethod
+    def _filename_time(
+        value: str,
+        format_string: str,
+        zone: tzinfo | None = None,
+    ) -> datetime | None:
+        """Parse and validate one filename timestamp."""
+
+        try:
+            parsed = datetime.strptime(value, format_string)
+        except ValueError:
+            return None
+        if parsed.timetuple()[:6] <= PLACEHOLDER_TIMES[2]:
+            # Older than DOS zero, which valid_time discards anyway. Said here because attaching the
+            # local zone to such a moment is what Windows refuses, and a name is read on any host.
+            return None
+        if zone is not None:
+            return valid_time(parsed.replace(tzinfo=zone))
+        try:
+            parsed = parsed.astimezone()
+        except (OSError, OverflowError, ValueError):
+            # The far end of the same refusal. A name can spell a date this host cannot put a zone
+            # on, and that is a number shaped like a date rather than a date; a walk of a hierarchy
+            # does not stop for one.
+            return None
+        return valid_time(parsed)
+
+
+@dataclass(frozen=True)
+class GitRepository:
+    """Local repository identity and configured remote metadata."""
+
+    root: Path
+    metadata_path: Path
+    upstream_remote: str | None
+    upstream_url: str | None
+    remotes: tuple[tuple[str, str], ...]
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Return repository paths and URLs suitable for identity matching."""
+
+        return {
+            "root": str(self.root),
+            "metadata_path": str(self.metadata_path),
+            "upstream_remote": self.upstream_remote,
+            "upstream_url": self.upstream_url,
+            "remotes": dict(self.remotes),
+        }
+
+
+class GitHandler(Handler):
+    """Identify tracked paths and derive spans from local Git history.
+
+    Only commits reachable from the current local ``HEAD`` are read; no remote
+    command or fetch is used. Repository and currently tracked file paths are
+    recognized. A tracked folder's span also includes historical files beneath
+    it that have since been deleted.
+
+    The typed :class:`GitRepository` reads every ``remote.<name>.url`` from
+    local Git configuration. ``upstream_remote`` is set only when the current
+    symbolic branch has both ``branch.<name>.remote`` and
+    ``branch.<name>.merge``. ``upstream_url`` is the matching configured remote
+    URL. Both are ``None`` for detached ``HEAD`` or a branch without that pair.
+    All configured remote URLs remain in ``remotes`` for deduplication.
+
+    The repository map is cached until ``HEAD``, its loose ref, the index, the
+    ``HEAD`` log, packed refs, or Git configuration changes.
+    """
+
+    name = "git"
+
+    def __init__(
+        self,
+        metadata: Mapping[str, Any] | None = None,
+        *,
+        strict: bool = False,
+    ) -> None:
+        """Initialize metadata, error policy, and repository-history cache."""
+
+        super().__init__(metadata, strict=strict)
+        self._git_cache: dict[
+            Path,
+            tuple[tuple[Any, ...], frozenset[Path], dict[Path, TimeSpan]],
+        ] = {}
+
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Return whether ``path`` is tracked, synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Return whether ``path`` belongs to the current tracked-path map."""
+
+        repository = self._repository(path)
+        if repository is None:
+            return False
+        tracked, _ = self._history(*repository)
+        return full_path(path) in tracked
+
+    @sync
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[FileStats | None, GitRepository | HandlerError]:
+        """Return local-history statistics and repository metadata."""
+
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
+
+    def call_sync(self, path: Path) -> tuple[FileStats, GitRepository]:
+        """Load local-history statistics and local Git remote configuration."""
+
+        path = full_path(path)
+        repository = self._repository(path)
+        if repository is None:
+            raise ValueError(f"{path}: Git repository is not identifiable")
+        tracked, spans = self._history(*repository)
+        if path not in tracked:
+            raise ValueError(f"{path}: path is not Git-tracked")
+        return (
+            FileStats(0, 0, 0, spans.get(path)),
+            self._repository_object(*repository),
+        )
+
+    def invalidate(self, path: Path | None = None) -> None:
+        """Discard all Git maps or the map containing ``path``."""
+
+        if path is None:
+            self._git_cache.clear()
+            return
+        repository = self._repository(path)
+        if repository is not None:
+            self._git_cache.pop(repository[0], None)
+
+    @classmethod
+    def _repository(cls, path: Path) -> tuple[Path, Path] | None:
+        """Return the nearest repository root and resolved Git metadata path."""
+
+        path = full_path(path)
+        start = path if path.is_dir() else path.parent
+        for candidate in (start, *start.parents):
+            if metadata := cls._metadata(candidate):
+                return candidate, metadata
+        return None
+
+    def _history(
+        self,
+        root: Path,
+        metadata: Path,
+    ) -> tuple[frozenset[Path], dict[Path, TimeSpan]]:
+        """Return the cached tracked paths and local commit spans for a repository."""
+
+        state = self._state(metadata)
+        cached = self._git_cache.get(root)
+        if cached is not None and cached[0] == state:
+            return cached[1], cached[2]
+
+        names = self._git(root, "ls-files", "-z").split(b"\0")
+        tracked: set[Path] = {root}
+        for name in names:
+            if not name:
+                continue
+            relative = self._relative(name)
+            path = root.joinpath(*relative.parts)
+            tracked.add(path)
+            for parent in path.parents:
+                tracked.add(parent)
+                if parent == root:
+                    break
+
+        spans: dict[Path, TimeSpan] = {}
+        moment: datetime | None = None
+        history = self._git(
+            root,
+            "log",
+            "--format=%x1e%cI",
+            "--name-only",
+            "-z",
+            "--no-renames",
+        )
+        for token in history.split(b"\0"):
+            if token.startswith(b"\x1e"):
+                try:
+                    parsed = datetime.fromisoformat(token[1:].decode("ascii"))
+                except ValueError as error:
+                    raise ValueError(f"{root}: invalid Git commit time") from error
+                moment = valid_time(parsed)
+                if moment is not None:
+                    self._add_span(spans, root, moment)
+                continue
+            if moment is None:
+                continue
+            token = token.removeprefix(b"\n")
+            if not token:
+                continue
+            path = root.joinpath(*self._relative(token).parts)
+            if path in tracked:
+                self._add_span(spans, path, moment)
+            for parent in path.parents:
+                if parent == root:
+                    break
+                if parent in tracked:
+                    self._add_span(spans, parent, moment)
+
+        frozen = frozenset(tracked)
+        self._git_cache[root] = state, frozen, spans
+        return frozen, spans
+
+    @classmethod
+    def _repository_object(cls, root: Path, metadata: Path) -> GitRepository:
+        """Read repository remote identity from local Git configuration."""
+
+        remotes: list[tuple[str, str]] = []
+        configured = cls._git_optional(
+            root,
+            "config",
+            "--get-regexp",
+            r"^remote\..*\.url$",
+        )
+        if configured is not None:
+            for line in configured.splitlines():
+                key, separator, url = line.partition(" ")
+                if not separator or not url:
+                    continue
+                remote = key.removeprefix("remote.").removesuffix(".url")
+                remotes.append((remote, url))
+        branch = cls._git_optional(root, "symbolic-ref", "--quiet", "--short", "HEAD")
+        upstream_remote = None
+        if branch is not None:
+            remote = cls._git_optional(
+                root,
+                "config",
+                "--get",
+                f"branch.{branch}.remote",
+            )
+            merge = cls._git_optional(
+                root,
+                "config",
+                "--get",
+                f"branch.{branch}.merge",
+            )
+            if remote is not None and merge is not None:
+                upstream_remote = remote
+        upstream_url = next(
+            (url for remote, url in remotes if remote == upstream_remote),
+            None,
+        )
+        return GitRepository(
+            root,
+            metadata,
+            upstream_remote,
+            upstream_url,
+            tuple(remotes),
+        )
+
+    @staticmethod
+    def _git(root: Path, *arguments: str) -> bytes:
+        """Run one read-only local Git command and return its raw stdout."""
+
+        result = subprocess.run(
+            ("git", "-C", str(root), *arguments),
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode:
+            detail = result.stderr.decode("utf-8", errors="replace").strip()
+            raise ValueError(f"{root}: Git failed: {detail}")
+        return result.stdout
+
+    @staticmethod
+    def _git_optional(root: Path, *arguments: str) -> str | None:
+        """Return stripped local Git output, or ``None`` for an absent value."""
+
+        result = subprocess.run(
+            ("git", "-C", str(root), *arguments),
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode:
+            return None
+        value = result.stdout.decode("utf-8", errors="surrogateescape").strip()
+        return value or None
+
+    @staticmethod
+    def _relative(value: bytes) -> PurePosixPath:
+        """Decode and validate one repository-relative path from Git output."""
+
+        path = PurePosixPath(value.decode("utf-8"))
+        if path.is_absolute() or ".." in path.parts:
+            raise ValueError(f"unsafe path in Git history: {path}")
+        return path
+
+    @staticmethod
+    def _add_span(spans: dict[Path, TimeSpan], path: Path, moment: datetime) -> None:
+        """Extend ``path`` to include one commit timestamp."""
+
+        if span := spans.get(path):
+            spans[path] = TimeSpan(start=min(span.start, moment), end=max(span.end, moment))
+        else:
+            spans[path] = TimeSpan(start=moment, end=moment)
+
+    @classmethod
+    def _state(cls, metadata: Path) -> tuple[Any, ...]:
+        """Return the Git metadata state that invalidates a cached history map."""
+
+        common = metadata
+        commondir = metadata / "commondir"
+        if commondir.is_file():
+            common = full_path(metadata / commondir.read_text(encoding="utf-8").strip())
+        head_value = (metadata / "HEAD").read_text(encoding="utf-8").strip()
+        ref_value: str | None = None
+        if head_value.startswith("ref:"):
+            ref = common / head_value.removeprefix("ref:").strip()
+            if ref.is_file():
+                ref_value = ref.read_text(encoding="utf-8").strip()
+        signatures = tuple(
+            (str(path), _signature(path.stat()))
+            for path in (
+                metadata / "index",
+                metadata / "logs" / "HEAD",
+                common / "config",
+                common / "packed-refs",
+            )
+            if path.is_file()
+        )
+        return head_value, ref_value, signatures
+
+    @staticmethod
+    def _metadata(path: Path) -> Path | None:
+        """Resolve a repository's directory or indirection-file ``.git`` marker."""
+
+        if not path.is_dir() or path.is_symlink():
+            return None
+        marker = path / ".git"
+        if marker.is_dir():
+            return marker
+        if not marker.is_file():
+            return None
+        try:
+            target = marker.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError):
+            return None
+        prefix = "gitdir:"
+        if not target.casefold().startswith(prefix):
+            return None
+        metadata = Path(target[len(prefix) :].strip())
+        if not metadata.is_absolute():
+            metadata = path / metadata
+        metadata = full_path(metadata)
+        return metadata if metadata.is_dir() else None
+
+
+@dataclass(frozen=True)
+class ArchiveContents:
+    """One extraction pass over an archive, member by member.
+
+    ``files`` is where each wanted member was written, ``digests`` the MD5 of
+    every member the pass read, and ``errors`` one failure for each member that
+    could not be read.
+    """
+
+    files: dict[PurePosixPath, Path]
+    digests: dict[PurePosixPath, str]
+    errors: tuple[HandlerError, ...] = ()
+
+
+class ArchiveHandler(Handler):
+    """Identify and load ZIP, RAR, and TAR.GZ member hierarchies.
+
+    Identification first requires a case-insensitive ``.zip``, ``.rar``, or
+    ``.tar.gz`` filename, then verifies only that format. ZIP uses
+    :func:`zipfile.is_zipfile`, RAR accepts the RAR 4 or RAR 5 signature, and
+    TAR.GZ requires the gzip signature plus a readable TAR structure. Each
+    member is a :class:`Record` with a safe relative POSIX path and ``location``
+    set to the physical archive. Absolute member paths and ``..`` components
+    are errors. Missing parent folders are synthesized so archive traversal
+    matches filesystem traversal.
+
+    ZIP timestamps come from the central directory. TAR timestamps come from
+    each member's Unix modification time. RAR name, type, size, and optional
+    modified time come from the UTF-8 RARLAB technical listing. RAR uses the
+    installed native ``rar`` or ``unrar`` command; no Python RAR implementation
+    is used. Password-protected or otherwise unreadable archives produce a
+    :class:`HandlerError` under the default error policy.
+    """
+
+    name = "archive"
+    extensions = (".rar", ".tar.gz", ".zip")
+    rar_signatures = (b"Rar!\x1a\x07\x00", b"Rar!\x1a\x07\x01\x00")
+    rar_timeout = 1800   # one RAR gets half an hour of the command; a longer one is an error, not a partial extraction
+
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Recognize a supported archive synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Recognize a supported extension and its matching archive format."""
+
+        path = full_path(path)
+        name = path.name.casefold()
+        extension = next(
+            (
+                extension
+                for extension in ArchiveHandler.extensions
+                if name.endswith(extension)
+            ),
+            None,
+        )
+        if extension is None or not path.is_file():
+            return False
+        if extension == ".zip":
+            return zipfile.is_zipfile(path)
+        if extension == ".rar":
+            return self._is_rar(path)
+        if extension == ".tar.gz":
+            return self._is_tar_gz(path)
+        return False
+
+    @sync
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[FileStats | None, tuple[Record, ...] | HandlerError]:
+        """Load archive statistics and member records in either call mode."""
+
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
+
+    def call_sync(self, path: Path) -> tuple[FileStats, tuple[Record, ...]]:
+        """Load archive statistics and member records without another event loop."""
+
+        path = full_path(path)
+        if zipfile.is_zipfile(path):
+            records = self._zip_records(path)
+        elif self._is_rar(path):
+            records = self._rar_records(path)
+        elif self._is_tar_gz(path):
+            records = self._tar_records(path)
+        else:
+            raise ValueError(f"{path}: unsupported archive")
+        return _archive_stats(records), records
+
+    @sync
+    async def extract(
+        self,
+        path: Path,
+        destination: Path,
+        members: Collection[PurePosixPath] | None = None,
+    ) -> ArchiveContents | HandlerError:
+        """Write archive members to a directory in either call mode."""
+
+        return await asyncio.to_thread(
+            self._safe_operation,
+            path,
+            "extract",
+            self.extract_sync,
+            path,
+            destination,
+            members,
+        )
+
+    def extract_sync(
+        self,
+        path: Path,
+        destination: Path,
+        members: Collection[PurePosixPath] | None = None,
+    ) -> ArchiveContents:
+        """Write ``members`` under ``destination`` and digest what was read.
+
+        ``members`` is every file member by default. Every member is read,
+        because the MD5 that read gives identifies content that is copied
+        between archives, and because a RAR is stored solid: asking for one
+        member decompresses everything before it, so the archive is extracted
+        in one command instead of once per member. A ZIP and a TAR.GZ are read
+        member by member and only the wanted ones are written. Folder members
+        are never written. A member that cannot be read becomes an entry in
+        :attr:`ArchiveContents.errors` and does not end the pass.
+
+        Written names are flat and unique, so one destination holds members
+        from any depth without creating the archive's folders.
+        """
+
+        path = full_path(path)
+        destination.mkdir(parents=True, exist_ok=True)
+        contents = ArchiveContents(files={}, digests={}, errors=())
+        errors: list[HandlerError] = []
+        wanted = None if members is None else set(members)
+        if zipfile.is_zipfile(path):
+            self._zip_extract(path, destination, wanted, contents, errors)
+        elif self._is_rar(path):
+            self._rar_extract(path, destination, wanted, contents, errors)
+        elif self._is_tar_gz(path):
+            self._tar_extract(path, destination, wanted, contents, errors)
+        else:
+            raise ValueError(f"{path}: unsupported archive")
+        return replace(contents, errors=tuple(errors))
+
+    def _read_member(
+        self,
+        member: PurePosixPath,
+        source: BinaryIO,
+        copy: Path | None,
+        contents: ArchiveContents,
+        errors: list[HandlerError],
+    ) -> None:
+        """Read one member once: its MD5, and a copy of it when one is wanted."""
+
+        digest = hashlib.md5()
+        try:
+            with source, (open(copy, "wb") if copy else nullcontext()) as out:
+                for chunk in iter(lambda: source.read(1 << 20), b""):
+                    digest.update(chunk)
+                    if out is not None:
+                        out.write(chunk)
+        except Exception as error:
+            errors.append(self._error(member, "extract", error))
+            return
+        contents.digests[member] = digest.hexdigest()
+        if copy is not None:
+            contents.files[member] = copy
+
+    @staticmethod
+    def _copy_path(
+        destination: Path,
+        index: int,
+        member: PurePosixPath,
+        wanted: set[PurePosixPath] | None,
+    ) -> Path | None:
+        """Return the flat unique name a wanted member is written under."""
+
+        if wanted is not None and member not in wanted:
+            return None
+        return destination / f"{index}_{member.name}"
+
+    def _zip_extract(
+        self,
+        path: Path,
+        destination: Path,
+        wanted: set[PurePosixPath] | None,
+        contents: ArchiveContents,
+        errors: list[HandlerError],
+    ) -> None:
+        """Read a ZIP member by member, writing the wanted ones."""
+
+        try:
+            archive = zipfile.ZipFile(path)
+        except (OSError, zipfile.BadZipFile) as error:
+            raise ValueError(f"{path}: cannot read ZIP: {error}") from error
+        with archive:
+            for index, info in enumerate(archive.infolist()):
+                if info.is_dir():
+                    continue
+                member = _record_path(info.filename)
+                copy = self._copy_path(destination, index, member, wanted)
+                try:
+                    source = archive.open(info)
+                except Exception as error:
+                    errors.append(self._error(member, "extract", error))
+                    continue
+                self._read_member(member, source, copy, contents, errors)
+
+    def _tar_extract(
+        self,
+        path: Path,
+        destination: Path,
+        wanted: set[PurePosixPath] | None,
+        contents: ArchiveContents,
+        errors: list[HandlerError],
+    ) -> None:
+        """Read a TAR.GZ in one sequential pass, writing the wanted members."""
+
+        try:
+            archive = tarfile.open(path, "r:*")
+        except (OSError, tarfile.TarError) as error:
+            raise ValueError(f"{path}: cannot read TAR.GZ: {error}") from error
+        with archive:
+            for index, info in enumerate(archive):
+                if not info.isfile():
+                    continue
+                member = _record_path(info.name)
+                copy = self._copy_path(destination, index, member, wanted)
+                source = archive.extractfile(info)
+                if source is None:
+                    continue
+                self._read_member(member, source, copy, contents, errors)
+
+    def _rar_extract(
+        self,
+        path: Path,
+        destination: Path,
+        wanted: set[PurePosixPath] | None,
+        contents: ArchiveContents,
+        errors: list[HandlerError],
+    ) -> None:
+        """Extract a solid RAR in one command, then read what it wrote."""
+
+        executable = self.rar_executable()
+        try:
+            subprocess.run(
+                [
+                    str(executable),
+                    "x",
+                    "-y",
+                    "-inul",
+                    "-p-",
+                    str(path),
+                    str(destination) + os.sep,
+                ],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                check=True,
+                timeout=self.rar_timeout,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise ValueError(f"{path}: cannot extract RAR: {error}") from error
+        for written in sorted(destination.rglob("*")):
+            if not written.is_file():
+                continue
+            member = PurePosixPath(written.relative_to(destination).as_posix())
+            try:
+                source = written.open("rb")
+            except OSError as error:
+                errors.append(self._error(member, "extract", error))
+                continue
+            self._read_member(member, source, None, contents, errors)
+            if wanted is None or member in wanted:
+                contents.files[member] = written
+
+    @classmethod
+    def _is_rar(cls, path: Path) -> bool:
+        """Return whether ``path`` starts with a RAR 4 or RAR 5 signature."""
+
+        try:
+            with path.open("rb") as stream:
+                header = stream.read(max(map(len, cls.rar_signatures)))
+        except OSError:
+            return False
+        return any(header.startswith(signature) for signature in cls.rar_signatures)
+
+    @staticmethod
+    def rar_executable() -> Path:
+        """Return the installed RARLAB command used to list RAR archives.
+
+        macOS and Debian installations expose ``rar`` or ``unrar`` through
+        ``PATH``. Windows is checked the same way first, followed by the native
+        WinRAR installation directories because its installer does not add the
+        commands to ``PATH``. Absence is an error instead of a reduced parser.
+        """
+
+        for command in ("rar", "unrar"):
+            if executable := shutil.which(command):
+                return full_path(executable)
+
+        if detect_os() == OSType.W11:
+            roots = tuple(
+                Path(os.environ[name])
+                for name in ("ProgramFiles", "ProgramFiles(x86)")
+                if name in os.environ
+            )
+            for executable in ("Rar.exe", "UnRAR.exe"):
+                for root in roots:
+                    candidate = root / "WinRAR" / executable
+                    if candidate.is_file():
+                        return full_path(candidate)
+
+        raise FileNotFoundError(
+            "RARLAB rar or unrar executable is required to read RAR archives"
+        )
+
+    @staticmethod
+    def _is_tar_gz(path: Path) -> bool:
+        """Return whether ``path`` has gzip bytes and a readable TAR structure."""
+
+        try:
+            with path.open("rb") as stream:
+                compressed = stream.read(2) == b"\x1f\x8b"
+        except OSError:
+            return False
+        return compressed and tarfile.is_tarfile(path)
+
+    @classmethod
+    def archive_name(
+        cls,
+        span: TimeSpan,
+        name: str,
+        extension: str,
+        local_time: tzinfo,
+    ) -> str:
+        """Return the required end/start archive name for a hierarchy span."""
+
+        extension = "." + extension.casefold().lstrip(".")
+        if extension not in cls.extensions:
+            raise ValueError(f"unsupported archive extension: {extension}")
+        safe_name = " ".join(
+            "".join(" " if char in UNSAFE else char for char in name).split()
+        )
+        if not safe_name:
+            raise ValueError("archive name is empty")
+        start, end = (moment.astimezone(local_time) for moment in (span.start, span.end))
+        return f"{end:%y%m%d}_end-{start:%y%m%d}_start_{safe_name}{extension}"
+
+    @staticmethod
+    def _zip_records(path: Path) -> tuple[Record, ...]:
+        """Read ZIP metadata into a complete archive-member hierarchy."""
+
+        try:
+            with zipfile.ZipFile(path) as archive:
+                return _complete_archive_records(
+                    path,
+                    tuple(
+                        Record(
+                            path=_record_path(info.filename),
+                            is_folder=info.is_dir(),
+                            size=info.file_size,
+                            modified_at=_archive_time(info.date_time),
+                            handlers=(),
+                            location=path,
+                        )
+                        for info in archive.infolist()
+                        if _record_path(info.filename) != PurePosixPath(".")
+                    ),
+                )
+        except (OSError, zipfile.BadZipFile) as error:
+            raise ValueError(f"{path}: cannot read ZIP: {error}") from error
+
+    @classmethod
+    def _rar_records(cls, path: Path) -> tuple[Record, ...]:
+        """Read RAR metadata from the portable RARLAB technical listing."""
+
+        executable = cls.rar_executable()
+        try:
+            completed = subprocess.run(
+                [
+                    str(executable),
+                    "lt",
+                    "-c-",
+                    "-p-",
+                    "-scf",
+                    "-y",
+                    str(path),
+                ],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                check=False,
+            )
+        except OSError as error:
+            raise ValueError(f"{path}: cannot run {executable}: {error}") from error
+
+        try:
+            output = completed.stdout.decode("utf-8")
+            errors = completed.stderr.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise ValueError(f"{path}: RAR command did not return UTF-8") from error
+        if completed.returncode:
+            detail = errors.strip() or output.strip()
+            raise ValueError(
+                f"{path}: RAR command exited with {completed.returncode}: {detail}"
+            )
+
+        entries: list[dict[str, str]] = []
+        entry: dict[str, str] | None = None
+        for line in output.splitlines():
+            field = re.match(r"^\s*([^:]+):\s?(.*)$", line)
+            if field is None:
+                continue
+            key, value = (part.strip() for part in field.groups())
+            if key == "Name":
+                if entry is not None:
+                    entries.append(entry)
+                entry = {}
+            if entry is not None:
+                entry[key] = value
+        if entry is not None:
+            entries.append(entry)
+
+        try:
+            records = tuple(cls._rar_record(path, entry) for entry in entries)
+        except (KeyError, ValueError) as error:
+            raise ValueError(
+                f"{path}: invalid RAR technical listing: {error}"
+            ) from error
+        return _complete_archive_records(path, records)
+
+    @staticmethod
+    def _rar_record(path: Path, fields: Mapping[str, str]) -> Record:
+        """Convert one RARLAB technical-listing entry into a member record."""
+
+        member = _record_path(fields["Name"])
+        is_folder = fields["Type"] == "Directory"
+        size = 0 if is_folder else int(fields["Size"])
+        modified = next(
+            (
+                value
+                for key, value in fields.items()
+                if key.casefold() in ("modified", "mtime")
+            ),
+            None,
+        )
+        modified_at = (
+            _archive_time(datetime.fromisoformat(modified))
+            if modified is not None
+            else None
+        )
+        return Record(
+            path=member,
+            is_folder=is_folder,
+            size=size,
+            modified_at=modified_at,
+            handlers=(),
+            location=path,
+        )
+
+    @staticmethod
+    def _tar_records(path: Path) -> tuple[Record, ...]:
+        """Read TAR metadata into a complete archive-member hierarchy."""
+
+        try:
+            with tarfile.open(path, "r:*") as archive:
+                return _complete_archive_records(
+                    path,
+                    tuple(
+                        Record(
+                            path=_record_path(info.name),
+                            is_folder=info.isdir(),
+                            size=info.size,
+                            modified_at=_archive_time(info.mtime),
+                            handlers=(),
+                            location=path,
+                        )
+                        for info in archive.getmembers()
+                        if _record_path(info.name) != PurePosixPath(".")
+                    ),
+                )
+        except (OSError, tarfile.TarError) as error:
+            raise ValueError(f"{path}: cannot read TAR.GZ: {error}") from error
+
+
+class _FrontmatterLoader(yaml.SafeLoader):
+    """Load safe YAML while retaining timestamp scalars as written."""
+
+
+_FrontmatterLoader.yaml_implicit_resolvers = {
+    first: [
+        (tag, pattern)
+        for tag, pattern in resolvers
+        if tag != "tag:yaml.org,2002:timestamp"
+    ]
+    for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+
+
+@dataclass(frozen=True)
+class MarkdownFile:
+    """A Markdown file and its complete YAML frontmatter mapping.
+
+    ``title`` and ``name`` implement the declared ``title|name`` equivalence:
+    each uses the supplied peer field and then the filename when its own field
+    is absent. ``tags`` normalizes the standard YAML list to strings while the
+    original value remains unchanged in ``frontmatter``. ``span`` is present
+    only when both ``created`` and ``updated`` are valid date values.
+    """
+
+    path: Path
+    frontmatter: dict[str, Any]
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Return a copy of every source frontmatter key and value."""
+
+        return dict(self.frontmatter)
+
+    @property
+    def title(self) -> str:
+        """Return frontmatter ``title``, ``name``, or the filename stem."""
+
+        value = self.frontmatter.get("title")
+        if value is None:
+            value = self.frontmatter.get("name")
+        return self.path.stem if value is None else str(value)
+
+    @property
+    def name(self) -> str:
+        """Return frontmatter ``name``, ``title``, or the filename stem."""
+
+        value = self.frontmatter.get("name")
+        if value is None:
+            value = self.frontmatter.get("title")
+        return self.path.stem if value is None else str(value)
+
+    @property
+    def tags(self) -> tuple[str, ...]:
+        """Return frontmatter tags without splitting a scalar tag value."""
+
+        value = self.frontmatter.get("tags")
+        if value is None:
+            return ()
+        values = value if isinstance(value, list) else [value]
+        return tuple(str(item) for item in values if item is not None)
+
+    @property
+    def span(self) -> TimeSpan | None:
+        """Return the chronological ``created`` to ``updated`` span."""
+
+        created = self._time(self.frontmatter.get("created"))
+        updated = self._time(self.frontmatter.get("updated"))
+        return (
+            TimeSpan(start=min(created, updated), end=max(created, updated))
+            if created is not None and updated is not None
+            else None
+        )
+
+    @staticmethod
+    def _time(value: Any) -> datetime | None:
+        """Parse one frontmatter date in its offset or the project timezone."""
+
+        if isinstance(value, datetime):
+            parsed = value
+        elif isinstance(value, date):
+            parsed = datetime(value.year, value.month, value.day)
+        elif isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value.strip())
+            except ValueError:
+                return None
+        else:
+            return None
+        return (
+            parsed
+            if parsed.tzinfo is not None
+            else parsed.replace(tzinfo=FRONTMATTER_TIMEZONE)
+        )
+
+
+class MarkdownHandler(Handler):
+    """Identify Markdown files and read their complete YAML frontmatter.
+
+    Supported input is a physical file whose suffix is ``.md`` ignoring case,
+    decoded as UTF-8 with an optional BOM. Frontmatter exists only when the
+    first decoded line strips to ``---`` and ends at a later line that strips
+    to ``---``. The enclosed text must be an empty YAML document or a YAML
+    mapping accepted by :class:`yaml.SafeLoader`. YAML timestamp scalars remain
+    strings; every key and nested value remains in ``MarkdownFile.frontmatter``.
+    The Markdown body is not parsed.
+
+    ``title`` and ``name`` use their matching frontmatter field, then the peer
+    field, then the filename stem. ``tags`` accepts a YAML list or one scalar
+    and exposes a tuple of strings. ``span`` requires both ``created`` and
+    ``updated`` values accepted by :meth:`datetime.fromisoformat`; a date-only
+    value starts at midnight and a value without an offset uses
+    ``America/Los_Angeles``. The earlier parsed value is the start and the later
+    is the end.
+
+    A missing frontmatter block is valid and produces an empty mapping. With
+    the default error policy, malformed YAML, a non-mapping document, or an
+    unclosed block returns ``(None, HandlerError)`` instead of stopping a tree.
+    """
+
+    name = "markdown"
+    extensions = (".md",)
+
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Recognize a Markdown file synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Return whether ``path`` is a physical ``.md`` file."""
+
+        path = full_path(path)
+        return path.suffix.casefold() == ".md" and path.is_file()
+
+    @sync
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[FileStats | None, MarkdownFile | HandlerError]:
+        """Read a Markdown file synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
+
+    def call_sync(self, path: Path) -> tuple[FileStats, MarkdownFile]:
+        """Return statistics and a Markdown object with all frontmatter keys."""
+
+        path = full_path(path)
+        if not self.identify_sync(path):
+            raise ValueError(f"{path}: Markdown file is not identifiable")
+        markdown = MarkdownFile(path, self._frontmatter(path))
+        return FileStats(1, 0, path.stat().st_size, markdown.span), markdown
+
+    @staticmethod
+    def _frontmatter(path: Path) -> dict[str, Any]:
+        """Read the complete leading YAML mapping, or an empty mapping."""
+
+        with path.open(encoding="utf-8-sig") as stream:
+            if stream.readline().strip() != "---":
+                return {}
+            lines: list[str] = []
+            for line in stream:
+                if line.strip() == "---":
+                    break
+                lines.append(line)
+            else:
+                raise ValueError(f"{path}: YAML frontmatter has no closing ---")
+        try:
+            frontmatter = yaml.load("".join(lines), Loader=_FrontmatterLoader)
+        except yaml.YAMLError as error:
+            raise ValueError(f"{path}: invalid YAML frontmatter: {error}") from error
+        if frontmatter is None:
+            return {}
+        if not isinstance(frontmatter, dict):
+            raise ValueError(f"{path}: YAML frontmatter must be a mapping")
+        return frontmatter
+
+
+@dataclass(frozen=True)
+class CSVFile:
+    """A complete comma-separated table and timestamps found in time columns."""
+
+    path: Path
+    header: tuple[str, ...]
+    rows: tuple[tuple[str, ...], ...]
+    timestamps: tuple[datetime, ...]
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Expose column names and row count without copying table contents."""
+        return {"header": self.header, "rows": len(self.rows)}
+
+    @property
+    def span(self) -> TimeSpan | None:
+        """Return the earliest-to-latest valid timestamp cell."""
+
+        return TimeSpan(start=min(self.timestamps), end=max(self.timestamps)) if self.timestamps else None
+
+
+class CSVHandler(Handler):
+    """Read comma-separated text and derive a span from named time columns.
+
+    Supported input is a physical file whose suffix is ``.csv`` ignoring case,
+    decoded as UTF-8 with an optional BOM. Python's strict :mod:`csv` reader is
+    used with the ``excel`` dialect: comma delimiter, double-quote quoting,
+    doubled embedded quotes, and either CRLF or LF records. The first record is
+    the complete header and every later record is retained without type
+    conversion. An empty file has an empty header and no rows.
+
+    A header matches a time column case-insensitively after surrounding spaces
+    are removed. The built-in names are ``timestamp``, ``ts``, ``started_at``,
+    ``session_start``, ``time``, and ``created_at``. Values in those columns
+    support ISO 8601 date or date-time spelling accepted by
+    :meth:`datetime.fromisoformat`, including ``Z`` and numeric offsets, plus
+    Unix seconds greater than 1,000,000,000 and Unix milliseconds greater than
+    10,000,000,000. Offset-free values use ``America/Los_Angeles``. Invalid,
+    placeholder, and future values do not contribute to the span.
+
+    Add a column name or a :meth:`datetime.strptime` format in a subclass; the
+    base handler remains unchanged::
+
+        class BillingCSVHandler(CSVHandler):
+            time_keys = (*CSVHandler.time_keys, "billed_at")
+            time_formats = (*CSVHandler.time_formats, "%m/%d/%Y %H:%M")
+
+    The subclass can then be one of the caller's ``FileHandler`` mixins. With
+    the default error policy, invalid CSV or undecodable text returns ``(None,
+    HandlerError)`` instead of stopping a tree.
+    """
+
+    name = "csv"
+    time_keys = TIME_KEYS
+    time_formats: tuple[str, ...] = ()
+
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Recognize a CSV file synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Return whether ``path`` is a physical ``.csv`` file."""
+
+        path = full_path(path)
+        return path.suffix.casefold() == ".csv" and path.is_file()
+
+    @sync
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[FileStats | None, CSVFile | HandlerError]:
+        """Read a CSV file synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
+
+    def call_sync(self, path: Path) -> tuple[FileStats, CSVFile]:
+        """Return file statistics and the complete parsed CSV table."""
+
+        path = full_path(path)
+        if not self.identify_sync(path):
+            raise ValueError(f"{path}: CSV file is not identifiable")
+        try:
+            with path.open(encoding="utf-8-sig", newline="") as stream:
+                records = tuple(tuple(row) for row in csv.reader(stream, strict=True))
+        except csv.Error as error:
+            raise ValueError(f"{path}: invalid CSV: {error}") from error
+        header = records[0] if records else ()
+        rows = records[1:]
+        indexes = tuple(
+            index
+            for index, name in enumerate(header)
+            if name.strip().casefold()
+            in {time_key.casefold() for time_key in self.time_keys}
+        )
+        timestamps = tuple(
+            timestamp
+            for row in rows
+            for index in indexes
+            if index < len(row)
+            and (timestamp := self._timestamp(row[index])) is not None
+        )
+        csv_file = CSVFile(path, header, rows, timestamps)
+        return FileStats(1, 0, path.stat().st_size, csv_file.span), csv_file
+
+    @classmethod
+    def _timestamp(cls, value: str) -> datetime | None:
+        """Parse one built-in or subclass-supplied CSV timestamp spelling."""
+
+        value = value.strip()
+        if not value:
+            return None
+        parsed: datetime | None = None
+        try:
+            number = float(value)
+        except ValueError:
+            number = 0
+        if number > 1_000_000_000:
+            seconds = number / 1000 if number > 10_000_000_000 else number
+            try:
+                parsed = datetime.fromtimestamp(seconds, timezone.utc)
+            except (OSError, OverflowError, ValueError):
+                return None
+        else:
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                for time_format in cls.time_formats:
+                    try:
+                        parsed = datetime.strptime(value, time_format)
+                    except ValueError:
+                        continue
+                    break
+        if parsed is None:
+            return None
+        localized = (
+            parsed
+            if parsed.tzinfo is not None
+            else parsed.replace(tzinfo=FRONTMATTER_TIMEZONE)
+        )
+        return valid_time(localized)
+
+
+@dataclass(frozen=True)
+class LogFile:
+    """A complete text log and the absolute timestamps found at row starts."""
+
+    path: Path
+    rows: tuple[str, ...]
+    timestamps: tuple[datetime, ...]
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Expose the row count without copying log contents."""
+        return {"rows": len(self.rows)}
+
+    @property
+    def span(self) -> TimeSpan | None:
+        """Return the first-to-last recorded timestamp, if any rows have one."""
+
+        return TimeSpan(start=min(self.timestamps), end=max(self.timestamps)) if self.timestamps else None
+
+
+class LogHandler(Handler):
+    """Identify ``.log`` files and derive spans from timestamped rows.
+
+    Supported input is a physical file whose suffix is ``.log`` ignoring case,
+    decoded as UTF-8 with an optional BOM. Every row is retained without its
+    line ending. A timestamp must begin after optional whitespace and one
+    optional ``[`` or ``(``. Its exact accepted shape is
+    ``YYYY-MM-DD[T or space]HH:MM:SS``, an optional dot-or-comma fractional
+    second, and optional ``Z``, ``+HH:MM``, ``-HH:MM``, ``+HHMM``, or ``-HHMM``
+    offset. Text may follow immediately after that timestamp.
+
+    Offset-free timestamps use ``America/Los_Angeles``. Invalid, placeholder,
+    and future timestamps do not contribute. The span is the earliest through
+    latest accepted row timestamp. A file with no accepted timestamp has no
+    span. With the default error policy, undecodable text returns ``(None,
+    HandlerError)`` instead of stopping a tree.
+    """
+
+    name = "log"
+
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Recognize a log file synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Return whether ``path`` is a physical ``.log`` file."""
+
+        path = full_path(path)
+        return path.suffix.casefold() == ".log" and path.is_file()
+
+    @sync
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[FileStats | None, LogFile | HandlerError]:
+        """Read a log file synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
+
+    def call_sync(self, path: Path) -> tuple[FileStats, LogFile]:
+        """Return all log rows and statistics spanning timestamped rows."""
+
+        path = full_path(path)
+        if not self.identify_sync(path):
+            raise ValueError(f"{path}: log file is not identifiable")
+        rows = tuple(path.read_text(encoding="utf-8-sig").splitlines())
+        timestamps = tuple(
+            timestamp for row in rows if (timestamp := self._timestamp(row)) is not None
+        )
+        log = LogFile(path, rows, timestamps)
+        return FileStats(1, 0, path.stat().st_size, log.span), log
+
+    @staticmethod
+    def _timestamp(row: str) -> datetime | None:
+        """Parse an absolute ISO timestamp from the beginning of one row."""
+
+        match = LOG_TIMESTAMP.match(row)
+        if match is None:
+            return None
+        try:
+            parsed = datetime.fromisoformat(match.group("timestamp"))
+        except ValueError:
+            return None
+        localized = (
+            parsed
+            if parsed.tzinfo is not None
+            else parsed.replace(tzinfo=FRONTMATTER_TIMEZONE)
+        )
+        return valid_time(localized)
+
+
+@dataclass(frozen=True)
+class EmailFile:
+    """An email file with metadata derived only from its filename.
+
+    ``timestamp``, ``subject``, and ``party`` are all ``None`` when the filename
+    does not use the supported convention. ``collision`` is the optional final
+    decimal suffix used to distinguish otherwise identical paths.
+    """
+
+    path: Path
+    timestamp: datetime | None
+    subject: str | None
+    party: str | None
+    collision: int | None
+
+    @property
+    def span(self) -> TimeSpan | None:
+        """Return the filename timestamp as a one-instant span."""
+
+        return TimeSpan(start=self.timestamp, end=self.timestamp) if self.timestamp is not None else None
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Return only metadata present in the supported filename."""
+
+        return {
+            key: value
+            for key, value in (
+                ("timestamp", self.timestamp),
+                ("subject", self.subject),
+                ("party", self.party),
+                ("collision", self.collision),
+            )
+            if value is not None
+        }
+
+
+class EmailHandler(Handler):
+    """Identify email files and derive metadata from their filenames.
+
+    Supported input is an existing physical file whose suffix is ``.msg`` or
+    ``.eml`` ignoring case. The handler does not open or parse Outlook MSG,
+    MIME headers, bodies, attachments, or embedded messages. Message parsing is
+    explicitly represented by :meth:`parse_message` returning
+    :data:`NotImplemented`.
+
+    Filename metadata uses exactly
+    ``YYMMDD.HHMMSS - subject - party[ - collision]`` before the extension.
+    Separators are one space, hyphen, one space. The timestamp uses
+    ``%y%m%d.%H%M%S`` and ``America/Los_Angeles``. The optional collision is a
+    decimal integer. Splitting from the right allows the subject to contain the
+    separator. A filename outside this convention remains a valid email file
+    with no filename-derived fields or span.
+    """
+
+    name = "email"
+    extensions = (".eml", ".msg")
+
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Recognize an email file synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Return whether ``path`` is a physical MSG or EML file."""
+
+        path = full_path(path)
+        return path.suffix.casefold() in EmailHandler.extensions and path.is_file()
+
+    @sync
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[FileStats | None, EmailFile | HandlerError]:
+        """Read filename metadata synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
+
+    def call_sync(self, path: Path) -> tuple[FileStats, EmailFile]:
+        """Return file statistics and metadata without parsing the message."""
+
+        path = full_path(path)
+        if not self.identify_sync(path):
+            raise ValueError(f"{path}: email file is not identifiable")
+        timestamp, subject, party, collision = self._filename(path)
+        email = EmailFile(path, timestamp, subject, party, collision)
+        return FileStats(1, 0, path.stat().st_size, email.span), email
+
+    @staticmethod
+    def parse_message(path: Path) -> Any:
+        """Return ``NotImplemented``; email payload parsing is not implemented."""
+
+        return NotImplemented
+
+    @staticmethod
+    def _filename(
+        path: Path,
+    ) -> tuple[datetime | None, str | None, str | None, int | None]:
+        """Parse the supported timestamp, subject, party, and collision suffix."""
+
+        timestamp_text, separator, remainder = path.stem.partition(" - ")
+        if not separator:
+            return None, None, None, None
+        collision: int | None = None
+        content, separator, final = remainder.rpartition(" - ")
+        if not separator:
+            return None, None, None, None
+        if final.isdecimal():
+            collision = int(final)
+            content, separator, final = content.rpartition(" - ")
+            if not separator:
+                return None, None, None, None
+        subject = content.strip()
+        party = final.strip()
+        if not subject or not party:
+            return None, None, None, None
+        try:
+            timestamp = datetime.strptime(timestamp_text, "%y%m%d.%H%M%S").replace(
+                tzinfo=FRONTMATTER_TIMEZONE
+            )
+        except ValueError:
+            return None, None, None, None
+        return valid_time(timestamp), subject, party, collision
+
+
+CHROMIUM_MARKER = "History"
+FIREFOX_MARKER = "places.sqlite"
+CHROMIUM_BROWSERS = ("edge", "brave", "opera", "vivaldi", "chrome", "chromium")
+SQLITE_HEADER = b"SQLite format 3\x00"
+CHROMIUM_EPOCH = datetime(1601, 1, 1, tzinfo=timezone.utc)
+
+
+@dataclass(frozen=True)
+class BrowserProfile:
+    """One browser profile's history, bookmarks, and downloads, as counts and a span.
+
+    ``family`` is ``chromium`` or ``firefox``. ``browser`` is the product read
+    from the profile's own path, and ``profile`` is the folder holding the
+    database. No URL, page title, or visited page is read or retained.
+    """
+
+    path: Path
+    family: str
+    browser: str
+    profile: str
+    history: int
+    urls: int
+    favorites: int
+    downloads: int
+    span: TimeSpan | None
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Return the browser, the profile, and what each table holds."""
+
+        return {
+            "family": self.family,
+            "browser": self.browser,
+            "profile": self.profile,
+            "history": self.history,
+            "urls": self.urls,
+            "favorites": self.favorites,
+            "downloads": self.downloads,
+        }
+
+
+class BrowserHandler(Handler):
+    """Identify a browser profile and count its history, bookmarks, and downloads.
+
+    Supported input is a Chromium ``History`` database, a Firefox
+    ``places.sqlite``, or a directory holding either. Both must start with the
+    SQLite file header and carry that engine's tables: ``urls`` or ``visits``
+    for Chromium, ``moz_places`` for Firefox. A directory is the profile, so
+    identifying one answers for the database inside it.
+
+    The database is copied with its ``-wal`` and ``-shm`` companions and opened
+    read-only from the copy, so a running browser is neither locked nor read
+    mid-write. Only counts and the earliest and latest times are read: visits,
+    URLs, bookmarks, and downloads. No URL, page title, or search term is read
+    or retained, and a Chromium profile's ``Bookmarks`` JSON contributes its
+    bookmark count and ``date_added`` times only.
+
+    Chromium times are microseconds from 1601-01-01 UTC and Firefox times are
+    microseconds from the Unix epoch. Placeholder and future values do not
+    contribute, so a profile with no usable time has no span. A file or folder
+    that is not a browser profile is unrecognized rather than an error.
+    """
+
+    name = "browser-history"
+
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Recognize a browser profile synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Return whether ``path`` is a profile database or a folder with one."""
+
+        return self._database(full_path(path)) is not None
+
+    @sync
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[FileStats | None, BrowserProfile | HandlerError]:
+        """Read a browser profile synchronously or asynchronously."""
+
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
+
+    def call_sync(self, path: Path) -> tuple[FileStats, BrowserProfile]:
+        """Return profile statistics and the counts read from its database."""
+
+        path = full_path(path)
+        database = self._database(path)
+        if database is None:
+            raise ValueError(f"{path}: not a browser profile")
+        profile = (
+            self._chromium(database)
+            if database.name == CHROMIUM_MARKER
+            else self._firefox(database)
+        )
+        return FileStats(1, 0, database.stat().st_size, profile.span), profile
+
+    @classmethod
+    def _database(cls, path: Path) -> Path | None:
+        """Return the profile database at or inside ``path``, if there is one."""
+
+        if path.is_dir():
+            return next(
+                (
+                    found
+                    for marker in (CHROMIUM_MARKER, FIREFOX_MARKER)
+                    if (found := cls._database(path / marker)) is not None
+                ),
+                None,
+            )
+        if path.name.casefold() not in (CHROMIUM_MARKER.casefold(), FIREFOX_MARKER):
+            return None
+        try:
+            with path.open("rb") as stream:
+                header = stream.read(len(SQLITE_HEADER))
+        except OSError:
+            return None
+        return path if header == SQLITE_HEADER else None
+
+    @staticmethod
+    @contextmanager
+    def _read_only(path: Path) -> Iterator[sqlite3.Connection]:
+        """Open a copy of the database so a running browser is never locked."""
+
+        with tempfile.TemporaryDirectory() as folder:
+            copy = Path(folder) / path.name
+            for suffix in ("", "-wal", "-shm"):
+                companion = Path(str(path) + suffix)
+                if companion.is_file():
+                    shutil.copy2(companion, Path(str(copy) + suffix))
+            connection = sqlite3.connect(f"file:{copy.as_posix()}?mode=ro", uri=True)
+            try:
+                yield connection
+            finally:
+                connection.close()
+
+    @staticmethod
+    def _columns(connection: sqlite3.Connection) -> dict[str, set[str]]:
+        """Return every table in the database with its column names."""
+
+        return {
+            str(name): {
+                str(column[1])
+                for column in connection.execute(f'PRAGMA table_info("{name}")')
+            }
+            for (name,) in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+
+    @staticmethod
+    def _counted(
+        connection: sqlite3.Connection,
+        query: str,
+        moment: Callable[[Any], datetime | None],
+        times: list[datetime],
+    ) -> int:
+        """Run one count/min/max query and keep the times it returned."""
+
+        row = connection.execute(query).fetchone()
+        if row is None:
+            return 0
+        times += [value for value in map(moment, row[1:]) if value is not None]
+        return int(row[0] or 0)
+
+    @staticmethod
+    def _chromium_time(value: Any) -> datetime | None:
+        """Convert microseconds from 1601-01-01 UTC into a recorded time."""
+
+        try:
+            return valid_time(CHROMIUM_EPOCH + timedelta(microseconds=int(value)))
+        except (OverflowError, TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _firefox_time(value: Any) -> datetime | None:
+        """Convert microseconds from the Unix epoch into a recorded time."""
+
+        try:
+            return valid_time(
+                datetime.fromtimestamp(int(value) / 1_000_000, timezone.utc)
+            )
+        except (OSError, OverflowError, TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _browser(path: Path) -> str:
+        """Name the Chromium product from the profile's own path."""
+
+        value = str(path).casefold()
+        return next((name for name in CHROMIUM_BROWSERS if name in value), "chromium")
+
+    @classmethod
+    def _chromium(cls, path: Path) -> BrowserProfile:
+        """Read a Chromium profile's visits, URLs, downloads, and bookmarks."""
+
+        times: list[datetime] = []
+        history = urls = downloads = 0
+        with cls._read_only(path) as connection:
+            columns = cls._columns(connection)
+            if "visits" in columns and "visit_time" in columns["visits"]:
+                history = cls._counted(
+                    connection,
+                    "SELECT count(*), min(visit_time), max(visit_time) FROM visits",
+                    cls._chromium_time,
+                    times,
+                )
+            elif "urls" in columns and "last_visit_time" in columns["urls"]:
+                history = cls._counted(
+                    connection,
+                    "SELECT count(*), min(last_visit_time), max(last_visit_time) "
+                    "FROM urls WHERE last_visit_time IS NOT NULL",
+                    cls._chromium_time,
+                    times,
+                )
+            if "urls" in columns:
+                urls = cls._counted(
+                    connection,
+                    "SELECT count(*) FROM urls",
+                    cls._chromium_time,
+                    times,
+                )
+            if "downloads" in columns:
+                downloads = cls._counted(
+                    connection,
+                    "SELECT count(*), min(start_time), max(start_time) FROM downloads"
+                    if "start_time" in columns["downloads"]
+                    else "SELECT count(*) FROM downloads",
+                    cls._chromium_time,
+                    times,
+                )
+        favorites = cls._bookmarks(path.parent / "Bookmarks", times)
+        return BrowserProfile(
+            path=path,
+            family="chromium",
+            browser=cls._browser(path),
+            profile=path.parent.name,
+            history=history,
+            urls=urls,
+            favorites=favorites,
+            downloads=downloads,
+            span=TimeSpan(start=min(times), end=max(times)) if times else None,
+        )
+
+    @classmethod
+    def _bookmarks(cls, path: Path, times: list[datetime]) -> int:
+        """Count the bookmarks in a Chromium profile and keep their times."""
+
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return 0
+        if not isinstance(document, Mapping):
+            return 0
+        found = 0
+        pending = list((document.get("roots") or {}).values())
+        while pending:
+            node = pending.pop()
+            if not isinstance(node, Mapping):
+                continue
+            if node.get("type") == "url":
+                found += 1
+                if moment := cls._chromium_time(node.get("date_added")):
+                    times.append(moment)
+            children = node.get("children")
+            if isinstance(children, list):
+                pending += children
+        return found
+
+    @classmethod
+    def _firefox(cls, path: Path) -> BrowserProfile:
+        """Read a Firefox profile's visits, places, bookmarks, and downloads."""
+
+        times: list[datetime] = []
+        history = urls = favorites = downloads = 0
+        with cls._read_only(path) as connection:
+            columns = cls._columns(connection)
+            if (
+                "moz_historyvisits" in columns
+                and "visit_date" in columns["moz_historyvisits"]
+            ):
+                history = cls._counted(
+                    connection,
+                    "SELECT count(*), min(visit_date), max(visit_date) "
+                    "FROM moz_historyvisits",
+                    cls._firefox_time,
+                    times,
+                )
+            if "moz_places" in columns:
+                urls = cls._counted(
+                    connection,
+                    "SELECT count(*) FROM moz_places",
+                    cls._firefox_time,
+                    times,
+                )
+            if "moz_bookmarks" in columns:
+                favorites = cls._counted(
+                    connection,
+                    "SELECT count(*), min(dateAdded), max(dateAdded) "
+                    "FROM moz_bookmarks WHERE type = 1"
+                    if "dateAdded" in columns["moz_bookmarks"]
+                    else "SELECT count(*) FROM moz_bookmarks WHERE type = 1",
+                    cls._firefox_time,
+                    times,
+                )
+            if "moz_annos" in columns and "moz_anno_attributes" in columns:
+                source = (
+                    "FROM moz_annos annotation JOIN moz_anno_attributes attribute "
+                    "ON annotation.anno_attribute_id = attribute.id "
+                    "WHERE attribute.name = 'downloads/destinationFileURI'"
+                )
+                downloads = cls._counted(
+                    connection,
+                    f"SELECT count(*), min(annotation.dateAdded), "
+                    f"max(annotation.dateAdded) {source}"
+                    if "dateAdded" in columns["moz_annos"]
+                    else f"SELECT count(*) {source}",
+                    cls._firefox_time,
+                    times,
+                )
+        return BrowserProfile(
+            path=path,
+            family="firefox",
+            browser="firefox",
+            profile=path.parent.name,
+            history=history,
+            urls=urls,
+            favorites=favorites,
+            downloads=downloads,
+            span=TimeSpan(start=min(times), end=max(times)) if times else None,
+        )
+
+
+class ImageHandler(Handler):
+    """Placeholder for image EXIF metadata after media-format recognition."""
+
+
+class VideoHandler(Handler):
+    """Placeholder for video EXIF metadata after media-format recognition."""
+
+
+@dataclass(frozen=True)
+class SessionTurn:
+    """One extracted user or assistant message with provenance flags."""
+
+    role: str
+    text: str
+    timestamp: datetime | None
+    meta: bool = False
+    sidechain: bool = False
+
+
+@dataclass(frozen=True)
+class SessionFile:
+    """One complete native or exported session.
+
+    Native sessions use an absolute ``path`` and no ``location``. Exported
+    sessions use the JSON member as ``path`` and the physical ZIP or extracted
+    conversation JSON file as ``location``. ``records`` retains the original
+    source objects while ``turns`` contains normalized user and assistant
+    messages.
+    """
+
+    path: Path | PurePosixPath
+    harness: Harness
+    uid: str | None
+    parent_uid: str | None
+    subagent: bool
+    records: tuple[Mapping[str, Any], ...]
+    turns: tuple[SessionTurn, ...]
+    span: TimeSpan | None
+    models: tuple[str, ...]
+    topic: str
+    sidechain_only: bool = False
+    location: Path | None = None
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Expose session identity and descriptive metadata without transcript text."""
+        return {
+            "path": self.path, "location": self.location,
+            "harness": self.harness, "uid": self.uid, "parent_uid": self.parent_uid,
+            "subagent": self.subagent, "sidechain_only": self.sidechain_only,
+            "source_records": len(self.records), "turns": len(self.turns),
+            "models": self.models, "topic": self.topic, "span": self.span,
+            "name": self.name,
+        }
+
+    @property
+    def span_start(self) -> datetime | None:
+        """Return the first valid session timestamp."""
+
+        return self.span.start if self.span else None
+
+    @property
+    def span_end(self) -> datetime | None:
+        """Return the last valid session timestamp."""
+
+        return self.span.end if self.span else None
+
+    @property
+    def user_messages(self) -> tuple[str, ...]:
+        """Return mainline, non-metadata user-message text."""
+
+        return tuple(
+            turn.text
+            for turn in self.turns
+            if turn.role == "user" and not turn.meta and not turn.sidechain
+        )
+
+    @property
+    def human_messages(self) -> tuple[str, ...]:
+        """What a person typed: user messages without their envelopes, leaving out generated ones."""
+        return tuple(text for message in self.user_messages if (text := typed(message)))
+
+    @property
+    def length(self) -> str:
+        """Return the rounded session duration using the largest suitable unit."""
+
+        if self.span is None:
+            return ""
+        seconds = round((self.span.end - self.span.start).total_seconds())
+        if not seconds:
+            return ""
+        unit, size = next(pair for pair in UNITS if seconds >= pair[1])
+        return f"~{round(seconds / size)}{unit}"
+
+    @property
+    def label(self) -> str:
+        """Return the date, turn count, duration, and topic display label."""
+
+        start = f"{self.span.start.astimezone():%y%m%d-%H%M} " if self.span else ""
+        topic = f" - {self.topic}" if self.topic else ""
+        return f"{start}{len(self.turns)}{self.length}{topic}"
+
+    @property
+    def name(self) -> str:
+        """Return a length-limited normalized filename retaining id and suffix."""
+
+        tail = (f".{self.uid}" if self.uid else "") + self.path.suffix
+        label = self.label
+        if len(label) + len(tail) > NAME_LIMIT:
+            label = label[: NAME_LIMIT - len(tail)].rstrip()
+        return f"{label}{tail}"
+
+
+@dataclass(frozen=True)
+class SessionFolder:
+    """Sessions read from one directory or one LLM export ZIP."""
+
+    path: Path
+    harness: Harness
+    files: tuple[SessionFile, ...]
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Expose collection identity and each session's metadata."""
+        return {
+            "harness": self.harness, "uid": self.uid,
+            "sessions": tuple(session.metadata for session in self.files),
+        }
+
+    @property
+    def uid(self) -> str | None:
+        """Return the shared session id only when every identified id agrees."""
+
+        values = {file.uid for file in self.files if file.uid}
+        return values.pop() if len(values) == 1 else None
+
+
+SessionObject = SessionFile | SessionFolder
+
+
+@dataclass(frozen=True)
+class SessionStats:
+    """Physical-file, session, turn, byte, span, and model statistics."""
+
+    files: int
+    sessions: int
+    turns: int
+    bytes: int
+    span_start: datetime | None
+    span_end: datetime | None
+    models: tuple[str, ...]
+
+    @property
+    def span(self) -> TimeSpan | None:
+        """Return the complete span when both bounds are available."""
+
+        return (
+            TimeSpan(start=self.span_start, end=self.span_end)
+            if self.span_start is not None and self.span_end is not None
+            else None
+        )
+
+    @classmethod
+    def from_object(cls, obj: SessionObject) -> SessionStats:
+        """Derive statistics from a session or collection of sessions.
+
+        Multiple conversations inside one export ZIP count as one physical
+        file for ``files`` and ``bytes``. Extracted exports count their
+        conversation JSON files. Each immutable id counts as one session.
+        """
+
+        files = (obj,) if isinstance(obj, SessionFile) else obj.files
+        spans = [file.span for file in files if file.span]
+        paths = {file.location or Path(file.path) for file in files}
+        span = _combine_spans(spans)
+        return cls(
+            files=len(paths),
+            sessions=len({file.uid for file in files if file.uid}),
+            turns=sum(len(file.turns) for file in files),
+            bytes=sum(path.stat().st_size for path in paths),
+            span_start=span.start if span else None,
+            span_end=span.end if span else None,
+            models=tuple(
+                dict.fromkeys(model for file in files for model in file.models)
+            ),
+        )
+
+
+class _LLMExportHandler(Handler):
+    """Shared folder and ZIP mechanics for ChatGPT and Anthropic handlers."""
+
+    def __init__(
+        self,
+        metadata: Mapping[str, Any] | None = None,
+        *,
+        strict: bool = False,
+    ) -> None:
+        """Initialize metadata, error policy, and provider export cache."""
+
+        super().__init__(metadata, strict=strict)
+        self._llm_export_cache: dict[
+            tuple[Harness, Path], tuple[Signature, SessionFolder]
+        ] = {}
+
+    @staticmethod
+    def _source_names(path: Path) -> frozenset[str]:
+        """Return direct folder filenames or ZIP member filenames.
+
+        A file not named ``.zip`` is not an export and is not opened.
+        """
+
+        if path.is_dir() and not path.is_symlink():
+            try:
+                return frozenset(
+                    child.name.casefold() for child in path.iterdir() if child.is_file()
+                )
+            except OSError:
+                return frozenset()
+        if path.suffix.casefold() != ".zip":
+            return frozenset()
+        try:
+            with zipfile.ZipFile(path) as archive:
+                return frozenset(
+                    PurePosixPath(member.filename).name.casefold()
+                    for member in archive.infolist()
+                    if not member.is_dir()
+                )
+        except (OSError, zipfile.BadZipFile):
+            return frozenset()
+
+    def _identify_export(self, path: Path, provider: type[Any]) -> bool:
+        """Recognize a provider export from its required filenames."""
+
+        path = full_path(path)
+        return provider.has_markers(self._source_names(path))
+
+    def _call_export(
+        self, path: Path, provider: type[Any]
+    ) -> tuple[SessionStats, SessionFolder]:
+        """Load every provider conversation from a folder or ZIP."""
+
+        path = full_path(path)
+        if not self._identify_export(path, provider):
+            raise ValueError(f"{path}: {provider.name} export is not identifiable")
+        signature = _signature(path.stat())
+        cache_key = provider.name, path
+        cached = self._llm_export_cache.get(cache_key) if path.is_file() else None
+        if cached is not None and cached[0] == signature:
+            return SessionStats.from_object(cached[1]), cached[1]
+
+        files: list[SessionFile] = []
+        try:
+            if path.is_dir() and not path.is_symlink():
+                sources = tuple(
+                    child
+                    for child in sorted(path.iterdir(), key=_display_order)
+                    if child.is_file() and provider.conversation_file(child.name)
+                )
+                for source in sources:
+                    with source.open("r", encoding="utf-8") as stream:
+                        conversations = json.load(stream, strict=False)
+                    self._append_export(
+                        files,
+                        source,
+                        source.name,
+                        conversations,
+                        provider,
+                    )
+            else:
+                with zipfile.ZipFile(path) as archive:
+                    members = tuple(
+                        member
+                        for member in archive.infolist()
+                        if not member.is_dir()
+                        and provider.conversation_file(
+                            PurePosixPath(member.filename).name
+                        )
+                    )
+                    for member in members:
+                        with archive.open(member) as stream:
+                            conversations = json.load(stream, strict=False)
+                        self._append_export(
+                            files,
+                            path,
+                            member.filename,
+                            conversations,
+                            provider,
+                        )
+        except (
+            OSError,
+            UnicodeDecodeError,
+            zipfile.BadZipFile,
+            json.JSONDecodeError,
+        ) as error:
+            raise ValueError(
+                f"{path}: cannot read {provider.name} export: {error}"
+            ) from error
+        if not files:
+            raise ValueError(
+                f"{path}: {provider.name} export contains no conversations"
+            )
+        folder = SessionFolder(path, provider.name, tuple(files))
+        if path.is_file():
+            self._llm_export_cache[cache_key] = signature, folder
+        return SessionStats.from_object(folder), folder
+
+    def _append_export(
+        self,
+        files: list[SessionFile],
+        location: Path,
+        member: str,
+        conversations: Any,
+        provider: type[Any],
+    ) -> None:
+        """Validate and append every conversation from one JSON source."""
+
+        if not isinstance(conversations, list):
+            raise ValueError(f"{location}::{member}: conversations are not a list")
+        for conversation in conversations:
+            if not isinstance(conversation, Mapping):
+                raise ValueError(f"{location}::{member}: conversation is not an object")
+            if not provider.identify_conversation(conversation):
+                raise ValueError(
+                    f"{location}::{member}: conversation format is not {provider.name}"
+                )
+            files.append(self._export_file(location, member, provider, conversation))
+
+    @staticmethod
+    def _export_file(
+        location: Path,
+        member: str,
+        provider: type[Any],
+        conversation: Mapping[str, Any],
+    ) -> SessionFile:
+        """Convert one provider conversation into a typed session file."""
+
+        uid = next(
+            (
+                value.strip()
+                for key in provider.id_keys
+                if isinstance(value := conversation.get(key), str) and value.strip()
+            ),
+            None,
+        )
+        if uid is None:
+            raise ValueError(f"{location}::{member}: conversation has no immutable id")
+        turns = tuple(
+            turn
+            for role, content, timestamp in provider.messages(conversation)
+            if (turn := SessionHandler._turn(role, content, timestamp)) is not None
+        )
+        timestamps = [turn.timestamp for turn in turns if turn.timestamp is not None]
+        timestamps += [
+            stamp
+            for key in provider.time_keys
+            if (stamp := valid_time(SessionHandler._stamp(conversation.get(key))))
+            is not None
+        ]
+        return SessionFile(
+            path=_record_path(member),
+            harness=provider.name,
+            uid=uid,
+            parent_uid=None,
+            subagent=False,
+            records=(conversation,),
+            turns=turns,
+            span=TimeSpan(start=min(timestamps), end=max(timestamps)) if timestamps else None,
+            models=SessionHandler._models((conversation,)),
+            topic=SessionHandler._topic(turns),
+            location=location,
+        )
+
+    def _invalidate_export(self, path: Path | None, provider: type[Any]) -> None:
+        """Discard one provider's cached ZIP exports at and beneath ``path``."""
+
+        selected = None if path is None else full_path(path)
+        for key in tuple(self._llm_export_cache):
+            name, cached = key
+            if name == provider.name and (
+                selected is None or cached == selected or selected in cached.parents
+            ):
+                self._llm_export_cache.pop(key, None)
+
+
+class ChatGPTHandler(_LLMExportHandler):
+    """Handle an extracted folder or ZIP from a ChatGPT data export.
+
+    A folder is detected from direct files; a ZIP is detected from member
+    basenames. Detection requires a case-insensitive
+    ``conversations-NNN.json`` name, or both ``chat.html`` and
+    ``conversations.json``. Each selected conversations file must contain a
+    JSON list. Every item must be an object with string ``current_node`` and an
+    object ``mapping``, plus a non-empty string ``id`` or ``conversation_id``.
+
+    Transcript turns follow the chain from ``current_node`` through each
+    node's ``parent`` and are returned in reading order. Only message objects
+    whose content type is ``text`` or ``multimodal_text`` contribute turns;
+    alternate mapping branches are not returned. Conversation and turn times
+    accept exported ISO or Unix second/millisecond values. The complete source
+    conversation remains in :attr:`SessionFile.records`.
+    """
+
+    name: Harness = "chatgpt"
+    id_keys = ("id", "conversation_id")
+    time_keys = ("create_time", "update_time")
+
+    @staticmethod
+    def has_markers(names: frozenset[str]) -> bool:
+        """Return whether the filenames identify a ChatGPT export."""
+
+        return any(
+            re.fullmatch(r"conversations-\d+\.json", name) for name in names
+        ) or {"chat.html", "conversations.json"}.issubset(names)
+
+    @staticmethod
+    def conversation_file(name: str) -> bool:
+        """Return whether ``name`` is a ChatGPT conversation JSON file."""
+
+        return EXPORT_MEMBER.fullmatch(name) is not None
+
+    @staticmethod
+    def identify_conversation(conversation: Mapping[str, Any]) -> bool:
+        """Recognize the ChatGPT mapping and current-node representation."""
+
+        return isinstance(conversation.get("mapping"), Mapping) and isinstance(
+            conversation.get("current_node"), str
+        )
+
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Recognize a ChatGPT folder or ZIP in either call mode."""
+
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Recognize a ChatGPT folder or ZIP from its filenames."""
+
+        return self._identify_export(path, ChatGPTHandler)
+
+    @sync
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[SessionStats | None, SessionFolder | HandlerError]:
+        """Load a ChatGPT folder or ZIP in either call mode."""
+
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
+
+    def call_sync(self, path: Path) -> tuple[SessionStats, SessionFolder]:
+        """Load all conversations from a ChatGPT folder or ZIP."""
+
+        return self._call_export(path, ChatGPTHandler)
+
+    def invalidate(self, path: Path | None = None) -> None:
+        """Discard cached ChatGPT ZIP exports at and beneath ``path``."""
+
+        self._invalidate_export(path, ChatGPTHandler)
+
+    @staticmethod
+    def messages(
+        conversation: Mapping[str, Any],
+    ) -> tuple[tuple[Any, Any, Any], ...]:
+        """Return messages along the active ChatGPT branch in reading order."""
+
+        mapping = conversation["mapping"]
+        current = conversation["current_node"]
+        chain: list[Mapping[str, Any]] = []
+        visited: set[str] = set()
+        while current is not None:
+            if (
+                not isinstance(current, str)
+                or current not in mapping
+                or current in visited
+            ):
+                raise ValueError(
+                    "ChatGPT conversation has an invalid current-node chain"
+                )
+            visited.add(current)
+            node = mapping[current]
+            if not isinstance(node, Mapping):
+                raise ValueError("ChatGPT conversation node is not an object")
+            chain.append(node)
+            current = node.get("parent")
+        return tuple(
+            (
+                author.get("role"),
+                content.get("parts"),
+                message.get("create_time"),
+            )
+            for node in reversed(chain)
+            if isinstance(message := node.get("message"), Mapping)
+            and isinstance(author := message.get("author"), Mapping)
+            and isinstance(content := message.get("content"), Mapping)
+            and content.get("content_type") in ("text", "multimodal_text")
+        )
+
+
+class AnthropicHandler(_LLMExportHandler):
+    """Handle an extracted folder or ZIP from an Anthropic Claude data export.
+
+    A folder is detected from direct files; a ZIP is detected from member
+    basenames. Detection requires case-insensitive ``conversations.json`` and
+    excludes an export that also contains ``chat.html``. The file must contain
+    a JSON list. Every item must be an object with a string ``uuid`` and a list
+    ``chat_messages``; its immutable ID is the first non-empty ``uuid`` or
+    ``id``.
+
+    Messages retain ``chat_messages`` order. ``sender`` supplies the role,
+    ``content`` supplies text or supported text blocks, and ``created_at``
+    supplies the turn time. The common turn normalizer maps ``human`` to
+    ``user``. Conversation ``created_at`` and ``updated_at`` values also
+    contribute to the span. The complete source conversation remains in
+    :attr:`SessionFile.records`.
+    """
+
+    name: Harness = "claude"
+    id_keys = ("uuid", "id")
+    time_keys = ("created_at", "updated_at")
+
+    @staticmethod
+    def has_markers(names: frozenset[str]) -> bool:
+        """Return whether the filenames identify a Claude export."""
+
+        return "conversations.json" in names and "chat.html" not in names
+
+    @staticmethod
+    def conversation_file(name: str) -> bool:
+        """Return whether ``name`` is the Claude conversation JSON file."""
+
+        return name.casefold() == "conversations.json"
+
+    @staticmethod
+    def identify_conversation(conversation: Mapping[str, Any]) -> bool:
+        """Recognize the Claude UUID and chat-message representation."""
+
+        return isinstance(conversation.get("chat_messages"), list) and isinstance(
+            conversation.get("uuid"), str
+        )
+
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Recognize an Anthropic Claude folder or ZIP in either call mode."""
+
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Recognize an Anthropic Claude folder or ZIP from its filenames."""
+
+        return self._identify_export(path, AnthropicHandler)
+
+    @sync
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[SessionStats | None, SessionFolder | HandlerError]:
+        """Load an Anthropic Claude folder or ZIP in either call mode."""
+
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
+
+    def call_sync(self, path: Path) -> tuple[SessionStats, SessionFolder]:
+        """Load all conversations from an Anthropic Claude folder or ZIP."""
+
+        return self._call_export(path, AnthropicHandler)
+
+    def invalidate(self, path: Path | None = None) -> None:
+        """Discard cached Anthropic ZIP exports at and beneath ``path``."""
+
+        self._invalidate_export(path, AnthropicHandler)
+
+    @staticmethod
+    def messages(
+        conversation: Mapping[str, Any],
+    ) -> tuple[tuple[Any, Any, Any], ...]:
+        """Return Claude messages in their exported order."""
+
+        return tuple(
+            (
+                message.get("sender"),
+                message.get("content"),
+                message.get("created_at"),
+            )
+            for message in conversation["chat_messages"]
+            if isinstance(message, Mapping)
+        )
+
+
+class SessionHandler(Handler):
+    """Identify, load, normalize, and cache native JSONL sessions.
+
+    A session file has a case-insensitive ``.jsonl`` extension, is non-empty,
+    and contains UTF-8 JSON Lines with at least one object. Identification
+    examines at most eight leading non-empty lines; a malformed line or a JSON
+    value other than an object makes that file unrecognized. Full loading
+    retains every valid object, skips blank, malformed, and non-object lines,
+    and returns an error only when no object remains.
+
+    Native formats are recognized from these object fields:
+
+    * Codex: ``type`` is ``session_meta``, ``turn_context``, ``event_msg``, or
+      ``response_item`` and ``payload`` is an object.
+    * Claude Code: a string ``sessionId``, ``uuid``, or ``parentUuid``, or
+      ``type`` equal to ``teleported-from``.
+    * OpenClaw: a string ``modelId``.
+    * Agy: ``USER_INPUT`` from ``USER_EXPLICIT`` or ``PLANNER_RESPONSE`` from
+      ``MODEL``, with string ``created_at``.
+    * Hermes: ``role`` equal to ``session_meta`` and string ``session_id``.
+
+    A directory is recognized from the Hermes marker ``state.db``, either Agy
+    marker ``antigravity_state.pbtxt`` or ``jetski_state.pbtxt``, or an Agy UUID
+    directory containing
+    ``.system_generated/logs/transcript_full.jsonl`` or ``transcript.jsonl``.
+    Loading a directory returns every recognized file below it. ChatGPT and
+    Anthropic data exports belong to their explicit handlers.
+    """
+
+    name = "session"
+    extensions = (".jsonl",)
+
+    def __init__(
+        self,
+        metadata: Mapping[str, Any] | None = None,
+        *,
+        strict: bool = False,
+    ) -> None:
+        """Initialize metadata, error policy, native readers, and session cache."""
+
+        super().__init__(metadata, strict=strict)
+        self._session_cache: dict[Path, tuple[Signature, SessionObject]] = {}
+        self._session_cache_limit = SESSION_CACHE
+        self._recognizers = (
+            ("cx", self._is_codex),
+            ("gemini", self._is_gemini),
+            ("cc", self._is_claude_code),
+            ("openclaw", self._is_openclaw),
+            ("agy", self._is_agy),
+            ("hermes", self._is_hermes),
+        )
+        self._uid_readers = {
+            "cx": self._codex_uid,
+            "gemini": self._gemini_uid,
+            "cc": self._claude_code_uid,
+            "openclaw": self._openclaw_uid,
+            "agy": self._agy_uid,
+            "hermes": self._hermes_uid,
+        }
+        # what a file says of the conversation above it: Codex names a parent thread, Claude Code
+        # names the session that spawned the subagent. The other harnesses name none.
+        self._parent_readers = {
+            "cx": self._parent,
+            "cc": self._claude_code_parent,
+        }
+        self._native_turn_readers = {
+            "cx": self._codex_turns,
+            "gemini": self._gemini_turns,
+            "cc": self._claude_code_turns,
+            "openclaw": self._openclaw_turns,
+            "agy": self._agy_turns,
+            "hermes": self._hermes_turns,
+        }
+
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Recognize a session file, folder, or export in either call mode."""
+
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Recognize structural folders or non-empty native JSONL files."""
+
+        path = full_path(path)
+        if path.is_dir() and not path.is_symlink():
+            return self._home_harness(path) is not None or self._agy_session_folder(
+                path
+            )
+        return (
+            self._session_candidate(path)
+            and self._harness(self._head(path)) is not None
+        )
+
+    @sync
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[SessionStats | None, SessionObject | HandlerError]:
+        """Load a session object and its derived statistics in either call mode."""
+
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
+
+    def call_sync(self, path: Path) -> tuple[SessionStats, SessionObject]:
+        """Load one native file or directory without entering another event loop."""
+
+        path = full_path(path)
+        if path.is_file():
+            obj: SessionObject = self._file(path)
+        elif path.is_dir() and not path.is_symlink():
+            hint = self._home_harness(path)
+            files = tuple(
+                session
+                for candidate in sorted(
+                    path.rglob("*"), key=lambda item: str(item).casefold()
+                )
+                if candidate.is_file()
+                for session in self._sessions(candidate)
+            )
+            harnesses = self._uniq(
+                [file.harness for file in files] + ([hint] if hint else [])
+            )
+            if not harnesses:
+                raise ValueError(f"{path}: session format is not identifiable")
+            if len(harnesses) != 1:
+                raise ValueError(f"{path}: folder contains multiple session harnesses")
+            obj = SessionFolder(path, harnesses[0], files)
+        else:
+            raise FileNotFoundError(path)
+        return SessionStats.from_object(obj), obj
+
+    def normalize_name(self, obj: SessionObject) -> str:
+        """Return the canonical name for one native session file."""
+
+        if not isinstance(obj, SessionFile):
+            raise ValueError(f"{obj.path}: normalization requires one session")
+        if obj.location is not None:
+            raise ValueError(f"{obj.location}: normalization requires one session file")
+        if obj.uid is None:
+            raise ValueError(f"{obj.path}: session has no immutable id")
+        return obj.name
+
+    def invalidate(self, path: Path | None = None) -> None:
+        """Discard all cached sessions or entries at and beneath ``path``."""
+
+        if path is None:
+            self._session_cache.clear()
+            return
+        path = full_path(path)
+        for key in tuple(self._session_cache):
+            if key == path or path in key.parents:
+                self._session_cache.pop(key, None)
+
+    def _file(self, path: Path) -> SessionFile:
+        """Load and cache one native JSONL session file."""
+
+        signature = _signature(path.stat())
+        cached = self._session_cache.get(path)
+        if (
+            cached is not None
+            and cached[0] == signature
+            and isinstance(cached[1], SessionFile)
+        ):
+            self._session_cache[path] = self._session_cache.pop(path)
+            return cached[1]
+        records = self._records(path)
+        harness = self._harness(records[:SNIFF])
+        if harness is None:
+            raise ValueError(f"{path}: session format is not identifiable")
+        turns = self._native_turn_readers[harness](records)
+        timestamps = tuple(self._timestamps(records))
+        uid = self._uid_readers[harness](records, path)
+        reader = self._parent_readers.get(harness)
+        parent_uid, subagent = reader(records) if reader else (None, False)
+        mainline = any(record.get("isSidechain") is False for record in records)
+        sidechain = any(record.get("isSidechain") is True for record in records)
+        item = SessionFile(
+            path=path,
+            harness=harness,
+            uid=uid,
+            parent_uid=parent_uid,
+            subagent=subagent,
+            records=records,
+            turns=turns,
+            span=TimeSpan(start=min(timestamps), end=max(timestamps)) if timestamps else None,
+            models=self._models(records),
+            topic=self._topic(turns),
+            sidechain_only=sidechain and not mainline,
+        )
+        self._session_cache[path] = (signature, item)
+        while len(self._session_cache) > self._session_cache_limit:
+            self._session_cache.pop(next(iter(self._session_cache)), None)   # the least recently read
+        return item
+
+    def _sessions(self, path: Path) -> tuple[SessionFile, ...]:
+        """Return a native session when ``path`` has a recognized JSONL head."""
+
+        return (
+            (self._file(path),)
+            if self._session_candidate(path)
+            and self._harness(self._head(path)) is not None
+            else ()
+        )
+
+    @staticmethod
+    def _session_candidate(path: Path) -> bool:
+        """Reject unsupported or empty paths without opening their contents."""
+
+        if path.suffix.casefold() not in SessionHandler.extensions:
+            return False
+        try:
+            status = path.stat()
+        except OSError:
+            return False
+        return stat_module.S_ISREG(status.st_mode) and status.st_size > 0
+
+    def _harness(
+        self,
+        records: Sequence[Mapping[str, Any]],
+        hint: Harness | None = None,
+    ) -> Harness | None:
+        """Return the first native format matching ``records``, or ``hint``."""
+
+        return next(
+            (harness for harness, recognize in self._recognizers if recognize(records)),
+            hint,
+        )
+
+    @staticmethod
+    def _is_codex(records: Sequence[Mapping[str, Any]]) -> bool:
+        """Recognize Codex lifecycle and response records."""
+
+        return any(
+            record.get("type")
+            in ("session_meta", "turn_context", "event_msg", "response_item")
+            and isinstance(record.get("payload"), Mapping)
+            for record in records
+        )
+
+    @staticmethod
+    def _is_claude_code(records: Sequence[Mapping[str, Any]]) -> bool:
+        """Recognize Claude Code session identifiers and record types."""
+
+        return any(
+            isinstance(record.get("sessionId"), str)
+            or record.get("type") == "teleported-from"
+            or isinstance(record.get("uuid"), str)
+            or isinstance(record.get("parentUuid"), str)
+            for record in records
+        )
+
+    @staticmethod
+    def _is_gemini(records: Sequence[Mapping[str, Any]]) -> bool:
+        """Recognize a Gemini CLI chat log by the header it opens with.
+
+        Its first record is the chat's own header — a session id, the hash of the project it was
+        opened in, when it started and what kind it is — and its turns arrive as one ``$set`` of
+        messages. Claude Code is recognized by a ``sessionId`` alone, so without this the Gemini CLI
+        is read as Claude Code, its turns are not found and every chat of one service shares that
+        service's id.
+        """
+
+        return any(
+            isinstance(record.get("sessionId"), str)
+            and isinstance(record.get("projectHash"), str)
+            and isinstance(record.get("startTime"), str)
+            for record in records
+        )
+
+    @staticmethod
+    def _is_openclaw(records: Sequence[Mapping[str, Any]]) -> bool:
+        """Recognize OpenClaw records from their model identifier."""
+
+        return any(isinstance(record.get("modelId"), str) for record in records)
+
+    @staticmethod
+    def _is_agy(records: Sequence[Mapping[str, Any]]) -> bool:
+        """Recognize Agy user and planner transcript records."""
+
+        return any(
+            record.get("type") in ("USER_INPUT", "PLANNER_RESPONSE")
+            and record.get("source") in ("USER_EXPLICIT", "MODEL")
+            and isinstance(record.get("created_at"), str)
+            for record in records
+        )
+
+    @staticmethod
+    def _is_hermes(records: Sequence[Mapping[str, Any]]) -> bool:
+        """Recognize a Hermes session metadata record."""
+
+        return any(
+            record.get("role") == "session_meta"
+            and isinstance(record.get("session_id"), str)
+            for record in records
+        )
+
+    @staticmethod
+    def _codex_uid(records: Sequence[Mapping[str, Any]], path: Path) -> str | None:
+        """Return the immutable id from Codex session metadata."""
+
+        for record in records:
+            if record.get("type") != "session_meta" or not isinstance(
+                payload := record.get("payload"), Mapping
+            ):
+                continue
+            value = payload.get("id") or payload.get("session_id")
+            return value.strip() if isinstance(value, str) and value.strip() else None
+        return None
+
+    @staticmethod
+    def _agy_uid(records: Sequence[Mapping[str, Any]], path: Path) -> str | None:
+        """Return the UUID-named Agy session folder beneath ``brain``."""
+
+        return next(
+            (
+                parent.name
+                for parent in path.parents
+                if parent.parent.name == "brain" and SESSION_UID.fullmatch(parent.name)
+            ),
+            None,
+        )
+
+    @classmethod
+    def _claude_code_uid(
+        cls, records: Sequence[Mapping[str, Any]], path: Path
+    ) -> str | None:
+        """Return the identifier of the conversation this file holds.
+
+        A subagent transcript carries its parent's ``sessionId`` on every record and its own
+        ``agentId``, which is also what the file is named after. The agent id identifies the
+        conversation in the file; the session id identifies its parent.
+        """
+
+        return cls._record_uid(records, ("agentId",)) or cls._record_uid(records, ID_KEYS)
+
+    @classmethod
+    def _gemini_uid(
+        cls, records: Sequence[Mapping[str, Any]], path: Path
+    ) -> str | None:
+        """Return the identifier of the chat this file holds: its session id and when it started.
+
+        The Gemini CLI reuses one session id for a service it runs — every chat of its a2a server is
+        logged under ``a2a-server`` — so the id alone names the service and not the conversation. The
+        start moment is in the header of every chat and is what tells one from another.
+        """
+
+        header = next(
+            (
+                record
+                for record in records
+                if isinstance(record.get("sessionId"), str)
+                and isinstance(record.get("startTime"), str)
+            ),
+            None,
+        )
+        if header is None:
+            return cls._record_uid(records, ID_KEYS)
+        return f"{header['sessionId']}/{header['startTime']}"
+
+    @classmethod
+    def _gemini_turns(
+        cls, records: Sequence[Mapping[str, Any]]
+    ) -> tuple[SessionTurn, ...]:
+        """Read the messages a Gemini CLI chat sets, in the order it sets them.
+
+        Its content blocks carry the text and no label, where the shared reader wants a block that
+        says it is text, so the text is joined here and handed over as one string.
+        """
+
+        return tuple(
+            item
+            for record in records
+            for changed in [record.get("$set")]
+            if isinstance(changed, Mapping)
+            for message in changed.get("messages") or ()
+            if isinstance(message, Mapping)
+            for item in [
+                cls._turn(
+                    message.get("type"),
+                    cls._gemini_text(message.get("content")),
+                    message.get("timestamp"),
+                )
+            ]
+            if item is not None
+        )
+
+    @staticmethod
+    def _gemini_text(content: Any) -> str:
+        """Join the text of a Gemini CLI message's blocks."""
+
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list):
+            return ""
+        return "\n\n".join(
+            part["text"]
+            for part in content
+            if isinstance(part, Mapping)
+            and isinstance(part.get("text"), str)
+            and part["text"].strip()
+        )
+
+    @classmethod
+    def _openclaw_uid(
+        cls, records: Sequence[Mapping[str, Any]], path: Path
+    ) -> str | None:
+        """Return the first OpenClaw session identifier."""
+
+        return cls._record_uid(records, ("id", "session_id"))
+
+    @classmethod
+    def _hermes_uid(
+        cls, records: Sequence[Mapping[str, Any]], path: Path
+    ) -> str | None:
+        """Return the first Hermes session identifier."""
+
+        return cls._record_uid(records, ID_KEYS)
+
+    @staticmethod
+    def _record_uid(
+        records: Sequence[Mapping[str, Any]], keys: Sequence[str]
+    ) -> str | None:
+        """Find the first non-empty identifier in supported record scopes."""
+
+        for record in records:
+            scopes = [record]
+            scopes += [
+                value
+                for key in ("payload", "message", "data")
+                if isinstance(value := record.get(key), Mapping)
+            ]
+            for key in keys:
+                for scope in scopes:
+                    value = scope.get(key)
+                    if isinstance(value, str) and value.strip():
+                        return value.strip()
+        return None
+
+    @classmethod
+    def _codex_turns(
+        cls, records: Sequence[Mapping[str, Any]]
+    ) -> tuple[SessionTurn, ...]:
+        """Extract Codex response messages, or legacy event messages when absent."""
+
+        response = tuple(
+            item
+            for record in records
+            if record.get("type") == "response_item"
+            and isinstance(payload := record.get("payload"), Mapping)
+            and payload.get("type") == "message"
+            for item in [
+                cls._turn(
+                    payload.get("role"), payload.get("content"), record.get("timestamp")
+                )
+            ]
+            if item is not None
+        )
+        if response:
+            return response
+        roles = {"user_message": "user", "agent_message": "assistant"}
+        return tuple(
+            item
+            for record in records
+            if record.get("type") == "event_msg"
+            and isinstance(payload := record.get("payload"), Mapping)
+            for item in [
+                cls._turn(
+                    roles.get(payload.get("type")),
+                    payload.get("message"),
+                    record.get("timestamp"),
+                )
+            ]
+            if item is not None
+        )
+
+    @classmethod
+    def _claude_code_turns(
+        cls, records: Sequence[Mapping[str, Any]]
+    ) -> tuple[SessionTurn, ...]:
+        """Extract Claude Code user and assistant turns with record flags."""
+
+        return tuple(
+            item
+            for record in records
+            if record.get("type") in ROLES
+            and isinstance(message := record.get("message"), Mapping)
+            for item in [
+                cls._turn(
+                    message.get("role", record.get("type")),
+                    message.get("content"),
+                    record.get("timestamp"),
+                    record.get("isMeta") is True,
+                    record.get("isSidechain") is True,
+                )
+            ]
+            if item is not None
+        )
+
+    @classmethod
+    def _openclaw_turns(
+        cls, records: Sequence[Mapping[str, Any]]
+    ) -> tuple[SessionTurn, ...]:
+        """Extract OpenClaw turns from nested message records."""
+
+        return tuple(
+            item
+            for record in records
+            if isinstance(message := record.get("message"), Mapping)
+            for item in [
+                cls._turn(
+                    message.get("role"),
+                    message.get("content"),
+                    record.get("timestamp", record.get("ts")),
+                )
+            ]
+            if item is not None
+        )
+
+    @classmethod
+    def _agy_turns(
+        cls, records: Sequence[Mapping[str, Any]]
+    ) -> tuple[SessionTurn, ...]:
+        """Map Agy user input and planner responses to canonical turns."""
+
+        roles = {"USER_INPUT": "user", "PLANNER_RESPONSE": "assistant"}
+        return tuple(
+            item
+            for record in records
+            for item in [
+                cls._turn(
+                    roles.get(record.get("type")),
+                    record.get("content"),
+                    record.get("created_at"),
+                )
+            ]
+            if item is not None
+        )
+
+    @classmethod
+    def _hermes_turns(
+        cls, records: Sequence[Mapping[str, Any]]
+    ) -> tuple[SessionTurn, ...]:
+        """Extract Hermes turns from flat role and content records."""
+
+        return tuple(
+            item
+            for record in records
+            for item in [
+                cls._turn(
+                    record.get("role"), record.get("content"), record.get("timestamp")
+                )
+            ]
+            if item is not None
+        )
+
+    @staticmethod
+    def _records(path: Path) -> tuple[Mapping[str, Any], ...]:
+        """Read valid JSON objects from a JSONL session file."""
+
+        # a writer crash or interrupted flush can leave one line truncated mid-record;
+        # skip that line rather than losing every record in the file over it.
+        records: list[Mapping[str, Any]] = []
+        with path.open("r", encoding="utf-8") as stream:
+            for line in stream:
+                if not line.strip():
+                    continue
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(value, dict):
+                    records.append(value)
+        if not records:
+            raise ValueError(f"{path}: session file is empty")
+        return tuple(records)
+
+    @staticmethod
+    def _head(path: Path) -> tuple[Mapping[str, Any], ...]:
+        """Read up to ``SNIFF`` leading JSONL objects, or return no records."""
+
+        found: list[Mapping[str, Any]] = []
+        try:
+            with path.open("r", encoding="utf-8") as stream:
+                for line in stream:
+                    if not line.strip():
+                        continue
+                    value = json.loads(line)
+                    if not isinstance(value, dict):
+                        return ()
+                    found.append(value)
+                    if len(found) >= SNIFF:
+                        break
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return ()
+        return tuple(found)
+
+    @classmethod
+    def _walk_values(cls, value: Any) -> Iterator[tuple[str, Any]]:
+        """Yield every mapping key and value recursively."""
+
+        if isinstance(value, Mapping):
+            for key, nested in value.items():
+                yield str(key), nested
+                yield from cls._walk_values(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                yield from cls._walk_values(nested)
+
+    @staticmethod
+    def _stamp(value: Any) -> datetime | None:
+        """Parse an ISO string or second/millisecond Unix timestamp."""
+
+        if isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+            except ValueError:
+                return None
+            return (
+                parsed
+                if parsed.tzinfo is not None
+                else parsed.replace(tzinfo=timezone.utc)
+            )
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and value > 1_000_000_000
+        ):
+            seconds = value / 1000 if value > 10_000_000_000 else value
+            try:
+                return datetime.fromtimestamp(seconds, timezone.utc)
+            except (OSError, OverflowError, ValueError):
+                return None
+        return None
+
+    @classmethod
+    def _timestamps(cls, records: Sequence[Mapping[str, Any]]) -> Iterator[datetime]:
+        """Record times only: the record, its payload, or its message. Values quoted deeper inside content are not the session's time."""
+
+        for record in records:
+            for scope in (record, record.get("payload"), record.get("message")):
+                if not isinstance(scope, Mapping):
+                    continue
+                for key in TIME_KEYS:
+                    if (stamp := valid_time(cls._stamp(scope.get(key)))) is not None:
+                        yield stamp
+
+    @classmethod
+    def _models(cls, records: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
+        """Return unique model names found anywhere in the records."""
+
+        return cls._uniq(
+            value
+            for record in records
+            for key, value in cls._walk_values(record)
+            if key in MODEL_KEYS
+        )
+
+    @classmethod
+    def _claude_code_parent(
+        cls, records: Sequence[Mapping[str, Any]]
+    ) -> tuple[str | None, bool]:
+        """Return a Claude Code parent session id and whether the file is a subagent's.
+
+        A file carrying an ``agentId`` is a subagent's transcript, and the ``sessionId`` every
+        record carries is the session that spawned it.
+        """
+
+        if cls._record_uid(records, ("agentId",)) is None:
+            return None, False
+        return cls._record_uid(records, ID_KEYS), True
+
+    @staticmethod
+    def _parent(records: Sequence[Mapping[str, Any]]) -> tuple[str | None, bool]:
+        """Return a Codex parent session id and whether the session is a subagent."""
+
+        for record in records:
+            if record.get("type") != "session_meta":
+                continue
+            payload = record.get("payload")
+            if not isinstance(payload, Mapping):
+                return None, False
+            source = payload.get("source")
+            subagent = payload.get("thread_source") == "subagent" or (
+                isinstance(source, Mapping) and "subagent" in source
+            )
+            parent = payload.get("parent_thread_id")
+            if not parent and isinstance(source, Mapping):
+                nested = source.get("subagent")
+                spawn = (
+                    nested.get("thread_spawn") if isinstance(nested, Mapping) else None
+                )
+                parent = (
+                    spawn.get("parent_thread_id")
+                    if isinstance(spawn, Mapping)
+                    else None
+                )
+            if subagent and not parent:
+                parent = payload.get("forked_from_id")
+            return (str(parent) if parent else None), subagent
+        return None, False
+
+    @staticmethod
+    def _content_text(content: Any) -> str:
+        """Join supported string and structured text content blocks."""
+
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list):
+            return ""
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                text = part
+            elif (
+                isinstance(part, Mapping)
+                and part.get("type") in ("text", "input_text", "output_text")
+                and isinstance(part.get("text"), str)
+            ):
+                text = part["text"]
+            else:
+                continue
+            if text.strip():
+                parts.append(text)
+        return "\n\n".join(parts)
+
+    @classmethod
+    def _turn(
+        cls,
+        role: Any,
+        content: Any,
+        timestamp: Any,
+        meta: bool = False,
+        sidechain: bool = False,
+    ) -> SessionTurn | None:
+        """Normalize one supported role and non-empty content into a turn."""
+
+        if isinstance(role, str) and role.casefold() == "human":
+            role = "user"
+        if not isinstance(role, str) or role.casefold() not in ROLES:
+            return None
+        text = cls._content_text(content)
+        if not text.strip():
+            return None
+        return SessionTurn(
+            role.casefold(), text, valid_time(cls._stamp(timestamp)), meta, sidechain
+        )
+
+    @staticmethod
+    def _topic(messages: Sequence[SessionTurn]) -> str:
+        """The first line a person typed."""
+        for message in messages:
+            if message.role != "user" or message.meta or message.sidechain:
+                continue
+            if text := typed(message.text):
+                return " ".join(
+                    "".join(
+                        " " if char in UNSAFE else char for char in text.splitlines()[0]
+                    ).split()
+                )
+        return ""
+
+    @staticmethod
+    def _uniq(values) -> tuple[str, ...]:
+        """Return non-empty strings once, preserving their first order."""
+
+        return tuple(
+            dict.fromkeys(
+                value.strip()
+                for value in values
+                if isinstance(value, str) and value.strip()
+            )
+        )
+
+    @staticmethod
+    def _home_harness(path: Path) -> Harness | None:
+        """Identify a harness home directory from its required marker file."""
+
+        return next(
+            (
+                harness
+                for harness, markers in HOMES.items()
+                if any((path / marker).exists() for marker in markers)
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _agy_session_folder(path: Path) -> bool:
+        """Recognize an Agy UUID folder containing a transcript file."""
+
+        return SESSION_UID.fullmatch(path.name) is not None and any(
+            (path / ".system_generated" / "logs" / name).is_file()
+            for name in ("transcript_full.jsonl", "transcript.jsonl")
+        )
+
+
+def valid_time(value: datetime | None) -> datetime | None:
+    """A recorded time, or None. Placeholders that tools write instead of a time, anything at or before DOS zero, and future times are not times."""
+
+    if value is None:
+        return None
+    fields = value.timetuple()[:6]
+    utc_fields = (
+        value.astimezone(timezone.utc).timetuple()[:6]
+        if value.tzinfo is not None
+        else fields
+    )
+    if (
+        fields in PLACEHOLDER_TIMES
+        or utc_fields in PLACEHOLDER_TIMES
+        or fields <= PLACEHOLDER_TIMES[2]
+    ):
+        return None
+    now = datetime.now(timezone.utc) if value.tzinfo is not None else datetime.now()
+    if value > now + FUTURE_TOLERANCE:
+        return None
+    return value
+
+
+def _signature(stat: os.stat_result) -> Signature:
+    """Return the filesystem fields used to invalidate path caches."""
+
+    return stat.st_mode, stat.st_size, stat.st_mtime_ns
+
+
+def _display_order(path: Path) -> tuple[bool, str]:
+    """Sort folders before files, then names without case sensitivity."""
+
+    return not (path.is_dir() and not path.is_symlink()), path.name.casefold()
+
+
+def _record_path(value: str) -> PurePosixPath:
+    """Return a safe archive-relative path from an archive member name."""
+
+    path = PurePosixPath(value.lstrip("/").replace("\\", "/"))
+    if (
+        path.is_absolute()
+        or ".." in path.parts
+        or (path.parts and path.parts[0].endswith(":"))
+    ):
+        raise ValueError(f"unsafe path inside archive: {value}")
+    return PurePosixPath(*(part for part in path.parts if part not in ("", ".")))
+
+
+def _archive_time(value: Any) -> datetime | None:
+    """An archive member's recorded time, or None when the archiver stored a placeholder instead."""
+
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            parsed = datetime.fromtimestamp(value, timezone.utc)
+        except (OSError, OverflowError, ValueError):
+            return None
+    else:
+        try:
+            parsed = datetime(*value)
+        except (TypeError, ValueError):
+            return None
+    return valid_time(parsed if parsed.tzinfo is not None else parsed.astimezone())
+
+
+def _complete_archive_records(
+    location: Path,
+    records: Sequence[Record],
+) -> tuple[Record, ...]:
+    """Add missing parent folders, derive stats, and order archive records."""
+
+    complete = {record.path: record for record in records}
+    for record in records:
+        for parent in record.path.parents:
+            if parent != PurePosixPath("."):
+                complete.setdefault(
+                    parent,
+                    Record(
+                        path=parent,
+                        is_folder=True,
+                        size=0,
+                        modified_at=None,
+                        handlers=(),
+                        location=location,
+                    ),
+                )
+
+    children: dict[PurePosixPath, list[PurePosixPath]] = {}
+    for path in complete:
+        children.setdefault(path.parent, []).append(path)
+    for path in sorted(complete, key=lambda item: len(item.parts), reverse=True):
+        record = complete[path]
+        if record.is_folder:
+            stats = FileHandler._folder_stats(
+                record, [complete[child] for child in children.get(path, ())]
+            )
+        else:
+            stats = FileHandler._file_stats(record)
+        complete[path] = replace(record, stats=stats)
+
+    return tuple(
+        sorted(
+            complete.values(),
+            key=lambda record: (
+                len(record.path.parts),
+                not record.is_folder,
+                str(record.path).casefold(),
+            ),
+        )
+    )
+
+
+def _archive_stats(records: Sequence[Record]) -> FileStats:
+    """Aggregate top-level archive records into complete archive statistics."""
+
+    root = Record(PurePosixPath("."), True, 0, None, ())
+    children = [
+        record for record in records if record.path.parent == PurePosixPath(".")
+    ]
+    return FileHandler._folder_stats(root, children)
+
+
+def _stats_span(stats: Any) -> TimeSpan | None:
+    """Read a complete span from either supported statistics representation."""
+
+    span = getattr(stats, "span", None)
+    if isinstance(span, TimeSpan):
+        return span
+    start = getattr(stats, "span_start", None)
+    end = getattr(stats, "span_end", None)
+    return (
+        TimeSpan(start=start, end=end)
+        if isinstance(start, datetime) and isinstance(end, datetime)
+        else None
+    )
+
+
+def _combine_spans(spans: Sequence[TimeSpan]) -> TimeSpan | None:
+    """Return the earliest start and latest end across all spans."""
+
+    return (
+        TimeSpan(start=min(span.start for span in spans), end=max(span.end for span in spans))
+        if spans
+        else None
+    )
+
+
+def typed(text: str) -> str:
+    """The text a person typed in a user message: the envelope stripped, '' when the message was generated."""
+    if match := REALTIME_INPUT.search(text):
+        text = match.group(1)
+    text = ENVELOPE.sub("", text, count=1).strip()
+    if not text or any(pattern.search(text) for pattern in NON_HUMAN):
+        return ""
+    first = text.splitlines()[0].strip()
+    if (
+        first.startswith("<")
+        and first.endswith(">")
+        or any(first.startswith(preamble) for preamble in PREAMBLE)
+    ):
+        return ""
+    return text
+
+
+def _metadata_text(value: Any) -> str | list[datetime]:
+    """JSON text for a value the index carries: a time in this host's local zone, anything else as written."""
+    if isinstance(value, TimeSpan):
+        return [value.start, value.end]
+    if isinstance(value, datetime):
+        return str(value.astimezone())
+    return str(value)
+
+
+@dataclass(frozen=True)
+class LocatedPath:
+    """A physical path recognized as a configured location, or as a folder inside one."""
+
+    path: Path
+    location: str
+    canonical: str
+    address: str
+    folder: str
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Return which location this is, and which folder of it."""
+
+        return {
+            "location": self.location,
+            "canonical": self.canonical,
+            "address": self.address,
+            "folder": self.folder,
+        }
+
+
+class LocationHandler(Handler):
+    """Identify a physical path as a configured location, or as a folder inside one.
+
+    ``metadata['locations']`` maps a folder on this host to the location that is there:
+    ``{'D:/SD.Lake': {'location': 'sd-lake', 'canonical': 'sd://SD.Lake'}}``. The deepest
+    folder containing the path wins, so a location inside another names the inner one. A
+    folder that is a location answers with its address and no folder; a folder below one
+    answers with that location and the folder it is inside it.
+    Without the mapping the handler never matches, so the default handler set is unchanged.
+    """
+
+    name = "location"
+
+    def folders(self) -> Mapping[str, Mapping[str, str]]:
+        """Return the caller's map of folder to the location that is there."""
+
+        return self.metadata.get("locations") or {}
+
+    def located(self, path: Path) -> LocatedPath | None:
+        """Return what the configuration says this path is, or None when it says nothing."""
+
+        here = full_path(path).as_posix()
+        folders = self.folders()
+        base = max(
+            (folder for folder in folders
+             if here == folder or here.startswith(folder.rstrip("/") + "/")),
+            key=len,
+            default=None,
+        )
+        if base is None:
+            return None
+        row = folders[base]
+        folder = "" if here == base else here[len(base.rstrip("/")) + 1:]
+        canonical = str(row["canonical"])
+        address = (canonical if not folder else
+                   canonical + folder if canonical.endswith("://") else
+                   canonical.rstrip("/") + "/" + folder)
+        return LocatedPath(full_path(path), str(row["location"]), canonical, address, folder)
+
+    @sync
+    async def identify(self, path: Path) -> bool:
+        """Return whether a configured location holds this folder, in either call mode."""
+
+        return await asyncio.to_thread(self._safe_identify, path, self.identify_sync)
+
+    def identify_sync(self, path: Path) -> bool:
+        """Return whether a configured location holds this folder."""
+
+        return self.located(path) is not None
+
+    @sync
+    async def __call__(
+        self,
+        path: Path,
+    ) -> tuple[FileStats | None, LocatedPath | HandlerError]:
+        """Return the located path in either call mode."""
+
+        return await asyncio.to_thread(self._safe_call, path, self.call_sync)
+
+    def call_sync(self, path: Path) -> tuple[FileStats, LocatedPath]:
+        """Return empty statistics and the location and folder this is."""
+
+        located = self.located(path)
+        if located is None:
+            raise ValueError(f"{path}: no configured location contains this path")
+        return FileStats(0, 0, 0, None), located
+
+
+class _MetadataHandlers(
+    FileHandler, LocationHandler, IgnoredHandler, ChatGPTHandler, AnthropicHandler,
+    MarkdownHandler, CSVHandler, LogHandler, EmailHandler, BrowserHandler,
+    SessionHandler, ArchiveHandler, GitHandler, FolderHandler,
+):
+    """The implemented metadata parsers used by the filesystem interface."""
+
+
+class _RarFileSystem(AbstractArchiveFileSystem):
+  """Expose the existing RAR handler through fsspec's archive interface."""
+
+  protocol = 'gppu-rar'
+  cachable = False
+
+  def __init__(self, fo: str, target_protocol=None, target_options=None, **kwargs):
+    super().__init__(**kwargs)
+    self._scratch = tempfile.TemporaryDirectory(prefix='gppufs-rar-')
+    self._archive = Path(self._scratch.name) / 'archive.rar'
+    options = {} if target_options is None else target_options
+    with open_uri(fo, protocol=target_protocol, **options) as source, self._archive.open('wb') as target:
+      shutil.copyfileobj(source, target)
+    self._handler = ArchiveHandler(strict=True)
+    _, records = self._handler.call_sync(self._archive)
+    self.dir_cache = {record.path.as_posix(): {
+      'name': record.path.as_posix(), 'type': 'directory' if record.is_folder else 'file',
+      'size': record.size, 'mtime': record.modified_at,
+    } for record in records}
+    self._contents = None
+
+  def _get_dirs(self):
+    return self.dir_cache
+
+  def _open(self, path, mode='rb', **kwargs):
+    if mode != 'rb':
+      raise NotImplementedError('RAR listings are read-only')
+    if self._contents is None:
+      self._contents = self._handler.extract_sync(self._archive, Path(self._scratch.name) / 'members')
+      if self._contents.errors:
+        raise OSError('; '.join(error.message for error in self._contents.errors))
+    return self._contents.files[PurePosixPath(path)].open('rb')
+
+  def close(self):
+    self._scratch.cleanup()
+
+
+register_implementation('gppu-rar', _RarFileSystem)
+
+
+@runtime_checkable
+class GppuIndex(Protocol):
+  """Where the metadata of a location's entries is kept when it is kept somewhere other than beside it.
+
+  Alex, 2026-09-17 03:45: "handler in my view was a thing that gets metadata for any locations
+  (recursively) / If metadata is already in database - handler is not involved". So a filesystem given
+  an index asks it first and runs a handler only for what it does not hold, and hands back what the
+  handler read so the next lookup does not run it again.
+
+  An entry is named by its address — the uri gppufs puts on every row, and the permalink of a
+  configured location where there is one. An implementation may accept an entity's uid as well; gppufs
+  only ever asks with an address. Nothing here knows what the index is made of: the implementation
+  that keeps Alex's index in Postgres lives with the indexer, in CRAP, and gppu imports none of it.
+  """
+
+  def entry(self, address: str) -> tuple[dict, list[dict] | None] | None:
+    """One entry's metadata and the listing of what is in it, or None when the index holds neither.
+
+    The listing is None for a thing that is not a container, and for a container the index has not
+    been told the contents of. Both come back in the same shape gppufs stores: the metadata is the
+    row, and each child of the listing carries `path`, `type` and `ino`.
+    """
+
+  def put(self, entries: Mapping[str, tuple[dict | None, list[dict] | None]]) -> None:
+    """Keep what the handlers read, by address. A None stands for a part this call does not change."""
+
+  def moved(self, source: str, destination: str) -> None:
+    """The entry at `source`, and everything under it, is at `destination` now.
+
+    What the index holds of a thing moves with the thing. Alex's reason for a file manager built on
+    this filesystem is that moving a folder between two indexed places keeps the index: the rows are
+    carried over, never thrown away and read again, so what was said about a file survives the move.
+
+    Every address the index holds of what moved is rewritten, the entries' own and the addresses
+    inside them, because an entry that still names where it was is an entry that cannot be read.
+    """
+
+
+class GppuFileSystem(AbstractFileSystem):
+  """fsspec listings enriched by handlers and stored beside their location.
+
+  ``location`` is the only required setting: an absolute path or a URL, never
+  the folder the caller happens to be in. Its index is
+  ``location/.<location-name>.gppufs.sqlite``. An existing index named for
+  a descendant folder owns that subtree. Index rows use relative addresses
+  so moving a folder with its database preserves its listings.
+
+  ``ls`` and ``info`` return the same metadata dictionaries from SQLite or
+  live parsing. ``refresh=True`` requests live data. An absent cached row
+  is populated by a live read; a failed read never substitutes stale data.
+  Every time in the metadata is written in this host's local zone.
+  Index files and SQLite journal companions are excluded from listings
+  and aggregates. The example applications do no parsing or persistence.
+
+  Archives use the same URI scheme and path format as their location.
+  Appending ``/outer.zip/inner.zip/note.md`` addresses a nested member;
+  its parent is ``/outer.zip/inner.zip``. An archive's file metadata and
+  member listing share its ordinary URI. Archive drivers are internal.
+
+  ``cat_file``, ``open``, ``head``, ``pipe_file`` and the rest of the fsspec
+  surface read and write bytes: a physical file through the base filesystem,
+  a member through its archive, and a write to a member is refused. A write
+  does not touch the index, so what was identified stands until the folder is
+  read again with ``refresh=True``.
+
+  When ``locations`` is given, a location's own address is an address this
+  filesystem answers to, so ``info('sd://SD.agents/memory/MEMORY.md')`` reaches
+  the entry whose rows carry that address. The deepest configured location
+  wins, and an address belonging to a location outside this root is outside it.
+  """
+
+  protocol = 'gppu'
+  cachable = False
+  _index_name = re.compile(r'^\..+\.gppufs\.sqlite(?:-(?:journal|wal|shm))?$')
+
+  def __init__(self, location: str | Path, locations: Mapping[str, Mapping[str, str]] | None = None,
+               index: GppuIndex | None = None, **storage_options: Any) -> None:
+    if location is None:
+      raise ValueError('location is required')
+    if '://' not in str(location) and not Path(location).is_absolute():
+      raise ValueError(f'{location}: a location is an absolute path or a URL, never a relative one')
+    super().__init__()
+    self.fs, self.root = url_to_fs(str(location), **storage_options)
+    if self.root != '/' and not re.fullmatch(r'[A-Za-z]:/', self.root):
+      self.root = self.root.rstrip('/')
+    self.location = self.fs.unstrip_protocol(self.root)
+    self._lock = RLock()
+    self._index = index              # the index that answers first; the file beside the location is a cache
+    self._cacheless = False          # set when the store refuses the index it would keep beside itself
+    self._memory: dict[str, sqlite3.Connection] = {}   # a remote store's index, held for this instance
+    self._scratch: tempfile.TemporaryDirectory | None = None   # where a listed remote entry is asked about
+    self._indexes: dict[str, str | None] = {}   # folder -> the index it holds, asked of the store once
+    self._standins: dict[str, str] = {}         # folder -> its slot among the listed entries asked about
+    self._locations = dict(locations) if locations else {}   # folder -> the location that is there
+    self._handlers = _MetadataHandlers({"locations": self._locations})
+    self._database_path(self.root)  # Validate the required location name.
+
+  def _database_path(self, folder: str) -> str:
+    name = folder.rstrip('/').rsplit('/', 1)[-1].rstrip(':')
+    if not name:
+      return f'{folder.rstrip("/")}/.gppufs.sqlite'
+    return f'{folder.rstrip("/")}/.{name}.gppufs.sqlite'
+
+  def _existing_index(self, folder: str) -> str | None:
+    """Whether a folder holds an index of its own, asked of the store once per folder.
+
+    ``_owner`` asks this of every ancestor of every entry, and on a store that is not the local
+    filesystem each ask is a round trip. A library of a thousand entries would otherwise spend its
+    walk asking SharePoint whether folders hold an index file they have never held. The answer does
+    not change under a walk, because gppufs is what creates that file and ``_database`` records it
+    here when it does.
+    """
+    if isinstance(self.fs, LocalFileSystem):
+      return self._index_at(folder)     # a local answer costs a stat, and the file can move under us
+    if folder not in self._indexes:
+      self._indexes[folder] = self._index_at(folder)
+    return self._indexes[folder]
+
+  def _index_at(self, folder: str) -> str | None:
+    expected = self._database_path(folder)
+    if self.fs.isfile(expected):
+      if isinstance(self.fs, LocalFileSystem) and os.name == 'nt':
+        actual_name = Path(expected).resolve(strict=True).name
+        if actual_name != PurePosixPath(expected).name:
+          self.fs.mv(str(PurePosixPath(folder) / actual_name), expected)
+      return expected
+    if not isinstance(self.fs, LocalFileSystem):
+      # Recovering an index that was renamed means renaming it back, which a store gppufs cannot
+      # write to will not do. There the index is the file named for the folder or nothing at all:
+      # a synced OneDrive carries the index files of the host that syncs it, and those belong to
+      # that host's Locations rather than to this one.
+      return None
+    if not self.fs.isdir(folder):
+      return None
+    try:
+      entries = self.fs.ls(folder, detail=True)
+    except PermissionError:
+      return None  # A folder this account cannot list holds no index it could read.
+    candidates = [item['name'] for item in entries
+      if item['type'] == 'file' and item['name'].endswith('.gppufs.sqlite')
+      and self._index_name.fullmatch(PurePosixPath(item['name']).name)]
+    if not candidates:
+      return None
+    identity = self.fs.info(folder).get('ino')
+    matches = []
+    for path in candidates:
+      local = isinstance(self.fs, LocalFileSystem)
+      with closing(sqlite3.connect(Path(path).as_uri() + '?mode=ro' if local else ':memory:', uri=local)) as database:
+        if not isinstance(self.fs, LocalFileSystem):
+          database.deserialize(self.fs.cat_file(path))
+        row = database.execute('SELECT ino FROM gppufs_index').fetchone()
+      if row is not None and (identity is None or row[0] == identity):
+        matches.append(path)
+    if len(matches) != 1:
+      raise ValueError(f'{folder}: cannot identify a unique index after rename')
+    self.fs.mv(matches[0], expected)
+    return expected
+
+  def _located(self, value: str) -> str:
+    """The folder a configured location's own address names, or the value unchanged.
+
+    `LocationHandler` puts `sd://SD.agents/memory/MEMORY.md` on every row it identifies, and that
+    address is what the index, the lake and an annotation carry. A filesystem that emits an address
+    and then refuses it cannot be asked about what it just said, so a permalink is read here as the
+    path it stands for. The deepest configured location wins, the way `located` picks one, and an
+    address belonging to a location outside this root still fails as being outside it.
+    """
+    for folder in sorted(self._locations, key=lambda item: len(str(self._locations[item]['canonical'])), reverse=True):
+      canonical = str(self._locations[folder]['canonical'])
+      if value == canonical or value == canonical.rstrip('/'):
+        return folder
+      rest = (value[len(canonical):] if canonical.endswith('://') and value.startswith(canonical) else
+              value[len(canonical.rstrip('/')) + 1:] if value.startswith(canonical.rstrip('/') + '/') else None)
+      if rest is not None:
+        return posixpath.join(folder, rest)
+    return value
+
+  def _key(self, path: str | Path | None) -> str:
+    if path is None:
+      return '.'
+    value = self._located(str(path).replace('\\', '/'))
+    if '://' in value:
+      value = self.fs._strip_protocol(value)
+    if value == self.root or value.rstrip('/') == self.root:
+      return '.'
+    prefix = self.root.rstrip('/') + '/'
+    if value.startswith(prefix):
+      value = value[len(prefix):].rstrip('/')
+    elif value.startswith('/') or re.match(r'^[A-Za-z]:', value):
+      raise ValueError(f'{path}: outside location {self.location}')
+    parts = PurePosixPath(value).parts
+    if '..' in parts:
+      raise ValueError(f'{path}: parent traversal is outside the listing address')
+    return PurePosixPath(value).as_posix()
+
+  def _path(self, key: str) -> str:
+    return self.root if key == '.' else posixpath.join(self.root, key)
+
+  def _uri(self, key: str) -> str:
+    return self.fs.unstrip_protocol(self._path(key))
+
+  def _archive_parent(self, key: str) -> str | None:
+    """The physical archive containing this path, if it crosses an archive boundary."""
+    for parent in reversed(PurePosixPath(key).parents):
+      path = self._path(parent.as_posix())
+      if path.casefold().endswith(ArchiveHandler.extensions) and self.fs.isfile(path):
+        return parent.as_posix()
+    return None
+
+  @contextmanager
+  def _filesystem(self, key: str, *, container: bool = False):
+    """Resolve ordinary container paths; archive filesystem URLs stay inside this access operation."""
+    fs, source = self.fs, self.root
+    archive_uri = None
+    opened = []
+    parts = PurePosixPath(key).parts
+    try:
+      for position, part in enumerate(('', *parts)):
+        if part:
+          source = posixpath.join(source, part)
+        if position == len(parts) and not container:
+          break
+        if not source.casefold().endswith(ArchiveHandler.extensions) or not fs.isfile(source):
+          continue
+        uri = (fs.unstrip_protocol(source) if archive_uri is None else
+               archive_uri.replace('://', '://' + source, 1))
+        archive_uri = self._archive_key(uri)
+        fs, source = url_to_fs(archive_uri, skip_instance_cache=True)
+        opened.append(fs)
+      yield fs, source
+    finally:
+      for archive in reversed(opened):
+        archive.close()
+
+  def _parent_key(self, key: str) -> str | None:
+    if key == '.':
+      return None
+    return str(PurePosixPath(key).parent)
+
+  def _owner(self, key: str) -> str:
+    if self._cacheless:
+      return '.'   # a store that will not hold the file has no folder below the root owning one
+    archive = self._archive_parent(key)
+    physical = key if archive is None else archive
+    folder = PurePosixPath(physical)
+    for candidate in (folder, *folder.parents):
+      if candidate == PurePosixPath('.'):
+        break
+      directory = self._path(candidate.as_posix())
+      if self._existing_index(directory) is not None:
+        return candidate.as_posix()
+    return '.'
+
+  @staticmethod
+  def _relative(key: str, owner: str) -> str:
+    return posixpath.relpath(key, owner)
+
+  @staticmethod
+  def _absolute(key: str, owner: str) -> str:
+    return posixpath.normpath(str(PurePosixPath(owner) / key))
+
+  def _prepare(self, database: sqlite3.Connection, owner: str, exists: bool) -> None:
+    """The two tables an index holds: which folder owns it, and one row per entry."""
+    if not exists:
+      database.execute('CREATE TABLE IF NOT EXISTS gppufs_index (ino INTEGER)')
+      database.execute('INSERT INTO gppufs_index VALUES (?)', (self.fs.info(self._path(owner)).get('ino'),))
+    database.execute('CREATE TABLE IF NOT EXISTS gppufs_entries ('
+      'path TEXT PRIMARY KEY, metadata TEXT NOT NULL, children TEXT)')
+
+  def _held(self, owner: str) -> sqlite3.Connection:
+    """The index held in memory for this instance, read once from the store when the store has one.
+
+    This is the index for a store that is not the local filesystem, and for a folder that will not
+    hold the file. An existing index is still read: a folder can be readable and not writable.
+    """
+    if owner not in self._memory:
+      database = sqlite3.connect(':memory:', check_same_thread=False)
+      if self._existing_index(self._path(owner)) is not None:
+        database.deserialize(self.fs.cat_file(self._database_path(self._path(owner))))
+      self._memory[owner] = database
+    return self._memory[owner]
+
+  @contextmanager
+  def _database(self, owner: str, *, write: bool = False):
+    """The location's index: beside the location, or in memory when the store will not hold one.
+
+    Alex, 2026-09-17 03:49: "local databases are caches for runtime and original indexes (often only
+    copy because original is a rar file now). / Local dbs are not synced in many cases. Don't count on
+    these being present". So this is a cache and never the answer: the index a lookup asks is the one
+    in Postgres. A place that refuses the file — GitHub serves read-only, and so does a folder on a
+    read-only share — is read through an index this instance keeps in memory instead, and the refusal
+    is remembered so the place is asked once rather than once per folder.
+    """
+    path = self._database_path(self._path(owner))
+    if isinstance(self.fs, LocalFileSystem) and not self._cacheless:
+      exists = self._existing_index(self._path(owner)) is not None
+      if not exists and not write:
+        yield None
+        return
+      try:
+        connection = sqlite3.connect(path)
+      except sqlite3.OperationalError:   # a read-only folder will not hold the file; only the cache is lost
+        self._cacheless = True
+      else:
+        with closing(connection) as database, database:
+          if write:
+            self._prepare(database, owner, exists)
+          yield database
+        return
+    database = self._held(owner)
+    with database:
+      if write:
+        self._prepare(database, owner, self._columns_of(database))
+      elif not self._columns_of(database):
+        yield None
+        return
+      yield database
+    if write and not self._cacheless:
+      try:
+        with self.fs.transaction:
+          self.fs.pipe_file(path, database.serialize())
+      except (NotImplementedError, OSError):   # the store serves read-only; only the cache file is lost
+        self._cacheless = True
+
+  @staticmethod
+  def _columns_of(database: sqlite3.Connection) -> bool:
+    """Whether this index has been given its tables yet."""
+    return bool(database.execute(
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='gppufs_entries'").fetchone())
+
+  def _stored(self, key: str) -> tuple[dict, list[dict] | None] | None:
+    """One entry read back from the location's index: its metadata and its listing, or None.
+
+    The index answers first when there is one, and what it holds is the answer — a handler runs only
+    for what it does not hold. The file beside the location is asked after it, and is a cache.
+
+    Not `_cached`: `AbstractFileSystem.__init__` returns early on a truthy `_cached`, so a method of
+    that name leaves the instance without `_intrans`, `_transaction` and `dircache`, and every read
+    through the fsspec surface raises AttributeError.
+    """
+    if self._index is not None:
+      held = self._index.entry(self._address(key))
+      if held is not None and held[0] is not None:
+        children = None if held[1] is None else [
+          {**child, 'path': self._key(child['path'])} for child in held[1]]
+        return self._addressed(key, dict(held[0])), children
+    owner = self._owner(key)
+    with self._database(owner) as database:
+      if database is None:
+        return None
+      row = database.execute('SELECT metadata, children FROM gppufs_entries WHERE path=?',
+        (self._relative(key, owner),)).fetchone()
+    if row is None:
+      return None
+    metadata = json.loads(row[0])
+    self._metadata_paths(metadata['gppu'], lambda value:
+      value if '://' in value else self._uri(self._absolute(value, owner)))
+    children = None if row[1] is None else [
+      {**child, 'path': self._absolute(child['path'], owner)} for child in json.loads(row[1])]
+    return self._addressed(key, metadata), children
+
+  def _address(self, key: str) -> str:
+    """How an index names this entry: the permalink a configured location gives it, else its uri.
+
+    An index is shared, and `sd://SD.agents/memory/MEMORY.md` is the one name for that file whichever
+    host holds it and whichever checkout asks. A place no configured location covers has only its own
+    uri to be named by, and an index keyed on that is an index for this host.
+    """
+    if self._locations:
+      located = self._handlers.located(Path(self._path(key)))
+      if located is not None:
+        return located.address
+    return self._uri(key)
+
+  def _for_index(self, key: str, metadata: dict) -> dict:
+    """One row as an index is given it: addressed, and every path inside it an address too.
+
+    An index is shared — the same entry is looked up from another host and another checkout — so
+    nothing owner-relative and nothing this process only can resolve may go into it.
+    """
+    value = json.loads(json.dumps(metadata, default=_metadata_text))
+    self._metadata_paths(value['gppu'], lambda item:
+      item if '://' in item else self._uri(item))
+    return self._addressed(key, value)
+
+  def _addressed(self, key: str, metadata: dict) -> dict:
+    """One stored row with the addresses this filesystem gives it: its own, its name and its parent.
+
+    How a thing is addressed is gppufs's and not the index's, so a row read from the file beside the
+    location and a row read from an index given to this filesystem are finished the same way.
+    """
+    metadata['name'] = self._uri(key)
+    metadata['gppu']['path'] = metadata['name']
+    metadata['gppu']['name'] = (PurePosixPath(self.root).name if key == '.' else
+      PurePosixPath(key).name)
+    parent = self._parent_key(key)
+    metadata['gppu']['parent'] = self._uri(parent) if parent is not None else None
+    return metadata
+
+  @staticmethod
+  def _metadata_paths(metadata: dict, convert: Callable) -> None:
+    """Rebase handler-owned paths without changing user frontmatter or text."""
+    for name in ('session', 'chatgpt', 'claude'):
+      if name not in metadata:
+        continue
+      section = metadata[name]
+      for item in (section, *section.get('sessions', ())):
+        # Exported session member paths are relative to their own location.
+        for field in (('location',) if item.get('location') is not None else ('path',)):
+          if field in item and item[field] is not None:
+            item[field] = convert(item[field])
+    if 'git' in metadata:
+      for field in ('root', 'metadata_path'):
+        if field in metadata['git']:
+          metadata['git'][field] = convert(metadata['git'][field])
+
+  @staticmethod
+  def _record_from_metadata(metadata: dict) -> Record:
+    """Rehydrate statistics for the existing folder aggregation functions."""
+    value = metadata['gppu']
+    probes = []
+    for handler, stored in value['stats'].items():
+      stats = dict(stored)
+      if 'span' in stats and stats['span'] is not None:
+        stats['span'] = TimeSpan(start=stats['span'][0], end=stats['span'][1])
+      for field in ('span_start', 'span_end'):
+        if field in stats and stats[field] is not None:
+          stats[field] = datetime.fromisoformat(stats[field])
+      probes.append(Probe(handler, SimpleNamespace(**stats), None))
+    return Record(PurePosixPath(value['path']), value['type'] == 'folder',
+      value['size'], datetime.fromisoformat(value['modified_at']) if value['modified_at'] else None,
+      tuple(value['handlers']), probes=tuple(probes),
+      stats=None if value.get('files') is None else FileStats(value['files'], value['folders'], value['bytes'],
+        TimeSpan(start=value['span'][0], end=value['span'][1]) if value['span'] else None))
+
+  def _save(self, rows: dict[str, tuple[dict, list[str] | None]], scope: str, *, in_archive: bool = False) -> None:
+    def metadata_for(key):
+      if key in rows:
+        return rows[key][0]
+      cached = self._stored(key)
+      if cached is None:
+        raise FileNotFoundError(self._uri(key))
+      return cached[0]
+
+    # Keep ancestor totals consistent with the refreshed subtree and cached siblings.
+    # Archive members do not change their physical archive's byte count.
+    if not in_archive:
+      child = scope
+      for parent in PurePosixPath(scope).parents:
+        key = parent.as_posix()
+        cached = self._stored(key)
+        if cached is None or cached[1] is None:
+          break
+        metadata, members = cached
+        children = list(dict.fromkeys([*(item['path'] for item in members), child]))
+        children.sort(key=lambda item: (metadata_for(item)['type'] != 'directory', item.casefold()))
+        child_records = [self._record_from_metadata(metadata_for(item)) for item in children]
+        stats = FileHandler._folder_stats(self._record_from_metadata(metadata), child_records)
+        if any(item.stats is None for item in child_records):
+          stats = FileStats(None, None, None, None)  # A child listed but not probed leaves the total unknown.
+        metadata['gppu'].update(json.loads(json.dumps(vars(stats), default=_metadata_text)))
+        del metadata['gppu']['name'], metadata['gppu']['parent']
+        self._metadata_paths(metadata['gppu'], lambda item:
+          self._key(item) if item == self.location or
+          item.startswith(self.location.rstrip('/') + '/') else item)
+        rows[key] = metadata, children
+        child = key
+
+    grouped: dict[str, list[tuple]] = {}
+    keep: dict[str, tuple[dict | None, list[dict] | None]] = {}
+    for key, (metadata, children) in rows.items():
+      owner = self._owner(key)
+      if owner not in grouped:
+        grouped[owner] = []
+      listing = None if children is None else [
+        {'path': child, 'type': (item := metadata_for(child))['type'], 'ino': item.get('ino')}
+        for child in children]
+      # What the handlers read goes to the index as well, addressed as this filesystem addresses it.
+      # A probe arrives here and not through `_store`, so an index told only by `_store` would answer
+      # with the identified row for ever and the probe would run again on every lookup.
+      if self._index is not None:
+        keep[self._address(key)] = (self._for_index(key, metadata),
+          None if listing is None else [{**child, 'path': self._address(child['path'])} for child in listing])
+      value = json.loads(json.dumps(metadata, default=_metadata_text))
+      value['name'] = self._relative(key, owner)
+      value['gppu']['path'] = value['name']
+      self._metadata_paths(value['gppu'], lambda item:
+        item if '://' in item else self._relative(item, owner))
+      grouped[owner].append((self._relative(key, owner), json.dumps(value, default=_metadata_text),
+        None if listing is None else json.dumps([
+          {**child, 'path': self._relative(child['path'], owner)} for child in listing])))
+    if keep:
+      self._index.put(keep)
+    # Publish descendant databases before the listing which references them.
+    for owner in sorted(grouped, key=lambda item: len(PurePosixPath(item).parts), reverse=True):
+      with self._database(owner, write=True) as database:
+        if scope == '.' or owner == scope or owner.startswith(scope + '/'):
+          database.execute('DELETE FROM gppufs_entries')
+        else:
+          relative = self._relative(scope, owner)
+          database.execute('DELETE FROM gppufs_entries WHERE path=? OR substr(path,1,?)=?',
+            (relative, len(relative) + 1, relative + '/'))
+        database.executemany('INSERT INTO gppufs_entries VALUES (?, ?, ?) '
+          'ON CONFLICT(path) DO UPDATE SET metadata=excluded.metadata, children=excluded.children', grouped[owner])
+
+  @staticmethod
+  def _renamed_key(key: str, old: str, new: str) -> str:
+    return new + key[len(old):] if key == old or key.startswith(old + '/') else key
+
+  def _folder_renames(self, key: str, children: list[dict]) -> bool:
+    if self._archive_parent(key) is not None:
+      return False
+    folders = [child for child in children if child['type'] == 'directory' and child['ino'] is not None]
+    if not folders:
+      return False
+    listed = [row for row in self.fs.ls(self._path(key), detail=True) if row['type'] == 'directory']
+    # A local directory scan reports no inode on Windows and rename recovery needs one, so each
+    # folder is asked about; a store that lists enough already said it, and asking again is a round
+    # trip per folder per listing.
+    live = listed if not isinstance(self.fs, LocalFileSystem) else [self.fs.info(row['name']) for row in listed]
+    changed = False
+    owner = self._owner(key)
+    for child in folders:
+      if any(self._key(row['name']) == child['path'] for row in live):
+        continue
+      matches = [row for row in live if row['type'] == 'directory' and row.get('ino') == child['ino']]
+      if len(matches) != 1:
+        continue
+      old, new = child['path'], self._key(matches[0]['name'])
+      self._existing_index(self._path(new))
+      with self._database(owner, write=True) as database:
+        stored = database.execute('SELECT path, metadata, children FROM gppufs_entries').fetchall()
+        for path, metadata, members in stored:
+          renamed = self._renamed_key(self._absolute(path, owner), old, new)
+          renamed = self._relative(renamed, owner)
+          if members is not None:
+            values = json.loads(members)
+            for value in values:
+              renamed_child = self._renamed_key(self._absolute(value['path'], owner), old, new)
+              value['path'] = self._relative(renamed_child, owner)
+            members = json.dumps(values)
+          value = json.loads(metadata)
+          value['name'] = renamed
+          value['gppu']['path'] = renamed
+          self._metadata_paths(value['gppu'], lambda item:
+            item if '://' in item else
+            self._relative(self._renamed_key(self._absolute(item, owner), old, new), owner))
+          database.execute('UPDATE gppufs_entries SET path=?, metadata=?, children=? WHERE path=?',
+            (renamed, json.dumps(value), members, path))
+      changed = True
+    return changed
+
+  @staticmethod
+  def _modified(native: dict) -> datetime | None:
+    if 'mtime' in native:
+      value = native['mtime']
+      if isinstance(value, (float, int)):
+        return valid_time(datetime.fromtimestamp(value, timezone.utc))
+      if isinstance(value, datetime):
+        return valid_time(value)
+      if isinstance(value, str):
+        return valid_time(datetime.fromisoformat(value.replace('Z', '+00:00')))
+    if 'date_time' in native:
+      return valid_time(datetime(*native['date_time']).astimezone())
+    return None
+
+  def _inventory(self, fs: AbstractFileSystem, root: str) -> dict[str, dict]:
+    # fsspec's archive info omits an empty archive root; it is still listable.
+    native = {root: {'name': root, 'type': 'directory', 'size': 0}
+      if isinstance(fs, AbstractArchiveFileSystem) and root in ('', '/') else fs.info(root)}
+    if native[root]['type'] != 'directory' or native[root].get('islink'):
+      return native
+    if IgnoredHandler.member_reason(PurePosixPath(root), True):
+      return native
+    for _, directories, files in fs.walk(root, detail=True, on_error='raise'):
+      for item in (*directories.values(), *files.values()):
+        if not self._index_name.fullmatch(PurePosixPath(item['name']).name):
+          native[item['name'].rstrip('/')] = fs.info(item['name'])
+      for name in tuple(directories):
+        if IgnoredHandler.member_reason(PurePosixPath(name), True) or directories[name].get('islink'):
+          del directories[name]
+    return native
+
+  def _live(self, key: str, *, container: bool = False) -> None:
+    uri = self._uri(key)
+    archive_metadata = self._stored(key)[0] if container else None
+    with self._filesystem(key, container=container) as (fs, source):
+      fs.invalidate_cache()
+      native = self._inventory(fs, source)
+      if isinstance(fs, LocalFileSystem):
+        self._handlers.invalidate_sync(Path(source))
+        self._parse(key, Path(source), native, source, self._handlers)
+      else:
+        with tempfile.TemporaryDirectory(prefix='gppufs-') as scratch:
+          base = self._extract(uri, fs, source, native, Path(scratch))
+          self._parse(key, base, native, source, _MetadataHandlers({"locations": self._locations}),
+                      in_archive=fs is not self.fs, archive_metadata=archive_metadata)
+
+  def _extract(self, uri: str, fs: AbstractFileSystem, source: str, native: dict[str, dict], scratch: Path) -> Path:
+    """Write the inventoried entries below ``source`` under ``scratch`` and return their base folder.
+
+    A tar is read in archive order: its compressed stream cannot seek back, so
+    members fetched out of order decompress the archive again from the start.
+    """
+    base = scratch / (PurePosixPath(source).name or 'archive')
+    items = list(native.items())
+    if isinstance(fs, TarFileSystem):
+      items.sort(key=lambda item: fs.index[item[0]][1] if item[0] in fs.index else -1)
+    for path, item in items:
+      relative = PurePosixPath(path).relative_to(PurePosixPath(source))
+      if '..' in relative.parts:
+        raise ValueError(f'{uri}: unsafe member {path}')
+      target = base / relative
+      if item['type'] == 'directory':
+        target.mkdir(parents=True, exist_ok=True)
+      else:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fs.get_file(path, str(target))
+    return base
+
+  @staticmethod
+  def _member_address(key: str, relative: str) -> str:
+    """The address of ``relative`` below any container, including an archive."""
+    if relative == '.':
+      return key
+    return str(PurePosixPath(key) / relative)
+
+  def _identify_members(self, key: str) -> None:
+    """Index an archive's members as a listing sees them: identified, none probed.
+
+    The archive is read once and its members are written to a scratch folder so
+    the handlers can recognize them. Every folder inside the archive keeps its
+    child listing, so entering one later reads the index.
+    """
+    uri = self._uri(key)
+    metadata = self._stored(key)[0]
+    with self._filesystem(key, container=True) as (fs, source):
+      native = self._inventory(fs, source)
+      with tempfile.TemporaryDirectory(prefix='gppufs-') as scratch:
+        base = full_path(self._extract(uri, fs, source, native, Path(scratch)))
+        rows: dict[str, tuple[dict, list | None]] = {key: (metadata, [])}
+        members: dict[str, list[dict]] = {key: []}
+        for record in _MetadataHandlers().identify_sync(base):
+          relative = Path(record.path).relative_to(base).as_posix()
+          if relative == '.':
+            continue
+          path = str(PurePosixPath(source) / relative)
+          if path not in native or self._index_name.fullmatch(record.name):
+            continue
+          address = self._member_address(key, relative)
+          rows[address] = self._identified_row(address, native[path], record), [] if record.is_folder else None
+          if relative != '.':
+            parent = self._member_address(key, PurePosixPath(relative).parent.as_posix())
+            members.setdefault(parent, []).append({'path': address, 'type': native[path]['type'], 'ino': None})
+        for address, listing in members.items():
+          listing.sort(key=lambda entry: (entry['type'] != 'directory', entry['path'].casefold()))
+          rows[address] = rows[address][0], listing
+        self._store(key, rows, members[key])
+
+  def _parse(self, key: str, local: Path, native: dict[str, dict], source: str,
+             handlers: FileHandler, *, in_archive: bool = False, archive_metadata: dict | None = None) -> None:
+    # Reuse the existing parsers; the fsspec inventory supplies native attributes.
+    local = full_path(local)
+    identified = handlers.probe_sync(local)
+    records: dict[Path, Record] = {}
+    addresses: dict[Path, str] = {}
+    attributes: dict[Path, dict] = {}
+    for record in identified:
+      relative = Path(record.path).relative_to(local)
+      path = str(PurePosixPath(source) / PurePosixPath(relative.as_posix()))
+      if path == '.' and source == '':
+        path = ''
+      if path not in native or self._index_name.fullmatch(record.name):
+        continue
+      item = native[path]
+      address = self._member_address(key, relative.as_posix())
+      records[Path(record.path)] = replace(record,
+        modified_at=self._modified(item),
+        size=0 if record.is_folder else record.size)
+      addresses[Path(record.path)] = address
+      attributes[Path(record.path)] = item
+    children: dict[Path, list[Path]] = {path: [] for path in records}
+    for path in records:
+      if path != local:
+        children[path.parent].append(path)
+    rows = {}
+    def reference(value):
+      candidate = Path(value)
+      if not candidate.is_absolute():
+        return value  # Exported session members are relative to their location.
+      if candidate.is_relative_to(local):
+        return self._member_address(key, candidate.relative_to(local).as_posix())
+      if isinstance(self.fs, LocalFileSystem) and candidate.is_relative_to(full_path(self.root)):
+        return candidate.relative_to(full_path(self.root)).as_posix()
+      return candidate.as_uri()
+
+    for path in sorted(records, key=lambda item: len(item.parts), reverse=True):
+      record = records[path]
+      stats = FileHandler._folder_stats(record, [records[child] for child in children[path]]) if record.is_folder else FileHandler._file_stats(record)
+      record = records[path] = replace(record, stats=stats)
+      extra = record.metadata
+      extra['stats'] = {probe.handler: vars(probe.stats)
+        for probe in record.probes if probe.stats is not None}
+      extra = json.loads(json.dumps(extra, default=_metadata_text))
+      self._metadata_paths(extra, reference)
+      address = addresses[path]
+      extra['is_container'] = (record.is_folder or 'archive' in record.handlers) and 'ignored' not in record.handlers
+      extra['probed'] = True
+      extra['probed_at'] = datetime.now().astimezone()
+      metadata = {**attributes[path], 'name': self._uri(address), 'gppu': extra}
+      members = [addresses[child] for child in children[path]] if record.is_folder else None
+      if path == local and archive_metadata is not None:
+        metadata = archive_metadata
+      rows[address] = metadata, members
+    self._save(rows, key, in_archive=in_archive)
+
+  def _archive_key(self, key: str) -> str:
+    name = key.split('::', 1)[0].casefold()
+    if name.endswith('.zip'):
+      return 'zip://::' + key
+    if name.endswith('.tar.gz'):
+      return 'tar://::' + key
+    if name.endswith('.rar'):
+      return 'gppu-rar://::' + key
+    raise ValueError(f'{key}: unsupported archive')
+
+  def _identifiable(self, key: str) -> bool:
+    """Physical local entries are listed and identified live, and so is a store whose listing says enough.
+
+    A store that sets ``listing_is_enough`` gives a name, a type and a size for every entry it
+    lists, which is what identification asks about. Without it a remote folder is read through
+    ``_live``, which fetches everything below it before a handler runs; for a SharePoint library
+    that is the whole library fetched in order to list one folder. Archive members are read
+    through ``_identify_members``.
+    """
+    return self._archive_parent(key) is None and (isinstance(self.fs, LocalFileSystem)
+                                or getattr(self.fs, 'listing_is_enough', False))
+
+  def _stand_in(self, key: str, item: dict) -> Path:
+    """The name and type of a remote entry, put where the handlers can be asked about it.
+
+    Identification asks what a name and a type are, and a store that lists enough answers both
+    without its bytes. The question is put to the handlers exactly as it is put for a local path,
+    so what a remote entry is identified as cannot drift from what a local one is, and only a file
+    that is actually probed is ever fetched.
+    """
+    if self._scratch is None:
+      self._scratch = tempfile.TemporaryDirectory(prefix='gppufs-listing-')
+    name = PurePosixPath(key).name if key != '.' else PurePosixPath(self.root).name or 'location'
+    parent = PurePosixPath(key).parent.as_posix()
+    if parent not in self._standins:
+      self._standins[parent] = str(len(self._standins))
+    # A store can hold a name this host cannot spell — a trailing space or dot, a reserved character,
+    # a path longer than this filesystem allows. The stand-in keeps the name as far as the host
+    # permits, because a handler reads a span out of a filename, and each folder gets a slot of its
+    # own so two entries of the same name in different folders do not become one.
+    stem, dot, suffix = name.rpartition('.')
+    spelled = ''.join('_' if letter in UNSAFE else letter for letter in name).rstrip(' .')
+    if not spelled:
+      spelled = 'entry'
+    if len(spelled) > NAME_LIMIT:
+      spelled = spelled[:NAME_LIMIT - len(suffix) - 1] + dot + suffix if dot else spelled[:NAME_LIMIT]
+    target = Path(self._scratch.name) / self._standins[parent] / spelled
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if item['type'] == 'directory':
+      target.mkdir(exist_ok=True)
+    elif not target.exists():
+      target.touch()
+    return target
+
+  def _listed_record(self, key: str, item: dict) -> Record:
+    """One entry of a store that lists enough, identified from that listing."""
+    record = self._handlers.record(self._stand_in(key, item))
+    return replace(record, path=PurePosixPath(self._path(key)),
+                   size=0 if record.is_folder else int(item.get('size') or 0))
+
+  def _identified_row(self, key: str, item: dict, record: Record) -> dict:
+    """One entry as a listing sees it: native attributes and the handlers that matched, nothing probed.
+
+    A file's count, bytes and name span are known from the listing. A folder's totals
+    are unknown until it is probed, so they are null and ``probed`` is false; ``probed_at``
+    is null too, where a probed row carries the local time of its last probe.
+    """
+    record = replace(record, modified_at=self._modified(item), size=0 if record.is_folder else record.size)
+    extra = json.loads(json.dumps(record.metadata, default=_metadata_text))
+    if record.is_folder:
+      extra.update(files=None, folders=None, bytes=None, span=None)
+    else:
+      extra.update(json.loads(json.dumps(vars(FileHandler._file_stats(record)), default=_metadata_text)))
+    extra['stats'] = {}
+    extra['is_container'] = (record.is_folder or 'archive' in record.handlers) and 'ignored' not in record.handlers
+    extra['probed'] = False
+    extra['probed_at'] = None
+    return {**item, 'name': self._uri(key), 'gppu': extra}
+
+  def _store(self, key: str, rows: dict[str, tuple[dict, list | None]], listing: list[dict] | None) -> None:
+    """Add identified rows the index does not hold yet and record the folder's live child listing.
+
+    What a handler read goes to the index first, so the next lookup is answered without running it,
+    and then to the file beside the location, which is the cache.
+    """
+    if self._index is not None:
+      keep: dict[str, tuple[dict | None, list[dict] | None]] = {
+        self._address(child): (self._for_index(child, metadata),
+                               None if members is None else
+                               [{**item, 'path': self._address(item['path'])} for item in members])
+        for child, (metadata, members) in rows.items()}
+      if listing is not None:
+        keep[self._address(key)] = (keep.get(self._address(key), (None, None))[0],
+                                    [{**item, 'path': self._address(item['path'])} for item in listing])
+      self._index.put(keep)
+    grouped: dict[str, list[tuple]] = {}
+    for child_key, (metadata, members) in rows.items():
+      owner = self._owner(child_key)
+      value = json.loads(json.dumps(metadata, default=_metadata_text))
+      value['name'] = self._relative(child_key, owner)
+      value['gppu']['path'] = value['name']
+      grouped.setdefault(owner, []).append((value['name'], json.dumps(value, default=_metadata_text),
+        None if members is None else json.dumps([
+          {**entry, 'path': self._relative(entry['path'], owner)} for entry in members])))
+    for owner, values in grouped.items():
+      with self._database(owner, write=True) as database:
+        database.executemany('INSERT INTO gppufs_entries VALUES (?, ?, ?) ON CONFLICT(path) DO NOTHING', values)
+    if listing is None:
+      return
+    owner = self._owner(key)
+    with self._database(owner, write=True) as database:
+      database.execute('UPDATE gppufs_entries SET children=? WHERE path=?', (json.dumps([
+        {**entry, 'path': self._relative(entry['path'], owner)} for entry in listing]), self._relative(key, owner)))
+
+  def _identify_entry(self, key: str) -> None:
+    """Index one entry from its native attributes and matching handlers, without probing."""
+    path = self._path(key)
+    item = self.fs.info(path)
+    record = (self._handlers.record(Path(path)) if isinstance(self.fs, LocalFileSystem)
+              else self._listed_record(key, item))
+    self._store(key, {key: (self._identified_row(key, item, record), None)}, None)
+
+  def _unlocated(self, key: str) -> bool:
+    """Whether the index holds this entry from before a configured location covered it.
+
+    The location map is the caller's, not the folder's, so a row identified without it is
+    out of date the moment the configuration names the place. Such a row is identified
+    again; every other stored row is kept.
+    """
+    if not self._locations or not self._handlers.located(Path(self._path(key))):
+      return False
+    stored = self._stored(key)
+    return stored is not None and 'location' not in stored[0]['gppu']
+
+  def _forget(self, key: str) -> None:
+    """Drop one stored entry so it is identified again on this listing."""
+    owner = self._owner(key)
+    with self._database(owner, write=True) as database:
+      database.execute('DELETE FROM gppufs_entries WHERE path=?', (self._relative(key, owner),))
+
+  def _reconcile(self, key: str, children: list[dict]) -> list[dict]:
+    """List the folder live: identify entries the index has not seen, drop entries that are gone."""
+    known = {child['path']: child for child in children}
+    rows: dict[str, tuple[dict, list | None]] = {}
+    listing: list[dict] = []
+    local = isinstance(self.fs, LocalFileSystem)
+    for entry in self.fs.ls(self._path(key), detail=True):
+      name = entry['name'].rstrip('/')
+      if self._index_name.fullmatch(PurePosixPath(name).name):
+        continue
+      child_key = self._key(name)
+      if child_key in known:
+        if not self._unlocated(child_key):
+          listing.append(known[child_key])
+          continue
+        self._forget(child_key)   # the stored row predates the location; an insert alone would keep it
+      if local:
+        item = self.fs.info(name)  # A directory scan reports no inode on Windows; rename recovery needs it.
+        record = self._handlers.record(Path(self._path(child_key)))
+      else:
+        item = entry            # a store that lists enough said it all once; asking again is a call per entry
+        record = self._listed_record(child_key, item)
+      rows[child_key] = self._identified_row(child_key, item, record), None
+      listing.append({'path': child_key, 'type': item['type'], 'ino': item.get('ino')})
+    listing.sort(key=lambda entry: (entry['type'] != 'directory', entry['path'].casefold()))
+    if rows or listing != children:
+      self._store(key, rows, listing)
+    return listing
+
+  @sync
+  async def info(self, path: str | Path | None = None, refresh: bool = False, **kwargs) -> dict:
+    """Return one native entry with its handler metadata.
+
+    Awaited inside an event loop, called plainly outside one; the reading runs
+    in a worker thread either way. A physical entry the index has not seen is
+    identified, not probed. A file whose details are asked for is probed once,
+    inside an archive as well; ``refresh=True`` probes again. A folder's totals
+    come from the last refresh of that folder.
+    """
+    return await asyncio.to_thread(self.info_sync, path, refresh)
+
+  def info_sync(self, path: str | Path | None = None, refresh: bool = False) -> dict:
+    """``info`` on the calling thread."""
+    with self._lock:
+      key = self._key(path)
+      cached = None if refresh else self._stored(key)
+      if cached is None:
+        physical = key
+        for parent in reversed(PurePosixPath(physical).parents):
+          parent_key = parent.as_posix()
+          listing = self._stored(parent_key)
+          if listing is not None and listing[1] is not None and self.fs.isdir(self._path(parent_key)):
+            self._folder_renames(parent_key, listing[1])
+        if not refresh:
+          cached = self._stored(key)
+      if cached is None and not refresh and self._identifiable(key):
+        self._identify_entry(key)
+        cached = self._stored(key)
+      if cached is None:
+        self._live(key)
+        cached = self._stored(key)
+      if cached is None:
+        raise FileNotFoundError(self._uri(key))
+      metadata = cached[0]
+      if metadata['type'] != 'directory' and not metadata['gppu'].get('probed', True):
+        self._live(key)
+        metadata = self._stored(key)[0]
+      return metadata
+
+  @sync
+  async def ls(self, path: str | Path | None = None, detail: bool = True,
+               recurse: bool = False, refresh: bool = False, live: bool = True, **kwargs) -> list:
+    """List entries, optionally descending, from the live folder and the colocated SQLite index.
+
+    Awaited inside an event loop, called plainly outside one; the listing runs
+    in a worker thread either way. Every entry the listing finds is identified.
+    Entries already indexed keep their indexed metadata. ``refresh=True``
+    probes the folder and everything below it. Entering an archive lists its
+    members identified, like a folder; refreshing the archive probes them.
+    """
+    return await asyncio.to_thread(self.ls_sync, path, detail, recurse, refresh, live)
+
+  def ls_sync(self, path: str | Path | None = None, detail: bool = True,
+              recurse: bool = False, refresh: bool = False, live: bool = True) -> list:
+    """``ls`` on the calling thread.
+
+    ``live`` reads the folder and reconciles the index with it. ``live=False`` answers from the
+    index alone and touches no filesystem, so what was indexed is listed wherever this runs, and
+    a folder the index has never seen lists nothing.
+    """
+    with self._lock:
+      key = self._key(path)
+      metadata = self.info_sync(path, refresh=refresh)
+      archive = 'archive' in metadata['gppu']['handlers']
+      if archive:
+        if refresh:
+          self._live(key, container=True)
+        elif self._stored(key)[1] is None:
+          self._identify_members(key)
+      cached = self._stored(key)
+      if cached is None:
+        raise FileNotFoundError(self._uri(key))
+      current, children = cached
+      if current['type'] != 'directory' and not archive:
+        return [current] if detail else [current['name']]
+      if not live:
+        children = children or []                   # the index alone; the folder is not read
+      elif not archive and self._identifiable(key):
+        if children is not None and self._folder_renames(key, children):
+          current, children = self._stored(key)
+        children = self._reconcile(key, children or [])
+      elif children is None:
+        self._live(key)
+        current, children = self._stored(key)
+      elif not archive and self._folder_renames(key, children):
+        current, children = self._stored(key)
+      result = []
+      for child in children:
+        cached = self._stored(child['path'])
+        if cached is None:
+          continue
+        row = cached[0]
+        if recurse and row['gppu']['is_container']:
+          below = self.ls_sync(row['name'], recurse=True, live=live)
+          row = self._stored(child['path'])[0]  # Entering an archive probes it; report the probed row.
+          result.append(row)
+          result.extend(below)
+        else:
+          result.append(row)
+      return result if detail else [row['name'] for row in result]
+
+  def cp_file(self, path1: str | Path, path2: str | Path, **kwargs: Any) -> None:
+    """Copy one entry's bytes inside this location. The copy is a new thing and is identified as one."""
+    with self._lock:
+      source, destination = self._key(path1), self._key(path2)
+      self.fs.cp_file(self._path(source), self._path(destination), **kwargs)
+      self._forget(destination)
+
+  def rm_file(self, path: str | Path) -> None:
+    """Remove one entry, and forget what was stored of it."""
+    with self._lock:
+      key = self._key(path)
+      self.fs.rm_file(self._path(key))
+      self._forget(key)
+
+  def mv(self, path1: str | Path, path2: str | Path, recursive: bool = False,
+         maxdepth: int | None = None, **kwargs: Any) -> None:
+    """Move an entry, and move what is held of it with it.
+
+    Alex's reason for a file manager on this filesystem: a folder moved between two indexed places
+    keeps its index. So the bytes are renamed where the base filesystem can rename them — one
+    operation for a folder of a million files, rather than a copy and a delete — and the rows under
+    the old address are rewritten to the new one rather than dropped and read again.
+
+    fsspec's own `mv` is a copy followed by a delete, which for a folder of that size is neither.
+    """
+    with self._lock:
+      source, destination = self._key(path1), self._key(path2)
+      if source == destination:
+        return
+      self.fs.mv(self._path(source), self._path(destination), recursive=recursive,
+                 maxdepth=maxdepth, **kwargs)
+      self._move_rows(source, destination)
+      if self._index is not None:
+        self._index.moved(self._address_of(source), self._address(destination))
+
+  def move_into(self, other: 'GppuFileSystem', path: str | Path, destination: str | Path) -> str:
+    """Move an entry out of this location and into another one, and move what is held of it with it.
+
+    This is the move Alex asks a file manager for: a folder carried between two indexed places, where
+    what the index says about it goes with it rather than being read again. The entity keeps its uid,
+    so every annotation on it survives the move; only where it is changes.
+
+    Two folders on one disk are renamed, which is one operation whatever the folder holds. Two places
+    on different filesystems are copied and then removed, because there is no other way.
+
+    The file beside each location is a cache and is treated as one: this location forgets what moved,
+    and the other identifies what arrived when it next lists. The index is what carries the reading.
+    """
+    source, arriving = self._key(path), other._key(destination)
+    was, now = self._address(source), other._address(arriving)
+    here, there = self._path(source), other._path(arriving)
+    if type(self.fs) is type(other.fs) and isinstance(self.fs, LocalFileSystem):
+      self.fs.mv(here, there, recursive=True)
+    else:
+      other.fs.mkdirs(other._path(other._parent_key(arriving) or '.'), exist_ok=True)
+      self.fs.get(here, there, recursive=True) if self.fs.isdir(here) else other.fs.pipe_file(
+        there, self.fs.cat_file(here))
+      self.fs.rm(here, recursive=True)
+    with self._lock:
+      self._forget_below(source)
+    if self._index is not None:
+      self._index.moved(was, now)
+    return now
+
+  def _forget_below(self, key: str) -> None:
+    """Forget the stored rows at and under one key, and the listing of the folder it was in."""
+    owner = self._owner(key)
+    with self._database(owner, write=True) as database:
+      if database is None:
+        return
+      here = self._relative(key, owner)
+      database.execute('DELETE FROM gppufs_entries WHERE path=? OR substr(path,1,?)=?',
+                       (here, len(here) + 1, here + '/'))
+      parent = self._parent_key(key)
+      if parent is not None:
+        database.execute('UPDATE gppufs_entries SET children=NULL WHERE path=?',
+                         (self._relative(parent, owner),))
+
+  def preserve(self, folder: str | Path) -> Path | None:
+    """Put this location's index in `folder` with its provenance in the name, and leave the location clean.
+
+    Alex, 2026-09-17: an index that makes a folder unclean or unsynced — a repository's working tree, a
+    library that will not sync a database — is preserved as a file in the lake rather than left where it
+    is, and there it is a record, indexed as a file, not opened. The walk still writes one while it
+    works; this is what happens at the end of the walk.
+
+    Where the lake is is the caller's: this library knows what the file is, not where his lake keeps it.
+    """
+    if not isinstance(self.fs, LocalFileSystem):
+      return None
+    index = self._existing_index(self.root)
+    if index is None:
+      return None
+    here = Path(index)
+    kept = Path(folder) / f'{datetime.now().strftime("%y%m%d")} {socket.gethostname().casefold()} {here.name.lstrip(".")}'
+    kept.parent.mkdir(parents=True, exist_ok=True)
+    kept.write_bytes(here.read_bytes())
+    if kept.read_bytes() != here.read_bytes():                 # compared by content, never by checksum
+      raise OSError(f'{kept}: the preserved copy does not match {here}')
+    here.unlink()
+    with self._lock:
+      self._memory.clear()
+    return kept
+
+  def _address_of(self, key: str) -> str:
+    """The address an entry had, worked out from the location map rather than from the vanished path."""
+    if self._locations:
+      for folder in sorted(self._locations, key=lambda item: len(item), reverse=True):
+        here = full_path(Path(self._path(key))).as_posix()
+        base = folder.rstrip('/')
+        if here == base or here.startswith(base + '/'):
+          canonical = str(self._locations[folder]['canonical'])
+          rest = '' if here == base else here[len(base) + 1:]
+          return canonical if not rest else (canonical + rest if canonical.endswith('://')
+                                             else canonical.rstrip('/') + '/' + rest)
+    return self._uri(key)
+
+  def _move_rows(self, source: str, destination: str) -> None:
+    """Rewrite every stored row at and under `source` to sit under `destination`."""
+    owner = self._owner(source)
+    if owner != self._owner(destination):
+      self._forget(source)                       # two indexes; the new place identifies what arrived
+      return
+    with self._database(owner, write=True) as database:
+      if database is None:
+        return
+      here, there = self._relative(source, owner), self._relative(destination, owner)
+      for path, metadata, children in database.execute(
+          'SELECT path, metadata, children FROM gppufs_entries').fetchall():
+        if path != here and not path.startswith(here + '/'):
+          continue
+        moved = there + path[len(here):]
+        value = json.loads(metadata)
+        value['name'] = moved
+        value['gppu']['path'] = moved
+        self._metadata_paths(value['gppu'], lambda item:
+          there + item[len(here):] if item == here or item.startswith(here + '/') else item)
+        listing = children if children is None else json.dumps([
+          {**child, 'path': there + child['path'][len(here):]
+           if child['path'] == here or child['path'].startswith(here + '/') else child['path']}
+          for child in json.loads(children)])
+        database.execute('DELETE FROM gppufs_entries WHERE path=?', (path,))
+        database.execute('INSERT INTO gppufs_entries VALUES (?, ?, ?) '
+          'ON CONFLICT(path) DO UPDATE SET metadata=excluded.metadata, children=excluded.children',
+          (moved, json.dumps(value), listing))
+      parent = self._parent_key(destination)
+      if parent is not None:
+        database.execute('UPDATE gppufs_entries SET children=NULL WHERE path=?',
+                         (self._relative(parent, owner),))
+
+  def _open(self, path: str | Path | None = None, mode: str = 'rb', **kwargs) -> BinaryIO:
+    """The bytes of one entry: a physical file through the base filesystem, a member through its archive.
+
+    fsspec builds `cat_file`, `open`, `head`, `tail`, `get_file`, `pipe_file` and `read_text` on this
+    one call, and its own default reads through `cat_file`, which reads through `_open` — so a
+    filesystem that leaves `_open` alone recurses until the stack ends.
+
+    Bytes are the base filesystem's, and the index is not touched: a write changes the file, and what
+    was identified stands until the folder is read again with `refresh=True`, exactly as it does for a
+    file some other writer changed.
+    """
+    key = self._key(path)
+    if self._archive_parent(key) is None:
+      return self.fs._open(self._path(key), mode, **kwargs)
+    if 'r' not in mode:
+      raise ValueError(f'{self._uri(key)}: a member of an archive is read-only')
+    with self._filesystem(key) as (fs, source):
+      return io.BytesIO(fs.cat_file(source))
+
+
+class PostgresFileSystem(AbstractFileSystem):
+  """A Postgres database read as folders and entries, so gppufs can index one like any other place.
+
+  Alex, 2026-09-17 04:21: an index in Postgres of his other Postgres databases and tables, every
+  database, schema and table written down as a source of data he may or may not trust yet. gppufs and
+  the handlers are how everything reads files, so a database is read the same way rather than by a
+  script of its own: a schema is a folder, a table or view is an entry in it, and what `pg_catalog`
+  knows about each is its metadata.
+
+      GppuFileSystem('pg://pg.karel.in/files', dsn='postgresql://…')
+
+  `dsn` is the caller's, because which databases exist and how one connects to them is his
+  configuration and not this library's. Nothing here writes: a database is read, never indexed into.
+  """
+
+  protocol = 'pg'
+  cachable = False
+  root_marker = ''
+
+  SCHEMAS = ("select nspname from pg_namespace"
+             " where nspname not like 'pg\\_%' and nspname <> 'information_schema' order by nspname")
+  ENTRIES = ("select c.relname as name, c.relkind as kind,"
+             "       pg_total_relation_size(c.oid) as bytes, c.reltuples::bigint as rows,"
+             "       obj_description(c.oid) as comment"
+             "  from pg_class c join pg_namespace n on n.oid = c.relnamespace"
+             " where n.nspname = %s and c.relkind in ('r', 'v', 'm', 'p', 'f') order by c.relname")
+  COLUMNS = ("select a.attname, format_type(a.atttypid, a.atttypmod) as type, a.attnotnull"
+             "  from pg_attribute a join pg_class c on c.oid = a.attrelid"
+             "  join pg_namespace n on n.oid = c.relnamespace"
+             " where n.nspname = %s and c.relname = %s and a.attnum > 0 and not a.attisdropped"
+             " order by a.attnum")
+  KINDS = {'r': 'table', 'v': 'view', 'm': 'materialized view', 'p': 'partitioned table',
+           'f': 'foreign table'}
+
+  # -- when a table's records happened ---------------------------------------------------------
+  # Alex, 2026-09-17: "Every entity has a date. It can be called date_sent or date_created, but
+  # every entity has a date. Timestamps of systems that process entities should never be used."
+  #
+  # So a table's span is the range its own records cover, read from the entity's own date and never
+  # from the stamp a loader left. `loaded_at`, `indexed_at`, `read_at` say when something read the
+  # row, not when the thing happened, and a span read off one of those says every table covers the
+  # hour the loader ran. They are left out by name; what remains is judged by what it holds, and the
+  # widest real range wins, because a record's own date spreads over the life of the data while a
+  # processing stamp collapses into the run that wrote it.
+  PROCESSED = ('loaded', 'indexed', 'read', 'seen', 'gone', 'ingested', 'imported', 'synced',
+               'probed', 'analysed', 'analyzed', 'refreshed', 'fetched', 'crawled', 'scanned',
+               'exported', 'processed', 'harvested', 'dumped', 'etl')
+  # A bare verb and `_at` is the stamp on the row, written when the row was written: an index's
+  # `created_at` is when it indexed the thing, not when the thing was created. A date of the thing
+  # says so in its name — `date_created`, `date_sent`, `changed_at` for a file's own mtime — which
+  # is the difference between his two examples. A table whose only date is a row stamp has no date
+  # of its own and gets no span, which is truer than a span of when the loader ran.
+  STAMPS = ('created_at', 'updated_at', 'inserted_at', 'written_at', 'recorded_at', 'stored_at')
+  # The day each system's clock starts from, which is what it writes where a date is unknown. Read
+  # off his own databases: .NET's minimum, Excel and OLE's zero, SQL Server's, and Unix's in both
+  # the spellings a stored value takes here.
+  ZEROS = ('0001-01-01', '0001-12-31', '1899-12-30', '1899-12-31', '1900-01-01',
+           '1969-12-31', '1970-01-01')
+  DATED = ("select a.attname from pg_attribute a join pg_class c on c.oid = a.attrelid"
+           "  join pg_namespace n on n.oid = c.relnamespace"
+           " where n.nspname = %s and c.relname = %s and a.attnum > 0 and not a.attisdropped"
+           "   and a.atttypid in ('timestamptz'::regtype, 'timestamp'::regtype, 'date'::regtype)"
+           " order by a.attnum")
+
+  def dated(self, schema: str, name: str) -> list[str]:
+    """The columns of a table that could carry the date of the thing each row is."""
+    with self._asking() as cursor:
+      cursor.execute(self.DATED, (schema, name))
+      found = [row['attname'] for row in cursor.fetchall()]
+    return [column for column in found
+            if column.casefold() not in self.STAMPS
+            and not any(word in column.casefold() for word in self.PROCESSED)]
+
+  def span(self, path: str) -> dict[str, Any] | None:
+    """When one table's records happened: the column their date is in, and its first and last.
+
+    A zero is not a date. Where the date was unknown a system writes the day its own clock starts
+    from, and every one of them reads as a real date: Unix writes 1970-01-01, or the evening of
+    1969-12-31 when it was stored without a zone in a western one; .NET writes 0001-01-01; Excel and
+    OLE write 1899-12-30; SQL Server writes 1900-01-01. Taking any of them says the table begins at
+    the beginning of that system's time. They are left out of the reading rather than corrected in
+    the data, and nothing is clamped: a date that is merely old, a photograph from 1967, is a date.
+    """
+    schema, _, name = self._under(path).partition('/')
+    columns = self.dated(schema, name) if name else []
+    if not columns:
+      return None
+    zeros = ', '.join(f"'{day}'" for day in self.ZEROS)
+    real = '("{0}"::date <> all(array[' + zeros + ']::date[]))'
+    reads = ', '.join(f'min("{column}") filter (where {real.format(column)}) as "from_{i}",'
+                      f' max("{column}") filter (where {real.format(column)}) as "to_{i}"'
+                      for i, column in enumerate(columns))
+    with self._asking() as cursor:
+      cursor.execute(f'select {reads} from "{schema}"."{name}"')   # noqa: S608 - names from pg_catalog
+      read = list(cursor.fetchone().values())
+    widest = None
+    for column, first, last in zip(columns, read[::2], read[1::2]):
+      if first is None or last is None:
+        continue
+      if widest is None or (last - first) > (widest['last'] - widest['first']):
+        widest = {'column': column, 'first': first, 'last': last}
+    return widest
+
+  def __init__(self, database: str, dsn: str | None = None, **storage_options: Any) -> None:
+    if not dsn:
+      raise ValueError('a Postgres location is read with a dsn; which databases exist is configuration')
+    super().__init__()
+    self.root = self._strip_protocol(database)
+    self.dsn = dsn
+    self.location = f'pg://{self.root}'
+
+  @classmethod
+  def _strip_protocol(cls, path: str) -> str:
+    path = stringify_path(path)
+    for prefix in ('pg://', 'postgresql://', 'postgres://'):
+      if path.startswith(prefix):
+        path = path[len(prefix):]
+    return path.strip('/')
+
+  @contextmanager
+  def _asking(self):
+    import psycopg2                                            # noqa: PLC0415 - the pg extra, asked for here only
+    from psycopg2.extras import RealDictCursor                 # noqa: PLC0415
+    with closing(psycopg2.connect(self.dsn)) as connection:
+      with connection.cursor(cursor_factory=RealDictCursor) as cursor:
+        yield cursor
+
+  def _under(self, path: str) -> str:
+    """What is asked about, below this database: '' for the database, else the schema or schema/entry."""
+    here = self._strip_protocol(path or '')
+    return here[len(self.root):].strip('/') if here.startswith(self.root) else here
+
+  def ls(self, path: str = '', detail: bool = True, **kwargs: Any) -> list:
+    """The schemas of a database, or the tables and views of a schema."""
+    under = self._under(path)
+    with self._asking() as cursor:
+      if not under:
+        cursor.execute(self.SCHEMAS)
+        found = [{'name': f'{self.root}/{row["nspname"]}', 'type': 'directory', 'size': 0}
+                 for row in cursor.fetchall()]
+      else:
+        cursor.execute(self.ENTRIES, (under,))
+        found = [{'name': f'{self.root}/{under}/{row["name"]}', 'type': 'file',
+                  'size': int(row['bytes'] or 0), 'kind': self.KINDS.get(row['kind'], row['kind']),
+                  'rows': int(row['rows'] or 0), 'comment': row['comment']}
+                 for row in cursor.fetchall()]
+    return found if detail else [row['name'] for row in found]
+
+  def info(self, path: str = '', **kwargs: Any) -> dict:
+    """What one schema or one entry is."""
+    under = self._under(path)
+    if not under:
+      return {'name': self.root, 'type': 'directory', 'size': 0}
+    schema, _, name = under.partition('/')
+    if not name:
+      return {'name': f'{self.root}/{schema}', 'type': 'directory', 'size': 0}
+    for row in self.ls(f'{self.root}/{schema}'):
+      if row['name'].rsplit('/', 1)[-1] == name:
+        return row
+    raise FileNotFoundError(f'pg://{self.root}/{under}')
+
+  def _open(self, path: str, mode: str = 'rb', **kwargs: Any) -> BinaryIO:
+    """One entry's columns, as text, so what a table holds can be read and identified like a file."""
+    if 'r' not in mode:
+      raise ValueError(f'pg://{self.root}: a database is read here, never written')
+    schema, _, name = self._under(path).partition('/')
+    with self._asking() as cursor:
+      cursor.execute(self.COLUMNS, (schema, name))
+      columns = cursor.fetchall()
+    text = '\n'.join(f'{row["attname"]} {row["type"]}'
+                      + ('' if not row['attnotnull'] else ' not null') for row in columns)
+    return io.BytesIO(text.encode('utf-8'))
+
+  def created(self, path: str) -> None:
+    return None
+
+  def modified(self, path: str) -> None:
+    return None
+
+
+register_implementation('pg', PostgresFileSystem, clobber=True)
+
+
+class SharePointFileSystem(AbstractFileSystem):
+  """A SharePoint or OneDrive drive read as folders and files, so gppufs can index one like any other place.
+
+  The address is Alex's, written down in his FileIndexer inventory: ``m365://$tenant/$service/$path``,
+  with ``sharepoint`` and ``onedrive`` as sibling services of a tenant. The last name of the path is
+  the drive and what comes before it is the site, so a document library is a Location the way a
+  Synology share is one.
+
+      GppuFileSystem('m365://karelin/sharepoint/teams/Alex/Finance', token=lambda: '...')
+
+  ``token`` is the caller's: which app registration reaches which tenant is his configuration and
+  not this library's. Nothing here writes. A drive is read, never written to.
+
+  A listing carries each item's SharePoint metadata with it, in the call that lists the folder:
+  the content type and every custom column come back with the item, so what a library says about a
+  document is in the index without the document being opened. That is also why this store sets
+  ``listing_is_enough``: its listing gives a name, a type and a size, which is what identification
+  asks about, and only a file that is probed is ever fetched.
+  """
+
+  protocol = 'm365'
+  cachable = False
+  root_marker = ''
+  listing_is_enough = True
+
+  GRAPH = 'https://graph.microsoft.com/v1.0'
+  # The content type and every custom column arrive with the item; this is the whole of the metadata.
+  EXPAND = 'listItem($expand=fields)'
+  PAGE = 200
+  DEADLINE = (10, 120)          # seconds to reach Graph, and to wait for it to answer
+  PATIENCE = 6                  # how many times a throttled call is asked again before it is raised
+  LONGEST_WAIT = 120            # seconds, whatever Retry-After says
+
+  def __init__(self, tenant: str, service: str, site: str, drive: str,
+               token: Callable[[], str] | None = None, **storage_options: Any) -> None:
+    if token is None:
+      raise ValueError('a SharePoint location is read with a token; which app reaches a tenant is configuration')
+    super().__init__()
+    self.tenant, self.service, self.site, self.drive = tenant, service, site, drive
+    self.token = token
+    self.root = '/'.join(part for part in (tenant, service, site, drive) if part)
+    self.location = f'm365://{self.root}'
+    self.host = f'{tenant}-my.sharepoint.com' if service == 'onedrive' else f'{tenant}.sharepoint.com'
+    self._drive_id: str | None = None
+    self._asked = None               # one pooled connection: a walk is thousands of calls to one host
+
+  @classmethod
+  def _get_kwargs_from_urls(cls, path: str) -> dict[str, str]:
+    """The tenant, the service, the site and the drive, read out of the address itself."""
+    parts = [part for part in cls._strip_protocol(path).split('/') if part]
+    if len(parts) < 3:
+      raise ValueError(f'{path}: an m365 location is m365://tenant/service/site/drive')
+    return {'tenant': parts[0], 'service': parts[1], 'site': '/'.join(parts[2:-1]), 'drive': parts[-1]}
+
+  @classmethod
+  def _strip_protocol(cls, path: str) -> str:
+    path = stringify_path(path)
+    return (path[len('m365://'):] if path.startswith('m365://') else path).strip('/')
+
+  def _asking(self, url: str, params: dict[str, str] | None = None):
+    """One call to Graph, waited on for a bounded time and asked again while Graph says to wait.
+
+    A walk of a tenant is hundreds of thousands of calls. Without a deadline one stalled read stops
+    the walk for good and says nothing, which is how a library comes to be missing from an index
+    that reports no error. Graph also throttles a walk of this size as a matter of course and says
+    with 429 how long to wait; waiting as told is its protocol rather than a way around a failure.
+    Everything else is raised.
+    """
+    import requests                                             # noqa: PLC0415 - the m365 extra, asked for here only
+    if self._asked is None:
+      self._asked = requests.Session()
+    where = url if url.startswith('https://') else f'{self.GRAPH}/{url.lstrip("/")}'
+    for attempt in range(self.PATIENCE):
+      response = self._asked.get(where, headers={'Authorization': f'Bearer {self.token()}'},
+                                 params=params, timeout=self.DEADLINE)
+      if response.status_code not in (429, 503, 504):
+        break
+      if attempt == self.PATIENCE - 1:
+        raise OSError(f'{response.status_code} {where}: still asked to wait after {self.PATIENCE} tries')
+      time.sleep(min(int(response.headers.get('Retry-After', 2 ** attempt)), self.LONGEST_WAIT))
+    if response.status_code == 404:
+      raise FileNotFoundError(url)
+    if response.status_code >= 400:
+      raise OSError(f'{response.status_code} {where}: {response.text[:200]}')
+    return response
+
+  def _identity(self) -> str:
+    """The drive this Location is, resolved once from the site and the drive's own name."""
+    if self._drive_id is None:
+      address = f'sites/{self.host}:/{self.site}:' if self.site else f'sites/{self.host}'
+      site = self._asking(address).json()
+      for found in self._asking(f'sites/{site["id"]}/drives?$select=id,name').json()['value']:
+        if found['name'] == self.drive:
+          self._drive_id = found['id']
+          break
+      else:
+        raise FileNotFoundError(f'{self.location}: the site has no drive named {self.drive}')
+    return self._drive_id
+
+  def _under(self, path: str) -> str:
+    """What is asked about, below this drive: '' for the drive itself, else the item's path in it."""
+    here = self._strip_protocol(path or '')
+    return here[len(self.root):].strip('/') if here.startswith(self.root) else here
+
+  def _address(self, under: str) -> str:
+    return f'drives/{self._identity()}/root' + (f':/{quote(under)}:' if under else '')
+
+  def _entry(self, item: dict, under: str) -> dict:
+    """One item as this store lists it: what it is, and what SharePoint says about it."""
+    listed = item.get('listItem') or {}
+    return {'name': f'{self.root}/{under}'.rstrip('/') if under else self.root,
+            'type': 'directory' if 'folder' in item else 'file',
+            'size': int(item.get('size') or 0),
+            'mtime': item.get('lastModifiedDateTime'),
+            'ino': item.get('id'),
+            'etag': item.get('eTag'),
+            'created_at': item.get('createdDateTime'),
+            'web_url': item.get('webUrl'),
+            'content_type': (listed.get('contentType') or {}).get('name'),
+            'columns': listed.get('fields') or {}}
+
+  def ls(self, path: str = '', detail: bool = True, **kwargs: Any) -> list:
+    """What is directly in one folder of the drive, each entry carrying its SharePoint metadata."""
+    under = self._under(path)
+    url = f'{self.GRAPH}/{self._address(under)}/children'
+    params: dict[str, str] | None = {'$expand': self.EXPAND, '$top': str(self.PAGE)}
+    found = []
+    while url:
+      page = self._asking(url, params).json()
+      params = None                       # the next link carries the query it was made with
+      for item in page.get('value', []):
+        found.append(self._entry(item, f'{under}/{item["name"]}'.lstrip('/')))
+      url = page.get('@odata.nextLink')
+    return found if detail else [row['name'] for row in found]
+
+  def info(self, path: str = '', **kwargs: Any) -> dict:
+    """What one item is, with its content type and its custom columns."""
+    under = self._under(path)
+    item = self._asking(self._address(under), {'$expand': self.EXPAND}).json()
+    return self._entry(item, under)
+
+  def _open(self, path: str, mode: str = 'rb', **kwargs: Any) -> BinaryIO:
+    """One item's bytes, fetched only when something asks to read it."""
+    if 'r' not in mode:
+      raise NotImplementedError(f'{self.location}: a drive is read here, never written')
+    return io.BytesIO(self._asking(f'{self._address(self._under(path))}/content').content)
+
+  def created(self, path: str) -> None:
+    return None
+
+  def modified(self, path: str) -> None:
+    return None
+
+
+class GppuCatalog(AbstractFileSystem):
+  """A catalog of Locations keyed by uid.
+
+  After ``Env.from_env(...)`` or ``Env.from_dict(...)``, ``GppuCatalog()``
+  resolves the configured connections and nested Locations. ``ls(recurse=True)``
+  walks that configuration tree. ``location(uid)`` returns the Location whose
+  ``ls`` and ``walk`` enumerate its child Locations. An explicit mapping
+  accepts the same data from another configuration loader.
+
+  FileSystem is built in. A connection's ``provider`` can name an external
+  Provider by its Python module and class; configuration loading imports it and
+  registers its declared scheme. ``schemas`` reports the loaded schemes. Each
+  connection gets one Provider instance, shared by every Location it reaches.
+
+  The explicit folder argument retains the existing exported-host catalog:
+
+  ``catalog`` is an absolute folder with one subfolder per host or server, named
+  as the Locations table names it, holding that host's ``locations.yaml``: one
+  row per Location as the table has it, plus ``root_path`` and ``index``, where
+  that Location keeps its gppufs index. The host's folder is chosen by the
+  machine name unless ``host`` says otherwise. The JSON files beside the host
+  folders are the global catalog, one per service, the file name being the
+  service: ``sharepoint.yaml``, ``synology-drive.yaml``, ``git.yaml`` and
+  so on. Each holds the canonical ``locations`` of that service, nested, a
+  location carrying its children in its own ``locations``, servers at the top.
+  The host folder's ``replicas.yaml`` says, per service, where this host holds
+  a copy of a location, named by its path of names in that tree, and when that
+  was last checked. A folder that is a replica carries a ``source`` block: the
+  service, the location's path of names, its server, what the catalog says of
+  it, and ``checked_at``. The catalog root lists the Locations without touching
+  them. Every address at or below a Location is served by that Location's
+  :class:`GppuFileSystem`; the deepest Location whose root contains the address
+  owns it. A Location root's parent is its parent Location when the catalog
+  names one, otherwise the catalog root, so a browser walks the Locations tree.
+  """
+
+  protocol = 'gppu-catalog'
+  cachable = False
+
+  def __init__(self, catalog: str | Path | Mapping | None = None, host: str | None = None,
+               location_types: Mapping | None = None, templates: Mapping[str, str] | None = None) -> None:
+    self.location_types = {'file': FileSystem}
+    if location_types is not None:
+      self.location_types.update(location_types)
+    self.templates = templates
+    self._providers: dict[str | None, Provider] = {}
+    self._configuration = catalog is None or isinstance(catalog, Mapping)
+    if self._configuration:
+      if catalog is None:
+        if not Env.initialized:
+          raise RuntimeError('load configuration with Env before constructing GppuCatalog')
+        catalog = Env.glob_dict('')
+      super().__init__()
+      self.host = host or socket.gethostname().split('.')[0].lower()
+      self.root = 'gppu-catalog://'
+      self._lock = RLock()
+      self._config = deepcopy(dict(catalog))
+      self._bound_locations = {}
+      self._load_configuration()
+      return
+    if not Path(catalog).is_absolute():
+      raise ValueError(f'{catalog}: the catalog is an absolute folder path')
+    super().__init__()
+    self.catalog = Path(catalog)
+    self.host = host or socket.gethostname()
+    folders = {folder.name.casefold(): folder for folder in self.catalog.iterdir() if folder.is_dir()}
+    if self.host.casefold() not in folders:
+      raise ValueError(f'{catalog}: no folder for host {self.host}')
+    self.folder = folders[self.host.casefold()]
+    self.sources: dict[str, dict] = {file.stem: yaml.safe_load(file.read_text(encoding='utf-8'))
+      for file in sorted(self.catalog.glob('*.yaml'))}
+    canonical: dict[tuple[str, str], dict] = {}
+    def walk(service: str, entries: list[dict], above: tuple[str, ...]) -> None:
+      for location in entries:  # a location carries its children in its own ``locations``; the top level is a server
+        names = (*above, location['name'])
+        canonical[service, '/'.join(names)] = {'service': service, 'location': '/'.join(names),
+          **({'server': names[0]} if len(names) > 1 else {}),
+          **{field: value for field, value in location.items() if field != 'locations'}}
+        walk(service, location.get('locations', []), names)
+    for service, source in self.sources.items():
+      walk(service, source['locations'], ())
+    replicas = self.folder / 'replicas.yaml'
+    self._replicas: dict[str, dict] = {}
+    listed = yaml.safe_load(replicas.read_text(encoding='utf-8')) or {} if replicas.is_file() else {}
+    for service, entries in listed.items():
+      for replica in entries:
+        location = canonical.get((service, replica['location']))
+        if location is None:
+          raise ValueError(f"{replicas}: {replica['path']} is a replica of {service} {replica['location']}, which {service}.yaml does not list")
+        self._replicas[os.path.normcase(os.path.normpath(replica['path']))] = {**location, 'checked_at': replica['checked_at']}
+    self.root = f'gppu-catalog://{self.catalog.as_posix()}'
+    self._lock = RLock()
+    self._filesystems: dict[str, GppuFileSystem] = {}
+    self._load()
+
+  def _load_configuration(self) -> None:
+    """Resolve configured Locations without opening any provider or index.
+
+    The input is the tree already loaded by Env, or the same plain data returned
+    by a database loader. Nested paths are provider-relative, never appended to
+    their parent's path. Loading does not mutate Env or the supplied mapping.
+    """
+    config = self._config
+    definitions = config['connections']
+    connection_templates = definitions['templates'] if 'templates' in definitions else {}
+    connection_rules = TemplateSet(templates=connection_templates, context=config)
+    self.connections = {
+      uid: connection_rules.resolve({'uid': uid, **row})
+      for uid, row in definitions.items()
+      if uid not in ('templates', 'macros', 'generators') and not uid.endswith('_templates')
+    }
+    for connection in self.connections.values():
+      if 'provider' not in connection:
+        continue
+      provider = connection['provider']
+      if provider in self.location_types:
+        continue
+      module, _, name = provider.rpartition('.')
+      if not module:
+        raise ValueError(f'{provider}: unknown configured provider')
+      kind = getattr(importlib.import_module(module), name)
+      if not isinstance(kind, type) or not issubclass(kind, Provider):
+        raise TypeError(f'{provider}: provider must implement Provider')
+      if kind.scheme in self.location_types and self.location_types[kind.scheme] is not kind:
+        raise ValueError(f'{kind.scheme}: provider already registered')
+      self.location_types[kind.scheme] = kind
+    tree = config['locations']
+    if isinstance(tree, Mapping):
+      templates = tree['templates'] if 'templates' in tree else {}
+      entries = [{'uid': uid, **row} for uid, row in tree.items()
+                 if uid not in ('templates', 'macros', 'generators') and not uid.endswith('_templates')]
+    elif isinstance(tree, list):
+      templates = config['location_templates'] if 'location_templates' in config else {}
+      entries = tree
+    else:
+      raise TypeError('locations must be a list or a mapping keyed by uid')
+    context = {**config, 'connections': self.connections, 'host': self.host}
+    rules = TemplateSet(templates=templates, context=context)
+    self.locations = {}
+    self._parents = {}
+
+    def add(items, parent=None, connection=None):
+      if not isinstance(items, list):
+        raise TypeError('nested locations must be a list')
+      for item in items:
+        row = dict(item)
+        uid = row['uid']
+        if not isinstance(uid, str) or not uid:
+          raise ValueError('every Location requires a nonempty uid')
+        if uid in self.locations:
+          raise ValueError(f'duplicate Location uid: {uid}')
+        children = row.pop('locations') if 'locations' in row else []
+        owner = row['parent'] if 'parent' in row else parent
+        if parent is not None and owner != parent:
+          raise ValueError(f'{uid}: parent conflicts with its nested Location')
+        serving = row['connection'] if 'connection' in row else connection
+        if serving is not None:
+          if serving not in self.connections:
+            raise KeyError(f'{uid}: unknown connection {serving}')
+          row['connection'] = serving
+        if templates and 'template' not in row:
+          row['template'] = 'connected' if serving is not None else 'location'
+        row['parent'] = owner
+        resolved = rules.resolve(row)
+        resolved['parent'] = owner
+        self.locations[uid] = resolved
+        self._parents[uid] = owner
+        add(children, uid, serving)
+
+    add(entries)
+    for uid, parent in self._parents.items():
+      visited = {uid}
+      while parent is not None:
+        if parent not in self.locations:
+          raise KeyError(f'{uid}: unknown parent Location {parent}')
+        if parent in visited:
+          raise ValueError(f'{uid}: Location hierarchy contains a cycle')
+        visited.add(parent)
+        parent = self._parents[parent]
+
+  def _provider(self, scheme: str, connection: str | None) -> Provider | None:
+    """The one Provider instance for a connection, or for a scheme reached without one."""
+    if scheme not in self.location_types:
+      return None
+    key = connection if connection is not None else scheme + '://'
+    if key not in self._providers:
+      self._providers[key] = self.location_types[scheme](self.connections[connection] if connection is not None else None)
+    return self._providers[key]
+
+  def location(self, uid: str) -> Location:
+    """Return the Location with this UID, with the Provider of its connection.
+
+    Args:
+      uid (str): Location UID from the configured tree.
+
+    Returns:
+      Location: The configured Location. Repeated calls with the same UID return
+        the same instance. A missing UID raises KeyError.
+    """
+    if not self._configuration:
+      raise TypeError('Location operations require a configured catalog')
+    with self._lock:
+      if uid not in self._bound_locations:
+        row = self.locations[uid]
+        parent = self._parents[uid]
+        self._bound_locations[uid] = Location(row,
+          provider=self._provider(urlsplit(row['canonical']).scheme, row.get('connection')),
+          parent=self.location(parent) if parent is not None else None,
+          children=lambda: (self.location(child) for child, owner in self._parents.items() if owner == uid),
+          templates=self.templates)
+      return self._bound_locations[uid]
+
+  def location_of(self, uri: y2uri | str) -> tuple[Location, y2path]:
+    """The nearest configured Location at or above uri, walking up one segment at a time, and the path below it."""
+    by_uri = {self._bare(row['canonical']): uid for uid, row in self.locations.items()}
+    at, below = self._bare(uri), []
+    while at not in by_uri:
+      scheme, _, rest = at.partition('://')
+      if not rest:
+        raise KeyError(f'{uri}: no configured Location holds this uri')
+      head, _, name = rest.rpartition('/')
+      at = f'{scheme}://{head}'
+      below.insert(0, name)
+    location = self.location(by_uri[at])
+    if isinstance(location.provider, FileSystem) and not urlsplit(at).path and below:
+      # A host has no folder of its own: the drive below it is the root of what is listed.
+      location = Location({'uid': location.uid, 'canonical': f'{at}/{below.pop(0)}'}, provider=location.provider,
+                          parent=location, templates=location.templates)
+    return location, y2path(unquote('/'.join(below)))
+
+  @staticmethod
+  def _bare(uri: y2uri | str) -> str:
+    """uri without a trailing slash; a scheme's own root keeps its '://'."""
+    scheme, _, rest = str(uri).partition('://')
+    return f'{scheme}://{rest.rstrip("/")}'
+
+  @property
+  def schemas(self) -> list[dict[str, str]]:
+    """URI schemes served by the implementations loaded in this catalog."""
+    return [{'scheme': scheme + '://',
+             'implementation': (kind.func if hasattr(kind, 'func') else kind).__name__}
+            for scheme, kind in self.location_types.items()]
+
+  def filesystem(self, uid: str) -> GppuFileSystem:
+    """Indexing is explicitly selected; ingestion uses Location operations."""
+    return GppuFileSystem(self.locations[uid]['canonical'])
+
+  def _configured_row(self, uid: str | None) -> dict:
+    if uid is None:
+      return {'name': self.root, 'type': 'directory', 'size': 0,
+              'gppu': {'uid': None, 'parent': None, 'locations': len(self.locations)}}
+    return {'name': uid, 'type': 'directory', 'size': 0, 'gppu': deepcopy(self.locations[uid])}
+
+  def _configured_listing(self, path, detail, recurse, refresh) -> list:
+    if refresh:
+      raise ValueError('reload configuration explicitly; catalog listing does not refresh storage')
+    parent = None if path is None or path == self.root or path == '' else str(path)
+    if parent is not None:
+      self.locations[parent]
+    result = []
+
+    def children(uid):
+      for child, owner in self._parents.items():
+        if owner == uid:
+          result.append(self._configured_row(child))
+          if recurse:
+            children(child)
+
+    children(parent)
+    return result if detail else [row['name'] for row in result]
+
+  def _load(self) -> None:
+    """Read the host's ``locations.yaml``; a Location whose ``index`` is not where gppufs keeps it is an error, not a redirect."""
+    rows = yaml.safe_load((self.folder / 'locations.yaml').read_text(encoding='utf-8')) or []
+    locations: dict[str, dict] = {}
+    for row in rows:
+      fs = self._filesystems.get(row['root_path']) or GppuFileSystem(row['root_path'])
+      if Path(row['index']) != Path(fs._database_path(fs.root)):
+        raise ValueError(f"{row['root_path']}: catalog index {row['index']} is not {fs._database_path(fs.root)}")
+      self._filesystems[row['root_path']] = fs
+      locations[row['root_path']] = row
+    self.locations = locations
+    by_id = {row['id']: row['root_path'] for row in rows}
+    self._parents = {row['root_path']: by_id.get(row['parent_file_location_id']) for row in rows}
+
+  def _location(self, path: str | Path) -> GppuFileSystem:
+    """The Location serving an absolute address: the deepest one whose root contains it."""
+    physical = str(path).replace('\\', '/')
+    if '://' not in physical and not Path(physical).is_absolute():
+      raise ValueError(f'{path}: catalog addresses are absolute paths or URLs')
+    owners = []
+    for fs in self._filesystems.values():
+      try:
+        fs._key(path)
+      except ValueError:
+        continue
+      owners.append(fs)
+    if not owners:
+      raise FileNotFoundError(f'{path}: not inside a catalog Location')
+    return max(owners, key=lambda fs: len(fs.root))
+
+  def _parent(self, fs: GppuFileSystem) -> str:
+    parent = self._parents[self._path_of(fs)]
+    return self.root if parent is None else self._filesystems[parent].location
+
+  def _path_of(self, fs: GppuFileSystem) -> str:
+    return next(path for path, item in self._filesystems.items() if item is fs)
+
+  def _ancestors(self, path: str) -> Iterator[str]:
+    parent = self._parents.get(path)
+    while parent is not None:
+      yield parent
+      parent = self._parents.get(parent)
+
+  def _catalog_row(self) -> dict:
+    """The catalog: its Locations, how many have an index, and the totals and latest refresh their indexes hold.
+
+    A Location below a Location whose totals are known is already inside them
+    and is not counted again.
+    """
+    rows = {path: self._location_row(fs)['gppu'] for path, fs in self._filesystems.items()}
+    counted = [row for path, row in rows.items() if row['files'] is not None
+      and not any(rows[parent]['files'] is not None for parent in self._ancestors(path))]
+    spans = [TimeSpan(start=row['span'][0], end=row['span'][1]) for row in counted if row['span']]
+    refreshed = [datetime.fromisoformat(row['probed_at']) for row in rows.values() if row['probed_at']]
+    return {'name': self.root, 'type': 'directory', 'size': 0, 'gppu': {
+      'name': self.catalog.name, 'path': self.root, 'parent': None, 'type': 'folder', 'modified_at': None,
+      'handlers': [], 'files': sum(row['files'] for row in counted) if counted else None,
+      'folders': sum(row['folders'] for row in counted) if counted else None,
+      'bytes': sum(row['bytes'] for row in counted) if counted else None,
+      'span': [str(min(span.start for span in spans)), str(max(span.end for span in spans))] if spans else None,
+      'stats': {}, 'probed': False, 'probed_at': str(max(refreshed)) if refreshed else None, 'is_container': True,
+      'locations': len(self.locations), 'indexed': sum(row['indexed'] for row in rows.values())}}
+
+  def _location_row(self, fs: GppuFileSystem) -> dict:
+    """A Location as the catalog knows it: the catalog's row, with the totals and last refresh its own index holds."""
+    row = self.locations[self._path_of(fs)]
+    cached = fs._stored('.')
+    known = cached[0]['gppu'] if cached is not None else {}
+    return {'name': fs.location, 'type': 'directory', 'size': 0, 'gppu': {
+      'name': PurePosixPath(fs.root).name or fs.root.rstrip('/'), 'path': fs.location, 'parent': self._parent(fs),
+      'type': 'folder', 'modified_at': known.get('modified_at'), 'handlers': known.get('handlers', []),
+      'files': known.get('files'), 'folders': known.get('folders'), 'bytes': known.get('bytes'),
+      'span': known.get('span'), 'stats': known.get('stats', {}), 'probed': known.get('probed', False),
+      'probed_at': known.get('probed_at'), 'is_container': True, 'indexed': cached is not None, 'location': row,
+      **({'source': source} if (source := self._source(fs, '.')) is not None else {})}}
+
+  def _source(self, fs: GppuFileSystem, key: str) -> dict | None:
+    """What a folder is by the catalog: the canonical location it is a replica of on this host, or None."""
+    return self._replicas.get(os.path.normcase(os.path.normpath(fs._path(key))))
+
+  def _served(self, fs: GppuFileSystem, row: dict) -> dict:
+    """A row from a Location's filesystem: its root carries the catalog's parent and Location, a replica its source."""
+    extra = {}
+    if row['name'] == fs.location:
+      extra.update(parent=self._parent(fs), location=self.locations[self._path_of(fs)])
+    if row['type'] == 'directory' and (source := self._source(fs, fs._key(row['name']))) is not None:
+      extra['source'] = source
+    return {**row, 'gppu': {**row['gppu'], **extra}} if extra else row
+
+  @sync
+  async def info(self, path: str | Path | None = None, refresh: bool = False, **kwargs) -> dict:
+    """The catalog itself, or one entry served by its Location; awaited in a loop, called plainly outside one."""
+    return await asyncio.to_thread(self.info_sync, path, refresh)
+
+  def info_sync(self, path: str | Path | None = None, refresh: bool = False) -> dict:
+    """``info`` on the calling thread."""
+    with self._lock:
+      if self._configuration:
+        if refresh:
+          raise ValueError('reload configuration explicitly; catalog lookup does not refresh storage')
+        uid = None if path is None or path == self.root or path == '' else str(path)
+        return self._configured_row(uid)
+      if path is None or path == self.root:
+        if refresh:
+          self._load()
+        return self._catalog_row()
+      fs = self._location(path)
+      return self._served(fs, fs.info_sync(path, refresh=refresh))
+
+  @sync
+  async def ls(self, path: str | Path | None = None, detail: bool = True,
+               recurse: bool = False, refresh: bool = False, **kwargs) -> list:
+    """The Locations at the catalog root, otherwise the listing the owning Location gives.
+
+    Awaited inside an event loop, called plainly outside one. ``refresh=True``
+    at the root rereads ``locations.yaml``. Recursion from the root descends
+    the Locations that have no parent Location; their subtrees hold the rest.
+    """
+    return await asyncio.to_thread(self.ls_sync, path, detail, recurse, refresh)
+
+  def ls_sync(self, path: str | Path | None = None, detail: bool = True,
+              recurse: bool = False, refresh: bool = False) -> list:
+    """``ls`` on the calling thread."""
+    with self._lock:
+      if self._configuration:
+        return self._configured_listing(path, detail, recurse, refresh)
+      if path is None or path == self.root:
+        if refresh:
+          self._load()
+        result = []
+        for location in sorted(self._filesystems, key=str.casefold):
+          fs = self._filesystems[location]
+          if recurse and self._parents[location] is not None:
+            continue
+          result.append(self._location_row(fs))
+          if recurse:
+            result.extend(fs.ls_sync(None, recurse=True))
+      else:
+        fs = self._location(path)
+        result = [self._served(fs, row) for row in fs.ls_sync(path, recurse=recurse, refresh=refresh)]
+      return result if detail else [row['name'] for row in result]
+
+class Collection:
+  """The Lake: every configured Location, and whatever they hold, addressed by uri.
+
+  Its methods take a uri where a Container takes a path. A uri resolves to the configured Location whose uri begins
+  it for longest, and the rest is the path inside that Location's Container.
+  """
+
+  def __init__(self, load: Callable[[], GppuCatalog], store: Callable[[Location | None, str, dict[str, Any]], None]) -> None:
+    """The Lake of the Locations load reads from where the configuration is kept; store writes a Location's
+    configuration row there, a new row when the Location is None, and the configuration is read again after it."""
+    self._load, self._store_row = load, store
+    self._catalog = load()
+
+  def _store(self, location: Location | None, who: str, fields: dict[str, Any]) -> None:
+    self._store_row(location, who, fields)
+    self._catalog = self._load()
+
+  def add(self, who: str, **fields: Any) -> None:
+    """Write a new Location's configuration row as who: provider, uid, name, path, service, kind, icon, tags, folders."""
+    self._store(None, who, fields)
+
+  @property
+  def locations(self) -> dict[str, Location]:
+    """Every configured Location, by uid."""
+    return {uid: self.location(uid) for uid in self._catalog.locations}
+
+  def location(self, uid: str) -> Location:
+    """The configured Location with uid."""
+    location = self._catalog.location(uid)
+    location._store = self._store
+    return location
+
+  def location_of(self, uri: y2uri | str) -> tuple[Location, y2path]:
+    """The Location a uri falls under, and the path below it."""
+    return self._catalog.location_of(uri)
+
+  def config(self, table: str | None = None) -> list[str] | dict[str, dict[str, Any]]:
+    """The configuration, before templates resolve it: the names of its tables, or one table's rows by uid.
+
+    A table is what the configuration was loaded with, never the objects built from it. Locations are listed with
+    the rest; /config/locations adds and changes them.
+    """
+    tables = {name: rows for name, rows in self._catalog._config.items() if isinstance(rows, Mapping)}
+    if table is None:
+      return sorted(tables)
+    return {uid: deepcopy(row) for uid, row in tables[table].items() if isinstance(row, Mapping) and not is_table_key(uid)}
+
+  def _at(self, uri: y2uri | str) -> tuple[Container, y2path]:
+    location, path = self.location_of(uri)
+    return location.container(), path
+
+  def ls(self, uri: y2uri | str, detail: bool = True) -> list[dict[str, Any]] | list[str]:
+    """What is directly inside uri."""
+    container, path = self._at(uri)
+    return container.ls(path, detail)
+
+  def walk(self, uri: y2uri | str, level: str = 'files', recursive: bool = False) -> list[tuple[dict, list[dict]]]:
+    """Every folder at and below uri with what it holds, read as deep as level."""
+    container, path = self._at(uri)
+    return list(container.walk(path, level=level, recursive=recursive))
+
+  def info(self, uri: y2uri | str) -> dict[str, Any]:
+    """What the handlers found at uri, without its content."""
+    container, path = self._at(uri)
+    return container.info(path)
+
+  def read(self, uri: y2uri | str) -> DataObject:
+    """The object at uri with its content."""
+    container, path = self._at(uri)
+    return container.read(path)
+
+  def open(self, uri: y2uri | str, mode: str = 'rb') -> BinaryIO:
+    """The bytes at uri."""
+    container, path = self._at(uri)
+    return container.open(path, mode)
+
+  def write(self, uri: y2uri | str, obj: DataObject) -> None:
+    """Store obj at uri."""
+    container, path = self._at(uri)
+    container.write(path, obj)
+
+  def delete(self, uri: y2uri | str) -> None:
+    """Remove the object at uri."""
+    container, path = self._at(uri)
+    container.delete(path)
+
+
+# endregion
+# region indexing
+
+LEVELS = ('refresh', 'files', 'handlers', 'archives')
+CACHE = Path('C:/.cache') if os.name == 'nt' else Path.home() / '.cache'
+FOLDER_CLASSES = {'.git': '.git', '.svn': '.git', '__pycache__': 'py_cache',
+  '.venv': 'py_cache', 'venv': 'py_cache', 'node_modules': 'npm_cache',
+  '.idea': 'ide_config', '.vscode': 'ide_config'}
+
+
+class _IndexHandlers(FileHandler, IgnoredHandler, MarkdownHandler, BrowserHandler,
+                     SessionHandler, ArchiveHandler, FolderHandler):
+  """The September indexer's parser set; no per-file Git repository scan."""
+
+
+def _selection(path, level, boundaries):
+  Location.relative(path)
+  if level not in LEVELS:
+    raise ValueError(f'unknown indexing level: {level}')
+  return {str(Location.relative(value)) for value in boundaries}
+
+
+def walk_container(container, path, level, recursive, boundaries):
+  """The same enumeration contract for non-filesystem Containers."""
+  boundaries = _selection(path, level, boundaries)
+
+  def visit(folder):
+    rows = []
+    for item in container.ls(folder):
+      row = dict(item)
+      name = str(Location.relative(row['name']))
+      if name.rpartition('/')[0] != folder or name == folder:
+        raise ValueError(f'{name}: listing must contain immediate Container children')
+      if row['type'] != 'directory' and level == 'refresh':
+        continue
+      if name in boundaries:
+        row['boundary'] = 'Location'
+      elif row['type'] != 'directory' and level in ('handlers', 'archives'):
+        obj = container.read(name)
+        try:
+          row['object'] = {'uri': str(obj.uri), 'identity': obj.identity, 'kind': obj.kind}
+        finally:
+          if hasattr(obj.content, 'close'):
+            obj.content.close()
+      rows.append(row)
+    yield {'name': folder, 'type': 'directory', 'size': 0}, rows
+    if recursive:
+      for row in rows:
+        if row['type'] == 'directory' and row['name'] not in boundaries:
+          yield from visit(row['name'])
+  yield from visit(path)
+
+
+def walk_files(root: Path, path: str, level: str, recursive: bool,
+               boundaries: Iterable[str]) -> Iterator[tuple[dict, list[dict]]]:
+  """Read through the handlers, extracting each selected archive once per walk."""
+  boundaries = _selection(path, level, boundaries)
+  handlers = _IndexHandlers()
+  archives = {}
+  scratch = None
+
+  def reading(record, name):
+    data = record.metadata
+    data.pop('path', None)
+    data.pop('location', None)
+    for probe in record.probes:
+      if probe.metadata:
+        data[probe.handler] = {key: value for key, value in probe.metadata.items()
+                               if key not in ('path', 'location')}
+      if probe.handler == 'session':
+        sessions = getattr(probe.obj, 'files', None) or [probe.obj]
+        data['fingerprints'] = [('session', f'{one.harness}/{one.uid}')
+                                for one in sessions if getattr(one, 'uid', None)]
+    data.update(name=name, type='directory' if record.is_folder else 'file')
+    if record.target is not None:
+      data['target'] = str(record.target)
+    if record.errors:
+      data['unread'] = [f'{error.handler}: {error.error_type}: {error.message}'
+                        for error in record.errors]
+    return data
+
+  def listed(record):
+    for child in handlers.children(record):
+      yield child
+      if child.is_folder:
+        yield from listed(child)
+
+  def extract(record):
+    nonlocal scratch
+    archive = Path(record.path)
+    if archive not in archives:
+      wanted = tuple({extension for handler in handlers.handler_types
+                      for extension in getattr(handler, 'extensions', ())})
+      members = [PurePosixPath(item.path) for item in listed(record)
+                 if not item.is_folder and item.name.casefold().endswith(wanted)]
+      if not members:
+        archives[archive] = {}
+      else:
+        if scratch is None:
+          CACHE.mkdir(parents=True, exist_ok=True)
+          scratch = tempfile.TemporaryDirectory(prefix='container-index-', dir=CACHE)
+        archives[archive] = handlers.extract_sync(archive,
+          Path(scratch.name) / str(len(archives)), members).files
+
+  def probe(record):
+    if level not in ('handlers', 'archives') or record.is_folder:
+      return record
+    if 'archive' in record.handlers and level != 'archives':
+      return record
+    original = record
+    if record.location is not None:
+      if level != 'archives':
+        return record
+      physical = archives[Path(record.location)].get(PurePosixPath(record.path))
+      if physical is None:
+        return record
+    else:
+      physical = Path(record.path)
+    records = handlers.probe_sync(physical, recursive=False)
+    if not records:
+      return original
+    record = records[0]
+    if original.location is not None:
+      record = replace(record, path=record.path if 'archive' in record.handlers else original.path,
+        location=None if 'archive' in record.handlers else original.location,
+        size=original.size, modified_at=original.modified_at)
+    return record
+
+  def visit(record, under, in_archive=False):
+    if not in_archive and 'archive' not in record.handlers:
+      physical = Path(record.path)
+      if physical.is_symlink() or physical.is_junction():
+        raise PermissionError(f'{under}: a link cannot be selected for traversal')
+      if 'ignored' in record.handlers:
+        raise PermissionError(f'{under}: selected directory is excluded by {IgnoredHandler.reason(physical)}')
+      if not record.is_folder:
+        raise NotADirectoryError(str(physical))
+    children = handlers.children(record)
+    if not in_archive and 'archive' not in record.handlers:
+      record = handlers.record(Path(record.path))
+      failures = [error for error in record.errors if error.operation in ('list', 'stat')]
+      if failures:
+        raise OSError(f'{under}: directory enumeration failed: ' + '; '.join(
+          f'{error.error_type}: {error.message}' for error in failures))
+    rows, descend = [], []
+    for child in children:
+      name = f'{under}/{child.name}' if under else child.name
+      if 'ignored' in child.handlers and not child.is_folder:
+        continue
+      link = child.target is not None or (child.location is None and isinstance(child.path, Path)
+        and (child.path.is_symlink() or child.path.is_junction()))
+      if level == 'refresh' and not child.is_folder:
+        continue
+      child = child if link else probe(child)
+      row = reading(child, name)
+      if link:
+        row['boundary'] = 'link'
+        row['target'] = str(child.path.resolve())
+      elif name in boundaries:
+        row['boundary'] = 'Location'
+      elif child.is_folder:
+        pattern = IgnoredHandler.match(child.name, FOLDER_CLASSES)
+        if pattern or 'ignored' in child.handlers:
+          row['boundary'] = FOLDER_CLASSES[pattern] if pattern else 'Ignored'
+          if child.location is None:
+            row['ignored_reason'] = IgnoredHandler.reason(Path(child.path))
+        elif recursive:
+          descend.append((child, name, in_archive))
+      elif level == 'archives' and 'archive' in child.handlers:
+        # An archive read failure remains file evidence and never a successful enumeration.
+        try:
+          extract(child)
+        except Exception as error:
+          row['unread'] = [*row.get('unread', []), f'archive: {type(error).__name__}: {error}']
+        else:
+          if not child.errors:
+            descend.append((child, name, True))
+      rows.append(row)
+    yield reading(record, under), rows
+    for child, name, archived in descend:
+      yield from visit(child, name, archived)
+    handlers.invalidate_sync()
+
+  try:
+    selected = handlers.record(root / path)
+    yield from visit(selected, path)
+  finally:
+    handlers.invalidate_sync()
+    if scratch is not None:
+      scratch.cleanup()
+
+# endregion
+
+
+def _json(value: Any) -> Any:
+  if isinstance(value, Location):
+    return value.uid
+  if isinstance(value, DataObject):
+    content = value.content if not hasattr(value.content, 'read') and not isinstance(value.content, bytes) else None
+    return {'uri': str(value.uri), 'identity': value.identity, 'kind': value.kind, 'name': value.name,
+            'removed': value.removed, 'content': content}
+  if isinstance(value, TimeSpan):
+    return {'start': _json(value.start), 'end': _json(value.end)}
+  if isinstance(value, datetime):
+    return (value.astimezone() if value.tzinfo is not None else value).isoformat()
+  if isinstance(value, date):
+    return value.isoformat()
+  return str(value)
+
+
+def serve(lake: Collection, host: str = '127.0.0.1', port: int = 8765) -> None:
+  """Serve lake's configuration and content as REST resources. A write to the configuration carries its author as who.
+
+  GET    /config                    the names of the configuration's tables
+  GET    /config/{table}[/{uid}]    a table's rows as configured, or one row
+  GET    /config/locations          every Location's configuration
+  GET    /config/locations/{uid}    one Location's configuration; the uid is URL-encoded, a generated one has slashes
+  POST   /config/locations          add a Location: who, provider, uid, name, path, service, kind, icon, tags, folders
+  PATCH  /config/locations/{uid}    change a Location's fields as who; a new configured uid goes in the body
+  GET    /lake/{uri}                what the handlers found at uri; ?ls what is inside it, ?walk&level=&recursive=
+                                    everything below it, ?read the object with its content, ?content its bytes
+  PUT    /lake/{uri}                store the object in the body: content, identity, kind, name
+  DELETE /lake/{uri}                remove the object at uri
+  """
+  from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+  from urllib.parse import parse_qs
+
+  class Handler(BaseHTTPRequestHandler):
+    def _route(self) -> tuple[str, str | None, dict[str, str]]:
+      url = urlsplit(self.path)
+      query = {key: values[0] for key, values in parse_qs(url.query, keep_blank_values=True).items()}
+      for collection in ('/config/locations', '/config', '/lake'):
+        if url.path == collection:
+          return collection, None, query
+        if url.path.startswith(collection + '/'):
+          return collection, unquote(url.path[len(collection) + 1:]), query
+      raise LookupError(f'no resource at {url.path}')
+
+    def _body(self) -> dict[str, Any]:
+      return json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+
+    def _reply(self, status: int, payload: Any, content_type: str = 'application/json; charset=utf-8') -> None:
+      data = payload if isinstance(payload, bytes) else json.dumps(payload, default=_json, ensure_ascii=False).encode('utf-8')
+      self.send_response(status)
+      self.send_header('Content-Type', content_type)
+      self.send_header('Content-Length', str(len(data)))
+      self.end_headers()
+      self.wfile.write(data)
+
+    def _answer(self, method: Callable[[], tuple[int, Any] | tuple[int, Any, str]]) -> None:
+      try:
+        self._reply(*method())
+      except LookupError as error:
+        self._reply(404, {'error': str(error)})
+      except (ValueError, TypeError) as error:
+        self._reply(400, {'error': str(error)})
+
+    def do_GET(self) -> None:
+      def get():
+        collection, name, query = self._route()
+        if collection == '/config/locations':
+          if name is None:
+            return 200, [location.data for location in lake.locations.values()]
+          return 200, lake.location(name).data
+        if collection == '/config':
+          if name is None:
+            return 200, lake.config()
+          table, _, uid = name.partition('/')
+          rows = lake.config(table)
+          return 200, rows[uid] if uid else rows
+        if 'ls' in query:
+          return 200, lake.ls(name)
+        if 'walk' in query:
+          return 200, lake.walk(name, query.get('level', 'files'), query.get('recursive') == '1')
+        if 'read' in query:
+          return 200, lake.read(name)
+        if 'content' in query:
+          with lake.open(name) as stream:
+            return 200, stream.read(), 'application/octet-stream'
+        return 200, lake.info(name)
+      self._answer(get)
+
+    def do_POST(self) -> None:
+      def post():
+        collection, name, _ = self._route()
+        if collection != '/config/locations' or name is not None:
+          raise LookupError('Locations are added at /config/locations')
+        body = self._body()
+        lake.add(**body)
+        return 201, lake.location(body.get('uid') or body['provider'] + ('/' + body['path'] if body.get('path') else '')).data
+      self._answer(post)
+
+    def do_PATCH(self) -> None:
+      def patch():
+        collection, name, _ = self._route()
+        if collection != '/config/locations' or name is None:
+          raise LookupError('a Location is changed at /config/locations/{uid}')
+        body = self._body()
+        id = lake.location(name).data['id']
+        lake.location(name).save(**body)
+        return 200, next(location.data for location in lake.locations.values() if location.data['id'] == id)
+      self._answer(patch)
+
+    def do_PUT(self) -> None:
+      def put():
+        collection, name, _ = self._route()
+        if collection != '/lake' or name is None:
+          raise LookupError('objects are stored at /lake/{uri}')
+        body = self._body()
+        lake.write(name, DataObject(name, body['content'], body.get('identity'), body.get('kind', 'object'), body.get('name', '')))
+        return 204, b''
+      self._answer(put)
+
+    def do_DELETE(self) -> None:
+      def delete():
+        collection, name, _ = self._route()
+        if collection != '/lake' or name is None:
+          raise LookupError('objects are removed at /lake/{uri}')
+        lake.delete(name)
+        return 204, b''
+      self._answer(delete)
+
+  ThreadingHTTPServer((host, port), Handler).serve_forever()

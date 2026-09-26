@@ -87,7 +87,7 @@ gppu (branch next)/
   examples/  tests/  run_example.sh
 ```
 
-Core keeps the import paths that consumers use today: `from gppu.tui import TUIApp` and `from gppu.fs import Location` still work, because `gppu.__path__` is extended by each installed provider. In `core/gppu/gppu.py`, every region above `# region Environment` is copied unchanged from `gppu/gppu.py`. `tui`, `postgres`, `azure` and `mqtt` are implemented, and `fs`, `iot`, `rest`, `data`, `chrome` and `y2` are docstrings naming what moves there unchanged.
+Core keeps the import paths that consumers use today: `from gppu.tui import TUIApp` and `from gppu.fs import Location` still work, because `gppu.__path__` is extended by each installed provider. In `core/gppu/gppu.py`, every region above `# region Environment` is copied unchanged from `gppu/gppu.py`. `tui`, `postgres`, `azure`, `mqtt` and `fs` are implemented, and, `iot`, `rest`, `data`, `chrome` and `y2` are docstrings naming what moves there unchanged.
 
 ## Every current class
 
@@ -129,6 +129,7 @@ Core keeps the import paths that consumers use today: `from gppu.tui import TUIA
 
 - `glob(key, default)` and `my(key, default)` are gone, because lookups are strict. A few consumers still pass defaults.
 - TUIs that call `_config_from_env()` drop the call.
+- The gppufs classes are imported from `gppu.fs`, no longer from `gppu`.
 - `_PGBase` subclasses take `db: Postgres` in `main`, and the `db` connection string becomes a `connections` row.
 - `MqttApp` subclasses become `AsyncApp` with `mqtt: Mqtt`.
 - Hand-rolled `argparse` in CLI scripts is replaced by `main`'s signature.
