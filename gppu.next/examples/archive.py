@@ -1,6 +1,6 @@
 """A CLI app: parameters from main's signature, a database by type, the result printed as JSON.
 
-  archive                      since and db from the signature, dry_run from archive.yaml
+  archive                      since and db from the signature, dry_run from config.yaml
   archive --since 3d --db pg-trix
   archive --schema             the parameters as JSON Schema
 """
