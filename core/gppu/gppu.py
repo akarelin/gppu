@@ -18,7 +18,7 @@ import builtins
 import json
 import getpass
 import socket
-from jinja2 import DictLoader, FileSystemLoader, StrictUndefined
+from jinja2 import DictLoader, StrictUndefined
 from jinja2.nativetypes import NativeEnvironment
 from jinja2.sandbox import SandboxedEnvironment
 
@@ -608,7 +608,7 @@ YML_BARE_INCLUDE = re.compile(r"^!include\s+\S.*$", re.MULTILINE)
 YML_BARE_KEY = '__include_'
 
 
-def dict_from_yml(filename: str | Path, /, **context) -> dict:
+def dict_from_yml(filename: str | Path, /) -> dict:
   filename = full_path(filename)
   dir_stack: list[Path] = [filename.parent]
   bare_seq = iter(range(1 << 30))
@@ -632,9 +632,8 @@ def dict_from_yml(filename: str | Path, /, **context) -> dict:
 
   def yml_load(text: str) -> Any: return yml_merged(yaml.load(yml_keyed(text), Loader=YmlLoader))
 
-  def yml_text(fn: Path) -> str:                                                           # a `.j2` document is rendered
-    if fn.suffix.lower() == '.j2': return jinja_document(fn, **context)                    # before YAML reads it, so its
-    with open(fn, encoding='utf-8') as f: return f.read()                                  # macros write the document
+  def yml_text(fn: Path) -> str:
+    with open(fn, encoding='utf-8') as f: return f.read()
 
   def yml_include(loader: FullLoader, node: Node) -> Any:
     fn = full_path(loader.construct_scalar(node), dir_stack[-1])
@@ -739,29 +738,6 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
     self.globals.update(jinja_helpers())
 
 
-class JinjaDocument(SandboxedEnvironment):
-  """Jinja templates that write a document rather than a value.
-
-  A value is rendered natively, so `{{ 1 }}` is the number. A document must not be:
-  a macro that writes `"seven"` would have its quotes evaluated away and the YAML it
-  was building would stop being YAML. This renders text, and reaches the files beside
-  the template so a document can import macros and read the facts it applies them to.
-  """
-
-  def __init__(self, search_path: Path, **options):
-    super().__init__(loader=FileSystemLoader(str(search_path)), undefined=StrictUndefined, autoescape=False,
-                     trim_blocks=True, lstrip_blocks=True, keep_trailing_newline=True, **options)
-    self.filters.update(jinja_helpers())
-    self.globals.update(jinja_helpers())
-    self.filters['from_yaml'] = lambda name: dict_from_yml(full_path(name, search_path))
-    self.filters['to_yaml'] = lambda value: yaml.safe_dump(value, default_flow_style=True).strip()
-    self.globals['hostname'] = lambda: socket.gethostname().split('.')[0].casefold()
-    # The builtins a document needs to merge a row onto its template and count what
-    # it loops over; the same set Y2 gives its own templates.
-    self.globals.update({name: getattr(builtins, name) for name in
-                         ('dict', 'list', 'int', 'float', 'str', 'len', 'sorted', 'min', 'max', 'range')})
-
-
 @cache
 def _jinja_compile(template: str):
   return JinjaEnvironment().from_string(template)
@@ -772,12 +748,6 @@ def jinja_template(template: str, /, **data) -> Any:
   value = _jinja_compile(template).render(**data)
   if isinstance(value, StrictUndefined): str(value)
   return value
-
-
-def jinja_document(filename: str | Path, /, **data) -> str:
-  """Render a template file to text, with its own directory as the search path."""
-  filename = full_path(filename)
-  return JinjaDocument(filename.parent).get_template(filename.name).render(**data)
 
 
 class TemplateSet:
@@ -1451,11 +1421,11 @@ class _Env:
 
   # -- loading -----------------------------------------------------------------------------
   def from_env(self, name: str, app_path: Path) -> None:
-    """``<name>.yaml`` then ``config.yaml``, each also as ``.j2``, searched from app_path upward."""
+    """``<name>.yaml`` then ``config.yaml``, searched from app_path upward. Jinja lives in the YAML's values."""
     self.name, self.app_path = name, app_path
     self._bind_logger(_logger.getChild(name))
     stem = Path(name).with_suffix('.yaml').name
-    names = (stem, f'{stem}.j2', 'config.yaml', 'config.yaml.j2')
+    names = (stem, 'config.yaml')
     self.config_file = next((parent / n for parent in (app_path, *app_path.parents) for n in names if (parent / n).exists()), None)
     if self.config_file is None: raise FileNotFoundError(f"Config ({' or '.join(names)}) not found walking up from '{app_path}'")
     self.from_dict(dict_from_yml(self.config_file))
