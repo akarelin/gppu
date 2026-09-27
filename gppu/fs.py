@@ -806,6 +806,7 @@ Harness = Literal[
     "claude",
     "cc",
     "gemini",
+    "copilot",
     "agy",
     "hermes",
     "openclaw",
@@ -4774,6 +4775,8 @@ class SessionHandler(Handler):
     * Agy: ``USER_INPUT`` from ``USER_EXPLICIT`` or ``PLANNER_RESPONSE`` from
       ``MODEL``, with string ``created_at``.
     * Hermes: ``role`` equal to ``session_meta`` and string ``session_id``.
+    * Copilot: a VS Code append-log initial object with ``sessionId``,
+      ``requests`` and ``responderUsername`` equal to ``GitHub Copilot``.
 
     A directory is recognized from the Hermes marker ``state.db``, either Agy
     marker ``antigravity_state.pbtxt`` or ``jetski_state.pbtxt``, or an Agy UUID
@@ -4799,6 +4802,7 @@ class SessionHandler(Handler):
         self._session_cache_limit = SESSION_CACHE
         self._recognizers = (
             ("cx", self._is_codex),
+            ("copilot", self._is_copilot),
             ("gemini", self._is_gemini),
             ("cc", self._is_claude_code),
             ("openclaw", self._is_openclaw),
@@ -4807,6 +4811,7 @@ class SessionHandler(Handler):
         )
         self._uid_readers = {
             "cx": self._codex_uid,
+            "copilot": self._copilot_uid,
             "gemini": self._gemini_uid,
             "cc": self._claude_code_uid,
             "openclaw": self._openclaw_uid,
@@ -4821,6 +4826,7 @@ class SessionHandler(Handler):
         }
         self._native_turn_readers = {
             "cx": self._codex_turns,
+            "copilot": self._copilot_turns,
             "gemini": self._gemini_turns,
             "cc": self._claude_code_turns,
             "openclaw": self._openclaw_turns,
@@ -4924,6 +4930,9 @@ class SessionHandler(Handler):
             raise ValueError(f"{path}: session format is not identifiable")
         turns = self._native_turn_readers[harness](records)
         timestamps = tuple(self._timestamps(records))
+        if harness == "copilot":
+            created = valid_time(self._stamp(records[0]["v"].get("creationDate")))
+            timestamps = tuple(stamp for stamp in (created, *(turn.timestamp for turn in turns)) if stamp is not None)
         uid = self._uid_readers[harness](records, path)
         reader = self._parent_readers.get(harness)
         parent_uid, subagent = reader(records) if reader else (None, False)
@@ -4991,6 +5000,98 @@ class SessionHandler(Handler):
             and isinstance(record.get("payload"), Mapping)
             for record in records
         )
+
+    @staticmethod
+    def _is_copilot(records: Sequence[Mapping[str, Any]]) -> bool:
+        """Recognize the native VS Code Copilot append-log header."""
+        if not records or records[0].get("kind") != 0:
+            return False
+        body = records[0].get("v")
+        return (isinstance(body, Mapping) and isinstance(body.get("sessionId"), str)
+                and isinstance(body.get("requests"), list)
+                and body.get("responderUsername") == "GitHub Copilot")
+
+    @staticmethod
+    def _copilot_state(records: Sequence[Mapping[str, Any]]) -> dict:
+        """Replay VS Code objectMutationLog entries without changing raw records.
+
+        Kind 2 replaces the array tail at ``i`` and then appends ``v``. Request
+        and response patches belong to the same conversation; they are not turns.
+        """
+        if not SessionHandler._is_copilot(records):
+            raise ValueError("Copilot append log has no initial session object")
+        body = deepcopy(records[0]["v"])
+        uid = body["sessionId"]
+        for record in records[1:]:
+            kind, path = record.get("kind"), record.get("k")
+            if type(kind) is not int or kind not in (1, 2, 3) or not isinstance(path, list) or not path:
+                raise ValueError("Copilot append log has an invalid mutation")
+            target = body
+            for key in path[:-1]:
+                if (isinstance(target, dict) and key in target
+                    or isinstance(target, list) and type(key) is int and 0 <= key < len(target)):
+                    target = target[key]
+                else:
+                    raise ValueError("Copilot append log mutation has no parent")
+            key = path[-1]
+            if not (isinstance(target, dict) and isinstance(key, str)
+                    or isinstance(target, list) and type(key) is int and 0 <= key < len(target)):
+                raise ValueError("Copilot append log mutation has an invalid target")
+            if kind == 1:
+                target[key] = deepcopy(record["v"])
+            elif kind == 3:
+                if not isinstance(target, dict):
+                    raise ValueError("Copilot deletion requires an object property")
+                target.pop(key, None)
+            else:
+                if isinstance(target, dict) and key not in target:
+                    target[key] = []  # Native Push initializes an absent array.
+                values = target[key]
+                if not isinstance(values, list):
+                    raise ValueError("Copilot Push target is not an array")
+                if "i" in record:
+                    index = record["i"]
+                    if type(index) is not int or not 0 <= index <= len(values):
+                        raise ValueError("Copilot Push index is outside its array")
+                    del values[index:]
+                if "v" in record:
+                    if not isinstance(record["v"], list):
+                        raise ValueError("Copilot Push values are not an array")
+                    values.extend(deepcopy(record["v"]))
+        if body["sessionId"] != uid or not isinstance(body["requests"], list):
+            raise ValueError("Copilot append log changed its session identity or requests type")
+        return body
+
+    @classmethod
+    def _copilot_uid(cls, records: Sequence[Mapping[str, Any]], path: Path) -> str:
+        """Return the sessionId recorded in the native initial object."""
+        return records[0]["v"]["sessionId"]
+
+    @classmethod
+    def _copilot_turns(cls, records: Sequence[Mapping[str, Any]]) -> tuple[SessionTurn, ...]:
+        """Read each final request and response; response completion times are absent."""
+        turns = []
+        for request in cls._copilot_state(records)["requests"]:
+            if (not isinstance(request, Mapping) or not isinstance(request.get("message"), Mapping)
+                or not isinstance(request["message"].get("text"), str) or "timestamp" not in request):
+                raise ValueError("Copilot request requires its original message and timestamp")
+            if turn := cls._turn("user", request["message"]["text"], request["timestamp"]):
+                turns.append(turn)
+            response = request.get("response", [])
+            if not isinstance(response, list):
+                raise ValueError("Copilot response must be an array")
+            parts = []
+            for part in response:
+                if not isinstance(part, Mapping):
+                    continue
+                if isinstance(part.get("value"), str):
+                    parts.append(part["value"])
+                elif part.get("kind") == "inlineReference" and isinstance(part.get("name"), str):
+                    parts.append(part["name"])
+            text = "".join(parts)
+            if turn := cls._turn("assistant", text, None):
+                turns.append(turn)
+        return tuple(turns)
 
     @staticmethod
     def _is_claude_code(records: Sequence[Mapping[str, Any]]) -> bool:
