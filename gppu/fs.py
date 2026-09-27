@@ -100,6 +100,10 @@ from .environment import is_table_key
 
 # region providers
 
+# The file in a folder that says what a write may do to the files it holds: a list of update, upsert, delete.
+MERGE_RULES = '.merge.yaml'
+OPERATIONS = ('update', 'upsert', 'delete')
+
 @dataclass(frozen=True)
 class DataObject:
   """Content and the uri it was read from or is written to.
@@ -172,8 +176,9 @@ class Provider:
     """The object at uri with its content."""
     raise NotImplementedError(f'{self.scheme}: read is not implemented')
 
-  def write(self, uri: y2uri, obj: DataObject) -> None:
-    """Store obj's content at uri."""
+  def write(self, uri: y2uri, obj: DataObject, *, replace: bool | Callable[[], bool] = False) -> None:
+    """Store obj's content at uri. A held object that differs is replaced only when replace is true or, called
+    once the conflict is known, returns true."""
     raise PermissionError(f'{self.scheme}: objects are read-only')
 
   def delete(self, uri: y2uri) -> None:
@@ -224,6 +229,7 @@ class Container:
     self.templates = None if templates is None else TemplateSet(named={'objects': deepcopy(dict(templates))})
     self._paths: dict[str, str] | None = None
     self._identities: dict[str, str] = {}
+    self._rules: dict[str, frozenset[str] | None] = {}
 
   def _uri(self, path: y2path | str) -> y2uri:
     return self.provider.join(self.uri, Location.relative(path))
@@ -308,9 +314,14 @@ class Container:
     return obj if obj.identity is not None else replace(obj, identity=str(path))
 
   def write(self, path: y2path | str, obj: DataObject) -> None:
-    """Store obj at path. The object's uri is unchanged.
+    """Store obj at path by the rules of its folder. The object's uri is unchanged.
 
-    With an identity template, a path already holding another object's identity is refused. Caller: Dagster jobs.
+    A new object is written and a held one that matches, or that the new bytes strictly extend, is left to the
+    Provider. Any other change to a held file, and a removed object, is what the nearest .merge.yaml at or above
+    the object's folder in this Container permits: update or upsert replaces the held file, delete removes the file
+    of a removed object. Without a permitting rule a changed file raises FileExistsError and a removed object's
+    file is kept. With an identity template, a path already holding another object's identity is
+    refused. Callers: Dagster jobs, Cruft pipelines.
 
     Args:
       path (y2path | str): Nonempty relative destination path.
@@ -327,6 +338,13 @@ class Container:
     if not path:
       raise ValueError('Container write path must name an object')
     uri = self._uri(path)
+    if obj.removed:
+      if 'delete' in self.rules(path):
+        try:
+          self.delete(path)
+        except FileNotFoundError:
+          pass  # the source removed an object this folder never held
+      return
     binary = isinstance(obj.content, bytes) or hasattr(obj.content, 'read')
     if not binary and self.templates is not None and 'identity' in self.templates.named:
       identity = self.templates.render_template('identity', uri=str(obj.uri), it=obj.content, path=path)
@@ -337,7 +355,33 @@ class Container:
           held = None
         if held is not None and identity != self.templates.render_template('identity', uri=str(obj.uri), it=held, path=path):
           raise ValueError(f'{uri}: refusing to replace a different object identity')
-    self.provider.write(uri, obj)
+    self.provider.write(uri, obj, replace=lambda: bool(self.rules(path) & {'update', 'upsert'}))
+
+  def rules(self, path: y2path | str) -> frozenset[str]:
+    """What a write may do at path: the operations the nearest .merge.yaml at or above its folder lists, read once
+    per folder. Empty when no folder up to this Container's root has one.
+
+    Args:
+      path (y2path | str): Relative object path.
+
+    Returns:
+      frozenset[str]: update, upsert and delete as listed; a rule naming anything else raises ValueError.
+    """
+    folder = PurePosixPath(str(Location.relative(path))).parent
+    for at in (str(folder) for folder in (folder, *folder.parents)):
+      if at not in self._rules:
+        uri = self._uri(MERGE_RULES if at == '.' else f'{at}/{MERGE_RULES}')
+        try:
+          with self.provider.open(uri) as stream:
+            listed = yaml.safe_load(stream) or []
+        except FileNotFoundError:
+          listed = None
+        if listed is not None and (not isinstance(listed, list) or any(operation not in OPERATIONS for operation in listed)):
+          raise ValueError(f'{uri}: a merge rule lists operations from {", ".join(OPERATIONS)}; others are not specified')
+        self._rules[at] = None if listed is None else frozenset(listed)
+      if self._rules[at] is not None:
+        return self._rules[at]
+    return frozenset()
 
   def delete(self, path: y2path | str) -> None:
     """Remove the object at path. Caller: Dagster jobs, before rewriting an object.
@@ -638,11 +682,13 @@ class FileSystem(Provider):
     content = json.loads(target.read_bytes()) if target.suffix.casefold() == '.json' else target.open('rb')
     return DataObject(uri, content, None, name=target.name)
 
-  def write(self, uri: y2uri, obj: DataObject) -> None:
+  def write(self, uri: y2uri, obj: DataObject, *, replace: bool | Callable[[], bool] = False) -> None:
     """Store obj.content at uri: JSON values as UTF-8 JSON, bytes and streams unchanged.
 
-    The file is staged beside its destination and moved into place. Identical content is left alone. Different
-    binary content at an existing file is refused until the file is deleted.
+    The file is staged beside its destination and moved into place. A held file that matches is left alone: JSON
+    by its value, anything else by its bytes. A held file the new bytes strictly extend is replaced, as an
+    append-only file grows. Any other held file is replaced only by replace, true or returning true when called,
+    and raises FileExistsError otherwise.
     """
     target = self.local(uri)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -668,16 +714,18 @@ class FileSystem(Provider):
         pending.unlink()
         raise
     try:
-      if not binary:
-        if target.exists() and filecmp.cmp(pending, target, shallow=False):
-          return
-        os.replace(pending, target)
-      else:
-        try:
-          os.link(pending, target)
-        except FileExistsError:
-          if not filecmp.cmp(pending, target, shallow=False):
-            raise FileExistsError(f'{target}: different content requires delete then write') from None
+      try:
+        os.link(pending, target)
+        return
+      except FileExistsError:
+        pass
+      if filecmp.cmp(pending, target, shallow=False):
+        return
+      if not binary and json.loads(target.read_bytes()) == incoming:
+        return
+      if not _extends(pending, target) and not (replace() if callable(replace) else replace):
+        raise FileExistsError(f'{target}: holds different content; a rule in its folder decides whether it is replaced')
+      os.replace(pending, target)
     finally:
       pending.unlink(missing_ok=True)
 
@@ -723,6 +771,18 @@ class FileSystem(Provider):
       state[scope] = pending
 
     yield objects(), commit
+
+
+def _extends(new: Path, held: Path) -> bool:
+  """Whether new is strictly larger than held and begins with every byte of it."""
+  size = held.stat().st_size
+  if new.stat().st_size <= size:
+    return False
+  with new.open('rb') as longer, held.open('rb') as shorter:
+    while chunk := shorter.read(1 << 20):
+      if longer.read(len(chunk)) != chunk:
+        return False
+  return True
 
 
 def _updated(previous: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
