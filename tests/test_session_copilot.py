@@ -44,7 +44,25 @@ def test_final_request_response_replays_tail_replacement_without_duplicate_turns
     ('user', 'Document'), ('assistant', 'Documented detect_os(). Complete.')]
   assert session.span_start == datetime.fromtimestamp((STAMP - 1000) / 1000, timezone.utc)
   assert session.span_end == datetime.fromtimestamp(STAMP / 1000, timezone.utc)
-  assert session.turns[1].timestamp is None, 'no completion timestamp is stored in this format'
+  assert session.turns[1].timestamp is None, 'no explicit completion timestamp in this request'
+
+
+@pytest.mark.parametrize('state', [1, 2, 3])
+def test_native_terminal_completion_is_response_and_session_end(tmp_path, state):
+  completed = 1790390964532
+  rows = [initial(), {'kind': 1, 'k': ['requests', 0, 'modelState'],
+    'v': {'value': state, 'completedAt': completed}}]
+  session = read(tmp_path, rows)
+  assert session.turns[0].timestamp == datetime.fromtimestamp(STAMP / 1000, timezone.utc)
+  assert session.turns[1].timestamp == datetime.fromtimestamp(completed / 1000, timezone.utc)
+  assert session.span_end == session.turns[1].timestamp
+
+
+@pytest.mark.parametrize('state,completed', [(0, STAMP+1000), (1, STAMP-1), (1, 'unknown'), (1, True)])
+def test_invalid_completion_is_not_an_invented_end(tmp_path, state, completed):
+  with pytest.raises(ValueError, match='Copilot completion'):
+    read(tmp_path, [initial(), {'kind': 1, 'k': ['requests', 0, 'modelState'],
+      'v': {'value': state, 'completedAt': completed}}])
 
 
 def test_running_request_without_response_and_later_append(tmp_path):

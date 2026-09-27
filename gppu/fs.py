@@ -5069,7 +5069,7 @@ class SessionHandler(Handler):
 
     @classmethod
     def _copilot_turns(cls, records: Sequence[Mapping[str, Any]]) -> tuple[SessionTurn, ...]:
-        """Read each final request and response; response completion times are absent."""
+        """Read final messages and their explicitly recorded response completion times."""
         turns = []
         for request in cls._copilot_state(records)["requests"]:
             if (not isinstance(request, Mapping) or not isinstance(request.get("message"), Mapping)
@@ -5089,7 +5089,13 @@ class SessionHandler(Handler):
                 elif part.get("kind") == "inlineReference" and isinstance(part.get("name"), str):
                     parts.append(part["name"])
             text = "".join(parts)
-            if turn := cls._turn("assistant", text, None):
+            state = request.get("modelState")
+            completed = state.get("completedAt") if isinstance(state, Mapping) else None
+            if completed is not None and (state.get("value") not in (1, 2, 3)
+                or type(completed) not in (int, float) or valid_time(cls._stamp(completed)) is None
+                or completed < request["timestamp"]):
+                raise ValueError("Copilot completion requires a terminal state and a valid recorded time")
+            if turn := cls._turn("assistant", text, completed):
                 turns.append(turn)
         return tuple(turns)
 
