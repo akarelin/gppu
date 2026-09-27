@@ -151,6 +151,8 @@ def test_file_write_uses_explicit_path_and_checks_source_identity(tmp_path):
     'identity': "{{ it.id if uri.startswith('plaud://') else none }}",
   }).container()
   obj = DataObject(y2uri('plaud://recording'), {'id': 'recording', 'name': 'Before'}, 'recording')
+  (tmp_path / 'chosen').mkdir()
+  (tmp_path / 'chosen/.merge.yaml').write_text('[upsert]')
   container.write('chosen/recording.json', obj)
   container.write('chosen/recording.json', DataObject(obj.uri, {'id': 'recording', 'name': 'After'}, 'recording'))
   assert container.read('chosen/recording.json').content['name'] == 'After'
@@ -174,7 +176,7 @@ def test_file_write_without_templates_round_trips_json_and_binary(tmp_path):
     container.write('nested/value.bin', DataObject(obj.uri, content, obj.identity))
   with container.read('nested/value.bin').content as stream:
     assert stream.read() == b'\x00\xff'
-  with pytest.raises(FileExistsError):
+  with pytest.raises(FileExistsError, match='rule in its folder'):
     container.write('nested/value.bin', DataObject(obj.uri, b'changed', obj.identity))
   container.delete('nested/value.bin')
   container.write('nested/value.bin', DataObject(obj.uri, b'changed', obj.identity))
@@ -251,3 +253,61 @@ def test_container_rejects_nonlocal_object_paths(tmp_path, path):
   container = Location({'uid': 'local', 'canonical': tmp_path.as_uri()}, provider=FileSystem()).container()
   with pytest.raises(ValueError):
     container.read(path)
+
+
+
+def test_lake_write_leaves_matching_files_and_grows_append_only_ones(tmp_path):
+  container = Container(FileSystem(), tmp_path.as_uri())
+  held = tmp_path / 'omi/detail.json'
+  held.parent.mkdir()
+  held.write_text('{\n  "id": "c1",\n  "title": "Walk"\n}\n', encoding='utf-8')
+  before = held.stat().st_mtime_ns
+  container.write('omi/detail.json', DataObject('omi://c1', {'title': 'Walk', 'id': 'c1'}, 'c1'))
+  assert held.stat().st_mtime_ns == before
+  with pytest.raises(FileExistsError):
+    container.write('omi/detail.json', DataObject('omi://c1', {'id': 'c1', 'title': 'Edited'}, 'c1'))
+  assert '"Walk"' in held.read_text(encoding='utf-8')
+  container.write('log.jsonl', DataObject('file:///log', b'one\n', 'log'))
+  container.write('log.jsonl', DataObject('file:///log', b'one\ntwo\n', 'log'))
+  assert (tmp_path / 'log.jsonl').read_bytes() == b'one\ntwo\n'
+  for shorter_or_other in (b'one\n', b'two\none\n'):
+    with pytest.raises(FileExistsError):
+      container.write('log.jsonl', DataObject('file:///log', shorter_or_other, 'log'))
+  assert (tmp_path / 'log.jsonl').read_bytes() == b'one\ntwo\n'
+  assert sorted(path.name for path in tmp_path.rglob('*')) == ['detail.json', 'log.jsonl', 'omi']
+
+
+def test_lake_write_follows_the_nearest_merge_rule_of_its_folder(tmp_path):
+  container = Container(FileSystem(), tmp_path.as_uri())
+  (tmp_path / 'contacts/people').mkdir(parents=True)
+  (tmp_path / 'contacts/.merge.yaml').write_text('- upsert\n- delete\n')
+  (tmp_path / 'contacts/people/ann.json').write_text('{"name": "Ann"}')
+  container.write('contacts/people/ann.json', DataObject('m365://ann', {'name': 'Ann B'}, 'ann'))
+  assert container.read('contacts/people/ann.json').content == {'name': 'Ann B'}
+  container.write('contacts/people/bob.json', DataObject('m365://bob', {'name': 'Bob'}, 'bob'))
+  container.write('contacts/people/ann.json', DataObject('m365://ann', b'', 'ann', removed=True))
+  container.write('contacts/people/gone.json', DataObject('m365://gone', b'', 'gone', removed=True))
+  assert sorted(path.name for path in (tmp_path / 'contacts/people').iterdir()) == ['bob.json']
+  assert container.rules('contacts/people/bob.json') == {'upsert', 'delete'}
+  assert container.rules('elsewhere/x.json') == frozenset()
+
+
+def test_lake_write_update_replaces_held_files_and_keeps_removed_ones(tmp_path):
+  container = Container(FileSystem(), tmp_path.as_uri())
+  (tmp_path / 'contacts').mkdir()
+  (tmp_path / 'contacts/.merge.yaml').write_text('[update]')
+  (tmp_path / 'contacts/ann.json').write_text('{"name": "Ann"}')
+  container.write('contacts/ann.json', DataObject('m365://ann', {'name': 'Ann B'}, 'ann'))
+  container.write('contacts/bob.json', DataObject('m365://bob', {'name': 'Bob'}, 'bob'))
+  container.write('contacts/ann.json', DataObject('m365://ann', b'', 'ann', removed=True))
+  assert sorted(path.name for path in (tmp_path / 'contacts').glob('*.json')) == ['ann.json', 'bob.json']
+  assert container.read('contacts/ann.json').content == {'name': 'Ann B'}
+
+
+def test_lake_write_refuses_an_unspecified_merge_rule(tmp_path):
+  container = Container(FileSystem(), tmp_path.as_uri())
+  (tmp_path / '.merge.yaml').write_text('[deep merge]')
+  (tmp_path / 'ann.json').write_text('{"name": "Ann"}')
+  with pytest.raises(ValueError, match='not specified'):
+    container.write('ann.json', DataObject('m365://ann', {'name': 'Ann B'}, 'ann'))
+  assert (tmp_path / 'ann.json').read_text() == '{"name": "Ann"}'

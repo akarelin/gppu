@@ -103,9 +103,10 @@ The bytes of the object at uri.
 
 The object at uri with its content.
 
-### `Provider.write(self, uri: 'y2uri', obj: 'DataObject') -> 'None'`
+### `Provider.write(self, uri: 'y2uri', obj: 'DataObject', *, replace: 'bool | Callable[[], bool]' = False) -> 'None'`
 
-Store obj's content at uri.
+Store obj's content at uri. A held object that differs is replaced only when replace is true or, called
+once the conflict is known, returns true.
 
 ### `Provider.delete(self, uri: 'y2uri') -> 'None'`
 
@@ -147,6 +148,13 @@ What is directly inside path, each entry named by its path in this Container, wi
 
 Callers: FileIndexer, the Plaud Dagster job, admin_ui.
 
+Args:
+  path (y2path | str): Relative directory path; empty selects the Container root.
+  detail (bool): True returns metadata objects; false returns only paths.
+
+Returns:
+  list[dict] | list[str]: Immediate children. Detailed entries contain name relative to the Container, type and size, plus Provider metadata; otherwise entries are relative path strings.
+
 ### `Container.walk(self, path: 'y2path | str' = '', *, level: 'str' = 'files', recursive: 'bool' = False, boundaries: 'Iterable[y2path | str]' = ()) -> 'Iterator[tuple[dict, list[dict]]]'`
 
 Each folder at and below path with what it holds, read as deep as level: refresh, files, handlers or archives.
@@ -154,13 +162,35 @@ Each folder at and below path with what it holds, read as deep as level: refresh
 A boundary path is reported and not entered. A listing error is raised, never read as an empty folder.
 Caller: FileIndexer.
 
+Args:
+  path (y2path | str): Relative starting path; empty selects the Container root.
+  level (str): Reading depth: refresh, files, handlers or archives.
+  recursive (bool): Whether to descend into child directories.
+  boundaries (Iterable[y2path | str]): Relative paths to report without entering.
+
+Returns:
+  Iterator[tuple[dict, list[dict]]]: Pairs of folder metadata and immediate child metadata. Entries contain name, type and Provider/handler fields; boundary marks a reported traversal boundary.
+
 ### `Container.info(self, path: 'y2path | str' = '') -> 'dict[str, Any]'`
 
 What is known about path without reading its content: type, size, times, span and what the handlers found.
 
+Args:
+  path (y2path | str): Relative object path; empty selects the Container root.
+
+Returns:
+  dict: Provider and handler metadata for the object, with name set to the supplied relative path. Content is not included; available metadata depends on the Provider.
+
 ### `Container.open(self, path: 'y2path | str', mode: 'str' = 'rb') -> 'BinaryIO'`
 
 The bytes at path. Caller: admin_ui.
+
+Args:
+  path (y2path | str): Relative object path.
+  mode (str): Stream mode passed to the Provider; rb reads bytes.
+
+Returns:
+  BinaryIO: Open stream owned and closed by the caller.
 
 ### `Container.read(self, path: 'y2path | str | DataObject') -> 'DataObject'`
 
@@ -169,19 +199,60 @@ The object at path with its content.
 Given a DataObject, the path is where the naming templates put it, and the result keeps its uri and identity.
 An object whose source gives no identity is identified by its path. Callers: Dagster jobs, admin_ui.
 
+Args:
+  path (y2path | str | DataObject): Relative object path, or a DataObject whose stored path is resolved from naming templates.
+
+Returns:
+  DataObject: Object with uri, identity, kind, name and content. A supplied DataObject retains its identity and URI; a path read uses its relative path when the Provider supplies no identity.
+
 ### `Container.write(self, path: 'y2path | str', obj: 'DataObject') -> 'None'`
 
-Store obj at path. The object's uri is unchanged.
+Store obj at path by the rules of its folder. The object's uri is unchanged.
 
-With an identity template, a path already holding another object's identity is refused. Caller: Dagster jobs.
+A new object is written and a held one that matches, or that the new bytes strictly extend, is left to the
+Provider. Any other change to a held file, and a removed object, is what the nearest .merge.yaml at or above
+the object's folder in this Container permits: update or upsert replaces the held file, delete removes the file
+of a removed object. Without a permitting rule a changed file raises FileExistsError and a removed object's
+file is kept. With an identity template, a path already holding another object's identity is
+refused. Callers: Dagster jobs, Cruft pipelines.
+
+Args:
+  path (y2path | str): Nonempty relative destination path.
+  obj (DataObject): Object supplying content and identity for the Provider write.
+
+Returns:
+  None: The Provider stores the object; conflicting stored identity raises ValueError.
+
+### `Container.rules(self, path: 'y2path | str') -> 'frozenset[str]'`
+
+What a write may do at path: the operations the nearest .merge.yaml at or above its folder lists, read once
+per folder. Empty when no folder up to this Container's root has one.
+
+Args:
+  path (y2path | str): Relative object path.
+
+Returns:
+  frozenset[str]: update, upsert and delete as listed; a rule naming anything else raises ValueError.
 
 ### `Container.delete(self, path: 'y2path | str') -> 'None'`
 
 Remove the object at path. Caller: Dagster jobs, before rewriting an object.
 
+Args:
+  path (y2path | str): Relative object path to remove.
+
+Returns:
+  None: The Provider removes the object and any cached path-to-identity entry is invalidated.
+
 ### `Container.path_of(self, obj: 'DataObject') -> 'y2path'`
 
 Where obj belongs in this Container by its naming templates. Callers: Dagster jobs, admin_ui's template preview.
+
+Args:
+  obj (DataObject): Object supplying naming-template context, including its parent when present.
+
+Returns:
+  y2path: Nonempty relative destination path produced by the configured naming templates.
 
 ### `Container.refresh(self, state: 'dict[str, Any]', path: 'y2path | str' = '') -> 'Iterator[Iterator[DataObject]]'`
 
@@ -189,6 +260,13 @@ The objects changed at or below path since state was recorded, removed ones mark
 
 state belongs to the caller. It advances only when every change was consumed inside the context and nothing
 raised, so a failed run is read again next time. Caller: Dagster jobs.
+
+Args:
+  state (dict[str, Any]): Caller-owned synchronization state; advanced only after successful full consumption.
+  path (y2path | str): Relative starting path; empty selects the Container root.
+
+Returns:
+  Iterator[Iterator[DataObject]]: Context manager yielding changed DataObjects, including removed objects marked removed. The caller must consume the iterator inside the context for state to advance.
 
 ## `Location(row: 'Mapping[str, Any]', *, provider: 'Provider | None' = None, parent: "'Location | None'" = None, children: "Callable[[], Iterable['Location']] | None" = None, templates: 'Mapping[str, str] | None' = None) -> 'None'`
 
@@ -213,25 +291,56 @@ The Locations directly below this one: the configured ones, then those its Provi
 
 Callers: admin_ui, FileIndexer, lake Dagster.
 
+Returns:
+  list[Location]: Direct child Locations, configured first and provider-discovered afterward; each carries uid, uri, parent and its configuration data.
+
 ### `Location.walk(self) -> "Iterator[tuple['Location', list['Location']]]"`
 
 This Location and every Location below it, each with the Locations directly below it.
+
+Returns:
+  Iterator[tuple[Location, list[Location]]]: Depth-first pairs of a Location and its immediate children, starting with this Location.
 
 ### `Location.container(self, path: 'y2path | str' = '') -> 'Container'`
 
 The Container at path below this Location. Callers: FileIndexer, Dagster jobs.
 
+Args:
+  path (y2path | str): Relative path below this Location; empty selects its root.
+
+Returns:
+  Container: Container bound to the Location Provider, canonical URI and naming templates. A Location without a Provider raises ValueError.
+
 ### `Location.uri_of(self, path: 'y2path | str' = '') -> 'y2uri'`
 
 The canonical uri of path below this Location, each name uri-escaped. Caller: FileIndexer.
+
+Args:
+  path (y2path | str): Relative path below this Location; empty selects its root.
+
+Returns:
+  y2uri: Canonical URI with each path segment escaped.
 
 ### `Location.save(self, who: 'str', **fields: 'Any') -> 'None'`
 
 Write fields into this Location's configuration row as who: uid, name, path, service, kind, icon, tags, folders.
 
+Args:
+  who (str): Author identity written with the configuration change.
+  fields (Any): Named configuration changes: uid, name, path, service, kind, icon, tags or folders; null removes a field in the REST merge patch.
+
+Returns:
+  None: The configured store writes the change; read the Location from its Collection again for updated values.
+
 ### `Location.relative(path: 'y2path | str') -> 'y2path'`
 
 path, checked to be relative and slash-separated, with no drive, empty or traversal segment.
+
+Args:
+  path (y2path | str): Relative path; the empty string identifies a root.
+
+Returns:
+  y2path: Validated relative path. Invalid paths raise ValueError.
 
 ## `FileSystem(connection: 'Mapping[str, Any] | None' = None) -> 'None'`
 
@@ -252,12 +361,14 @@ What the handlers found at uri: type, size, times, span and each handler's metad
 
 The file at uri: a JSON file's parsed value, any other file's byte stream.
 
-### `FileSystem.write(self, uri: 'y2uri', obj: 'DataObject') -> 'None'`
+### `FileSystem.write(self, uri: 'y2uri', obj: 'DataObject', *, replace: 'bool | Callable[[], bool]' = False) -> 'None'`
 
 Store obj.content at uri: JSON values as UTF-8 JSON, bytes and streams unchanged.
 
-The file is staged beside its destination and moved into place. Identical content is left alone. Different
-binary content at an existing file is refused until the file is deleted.
+The file is staged beside its destination and moved into place. A held file that matches is left alone: JSON
+by its value, anything else by its bytes. A held file the new bytes strictly extend is replaced, as an
+append-only file grows. Any other held file is replaced only by replace, true or returning true when called,
+and raises FileExistsError otherwise.
 
 ### `FileSystem.refresh(self, state: 'dict[str, Any]', uri: 'y2uri') -> 'Iterator[tuple[Iterator[DataObject], Callable[[], None]]]'`
 
