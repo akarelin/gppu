@@ -27,6 +27,8 @@ tui = ["textual"]
 serve = ["textual-serve"]
 vault-azure = ["azure-identity", "azure-keyvault-secrets"]
 vault = ["azure-identity", "azure-keyvault-secrets"]
+# gppu.ld; and fastapi-querybuilder, installed with --no-deps: its metadata lists poetry, uvicorn and aiosqlite as runtime dependencies
+ld = ["fastapi", "sqlmodel", "sqlalchemy[asyncio]", "psycopg[binary]", "fastapi-pagination", "sqlakeyset"]
 all = ["psycopg2-binary", "sqlalchemy", "diskcache", "aiomqtt", "selenium>=4.0.0", "jinja2", "textual", "textual-serve", "azure-identity", "azure-keyvault-secrets"]
 test = ["pytest"]
 test-tui = ["pytest", "pytest-asyncio", "textual"]
