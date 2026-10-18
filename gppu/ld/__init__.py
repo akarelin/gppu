@@ -1,5 +1,5 @@
-"""Linked Data: records and the links between them, on Postgres, and what an API of a type is built from (_Conventions/Linked Data.md,
-# API). The basic types' tables (`Record`, `Node`, `Event`, `Activity`, `Link`), the rules a record is written by on its class
+"""Linked Data: records and the links between them, on Postgres, and what an API of a type is built from (_Conventions/Linked
+Data.md, # API). The basic types' tables (`Record`, `Node`, `Event`, `Activity`, `Link`), the rules a record is written by on its class
 (`Stored.write`), the core's paths (`app`: `/types`, `/records`, `/links`), and for an API of its own for a type: `typed()`, a type's
 create, read, update and search; `listed()` and `paged()`, its lists and pages; `api_at()`, the API with its own documentation; `served()`,
 the APIs at one address. The tables are made by the store's `schema.sql` (RAN `Projects/ld`); `connect()` opens the store.

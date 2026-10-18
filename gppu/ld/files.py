@@ -6,6 +6,7 @@ gppufs is how Alex's tools reach files: FileIndexer, admin_ui's locations, the L
 configuration, known by its uid and its canonical uri, reached through the Provider of its uri's scheme constructed with a
 connection; a Container lists what is below a Location, its handlers read what each entry is, and an index keeps what they read.
 This API keeps both sides:
+
 - the configuration: `GET /files/locations`, the locations as gppufs's configuration table, each a location record whose `data.handler`
   is its connection, the parameters its Provider is constructed with (Alex: "handler connection parameters are stored in
   [[Linked Data#Location]]"); `gppu.fs.GppuCatalog` is made from them. Credentials are not stored: a Provider reads them where it
