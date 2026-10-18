@@ -1,0 +1,36 @@
+name: gppu docs
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  # the documentation (docs/mkdocs.yaml) into the folder nginx serves at kb.karel.in/gppu/v3/ on trix (RAN trix_kb.conf), copied there
+  # over ssh, and the same site to GitHub Pages, which the repository's Pages setting takes from GitHub Actions
+  docs:
+    runs-on: [self-hosted, linux]
+    environment:
+      name: github-pages
+      url: ${{ steps.pages.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Documentation
+        run: |
+          uvx --python 3.14 --with mkdocs-material --with "mkdocstrings[python]" --with mkdocs-gen-files --with pylint mkdocs build --strict -f docs/mkdocs.yaml -d "$RUNNER_TEMP/site"
+          ssh trix 'rm -rf /data/gppu/docs/v3.next && install -d -m 755 /data/gppu /data/gppu/docs'
+          scp -rq "$RUNNER_TEMP/site" trix:/data/gppu/docs/v3.next
+          ssh trix 'rm -rf /data/gppu/docs/v3 && mv /data/gppu/docs/v3.next /data/gppu/docs/v3'
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: ${{ runner.temp }}/site
+
+      - id: pages
+        uses: actions/deploy-pages@v5
