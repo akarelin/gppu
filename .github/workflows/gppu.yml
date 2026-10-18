@@ -39,11 +39,11 @@ permissions:
   contents: write
 
 jobs:
-  # the documentation (docs/Dockerfile) into the folder nginx serves at kb.karel.in/gppu/v3/ on trix (RAN trix_kb.conf), and the same
-  # site to GitHub Pages, which the repository's Pages setting takes from GitHub Actions
+  # the documentation (docs/mkdocs.yaml) into the folder nginx serves at kb.karel.in/gppu/v3/ on trix (RAN trix_kb.conf), copied there
+  # over ssh, and the same site to GitHub Pages, which the repository's Pages setting takes from GitHub Actions
   docs:
     if: inputs.docs
-    runs-on: [self-hosted, trix]
+    runs-on: [self-hosted, linux]
     permissions:
       contents: read
       pages: write
@@ -54,16 +54,18 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: astral-sh/setup-uv@v7
+
       - name: Documentation
         run: |
-          D=/data/gppu/docs
-          rm -rf $D/v3.next && install -d -m 755 /data/gppu $D $D/v3.next
-          docker build -f docs/Dockerfile --output type=local,dest=$D/v3.next .
-          rm -rf $D/v3 && mv $D/v3.next $D/v3
+          uvx --python 3.14 --with mkdocs-material --with "mkdocstrings[python]" mkdocs build --strict -f docs/mkdocs.yaml -d "$RUNNER_TEMP/site"
+          ssh trix 'rm -rf /data/gppu/docs/v3.next && install -d -m 755 /data/gppu /data/gppu/docs'
+          scp -rq "$RUNNER_TEMP/site" trix:/data/gppu/docs/v3.next
+          ssh trix 'rm -rf /data/gppu/docs/v3 && mv /data/gppu/docs/v3.next /data/gppu/docs/v3'
 
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: /data/gppu/docs/v3
+          path: ${{ runner.temp }}/site
 
       - id: pages
         uses: actions/deploy-pages@v5
