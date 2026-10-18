@@ -8,7 +8,7 @@ Needs the `ld` extra, and fastapi-querybuilder installed with `--no-deps`: its m
 dependencies."""
 from datetime import datetime, timedelta
 from enum import IntEnum
-from typing import Annotated, Any, Literal, Self, TypeVar
+from typing import Annotated, Any, ClassVar, Literal, Self, TypeVar
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -39,6 +39,7 @@ DAY, SECOND = timedelta(days=1), timedelta(seconds=1)
 LIST = 1000   # the most records a list sends: the older data's largest list of like records is a folder's 585 files (work 15, a location's runs 16, 2026-10-17)
 LIST_BYTES = 1_000_000   # and the most data it sends, `data` and `meta` as Postgres stores them: that folder's are 187 kB (work 45 kB; a session's messages up to 145 MB, so they are read a page at a time)
 DATETIME, DURATION = TypeAdapter(datetime), TypeAdapter(timedelta)
+STATUSES = ('deleted', 'hidden', 'draft', 'abandoned')   # every record's (Alex 10-18 09:22: deleted, hidden, draft; abandoned, a record kept where a link is deleted, the spec's # API); a type adds its own
 
 
 def connect(dsn: str):
@@ -126,7 +127,7 @@ class RecordFields(SQLModel):
     model_config = ConfigDict(extra='forbid')
     # String, not SQLModel's own AutoString: search looks for its text only in String columns
     subtype: str | None = Field(None, sa_type=String, description='Plain text refining the `type`, from a short list per type that Postgres does not enforce.')
-    status: str | None = Field(None, sa_type=String, description='Plain text, its values per type.')
+    status: str | None = Field(None, sa_type=String, description='Plain text: `deleted`, `hidden`, `draft` or `abandoned` on any record, or one its type adds; any other is refused.')
     name: str | None = Field(None, sa_type=String, description='Name used for display.')
     data: dict = Field(default_factory=dict, sa_type=JSONB, description='What the record says about the thing. On update, merged into what is there; a null removes a key.')
     meta: dict = Field(default_factory=dict, sa_type=JSONB, description='How the record came to be: who made it, from what, when it was seen. `meta.tags`: a list of strings, or one string. Merged on update as `data` is.')
@@ -223,6 +224,7 @@ class Stored(SQLModel):
     created: datetime | None = Field(None, sa_type=DateTime(timezone=True), sa_column_kwargs={'server_default': FetchedValue(), 'nullable': False}, description='When the record was made.')
     updated: datetime | None = Field(None, sa_type=DateTime(timezone=True), sa_column_kwargs={'onupdate': func.now()}, description='When the record was last changed.')
     type: Type | None = Field(None, sa_type=TypeCode, sa_column_kwargs={'server_default': FetchedValue()}, description='What the record is: the first byte of its `id`. Read only.')
+    STATUSES: ClassVar[tuple[str, ...]] = ()   # the statuses its type adds to every record's
 
     @classmethod
     def makes(cls) -> Type:
@@ -236,6 +238,7 @@ class Stored(SQLModel):
         if extra := sent.model_fields_set - cls.model_fields.keys():
             raise HTTPException(422, f'a {cls.__tablename__} has no {", ".join(sorted(extra))}')
         if id and (row := await db.get(cls, id)):
+            statused(sent, made(row.type))   # its own type's, also when written as the basic type it is made from: a work's through /records
             change = {k: getattr(sent, k) for k in sent.model_fields_set - {'id'}}   # what was sent, a span still a Span
             for key in ('data', 'meta'):
                 if key in change:
@@ -243,6 +246,7 @@ class Stored(SQLModel):
             return row.sqlmodel_update(change)
         if id and id.bytes[0] != cls.makes():   # an id's first byte is its type: a file's id would make a record in the wrong table
             raise HTTPException(422, f'{id} is of type {id.bytes[0]:#04x}, which this path does not make')
+        statused(sent, cls)
         row = cls.model_validate(sent, update={'id': id})
         db.add(row)
         return row
@@ -251,6 +255,20 @@ class Stored(SQLModel):
     async def read(cls, db: AsyncSession, id: UUID) -> Self:
         """404 when there is none (`missing`)."""
         return await db.get_one(cls, id)
+
+
+def made(code: int) -> type[Stored]:
+    """The class of the table a type is made in, wherever it is defined: work's and sessions' are outside gppu."""
+    for table in Stored.__subclasses__():
+        if hasattr(table, '__table__') and table.makes() == code:
+            return table
+    raise RuntimeError(f'no {Type(code).name.lower()} table here: the module that makes it is not imported')
+
+
+def statused(sent: SQLModel, table: type[Stored]):
+    """A status is every record's (`STATUSES`) or one its table's type adds; any other is refused."""
+    if sent.status not in (None, *STATUSES, *table.STATUSES):
+        raise HTTPException(422, f"a {table.__tablename__}'s status is {', '.join(STATUSES + table.STATUSES)}, not {sent.status}")
 
 
 class Record(RecordFields, Stored, table=True):
@@ -267,6 +285,7 @@ class Event(EventFields, Stored, table=True):
 
 class Activity(ActivityFields, Stored, table=True):
     """An activity: a named span of time."""
+    STATUSES = ('reading', 'storing', 'done', 'failed')   # a FileIndexer run's phases: its runs are the activities the core holds (gppu.ld.files, /files/runs)
 
 
 class Link(LinkFields, Stored, table=True):

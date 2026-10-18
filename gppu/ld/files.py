@@ -61,6 +61,7 @@ class File(FileFields, Stored, table=True):
     (Files.md). An insert is an upsert (Linked Data.md, Operations): a file sent without an `id` where one is, its parent and name the
     table's own unique pair, is merged into it. A location's `data.uid` names one location: a write that gives a location, not abandoned,
     the uid another such location holds is refused; locations that shared a uid before the rule are written as they are."""
+    STATUSES = ('active',)   # a location in use, as gppufs's configuration has it; DELETED and ABANDONED are every record's
 
     @classmethod
     async def write(cls, db: AsyncSession, id: UUID | None, sent: SQLModel) -> 'File':
