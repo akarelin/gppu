@@ -30,11 +30,44 @@ on:
         description: 'Run TUI tests'
         type: boolean
         default: true
+      docs:
+        description: 'Publish the documentation'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
 jobs:
+  # the documentation (docs/Dockerfile) into the folder nginx serves at kb.karel.in/gppu/v3/ on trix (RAN trix_kb.conf), and the same
+  # site to GitHub Pages, which the repository's Pages setting takes from GitHub Actions
+  docs:
+    if: inputs.docs
+    runs-on: [self-hosted, trix]
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.pages.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Documentation
+        run: |
+          D=/data/gppu/docs
+          rm -rf $D/v3.next && install -d -m 755 /data/gppu $D $D/v3.next
+          docker build -f docs/Dockerfile --output type=local,dest=$D/v3.next .
+          rm -rf $D/v3 && mv $D/v3.next $D/v3
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: /data/gppu/docs/v3
+
+      - id: pages
+        uses: actions/deploy-pages@v5
+
   matrix:
     runs-on: [self-hosted, linux]
     if: inputs.run_tests

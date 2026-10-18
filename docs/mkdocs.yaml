@@ -1,0 +1,32 @@
+site_name: gppu
+site_description: General Purpose Python Utilities, documented from the code's docstrings.
+docs_dir: gppu                     # a page per module, mkdocstrings writing it from the module's docstrings
+site_url: https://kb.karel.in/gppu/v3/   # where it is published; every build names its output folder: mkdocs build -d <folder>
+repo_url: https://github.com/akarelin/gppu
+use_directory_urls: false          # every page is a file, so the site opens from disk
+
+theme:
+  name: material
+  features: [navigation.sections, toc.follow, content.code.copy]
+
+plugins:
+  - search
+  - offline                        # the search index as a script, so search works from disk too
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [..]              # gppu's source, read as it is: the build imports none of it
+          options:
+            members_order: source
+            show_source: false     # the docstrings are the documentation
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.superfences:          # a ```mermaid block in a docstring or a page is drawn as a diagram
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format

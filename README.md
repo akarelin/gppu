@@ -6,6 +6,8 @@
 
 [![CI](https://github.com/akarelin/gppu/actions/workflows/gppu.yml/badge.svg)](https://github.com/akarelin/gppu/actions/workflows/gppu.yml) [![release](https://img.shields.io/github/v/release/akarelin/gppu?filter=gppu/v*&label=&color=blue&style=flat-square)](https://github.com/akarelin/gppu/releases?q=gppu)
 
+Documentation from the code's docstrings: [kb.karel.in/gppu/v3](https://kb.karel.in/gppu/v3/), built by [docs/Dockerfile](docs/Dockerfile).
+
 
 <table>
 <tr>
