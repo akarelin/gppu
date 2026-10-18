@@ -106,6 +106,7 @@ class Type(IntEnum):
     SESSION = 0x30
     MESSAGE = 0x31
     WORK = 0x40
+    ANNOTATION = 0x50
     LINK = 0xA0
 
 
@@ -273,7 +274,7 @@ class Link(LinkFields, Stored, table=True):
 
 
 TABLES = {t.makes(): t for t in (Record, Node, Event, Activity, Link)}   # the types the core makes, each in its own table
-READ = TABLES | {Type.FILE: Node, Type.SESSION: Activity, Type.MESSAGE: Event, Type.WORK: Activity}   # and the others, read with the columns of the basic type each is made from
+READ = TABLES | {Type.FILE: Node, Type.SESSION: Activity, Type.MESSAGE: Event, Type.WORK: Activity, Type.ANNOTATION: Node}   # and the others, read with the columns of the basic type each is made from
 AnyRecord = Record | Node | Event | Activity | Link   # a record read with the columns of its type's table
 
 
