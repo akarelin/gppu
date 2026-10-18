@@ -58,7 +58,7 @@ jobs:
 
       - name: Documentation
         run: |
-          uvx --python 3.14 --with mkdocs-material --with "mkdocstrings[python]" mkdocs build --strict -f docs/mkdocs.yaml -d "$RUNNER_TEMP/site"
+          uvx --python 3.14 --with mkdocs-material --with "mkdocstrings[python]" --with mkdocs-gen-files --with pylint mkdocs build --strict -f docs/mkdocs.yaml -d "$RUNNER_TEMP/site"
           ssh trix 'rm -rf /data/gppu/docs/v3.next && install -d -m 755 /data/gppu /data/gppu/docs'
           scp -rq "$RUNNER_TEMP/site" trix:/data/gppu/docs/v3.next
           ssh trix 'rm -rf /data/gppu/docs/v3 && mv /data/gppu/docs/v3.next /data/gppu/docs/v3'

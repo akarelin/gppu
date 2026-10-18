@@ -1,3 +1,0 @@
-# gppu.ld
-
-::: gppu.ld
