@@ -32,6 +32,7 @@ Documentation from the code's docstrings: [kb.karel.in/gppu/v3](https://kb.karel
 
 | Module | Purpose |
 |--------|---------|
+| [`gppu.app`](gppu/app.py) | `CliApp` for command-line utilities: configuration and logging on construction, typed options and `--help` from `main`, `--schema`, parameter binding and JSON results. `App` for direct calls; `AsyncApp` for asyncio work. |
 | `gppu` (core)<br> | **Environment**: `Env` config loader with `!include`, typed path access (`glob`, `glob_int`, `glob_list`, `glob_dict`). <br>**Logger**: colored `Info`/`Warn`/`Error`/`Debug`/`Dump`. <br>**Vault**: `Vault.get`/`create`/`update`/`list` with Azure Key Vault and `SECRET_*` env-var backends; `!secret` YAML tag.<br>Plus: type coercion, dict utilities, YAML/JSON I/O, time helpers, OS detection + `full_path` path resolution (env vars, `~`, WSL drive mapping), async helpers, template population |
 | [`gppu.handlers`](docs/handlers.md) | Generated handler API and supported-format reference. |
 | [`gppu.environment`](docs/environment.md) | `Environment`: the basic level with no file (platform, host, user, home, os, trace), strict lookups, the configuration's macros called by name (`place`, `folder`, `uri`, `location_of`, `local_of`).<br>`State`: every table of the loaded configuration resolved through its templates, checked against what it references and built into objects; `services` for the rows marked so |
@@ -51,6 +52,8 @@ python -m examples.handler_browser
 ```
 
 ## Environment
+
+`CliApp` loads configuration automatically. The explicit loader below is for code that needs configuration without constructing an app.
 
 ```python
 from gppu import Env
@@ -114,33 +117,34 @@ In YAML: `password: !secret db-pass` resolves at load time via `Vault.get`. Requ
 
 ## How Apps Work
 
-Every app follows the same pattern: a YAML config file is the single source of truth, and `Env.from_env()` loads it at startup. The app reads all its settings from `Env.glob()`.
+Command-line utilities subclass `CliApp`, define a typed `main`, and call `MyApp.cli()`. Construction loads the shared configuration and logging; gppu provides argument parsing, `--help`, `--schema`, configuration binding and JSON output. Do not build that setup in each utility. Use `App` for an object called directly and `AsyncApp` for asyncio work.
 
-### 1. Create a config — `myapp.yaml` next to your script:
+### 1. Use the project's shared configuration
+
+When the script folder needs a configuration entry point, `config.yaml` includes the existing shared configuration. Settings remain there; do not copy them into a utility-specific file.
 
 ```yaml
-logs:
-  - Application
-  - System
-level: Warning
-days: 30
-error_rules: !include error_rules.yaml
+!include ../_config/_config.yaml
 ```
 
-### 2. Initialize and read config:
+### 2. Define the command's work
+
+This example takes `logs`, `level` and `days` from the shared configuration. Command-line options override those values. A missing required value raises an error.
 
 ```python
-from gppu import Env, Info, glob, glob_int, glob_list
-from pathlib import Path
+from gppu import CliApp
 
-Env.from_env(name='myapp', app_path=Path(__file__).parent)
+class MyApp(CliApp):
+    def main(self, logs: list[str], level: str, days: int) -> dict:
+        """Read the configured logs."""
+        self.Info('Reading logs', level, days)
+        return {'logs': logs, 'level': level, 'days': days}
 
-logs  = glob_list('logs')
-level = glob('level', default='Warning')
-days  = glob_int('days', default=10)
-
-Info('WBLUE', 'myapp', 'NONE', 'loaded', 'BG', str(len(logs)), 'NONE', 'logs')
+if __name__ == '__main__':
+    MyApp.cli()
 ```
+
+No arguments runs `main` with configuration values. `--days 7` overrides `days`; `--help` and `--schema` describe the same method without running it. Returned data goes to stdout as JSON and logs go to stderr. See [`gppu.app.CliApp`](gppu/app.py) and [`gppu.params`](gppu/params.py).
 
 ### 3. For TUI apps — subclass `TUIApp` and use `Env` the same way:
 
