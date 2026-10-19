@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, ClassVar, Optional
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 
 from .gppu import Env
 from .gppu import _Base, _DC
@@ -74,50 +74,55 @@ class _PGBase(_PersistentBase):
       self._connection = None
 
 
-class _SQABase(_PersistentBase):
-  """SQLAlchemy ORM database access.
+def async_engine(dsn: str):
+  """SQLAlchemy's async engine on psycopg 3 for the Postgres at `dsn`, its session's zone UTC, so a time without a zone is
+  compared as UTC. A `postgresql://` dsn is taken as psycopg 3's. Needs the `ld` extra."""
+  from sqlalchemy.ext.asyncio import create_async_engine
+  if dsn.startswith('postgresql://'): dsn = 'postgresql+psycopg://' + dsn.removeprefix('postgresql://')
+  return create_async_engine(dsn, connect_args={'options': '-c timezone=UTC'})
 
-  Provides ORM session management with declarative models.
-  Use with _DM base class for model definitions.
+
+class _SQABase(_PersistentBase):
+  """SQLModel ORM database access: SQLAlchemy's async engine on psycopg 3 (`async_engine`), as gppu.ld uses it.
+
+  `session()` is one database session, committed when it closes and rolled back on an error.
+  Needs the `ld` extra.
   """
   _engine: Any
-  _Session: Any
 
   def __init__(self, **kw):
     super().__init__(**kw)
     self._engine = None
-    self._Session = None
 
   @property
   def engine(self):
     """Lazy engine - creates on first use."""
-    if self._engine is None:
-      from sqlalchemy import create_engine
-      from sqlalchemy.orm import sessionmaker
-      self._engine = create_engine(self.db_connection_string, echo=False)
-      self._Session = sessionmaker(bind=self._engine)
+    if self._engine is None: self._engine = async_engine(self.db_connection_string)
     return self._engine
 
-  @contextmanager
-  def session(self):
-    """Context manager for database session with auto-commit/rollback."""
-    _ = self.engine  # ensure engine is created
-    sess = self._Session()
-    try:
-      yield sess
-      sess.commit()
-    except Exception:
-      sess.rollback()
-      raise
-    finally:
-      sess.close()
+  @asynccontextmanager
+  async def session(self):
+    """Async context manager for an ORM session with auto-commit/rollback."""
+    from sqlmodel.ext.asyncio.session import AsyncSession
+    async with AsyncSession(self.engine, expire_on_commit=False) as sess:
+      try:
+        yield sess
+        await sess.commit()
+      except Exception:
+        await sess.rollback()
+        raise
 
-  def close(self):
+  async def close(self):
     """Dispose the engine connection pool."""
     if self._engine:
-      self._engine.dispose()
+      await self._engine.dispose()
       self._engine = None
-      self._Session = None
+
+  async def __aenter__(self):
+    return self
+
+  async def __aexit__(self, *_):
+    await self.close()
 
 
 class _PersistentDC(_DC):

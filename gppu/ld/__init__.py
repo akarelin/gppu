@@ -27,12 +27,13 @@ from sqlakeyset import custom_bookmark_type
 from sqlalchemy import DateTime, FetchedValue, SmallInteger, String, TypeDecorator
 from sqlalchemy.dialects.postgresql import JSONB, TSTZRANGE, Range
 from sqlalchemy.exc import DataError, IntegrityError, NoResultFound, StatementError
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import create_async_engine  # noqa: F401  RAN Projects/ld's checks make their engine with ld.create_async_engine
 from sqlalchemy.sql.elements import UnaryExpression
 from sqlalchemy.sql.visitors import iterate
 from sqlmodel import Column, Field, SQLModel, delete, func, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from ..data import async_engine
 from ..gppu import TimeSpan
 
 T = TypeVar('T')
@@ -45,10 +46,10 @@ STATUSES = ('deleted', 'hidden', 'draft', 'abandoned')   # every record's (Alex 
 
 
 def connect(dsn: str):
-    """The store at `dsn`, `postgresql+psycopg://user:password@host:port/database`; a filter's time is read without its zone, so
-    compared as UTC."""
+    """The store at `dsn`, `postgresql+psycopg://user:password@host:port/database`, through gppu.data's `async_engine`; a filter's
+    time is read without its zone, so compared as UTC."""
     global engine
-    engine = create_async_engine(dsn, connect_args={'options': '-c timezone=UTC'})
+    engine = async_engine(dsn)
 
 
 async def database():
