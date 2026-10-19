@@ -441,3 +441,52 @@ class AsyncApp(mixin_Rest, App, EventLoopBridge):
     task.add_done_callback(self._background_tasks.discard)
     return task
 # endregion
+
+
+# region API application
+class APIApp(AsyncApp):
+    """An AsyncApp that serves HTTP, the transport ``mixin_Rest`` leaves to its host: on uvicorn, at the ``host`` and ``port`` of its
+    configuration, its own objects at ``/rest`` and each ASGI app ``apis()`` gives at its path.
+
+    ``GET /rest`` lists the objects, ``GET /rest/{registry}/{key}`` reads one and ``GET /rest/{registry}/{key}/{name}`` one of its
+    values, ``POST /rest/{registry}/{key}/{name}`` calls a method with the JSON body as its arguments. Override ``apis()``; override
+    ``start()`` for work before serving and end it with ``await super().start()``. FastAPI and uvicorn come with the ``ld`` extra::
+
+        class LDAPI(APIApp):
+            def setup(self): ld.connect(self.my('postgres'))
+            def apis(self): return {'/ld/v1': ld.served({'/work': work.app})}
+    """
+
+    def apis(self) -> dict[str, Any]:
+        """path -> the FastAPI (or any ASGI) app served there."""
+        return {}
+
+    def asgi(self):
+        """The app uvicorn serves: ``/rest``, and the apps of ``apis()`` at their paths."""
+        from fastapi import Body, FastAPI, Response
+
+        def answer(reply: tuple[Any, int]) -> Response:   # a value gppu holds (a time, a uri) is sent as its text
+            return Response(json.dumps(reply[0], default=str, ensure_ascii=False), status_code=reply[1], media_type='application/json')
+
+        root = FastAPI(title=self.name)
+
+        @root.get('/rest')
+        def objects(kind: str | None = None): return answer(self.rest_objects(kind, full=True))
+
+        @root.get('/rest/{registry}/{key}')
+        def read(registry: str, key: str): return answer(self.rest_read(registry, key))
+
+        @root.get('/rest/{registry}/{key}/{name}')
+        def value(registry: str, key: str, name: str): return answer(self.rest_read(registry, key, name))
+
+        @root.post('/rest/{registry}/{key}/{name}')
+        async def call(registry: str, key: str, name: str, body: dict = Body(default_factory=dict)):
+            return answer(await self.rest_call(registry, key, name, body))
+
+        for path, app in self.apis().items(): root.mount(path, app)
+        return root
+
+    async def start(self) -> None:
+        import uvicorn
+        await uvicorn.Server(uvicorn.Config(self.asgi(), host=self.my('host'), port=self.my('port'))).serve()
+# endregion
