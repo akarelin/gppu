@@ -63,7 +63,7 @@ Linked Data and its parts:
 - GitHub Pages is not enabled for gppu, so `gppu-docs.yaml`'s last step fails.
 - kb.karel.in/obsidian/ answers 502: `kb-web` was suspended 2026-09-21 and nothing serves 127.0.0.1:8086 on trix.
 - The `ld` image has no `textual`, so `check_files.py`'s TUI part fails in it unless installed.
-- Something in the RAN checkout commits staged changes on its own, with generic messages (b656547eb, bcb6abc3a); the gppu checkout too (4f2caa6).
+- Something in the RAN checkout commits staged changes on its own, with generic messages (b656547eb, bcb6abc3a); the gppu checkout too (4f2caa6), and a clone under `C:\.cache` once its files were open in VS Code, from which it tried to push into the D:\Dev checkouts.
 - CRAP's admin_ui runs its own HTTP server rather than an `APIApp`.
 - RAN `Projects/ld/work.py:152` builds a `Span` from a value that is not one.
 - `Env.glob` answers a default for a missing key and `Environment.glob` raises; both read `Env.data` with `deepget`.
