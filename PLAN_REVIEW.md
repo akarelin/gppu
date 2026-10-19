@@ -16,13 +16,13 @@ Alex's requirements (2026-10-18, deciding where Linked Data lives): Linked Data 
 2. One Span: done. gppu's `TimeSpan` holds an open end, its bounds and the specification's forms; `gppu.ld.Span` is that `TimeSpan` with Linked Data's reading rules (gppu daf7b13).
 3. One ORM: done. `gppu.data._SQABase`, which nothing used, is the ORM `gppu.ld` uses, and `gppu.ld.connect()` opens its store through `gppu.data.async_engine`; `_PGBase` is unchanged, since CCTV-detective, admin_ui, Plaud and CRAP's file_indexer use it (gppu d2d1e27).
 4. gppufs on Linked Data inside gppu: in progress.
-5. APIApp: not started.
-6. One environment: not started.
+5. APIApp: done. `gppu.app.APIApp` is the AsyncApp that serves HTTP on uvicorn at its configuration's host and port: its own objects at `/rest` and each ASGI app its `apis()` gives at its path (gppu 6a36245). RAN `Projects/ld/api.py` is an APIApp serving Linked Data at `/ld/v1` (RAN 592adca5e). gppufs's `/config` and `/lake` are a FastAPI app, `gppu.fs.api(lake)`, which an APIApp serves among its apis, in place of `serve()`'s own `ThreadingHTTPServer` (gppu 86c9b53).
+6. One environment: done. `Environment` takes os, user and home from `Env`, which detects them once, and names its platform from `Env.os`; `params` reads the configuration with `deepget` instead of its own copy; `deepget` returns a falsy value at a nested path, where a nested `false` used to come back as the default; `detect_os` knows macOS (gppu d0f192a). The rest are layers over `Env`, not copies of it: `_Config` is an object's section, `Vault` its secrets, `_MqttConfig` a source that loads into `Env`, `GppuCatalog` reads `Env` unless given a mapping or an exported catalog folder.
 7. `fs-dumpoftext.py` to `archive/`: done (gppu 6d75c1e).
 
 ## 4. gppufs on Linked Data inside gppu
 - Done: RAN `Projects/ld/gppufs` is `gppu.ld.gppufs`, gppufs's catalog, Lake and index kept by Linked Data's files API; FileIndexer gives it the API's address from its own `gppufs.yaml` (gppu ab3707c, RAN b656547eb and bcb6abc3a). RAN's five checks pass on it, and FileIndexer reads its 175 locations through it.
-- Next: one way of writing a uri below another. `gppu.ld.files` has its own (`address()`, `below()`) beside `gppu.fs`'s (`_join`, `GppuCatalog`'s location lookup).
+- Next: one way of writing an address below a location's canonical uri, and of reading one back. gppu has it seven times: `gppu.fs`'s `_join` (Location, Provider: each name escaped, a trailing slash kept), `LocationHandler.located`, `GppuFileSystem._located` and `_address_of` (names as they are, no trailing slash), `gppu.ld.files`'s `address()` and `below()` (escaped, no trailing slash), and `gppu.ld.gppufs`'s `join`, `bare`, `parent_of`. They differ for a canonical uri ending in `/` (`file://alex-laptop/D:/`) and for a name with a space.
 - Unchanged on purpose: every file is a Linked Data record, as the code had it; the specification keeps files in gppufs's indexes. That bridge is the specification session's.
 
 ## Done before the plan
@@ -40,9 +40,9 @@ Configuration and environment:
 - `_MqttConfig` (`gppu/iot.py`): MQTT's configuration as an app.
 
 HTTP:
-- `mixin_Rest` (`gppu/app.py`), which `AsyncApp` includes: every public member of an app over HTTP; the host supplies the listener.
-- `gppu.fs.serve`: gppufs's `/config` and `/lake` on Python's `ThreadingHTTPServer`.
-- `gppu.ld`'s FastAPI apps (`api_at`, `served`), which RAN `Projects/ld/api.py` runs with uvicorn inside an `AsyncApp`.
+- `mixin_Rest` (`gppu/app.py`), which `AsyncApp` includes: every public member of an app over HTTP; `APIApp` is its listener.
+- `gppu.fs.api`: gppufs's `/config` and `/lake` as a FastAPI app; `gppu.fs.serve` runs it alone on uvicorn.
+- `gppu.ld`'s FastAPI apps (`api_at`, `served`), which RAN `Projects/ld/api.py` serves as an `APIApp`.
 
 Linked Data and its parts:
 - `Record` in `gppu/fs.py` and `Record`, `Node`, `Link` in `gppu/ld/__init__.py`.
@@ -53,3 +53,6 @@ Linked Data and its parts:
 - kb.karel.in/obsidian/ answers 502: `kb-web` was suspended 2026-09-21 and nothing serves 127.0.0.1:8086 on trix.
 - The `ld` image has no `textual`, so `check_files.py`'s TUI part fails in it unless installed.
 - Something in the RAN checkout commits staged changes on its own, with generic messages (b656547eb, bcb6abc3a).
+- CRAP's admin_ui runs its own HTTP server rather than an `APIApp`.
+- RAN `Projects/ld/work.py:152` builds a `Span` from a value that is not one.
+- `Env.glob` answers a default for a missing key and `Environment.glob` raises; both read `Env.data` with `deepget`.
