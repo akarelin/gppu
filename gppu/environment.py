@@ -32,7 +32,7 @@ _MISSING = object()
 
 def platform_name() -> str:
   """The platform vocabulary of the shared configuration, for gppu's `detect_os`: windows, wsl, debian, macos."""
-  return {OSType.W11: 'windows', OSType.WSL: 'wsl', OSType.MACOS: 'macos'}.get(Env.os, 'debian')
+  return {OSType.W11: 'windows', OSType.WSL: 'wsl', OSType.LINUX: 'debian', OSType.MACOS: 'macos'}[Env.os]
 
 
 class _Environment:
