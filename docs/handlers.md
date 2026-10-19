@@ -1430,6 +1430,11 @@ identified, not probed. A file whose details are asked for is probed once,
 inside an archive as well; `refresh=True` probes again. A folder's totals
 come from the last refresh of that folder.
 
+### `GppuFileSystem.stored(self, path: 'str | Path | None' = None) -> 'tuple[dict, list[dict] | None] | None'`
+
+What the index holds of path, its metadata and the listing of what is in it, touching no filesystem; None when it holds
+nothing. The listing is None until the folder was listed.
+
 ### `GppuFileSystem.info_sync(self, path: 'str | Path | None' = None, refresh: 'bool' = False) -> 'dict'`
 
 `info` on the calling thread.

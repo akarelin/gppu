@@ -6875,6 +6875,12 @@ class GppuFileSystem(AbstractFileSystem):
     """
     return await asyncio.to_thread(self.info_sync, path, refresh)
 
+  def stored(self, path: str | Path | None = None) -> tuple[dict, list[dict] | None] | None:
+    """What the index holds of path, its metadata and the listing of what is in it, touching no filesystem; None when it holds
+    nothing. The listing is None until the folder was listed."""
+    with self._lock:
+      return self._stored(self._key(path))
+
   def info_sync(self, path: str | Path | None = None, refresh: bool = False) -> dict:
     """``info`` on the calling thread."""
     with self._lock:
@@ -6926,17 +6932,20 @@ class GppuFileSystem(AbstractFileSystem):
     """
     with self._lock:
       key = self._key(path)
-      metadata = self.info_sync(path, refresh=refresh)
-      archive = 'archive' in metadata['gppu']['handlers']
-      if archive:
-        if refresh:
-          self._live(key, container=True)
-        elif self._stored(key)[1] is None:
-          self._identify_members(key)
+      if live:
+        metadata = self.info_sync(path, refresh=refresh)
+        if 'archive' in metadata['gppu']['handlers']:
+          if refresh:
+            self._live(key, container=True)
+          elif self._stored(key)[1] is None:
+            self._identify_members(key)
       cached = self._stored(key)
       if cached is None:
+        if not live:
+          return []                                   # the index has never seen it
         raise FileNotFoundError(self._uri(key))
       current, children = cached
+      archive = 'archive' in current['gppu']['handlers']
       if current['type'] != 'directory' and not archive:
         return [current] if detail else [current['name']]
       if not live:
