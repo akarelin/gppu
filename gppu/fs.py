@@ -83,7 +83,6 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import SimpleNamespace
 from typing import Any, BinaryIO, Literal, Protocol, TypeVar, runtime_checkable
 from urllib.parse import quote, unquote, urlsplit
-from zoneinfo import ZoneInfo
 from threading import RLock
 
 import yaml
@@ -95,7 +94,7 @@ from fsspec.implementations.tar import TarFileSystem
 from fsspec.spec import AbstractFileSystem
 from fsspec.utils import stringify_path
 
-from .gppu import TimeSpan, Env, OSType, TemplateSet, _Base, detect_os, full_path, sync, y2path, y2uri
+from .gppu import MY_TZ, TimeSpan, Env, OSType, TemplateSet, _Base, detect_os, full_path, sync, y2path, y2uri
 from .environment import is_table_key
 
 
@@ -849,7 +848,6 @@ SESSION_CACHE = 512
 UNITS = (("d", 86400), ("h", 3600), ("m", 60), ("s", 1))
 UNSAFE = '\\/:*?"<>|\r\n\t'
 NAME_LIMIT = 254
-FRONTMATTER_TIMEZONE = ZoneInfo("America/Los_Angeles")
 PREAMBLE = ("# AGENTS.md instructions",)
 # User-role text the harness or a tool generated (sessions-clean, list-sessions): matching text was not typed by a person.
 NON_HUMAN = (
@@ -3404,7 +3402,7 @@ class MarkdownFile:
         return (
             parsed
             if parsed.tzinfo is not None
-            else parsed.replace(tzinfo=FRONTMATTER_TIMEZONE)
+            else parsed.replace(tzinfo=MY_TZ)
         )
 
 
@@ -3629,7 +3627,7 @@ class CSVHandler(Handler):
         localized = (
             parsed
             if parsed.tzinfo is not None
-            else parsed.replace(tzinfo=FRONTMATTER_TIMEZONE)
+            else parsed.replace(tzinfo=MY_TZ)
         )
         return valid_time(localized)
 
@@ -3722,7 +3720,7 @@ class LogHandler(Handler):
         localized = (
             parsed
             if parsed.tzinfo is not None
-            else parsed.replace(tzinfo=FRONTMATTER_TIMEZONE)
+            else parsed.replace(tzinfo=MY_TZ)
         )
         return valid_time(localized)
 
@@ -3846,7 +3844,7 @@ class EmailHandler(Handler):
             return None, None, None, None
         try:
             timestamp = datetime.strptime(timestamp_text, "%y%m%d.%H%M%S").replace(
-                tzinfo=FRONTMATTER_TIMEZONE
+                tzinfo=MY_TZ
             )
         except ValueError:
             return None, None, None, None
