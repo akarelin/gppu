@@ -72,7 +72,8 @@ import tarfile
 import time
 import tempfile
 import zipfile
-from collections.abc import AsyncIterator, Callable, Collection, Iterable, Iterator, Mapping, Sequence
+import collections.abc
+from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, closing, contextmanager, nullcontext
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -2903,7 +2904,7 @@ class ArchiveHandler(Handler):
         self,
         path: Path,
         destination: Path,
-        members: Collection[PurePosixPath] | None = None,
+        members: collections.abc.Collection[PurePosixPath] | None = None,
     ) -> ArchiveContents | HandlerError:
         """Write archive members to a directory in either call mode."""
 
@@ -2921,7 +2922,7 @@ class ArchiveHandler(Handler):
         self,
         path: Path,
         destination: Path,
-        members: Collection[PurePosixPath] | None = None,
+        members: collections.abc.Collection[PurePosixPath] | None = None,
     ) -> ArchiveContents:
         """Write ``members`` under ``destination`` and digest what was read.
 

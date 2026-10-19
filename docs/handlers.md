@@ -750,11 +750,11 @@ Load archive statistics and member records in either call mode.
 
 Load archive statistics and member records without another event loop.
 
-### `ArchiveHandler.extract(self, path: 'Path', destination: 'Path', members: 'Collection[PurePosixPath] | None' = None) -> 'ArchiveContents | HandlerError'`
+### `ArchiveHandler.extract(self, path: 'Path', destination: 'Path', members: 'collections.abc.Collection[PurePosixPath] | None' = None) -> 'ArchiveContents | HandlerError'`
 
 Write archive members to a directory in either call mode.
 
-### `ArchiveHandler.extract_sync(self, path: 'Path', destination: 'Path', members: 'Collection[PurePosixPath] | None' = None) -> 'ArchiveContents'`
+### `ArchiveHandler.extract_sync(self, path: 'Path', destination: 'Path', members: 'collections.abc.Collection[PurePosixPath] | None' = None) -> 'ArchiveContents'`
 
 Write `members` under `destination` and digest what was read.
 
@@ -1273,6 +1273,8 @@ Native formats are recognized from these object fields:
 * Agy: `USER_INPUT` from `USER_EXPLICIT` or `PLANNER_RESPONSE` from
   `MODEL`, with string `created_at`.
 * Hermes: `role` equal to `session_meta` and string `session_id`.
+* Copilot: a VS Code append-log initial object with `sessionId`,
+  `requests` and `responderUsername` equal to `GitHub Copilot`.
 
 A directory is recognized from the Hermes marker `state.db`, either Agy
 marker `antigravity_state.pbtxt` or `jetski_state.pbtxt`, or an Agy UUID

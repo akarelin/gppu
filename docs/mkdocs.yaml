@@ -1,5 +1,5 @@
 # gppu's documentation, built from the repository's root in an environment of its own, as gppu.yml's docs job builds it:
-#   uvx --python 3.14 --with mkdocs-material --with "mkdocstrings[python]" --with mkdocs-gen-files --with pylint mkdocs build --strict -f docs/mkdocs.yaml -d <folder>
+#   uvx --python 3.14 --with mkdocs-material --with "mkdocstrings[python]" --with mkdocs-gen-files --with graphifyy mkdocs build --strict -f docs/mkdocs.yaml -d <folder>
 site_name: gppu
 site_description: General Purpose Python Utilities, documented from the code's docstrings.
 docs_dir: gppu                     # the home page; the modules' pages are made from the code at build time (docs_pages.py)
@@ -23,6 +23,7 @@ plugins:
           options:
             members_order: source
             show_source: false     # the docstrings are the documentation
+            show_if_no_docstring: true   # every class and function of gppu, with its signature, also those without a docstring
             docstring_options:     # a docstring's Parameters may name what **kw takes (gppu.pcp) and leave its types out
               warn_unknown_params: false
               warn_missing_types: false
