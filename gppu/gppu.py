@@ -27,7 +27,7 @@ from typing import TypeAlias, ClassVar, Callable, Protocol
 from collections import defaultdict, UserDict, UserList
 from enum import Enum
 from functools import wraps, partial, cache
-from datetime import datetime as dt, timezone
+from datetime import datetime as dt, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from copy import copy, deepcopy
@@ -168,14 +168,25 @@ class Span:
     ...
 
 class TimeSpan(Span):
+  """[start, end], its end None while it goes on; a date and a duration, [date, date + duration]; a date alone,
+  [date, date + 1 day); a ts alone, [ts, ts + 1 second). A duration is a timedelta or seconds. `bounds` says
+  which ends it holds: '[]' both, '[)' not its end."""
   start: dt
-  end: dt
+  end: dt | None
+  bounds: str
 
-  def __init__(self, **kw):
-    self.start = safe_datetime(kw['start'])
-    self.end = safe_datetime(kw['end'])
-    if self.start is None or self.end is None: raise ValueError('TimeSpan requires valid start and end values')
-    if self.end < self.start: raise ValueError('TimeSpan end precedes start')
+  def __init__(self, start=None, end=None, *, date=None, duration=None, ts=None, bounds: str = '[]'):
+    length = None
+    if ts is not None: start, length, bounds = ts, timedelta(seconds=1), '[)'
+    elif date is not None and duration is not None: start, length = date, duration if isinstance(duration, timedelta) else timedelta(seconds=duration)
+    elif date is not None: start, length, bounds = date, timedelta(days=1), '[)'
+    self.start = safe_datetime(start)
+    if self.start is None: raise ValueError('TimeSpan requires a valid start')
+    self.end = self.start + length if length is not None else None if end is None else safe_datetime(end)
+    if end is not None and self.end is None: raise ValueError('TimeSpan requires a valid end or none')
+    if self.end is not None and self.end < self.start: raise ValueError('TimeSpan end precedes start')
+    if bounds not in ('[]', '[)'): raise ValueError(f"TimeSpan bounds are '[]' or '[)', not {bounds!r}")
+    self.bounds = bounds
 
 
 class y2list(UserList):

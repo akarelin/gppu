@@ -6,9 +6,9 @@ the APIs at one address. The tables are made by the store's `schema.sql` (RAN `P
 
 Needs the `ld` extra, and fastapi-querybuilder installed with `--no-deps`: its metadata lists poetry, uvicorn and aiosqlite as runtime
 dependencies."""
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import IntEnum
-from typing import Annotated, Any, ClassVar, Literal, Self, TypeVar
+from typing import Annotated, Any, ClassVar, Self, TypeVar
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -21,7 +21,8 @@ from fastapi_pagination.customization import (CustomizedPage, UseExcludedFields,
 from fastapi_pagination.ext.sqlalchemy import apaginate   # querybuilder builds SQLAlchemy selects
 from fastapi_querybuilder import QueryBuilder, QueryParams, build_query
 from psycopg.errors import UndefinedFunction
-from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError, field_validator, model_validator
+from pydantic import ConfigDict, GetCoreSchemaHandler, GetJsonSchemaHandler, TypeAdapter, ValidationError, model_validator
+from pydantic_core import core_schema
 from sqlakeyset import custom_bookmark_type
 from sqlalchemy import DateTime, FetchedValue, SmallInteger, String, TypeDecorator
 from sqlalchemy.dialects.postgresql import JSONB, TSTZRANGE, Range
@@ -32,10 +33,11 @@ from sqlalchemy.sql.visitors import iterate
 from sqlmodel import Column, Field, SQLModel, delete, func, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from ..gppu import TimeSpan
+
 T = TypeVar('T')
 
 engine = None   # the store, opened by connect()
-DAY, SECOND = timedelta(days=1), timedelta(seconds=1)
 LIST = 1000   # the most records a list sends: the older data's largest list of like records is a folder's 585 files (work 15, a location's runs 16, 2026-10-17)
 LIST_BYTES = 1_000_000   # and the most data it sends, `data` and `meta` as Postgres stores them: that folder's are 187 kB (work 45 kB; a session's messages up to 145 MB, so they are read a page at a time)
 DATETIME, DURATION = TypeAdapter(datetime), TypeAdapter(timedelta)
@@ -145,31 +147,43 @@ class LinkFields(RecordFields):
     to_id: UUID | None = Field(None, description='The node at the other end.')
 
 
-class Span(BaseModel):
-    """A span of time in one of the spec's forms: `start` and `end`, [start, end]; `date` and `duration` (ISO 8601, or seconds),
-    [date, date + duration]; a `date` alone, [date, date + 1 day); a `ts` alone, [ts, ts + 1 second). `bounds` says which ends it holds.
-    A time without a zone is UTC, as the store holds it. Not gppu's `Span` and `TimeSpan`, which have no bounds and refuse an open end."""
-    start: datetime | None = None
-    end: datetime | None = None
-    bounds: Literal['[]', '[)'] = '[]'
+def utc(t: Any) -> datetime | None:
+    """A time as pydantic reads it (ISO 8601, or seconds), one without a zone UTC, as the store holds it: Postgres takes a range of
+    times without a zone for a tsrange, not a span."""
+    t = None if t is None else DATETIME.validate_python(t)
+    return t.replace(tzinfo=UTC) if t and not t.tzinfo else t
 
-    @model_validator(mode='before')
-    @classmethod
-    def forms(cls, v: Any) -> Any:
-        if not isinstance(v, dict) or not {'date', 'ts'} & v.keys():
-            return v
-        if 'ts' in v:
-            start, length, bounds = DATETIME.validate_python(v['ts']), SECOND, '[)'
-        elif 'duration' in v:
-            start, length, bounds = DATETIME.validate_python(v['date']), DURATION.validate_python(v['duration']), '[]'
-        else:
-            start, length, bounds = DATETIME.validate_python(v['date']), DAY, '[)'
-        return {'start': start, 'end': start + length, 'bounds': bounds}
 
-    @field_validator('start', 'end')
+class Span(TimeSpan):
+    """gppu's `TimeSpan` as Linked Data reads and sends it, in any of its forms: `start` and `end`, an open end left out; `date` and
+    `duration` (ISO 8601, or seconds); a `date` alone; a `ts` alone. A time without a zone is UTC, as the store holds it, and a span is
+    sent in UTC: `{"start", "end", "bounds"}`."""
+    def __init__(self, start=None, end=None, *, date=None, duration=None, ts=None, bounds: str = '[]'):
+        super().__init__(utc(start), utc(end), date=utc(date), ts=utc(ts), bounds=bounds,
+                         duration=None if duration is None else DURATION.validate_python(duration))
+
+    def sent(self) -> dict:
+        return {'start': self.start.astimezone(UTC), 'end': self.end and self.end.astimezone(UTC), 'bounds': self.bounds}
+
     @classmethod
-    def utc(cls, t: datetime | None) -> datetime | None:
-        return t.replace(tzinfo=ZoneInfo('UTC')) if t and not t.tzinfo else t   # Postgres takes a range of times without a zone for a tsrange, not a span
+    def __get_pydantic_core_schema__(cls, source: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+        def read(v: Any) -> 'Span':   # a span, or the fields of one; what TimeSpan refuses pydantic answers 422 with
+            if isinstance(v, cls):
+                return v
+            if not isinstance(v, dict):
+                raise ValueError('a span is an object: start and end, date and duration, date, or ts')
+            return cls(**v)
+        return core_schema.no_info_plain_validator_function(read, serialization=core_schema.plain_serializer_function_ser_schema(cls.sent))
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, schema: core_schema.CoreSchema, handler: GetJsonSchemaHandler) -> dict:
+        return {'title': 'Span', 'type': 'object', 'description': cls.__doc__, 'properties': {
+            'start': {'type': 'string', 'format': 'date-time', 'title': 'Start'},
+            'end': {'anyOf': [{'type': 'string', 'format': 'date-time'}, {'type': 'null'}], 'default': None, 'title': 'End'},
+            'bounds': {'type': 'string', 'enum': ['[]', '[)'], 'default': '[]', 'title': 'Bounds'}}}
+
+
+SPAN = TypeAdapter(Span)
 
 
 class SpanColumn(TypeDecorator):
@@ -182,14 +196,14 @@ class SpanColumn(TypeDecorator):
         if span is None:
             return None
         if not isinstance(span, Span):
-            span = Span.model_validate(span if isinstance(span, dict) else {'ts': span})
+            span = Span(**span) if isinstance(span, dict) else Span(ts=span)
         return Range(span.start, span.end, bounds=span.bounds)
 
     def process_result_value(self, value, dialect):
         return None if value is None else Span(start=value.lower, end=value.upper, bounds=value.bounds)
 
 
-custom_bookmark_type(Span, 'span', deserializer=Span.model_validate_json, serializer=Span.model_dump_json)   # a page sorted by span carries one in its cursor
+custom_bookmark_type(Span, 'span', deserializer=SPAN.validate_json, serializer=lambda s: SPAN.dump_json(s).decode())   # a page sorted by span carries one in its cursor
 
 
 class EventFields(RecordFields):
