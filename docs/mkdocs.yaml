@@ -23,6 +23,9 @@ plugins:
           options:
             members_order: source
             show_source: false     # the docstrings are the documentation
+            docstring_options:     # a docstring's Parameters may name what **kw takes (gppu.pcp) and leave its types out
+              warn_unknown_params: false
+              warn_missing_types: false
 
 markdown_extensions:
   - admonition
