@@ -1717,7 +1717,7 @@ class Vault:
   def create(name: str, value: str, designation: str | None = None) -> None:
     """Create a new secret. Raises if name already exists — use update to overwrite.
 
-    designation: optional suffix appended as '-<designation>' (kebab-lower) to disambiguate
+    designation: optional suffix appended as `-<designation>` (kebab-lower) to disambiguate
     when the base name collides with an existing secret.
     """
     if Vault._exists(name) and designation:

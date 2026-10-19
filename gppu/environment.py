@@ -4,7 +4,7 @@ Environment is the basic level, with no configuration file: platform, host, user
 os and the trace rules. Once `Environment.from_env` has loaded the app's configuration —
 and through its `!include` of the shared one, everything the fleet knows — lookups into
 it are strict, and the questions a utility used to answer for itself are rules of the
-configuration — its macros — reached as Environment.<table>.<rule>(...): where a
+configuration — its macros — reached as `Environment.<table>.<rule>(...)`: where a
 location is on a host, what its address is on a connection, which path an address means
 here, how a command runs on a host. gppu knows no rule by name.
 
