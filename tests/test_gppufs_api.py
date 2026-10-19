@@ -1,6 +1,10 @@
 """gppu.fs.api: the Lake's /config and /lake as a FastAPI app answer what the Collection answers itself."""
 import json
 
+import pytest
+
+pytest.importorskip('fastapi')   # gppu's ld extra; the build's tests install gppu without it
+
 from fastapi.testclient import TestClient
 
 from gppu.fs import Collection, GppuCatalog, _json, api
