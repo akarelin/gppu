@@ -2,32 +2,32 @@
 fileClass: Document
 created: 2026-10-19
 updated: 2026-10-19
-generated: { by: claude-code/opus-5-5, at: 2026-10-19T10:20 }
+generated: { by: claude-code/opus-5-5, at: 2026-10-19T10:55 }
 ---
 
 # gppu review
 
-Goal: gppu does what it is meant to: one implementation of each thing, Linked Data a submodule of gppu built on gppu's own primitives, and documentation generated from gppu's code alone. Nothing that works is dropped.
+Goal: gppu does what it is meant to. gppufs and Linked Data are native to gppu, built on gppu's own configuration, logging, apps and primitives; each thing has one implementation; the documentation is generated from gppu's code alone. Nothing that works is dropped; backwards compatibility is not a constraint.
 
-Alex, 2026-10-18, deciding Linked Data's place: "we put the whole uh, REST, uh, the whole like base API for records in GPPU. I believe that there's locations API already in GPPU and might as well be there. ... some of the primitives uh, of what kind of a data, uh, like spans, like path, all of those are already in GPU. So, okay, let's decide it. So linked data becomes a new submodule of GPU. ... you can improve uh, Postgres and uh, uh, current ORM implementation of GPP. I, I don't think it's really being used. So maybe uh, maybe replace it with uh, the ORM that you use." Same day: "you can have an API app, and GPPU is another type of app".
-
-Alex, 2026-10-19: "it doesn't mean you have to rewrite GPPU ... I don't want to destroy the working functionality". "start off with two things: correctly generate documentation, and do GPP what needs to be done ... there are a bunch of files where functionality is spread, and it's just wrong. So make GPPU work correct."
+Alex's requirements (2026-10-18, deciding where Linked Data lives): Linked Data is a submodule of gppu, its base API for records in gppu; the locations API gppu already has serves it; it uses the primitives gppu already has, such as spans and paths; gppu's Postgres and ORM are improved, its unused ORM replaced by the one Linked Data uses; an API app is a type of gppu app. (2026-10-19): gppu is not rewritten and what works is kept; documentation is generated correctly; functionality spread over several files is put right; gppufs and Linked Data are native to gppu, not side modules that do not use it.
 
 ## Plan
-1. Documentation from gppu's code: done. kb.karel.in/gppu/v3/: every module's reference, every class and function also without a docstring, the package's exports on the home page, and graph.html, graphify's graph grouped by gppu's modules (no model, no Mermaid).
-2. One Span: in progress.
-3. One Postgres and ORM: not started.
-4. One locations API: not started.
+1. Documentation from gppu's code: done. kb.karel.in/gppu/v3/: every module's reference, also what has no docstring; the package's exports on the home page; graph.html, graphify's graph grouped by gppu's modules, read without a model.
+2. One Span: done. gppu's `TimeSpan` holds an open end, its bounds and the specification's forms; `gppu.ld.Span` is that `TimeSpan` with Linked Data's reading rules (gppu daf7b13).
+3. One ORM: done. `gppu.data._SQABase`, which nothing used, is the ORM `gppu.ld` uses, and `gppu.ld.connect()` opens its store through `gppu.data.async_engine`; `_PGBase` is unchanged, since CCTV-detective, admin_ui, Plaud and CRAP's file_indexer use it (gppu d2d1e27).
+4. gppufs on Linked Data inside gppu: in progress.
 5. APIApp: not started.
 6. One environment: not started.
-7. `fs-dumpoftext.py` to `archive/`: not started.
+7. `fs-dumpoftext.py` to `archive/`: done (gppu 6d75c1e).
 
-## 2. One Span
-gppu has `Span` and `TimeSpan` in `gppu/gppu.py`, used by gppufs (`gppu/fs.py`, about twenty places). `gppu.ld` has its own `Span`, a pydantic model with `bounds`, open ends and the specification's forms (start and end; date and duration; date; ts), used by `gppu.ld.files` and RAN `Projects/ld` (`sessions.py`, `work.py`).
+## 4. gppufs on Linked Data inside gppu
+- Done: RAN `Projects/ld/gppufs` is `gppu.ld.gppufs`, gppufs's catalog, Lake and index kept by Linked Data's files API; FileIndexer gives it the API's address from its own `gppufs.yaml` (gppu ab3707c, RAN b656547eb and bcb6abc3a). RAN's five checks pass on it, and FileIndexer reads its 175 locations through it.
+- Next: one way of writing a uri below another. `gppu.ld.files` has its own (`address()`, `below()`) beside `gppu.fs`'s (`_join`, `GppuCatalog`'s location lookup).
+- Unchanged on purpose: every file is a Linked Data record, as the code had it; the specification keeps files in gppufs's indexes. That bridge is the specification session's.
 
 ## Done before the plan
 - VS Code resolves gppu from `~/.venv`: gppu installed editable in compat mode.
-- `gppu.fs`: the type of an archive's members names `collections.abc.Collection`, since gppu.fs's own `Collection` took the name.
+- `gppu.fs`: the type of an archive's members names `collections.abc.Collection`, since gppu.fs's own `Collection` took the name; the handler reference regenerated.
 
 ## Inventory
 Configuration and environment:
@@ -39,17 +39,17 @@ Configuration and environment:
 - `GppuCatalog` (`gppu/fs.py`): reads its own YAML (`locations.yaml`, sources, replicas) beside `Env`.
 - `_MqttConfig` (`gppu/iot.py`): MQTT's configuration as an app.
 
-Postgres:
-- `_PGBase` (psycopg2) and `_SQABase` (SQLAlchemy) in `gppu/data.py`, and `gppu.ld`'s own async SQLAlchemy engine over psycopg 3 (`connect()`), which uses neither.
+HTTP:
+- `mixin_Rest` (`gppu/app.py`), which `AsyncApp` includes: every public member of an app over HTTP; the host supplies the listener.
+- `gppu.fs.serve`: gppufs's `/config` and `/lake` on Python's `ThreadingHTTPServer`.
+- `gppu.ld`'s FastAPI apps (`api_at`, `served`), which RAN `Projects/ld/api.py` runs with uvicorn inside an `AsyncApp`.
 
 Linked Data and its parts:
 - `Record` in `gppu/fs.py` and `Record`, `Node`, `Link` in `gppu/ld/__init__.py`.
-- `Location`, `Container`, `Collection`, `GppuIndex`, `GppuCatalog` in `gppu/fs.py`.
-- `gppu/fs-dumpoftext.py`: another `Container`, `Location`, `Collection`, `Index`, `SqliteIndex`; nothing imports it.
-- `gppu/ld/files.py`: files and locations as Linked Data records beside gppufs.
 - `gppu/ld/annotations.py`: `Annotation`, a type the specification does not have.
-- RAN `Projects/ld/gppufs`: gppufs's `GppuIndex` over the files API, outside gppu.
 
 ## Found, not this task
 - GitHub Pages is not enabled for gppu, so `gppu-docs.yaml`'s last step fails.
 - kb.karel.in/obsidian/ answers 502: `kb-web` was suspended 2026-09-21 and nothing serves 127.0.0.1:8086 on trix.
+- The `ld` image has no `textual`, so `check_files.py`'s TUI part fails in it unless installed.
+- Something in the RAN checkout commits staged changes on its own, with generic messages (b656547eb, bcb6abc3a).
