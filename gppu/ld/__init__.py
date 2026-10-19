@@ -474,7 +474,7 @@ async def record_search(db: Db, type: Type | None = None, conditions: QueryParam
     """Of one `type`, with the columns it is read with, or of every type, with the record columns.
 
     `filters` is one JSON document of conditions on any column,
-    `{"parent_id": {"$eq": "…"}, "status": {"$ne": "abandoned"}, "name": {"$contains": "x"}}`, with the operators
+    `{"parent_id": {"$eq": "…"}, "status": {"$ne": "discarded"}, "name": {"$contains": "x"}}`, with the operators
     `$eq` `$ne` `$gt` `$gte` `$lt` `$lte` `$in` `$contains` `$startswith` `$isempty` `$isnotempty`, joined by `$and` `$or`.
     A time in a condition is UTC in whole seconds, `2026-10-16T13:00:00Z` or the same without the `Z`; one with an offset is refused.
     A key inside `data` or `meta` is not a column: no condition reaches it.
