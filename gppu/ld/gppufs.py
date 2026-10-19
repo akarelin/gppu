@@ -26,7 +26,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 import httpx
 
-from ..fs import Collection, FileSystem, GppuCatalog, GppuFileSystem, Location
+from ..fs import Collection, FileSystem, GppuCatalog, GppuFileSystem, Location, _address
 from ..gppu import TimeSpan, full_path, glob
 
 client: httpx.Client   # the API, opened by connect()
@@ -244,11 +244,6 @@ def name_of(address: str) -> str:
     return bare(address).partition('://')[2].rpartition('/')[2]
 
 
-def join(address: str, name: str) -> str:
-    """The address of name in what address names, as gppufs's LocationHandler writes it."""
-    return address + name if address.endswith('/') else f'{address}/{name}'
-
-
 class Index:
     """gppu.fs.GppuIndex kept by Linked Data: an entry, named by its address, is the file record there (GET /files/address). Its
     metadata is the entry exactly as gppufs keeps it, its fsspec listing and its gppu reading without what gppufs calculates of it
@@ -275,7 +270,7 @@ class Index:
         if r['meta'].get('enumerated'):
             listing = sorted(({'path': at, 'type': c['meta']['gppufs']['type'], 'ino': c['meta']['gppufs'].get('ino')}
                               for c in files(parent_id=r['id']) if 'gppufs' in c['meta'] and c['status'] != DELETED
-                              and (at := c['data']['canonical'] if c['subtype'] == 'location' else join(address, c['name']))
+                              and (at := c['data']['canonical'] if c['subtype'] == 'location' else _address(address, c['name']))
                               and parent_of(at) == bare(address)),
                              key=lambda c: (c['type'] != 'directory', c['path'].casefold()))
         return r['meta']['gppufs'] | {'name': address}, listing
@@ -301,7 +296,7 @@ class Index:
                 if (own.get('subtype') or folder['subtype']) in ('folder', 'git'):
                     own['subtype'] = 'git' if GIT in holds else 'folder'
             written, _ = contents(folder, own, children, holds)
-            stored |= {join(a, name): r for name, r in written.items()}
+            stored |= {_address(a, name): r for name, r in written.items()}
 
     def moved(self, source: str, destination: str) -> None:
         """The entry at source, and everything under it, is at destination now: its record gets the parent and the name destination

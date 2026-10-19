@@ -27,6 +27,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel, func, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from ..fs import _address, _below
 from . import Activity, ActivityFields, Db, RecordFields, Span, Stored, Type, api_at, listed, saved, typed
 
 ABANDONED = 'abandoned'   # the status of a record no longer in use: the core deletes only links, so anything else that goes is kept with this status (Linked Data.md, # API ## Storage)
@@ -113,22 +114,9 @@ class Addressed(FileFields, Stored):
     address: str = Field(description="_address_: its location's canonical uri with its path below it, each name uri-escaped, as gppufs addresses it.")
 
 
-def below(canonical: str, uri: str) -> str | None:
-    """The escaped path a uri names below a canonical uri, empty for the canonical uri itself; none when the uri is not at or below it.
-    A canonical uri that is a scheme's root (`work://`) has its paths right after it, as gppufs reads them."""
-    if canonical.endswith('://'):
-        return uri[len(canonical):].strip('/') if uri.startswith(canonical) else None
-    root = canonical.rstrip('/')
-    if uri.rstrip('/') == root:
-        return ''
-    return uri[len(root) + 1:].rstrip('/') if uri.startswith(root + '/') else None
-
-
 def address(canonical: str, path: str) -> str:
-    """The address of a path below a canonical uri: each name uri-escaped, as gppufs's Location.uri_of writes it."""
-    if not path:
-        return canonical
-    return canonical + quote(path, safe='/') if canonical.endswith('/') else f'{canonical}/{quote(path, safe="/")}'
+    """The address of a path below a canonical uri, each name uri-escaped, by gppu.fs's rule for an address below a location."""
+    return _address(canonical, quote(path, safe='/'))
 
 
 async def in_use(db: AsyncSession) -> list[File]:
@@ -169,7 +157,7 @@ async def at(db: Db, uri: str):
     """The file an address names: the location in use whose canonical uri begins it for longest, then each name below it, a child of
     the one before. 404 when nothing is stored there, 422 when two locations begin it equally long. A file its folder no longer holds is
     still there, its `status` `deleted`."""
-    held = [(r, rest) for r in await in_use(db) if (c := r.data.get('canonical')) and (rest := below(c, uri)) is not None]
+    held = [(r, rest) for r in await in_use(db) if (c := r.data.get('canonical')) and (rest := _below(c, uri)) is not None]
     deepest = [(r, rest) for r, rest in held if len(r.data['canonical']) == max(len(h.data['canonical']) for h, _ in held)]
     if len(deepest) != 1:
         raise HTTPException(422 if deepest else 404, f"{len(deepest)} locations hold {uri}{': ' + ', '.join(str(r.id) for r, _ in deepest) if deepest else ''}")

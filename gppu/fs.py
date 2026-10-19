@@ -138,6 +138,20 @@ def _join(uri: y2uri | str, path: y2path | str) -> y2uri:
   return uri / quote(str(path), safe='/') if str(path) else uri
 
 
+def _address(canonical: str, rest: str) -> str:
+  """The address of rest below a canonical uri, its names as they are, as an index row carries it; a canonical uri ending
+  in `/`, a scheme's root (`work://`) among them, has rest right after it."""
+  return canonical if not rest else canonical + rest if canonical.endswith('/') else f'{canonical}/{rest}'
+
+
+def _below(canonical: str, address: str) -> str | None:
+  """What an address names below a canonical uri, empty for the canonical uri itself; none when it is not at or below it."""
+  if address.rstrip('/') == canonical.rstrip('/'):
+    return ''
+  base = canonical if canonical.endswith('/') else canonical + '/'
+  return address[len(base):].strip('/') if address.startswith(base) else None
+
+
 class Provider:
   """Reaches objects by their uri over one connection.
 
@@ -5887,10 +5901,7 @@ class LocationHandler(Handler):
         row = folders[base]
         folder = "" if here == base else here[len(base.rstrip("/")) + 1:]
         canonical = str(row["canonical"])
-        address = (canonical if not folder else
-                   canonical + folder if canonical.endswith("://") else
-                   canonical.rstrip("/") + "/" + folder)
-        return LocatedPath(full_path(path), str(row["location"]), canonical, address, folder)
+        return LocatedPath(full_path(path), str(row["location"]), canonical, _address(canonical, folder), folder)
 
     @sync
     async def identify(self, path: Path) -> bool:
@@ -6137,13 +6148,9 @@ class GppuFileSystem(AbstractFileSystem):
     address belonging to a location outside this root still fails as being outside it.
     """
     for folder in sorted(self._locations, key=lambda item: len(str(self._locations[item]['canonical'])), reverse=True):
-      canonical = str(self._locations[folder]['canonical'])
-      if value == canonical or value == canonical.rstrip('/'):
-        return folder
-      rest = (value[len(canonical):] if canonical.endswith('://') and value.startswith(canonical) else
-              value[len(canonical.rstrip('/')) + 1:] if value.startswith(canonical.rstrip('/') + '/') else None)
+      rest = _below(str(self._locations[folder]['canonical']), value)
       if rest is not None:
-        return posixpath.join(folder, rest)
+        return posixpath.join(folder, rest) if rest else folder
     return value
 
   def _key(self, path: str | Path | None) -> str:
@@ -7067,10 +7074,7 @@ class GppuFileSystem(AbstractFileSystem):
         here = full_path(Path(self._path(key))).as_posix()
         base = folder.rstrip('/')
         if here == base or here.startswith(base + '/'):
-          canonical = str(self._locations[folder]['canonical'])
-          rest = '' if here == base else here[len(base) + 1:]
-          return canonical if not rest else (canonical + rest if canonical.endswith('://')
-                                             else canonical.rstrip('/') + '/' + rest)
+          return _address(str(self._locations[folder]['canonical']), '' if here == base else here[len(base) + 1:])
     return self._uri(key)
 
   def _move_rows(self, source: str, destination: str) -> None:
