@@ -1,4 +1,5 @@
-# gppu's documentation, built from the repository's root in an environment of its own, as gppu.yml's docs job builds it:
+# gppu's documentation, built from the repository's root in an environment of its own, as docs/publish.sh builds it for every gppu
+# release (gppu.yml) and for gppu-docs.yaml:
 #   uvx --python 3.14 --with mkdocs-material --with "mkdocstrings[python]" --with mkdocs-gen-files --with graphifyy mkdocs build --strict -f docs/mkdocs.yaml -d <folder>
 site_name: gppu
 site_description: General Purpose Python Utilities, documented from the code's docstrings.

@@ -18,15 +18,14 @@ jobs:
       url: ${{ steps.pages.outputs.page_url }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-tags: true   # the home page names the version it documents, from the release tags
+          fetch-depth: 0
 
       - uses: astral-sh/setup-uv@v7
 
       - name: Documentation
-        run: |
-          uvx --python 3.14 --with mkdocs-material --with "mkdocstrings[python]" --with mkdocs-gen-files --with graphifyy mkdocs build --strict -f docs/mkdocs.yaml -d "$RUNNER_TEMP/site"
-          ssh trix 'rm -rf /data/gppu/docs/v3.next && install -d -m 755 /data/gppu /data/gppu/docs'
-          scp -rq "$RUNNER_TEMP/site" trix:/data/gppu/docs/v3.next
-          ssh trix 'rm -rf /data/gppu/docs/v3 && mv /data/gppu/docs/v3.next /data/gppu/docs/v3'
+        run: sh docs/publish.sh
 
       - uses: actions/upload-pages-artifact@v5
         with:

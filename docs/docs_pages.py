@@ -1,6 +1,6 @@
 """The pages mkdocs-gen-files makes at build time out of gppu's code: a page per module, its reference, which mkdocstrings writes from
-the docstrings; on the home page, what the package `gppu` exports, by its own import lines; and graph.html, graphify's graph of every
-class and function of gppu, read from the code without a model and grouped by gppu's modules."""
+the docstrings; on the home page, the version of gppu they document and what the package `gppu` exports, by its own import lines; and
+graph.html, graphify's graph of every class and function of gppu, read from the code without a model and grouped by gppu's modules."""
 import ast
 import json
 import os
@@ -94,6 +94,13 @@ def graph() -> str:
         return Path(out, 'graph.html').read_text(encoding='utf-8')
 
 
+def version() -> str:
+    """The version of gppu the pages document: its release tag, gppu/v3.6.23, or the release before the code and how far past it
+    the code is, gppu/v3.6.22-41-g8fb96fa."""
+    return subprocess.run(['git', 'describe', '--tags', '--match', 'gppu/v*'], cwd=ROOT, check=True, capture_output=True,
+                          text=True).stdout.strip()
+
+
 def group(node: dict) -> str:
     """The gppu module a node is in: gppu.<module>, or gppu.<package> for a module in a package; the package's own __init__.py is gppu."""
     parts = PurePath(node['source_file']).with_suffix('').parts
@@ -104,9 +111,10 @@ with mkdocs_gen_files.open('graph.html', 'w') as f:
     f.write(graph())
 
 for name, source in modules():
-    if name == 'gppu':   # the package itself: its docstring and what it exports, on the home page
+    if name == 'gppu':   # the package itself: its version, its docstring and what it exports, on the home page
         with mkdocs_gen_files.open('index.md', 'a') as f:
-            f.write(f'\n::: gppu\n    options:\n      members: false\n      show_root_heading: false\n\n{exports(name, source)}\n')
+            f.write(f'\n**Version** {version()}\n\n::: gppu\n    options:\n      members: false\n      show_root_heading: false\n\n'
+                    f'{exports(name, source)}\n')
         continue
     page = '/'.join(name.split('.')[1:]) + ('/index.md' if source.stem == '__init__' else '.md')
     body = f'::: {name}\n' if defines(source) else (   # a package: its docstring and what it gathers, defined on its modules' pages
