@@ -85,7 +85,7 @@ def test_local_path_cannot_escape_location(relative, tmp_path):
 def test_drive_root_stays_absolute():
   location = Location({'uid': 'drive', 'canonical': 'file:///D:/'}, provider=FileSystem())
   assert str(location.uri) == 'file:///D:/'
-  assert str(location.uri_of('Contacts/person.json')) == 'file:///D:/Contacts/person.json/'
+  assert str(location.uri_of('Contacts/person.json')) == 'file:///D:/Contacts/person.json'
 
 
 def test_missing_connection_and_parent_are_errors():

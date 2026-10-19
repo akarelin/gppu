@@ -17,7 +17,7 @@ This API keeps both sides:
   (`/files/runs`)."""
 from datetime import datetime
 from typing import Literal
-from urllib.parse import quote, unquote
+from urllib.parse import unquote
 from uuid import UUID
 
 import pydantic
@@ -27,7 +27,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel, func, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from ..fs import _address, _below
+from ..fs import _below, _join
 from . import Activity, ActivityFields, Db, RecordFields, Span, Stored, Type, api_at, listed, saved, typed
 
 ABANDONED = 'abandoned'   # the status of a record no longer in use: the core deletes only links, so anything else that goes is kept with this status (Linked Data.md, # API ## Storage)
@@ -115,8 +115,8 @@ class Addressed(FileFields, Stored):
 
 
 def address(canonical: str, path: str) -> str:
-    """The address of a path below a canonical uri, each name uri-escaped, by gppu.fs's rule for an address below a location."""
-    return _address(canonical, quote(path, safe='/'))
+    """The address of a path below a canonical uri, each name uri-escaped, as gppufs's Location.uri_of writes it."""
+    return str(_join(canonical, path))
 
 
 async def in_use(db: AsyncSession) -> list[File]:

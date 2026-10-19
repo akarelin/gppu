@@ -133,9 +133,13 @@ class DataObject:
 
 
 def _join(uri: y2uri | str, path: y2path | str) -> y2uri:
-  """uri with a relative path below it, each name uri-escaped."""
+  """uri with a relative path below it, each name uri-escaped; a canonical uri's trailing slash is its own, not the path's."""
   uri = y2uri(uri)
-  return uri / quote(str(path), safe='/') if str(path) else uri
+  if not str(path):
+    return uri
+  joined = uri / quote(str(path), safe='/')
+  joined._last_segment_empty = False
+  return joined
 
 
 def _address(canonical: str, rest: str) -> str:
