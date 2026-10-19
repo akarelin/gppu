@@ -3,19 +3,20 @@ name: gppu docs
 on:
   workflow_dispatch:
 
+# 2026-10-19: GitHub Pages commented out below: deploy-pages failed every run, since the repository is private and has no Pages site
 permissions:
   contents: read
-  pages: write
-  id-token: write
+  # pages: write
+  # id-token: write
 
 jobs:
   # the documentation (docs/mkdocs.yaml) into the folder nginx serves at kb.karel.in/gppu/v3/ on trix (RAN trix_kb.conf), copied there
-  # over ssh, and the same site to GitHub Pages, which the repository's Pages setting takes from GitHub Actions
+  # over ssh
   docs:
     runs-on: [self-hosted, linux]
-    environment:
-      name: github-pages
-      url: ${{ steps.pages.outputs.page_url }}
+    # environment:
+    #   name: github-pages
+    #   url: ${{ steps.pages.outputs.page_url }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -27,9 +28,9 @@ jobs:
       - name: Documentation
         run: sh docs/publish.sh
 
-      - uses: actions/upload-pages-artifact@v5
-        with:
-          path: ${{ runner.temp }}/site
-
-      - id: pages
-        uses: actions/deploy-pages@v5
+      # - uses: actions/upload-pages-artifact@v5
+      #   with:
+      #     path: ${{ runner.temp }}/site
+      #
+      # - id: pages
+      #   uses: actions/deploy-pages@v5

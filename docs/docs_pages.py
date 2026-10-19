@@ -1,9 +1,11 @@
 """The pages mkdocs-gen-files makes at build time out of gppu's code: a page per module, its reference, which mkdocstrings writes from
-the docstrings; on the home page, the version of gppu they document and what the package `gppu` exports, by its own import lines; and
-graph.html, graphify's graph of every class and function of gppu, read from the code without a model and grouped by gppu's modules."""
+the docstrings; on the home page, the version of gppu they document and what the package `gppu` exports, by its own import lines;
+graph.html, graphify's graph of every class and function of gppu, read from the code without a model and grouped by gppu's modules;
+and under guides/, gppu's own documents, README first, as they are in the repository."""
 import ast
 import json
 import os
+import posixpath
 import re
 import subprocess
 import tempfile
@@ -13,6 +15,8 @@ import mkdocs_gen_files
 
 ROOT = Path(__file__).parents[1]   # the repository, beside docs/
 PACKAGE = ROOT / 'gppu'
+GUIDES = 'guides'                  # where the site carries gppu's documents, laid out as in the repository, so their links hold
+LINK = re.compile(r'(?P<lead>\]\(|href="|src=")(?P<target>[^)"#\s]+)')   # a document's links, Markdown's and its HTML's
 
 
 def modules():
@@ -107,6 +111,40 @@ def group(node: dict) -> str:
     return 'gppu' if parts == ('__init__',) else 'gppu.' + parts[0]
 
 
+def page(name: str, source: Path) -> str:
+    """A module's page: gppu.tui.tree's is tui/tree.md, a package's the index.md of its folder, the package gppu's the home page."""
+    return '/'.join(name.split('.')[1:] + (['index'] if source.stem == '__init__' else [])) + '.md'
+
+
+def documents():
+    """gppu's documents: README, the documents beside it and those in docs/; a plan, a 2Do or a handoff is work, not documentation."""
+    for source in sorted([*ROOT.glob('*.md'), *(ROOT / 'docs').glob('*.md')]):
+        if not source.name.startswith(('PLAN_', '2DO', 'HANDOFF_')):
+            yield source.relative_to(ROOT).as_posix()
+
+
+def relinked(document: str, published: set) -> str:
+    """A document's text with each link to a file the site does not carry made into one that answers: gppu's code goes to its module's
+    page, an image is copied beside the document, anything else (an example, a workflow, w11) goes to the file in the repository."""
+    pages = {source.relative_to(ROOT).as_posix(): page(name, source) for name, source in modules()}
+    here = posixpath.dirname(document)
+
+    def relink(match):
+        lead, target = match['lead'], match['target']
+        file = posixpath.normpath(posixpath.join(here, target))
+        if re.match(r'[a-z][a-z0-9+.-]*:|/', target) or file in published:
+            return match[0]
+        if file in pages:   # mkdocs turns a Markdown link to a page into the page's address; an HTML link is written as one
+            return lead + posixpath.relpath(pages[file] if lead == '](' else pages[file][:-3] + '.html', posixpath.join(GUIDES, here))
+        if PurePath(file).suffix in {'.svg', '.png', '.jpg', '.gif'}:
+            with mkdocs_gen_files.open(f'{GUIDES}/{file}', 'wb') as f:
+                f.write((ROOT / file).read_bytes())
+            return match[0]
+        return f'{lead}{mkdocs_gen_files.config.repo_url}/blob/master/{file}'
+
+    return LINK.sub(relink, (ROOT / document).read_text(encoding='utf-8'))
+
+
 with mkdocs_gen_files.open('graph.html', 'w') as f:
     f.write(graph())
 
@@ -116,8 +154,12 @@ for name, source in modules():
             f.write(f'\n**Version** {version()}\n\n::: gppu\n    options:\n      members: false\n      show_root_heading: false\n\n'
                     f'{exports(name, source)}\n')
         continue
-    page = '/'.join(name.split('.')[1:]) + ('/index.md' if source.stem == '__init__' else '.md')
     body = f'::: {name}\n' if defines(source) else (   # a package: its docstring and what it gathers, defined on its modules' pages
         f'::: {name}\n    options:\n      members: false\n      show_root_heading: false\n\n{exports(name, source)}\n')
-    with mkdocs_gen_files.open(page, 'w') as f:
+    with mkdocs_gen_files.open(page(name, source), 'w') as f:
         f.write(f'# {name}\n\n{body}')
+
+published = set(documents())
+for document in published:
+    with mkdocs_gen_files.open(f'{GUIDES}/{document}', 'w') as f:
+        f.write(relinked(document, published))

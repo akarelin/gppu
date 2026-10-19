@@ -2,7 +2,7 @@
 # release (gppu.yml) and for gppu-docs.yaml:
 #   uvx --python 3.14 --with mkdocs-material --with "mkdocstrings[python]" --with mkdocs-gen-files --with graphifyy mkdocs build --strict -f docs/mkdocs.yaml -d <folder>
 site_name: gppu
-site_description: General Purpose Python Utilities, documented from the code's docstrings.
+site_description: General Purpose Python Utilities, documented from the code's docstrings and by gppu's own documents.
 docs_dir: gppu                     # the home page; the modules' pages are made from the code at build time (docs_pages.py)
 site_url: https://kb.karel.in/gppu/v3/   # where it is published; every build names its output folder: mkdocs build -d <folder>
 repo_url: https://github.com/akarelin/gppu
