@@ -23,7 +23,8 @@ Alex's requirements (2026-10-18, deciding where Linked Data lives): Linked Data 
 ## 4. gppufs on Linked Data inside gppu
 - Done: RAN `Projects/ld/gppufs` is `gppu.ld.gppufs`, gppufs's catalog, Lake and index kept by Linked Data's files API; FileIndexer gives it the API's address from its own `gppufs.yaml` (gppu ab3707c, RAN b656547eb and bcb6abc3a). RAN's five checks pass on it, and FileIndexer reads its 175 locations through it.
 - Done: one rule for an address below a location's canonical uri and for reading one back, `gppu.fs`'s `_address` and `_below`; `LocationHandler.located`, `GppuFileSystem._located` and `_address_of`, `gppu.ld.files`'s `address()` and `below()` and `gppu.ld.gppufs` use it in place of their own copies. Every address is as it was, except under `file:///`, which gave `file:/home` (gppu e63fee0).
-- Open: gppu writes a name in an address two ways. `Location.uri_of` (`_join`) escapes each name and keeps a canonical uri's trailing slash after the name (`file:///D:/Contacts/person.json/`, which `tests/test_catalog_configuration.py` asserts); CRAP FileIndexer's `fact.record.uri` and RAN `Projects/ld`'s FileIndexer use it. The gppufs index rows `LocationHandler` writes have names as they are and no trailing slash. Linked Data's `address()` escapes and has no trailing slash. Making them one changes the addresses one of the two stores already holds.
+- Done: `Location.uri_of` keeps a canonical uri's trailing slash as the canonical uri's own, so a file below `file:///D:/` is `file:///D:/Contacts/person.json`, not `.../person.json/`; none of CRAP FileIndexer's records had an address ending in `/`. Linked Data's `address()` is `uri_of`'s rule (gppu 4f2caa6).
+- Open: gppu writes a name in an address two ways. `Location.uri_of` escapes each name (`a%20b`), and CRAP FileIndexer's records and Linked Data's addresses have it so. The gppufs index rows `LocationHandler` writes have names as they are (`a b`), and `GppuFileSystem` reads addresses back that way. Making them one changes the rows one of the two already holds.
 - Unchanged on purpose: every file is a Linked Data record, as the code had it; the specification keeps files in gppufs's indexes. That bridge is the specification session's.
 
 ## Done before the plan
@@ -53,7 +54,7 @@ Linked Data and its parts:
 - GitHub Pages is not enabled for gppu, so `gppu-docs.yaml`'s last step fails.
 - kb.karel.in/obsidian/ answers 502: `kb-web` was suspended 2026-09-21 and nothing serves 127.0.0.1:8086 on trix.
 - The `ld` image has no `textual`, so `check_files.py`'s TUI part fails in it unless installed.
-- Something in the RAN checkout commits staged changes on its own, with generic messages (b656547eb, bcb6abc3a).
+- Something in the RAN checkout commits staged changes on its own, with generic messages (b656547eb, bcb6abc3a); the gppu checkout too (4f2caa6).
 - CRAP's admin_ui runs its own HTTP server rather than an `APIApp`.
 - RAN `Projects/ld/work.py:152` builds a `Span` from a value that is not one.
 - `Env.glob` answers a default for a missing key and `Environment.glob` raises; both read `Env.data` with `deepget`.
