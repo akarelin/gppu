@@ -34,6 +34,21 @@ class TestDeepget:
         d = {"a": {"b": 1}}
         assert deepget("a/c/d", d, default="fallback") == "fallback"
 
+    def test_a_falsy_value_at_a_path_is_the_value(self):
+        from collections import UserDict
+        d = {"rest": {"enabled": False, "count": 0, "name": "", "none": None, "deep": UserDict({"on": False})}}
+        assert deepget("rest/enabled", d, default=True) is False
+        assert deepget("rest/count", d, default=5) == 0
+        assert deepget("rest/name", d, default="x") == ""
+        assert deepget("rest/none", d, default="x") is None
+        assert deepget("rest/deep/on", d, default=True) is False
+        assert deepget("rest/name/below", d, default="x") == "x"   # a step that is no mapping
+
+    def test_environment_reads_a_nested_false(self):
+        from gppu import Env, Environment
+        Env.from_dict({"rest": {"enabled": False}})
+        assert Environment.glob("rest/enabled") is False
+
 
 class TestDeepgetTyped:
     def test_deepget_int_returns_int(self):

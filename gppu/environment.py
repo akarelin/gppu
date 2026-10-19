@@ -19,14 +19,11 @@ State.services. Construction runs once, at startup.
 
 from __future__ import annotations
 
-import getpass
-import os
-import platform as _platform
 import socket
 from pathlib import Path
 from typing import Any
 
-from .gppu import TRACE_RULES, Env, TemplateSet, _DC, deepget, detect_os
+from .gppu import TRACE_RULES, Env, OSType, TemplateSet, _DC, deepget
 
 def is_table_key(name: str) -> bool:   # what a table holds beside its rows: its macros, its generators, its templates and
   return name in ('macros', 'generators', 'templates') or name.endswith('_templates')   # its named templates
@@ -34,12 +31,8 @@ _MISSING = object()
 
 
 def platform_name() -> str:
-  """The platform vocabulary of the shared configuration: windows, wsl, debian, macos."""
-  system = _platform.system()
-  if system == 'Windows': return 'windows'
-  if system == 'Darwin': return 'macos'
-  if 'WSL_DISTRO_NAME' in os.environ or 'microsoft' in _platform.release().lower(): return 'wsl'
-  return 'debian'
+  """The platform vocabulary of the shared configuration, for gppu's `detect_os`: windows, wsl, debian, macos."""
+  return {OSType.W11: 'windows', OSType.WSL: 'wsl', OSType.MACOS: 'macos'}.get(Env.os, 'debian')
 
 
 class _Environment:
@@ -49,11 +42,11 @@ class _Environment:
   via `glob`, `glob_list`, and `glob_dict`, and dynamic access to table rules and macros.
   Initialized once at startup via `from_env` or `from_dict`.
   """
-  os = detect_os()
+  os = Env.os   # Env's, which detects them once
   platform: str = platform_name()
   host: str = socket.gethostname().split('.')[0].lower()
-  user: str = getpass.getuser()
-  home: Path = Path.home()
+  user: str = Env.user
+  home: Path = Env.home
 
   # -- loading: gppu Env underneath, State constructed on top --------------------------
   def from_env(self, name: str | None = None, app_path: Path | None = None) -> None:

@@ -25,6 +25,7 @@ from jinja2.sandbox import SandboxedEnvironment
 from typing import Union, Any, Literal, List, Optional, Tuple, Dict, DefaultDict
 from typing import TypeAlias, ClassVar, Callable, Protocol
 from collections import defaultdict, UserDict, UserList
+from collections.abc import Mapping
 from enum import Enum
 from functools import wraps, partial, cache
 from datetime import datetime as dt, timedelta, timezone
@@ -61,9 +62,10 @@ class OSType(Enum):
 def detect_os() -> OSType:
   sysname = platform.system()
   if sysname == "Windows": return OSType.W11
+  elif sysname == "Darwin": return OSType.MACOS
   elif sysname == "Linux":
     release = platform.release().lower()
-    if "microsoft" in release or "wsl" in release: return OSType.WSL
+    if "microsoft" in release or "wsl" in release or 'WSL_DISTRO_NAME' in os.environ: return OSType.WSL
     return OSType.LINUX
   else: return OSType.OTHER
 
@@ -473,12 +475,13 @@ deepdict: Callable[[], DefaultDict[Any, Any]] = lambda: defaultdict(deepdict)
 
 
 def deepget(path: str, d: dict, default=None):
+  """The value at a slash path, falsy values included; default when any step is absent."""
   if '/' in path and path not in d.keys():
-    _ = dict(d)
+    _ = d
     for pp in path.split('/'):
-      _ = _.get(pp)
-      if not _: break
-    return _ if _ else default
+      if not isinstance(_, Mapping) or pp not in _: return default
+      _ = _[pp]
+    return _
   return d.get(path, default)
   # if '/' not in path or path in d: return d.get(path, default)
   # for p in path.split('/'):

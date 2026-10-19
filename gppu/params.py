@@ -26,6 +26,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping
 
+from .gppu import deepget
+
 _MISSING = object()
 _JSON_TYPES = {str: 'string', int: 'integer', float: 'number', bool: 'boolean', Path: 'string', dict: 'object', list: 'array'}
 _ARG_LINE = re.compile(r'^\s+(\w+)(?:\s*\([^)]*\))?:\s*(.+)$')
@@ -44,15 +46,6 @@ class Param:
 
   @property
   def option(self) -> str: return '--' + self.name.replace('_', '-')
-
-
-def lookup(path: str, d: dict) -> Any:
-  """The value at a slash path, falsy values included; _MISSING when any step is absent."""
-  if path in d: return d[path]
-  for part in path.split('/'):
-    if not isinstance(d, dict) or part not in d: return _MISSING
-    d = d[part]
-  return d
 
 
 def _unwrap(annotation: Any) -> Any:
@@ -121,7 +114,7 @@ def resolve(fn: Callable, given: Mapping[str, Any], config: Mapping[str, Any]) -
   kwargs = {}
   for p in parameters(fn):
     if p.name in given: value = given[p.name]
-    elif (found := lookup(p.name, dict(config))) is not _MISSING: value = found
+    elif (found := deepget(p.name, dict(config), _MISSING)) is not _MISSING: value = found
     elif not p.required: value = p.default
     else: raise LookupError(f'{p.name}: required; pass {p.option} or set {p.name} in configuration')
     kwargs[p.name] = convert(p, value)
