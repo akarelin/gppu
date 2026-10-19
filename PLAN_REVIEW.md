@@ -29,6 +29,9 @@ Configuration and environment:
 - `GppuCatalog` (`gppu/fs.py`): reads its own YAML (`locations.yaml`, sources, replicas) beside `Env`.
 - `_MqttConfig` (`gppu/iot.py`): MQTT's configuration as an app.
 
+Postgres:
+- `_PGBase` (psycopg2) and `_SQABase` (SQLAlchemy) in `gppu/data.py`, and `gppu.ld`'s own async SQLAlchemy engine over psycopg 3 (`connect()`), which uses neither.
+
 Linked Data and its parts:
 - `Span`, `TimeSpan` (`gppu/gppu.py`) and a second `Span` in `gppu/ld/__init__.py`, which says it is not gppu's.
 - `Record` in `gppu/fs.py` and `Record`, `Node`, `Link` in `gppu/ld/__init__.py`.
