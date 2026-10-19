@@ -135,7 +135,7 @@ def store(location: Location | None, who: str, fields: dict[str, Any]) -> None:
 
 def collection(**location_types: Any) -> Collection:
     """gppufs's Collection, the Lake, over Linked Data: its Locations read from it (catalog()) and their configuration written back
-    into it (store()); gppu.fs.serve serves it as /config and /lake."""
+    into it (store()); gppu.fs.api serves it as /config and /lake."""
     return Collection(lambda: catalog(**location_types), store)
 
 

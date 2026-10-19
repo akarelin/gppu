@@ -1715,9 +1715,10 @@ The same enumeration contract for non-filesystem Containers.
 
 Read through the handlers, extracting each selected archive once per walk.
 
-## `serve(lake: 'Collection', host: 'str' = '127.0.0.1', port: 'int' = 8765) -> 'None'`
+## `api(lake: 'Collection')`
 
-Serve lake's configuration and content as REST resources. A write to the configuration carries its author as who.
+lake's configuration and content as REST resources, a FastAPI app: an APIApp serves it among its apis(), serve() alone.
+A write to the configuration carries its author as who. Needs FastAPI (the `ld` extra).
 
 GET    /config                    the names of the configuration's tables
 GET    /config/{table}[/{uid}]    a table's rows as configured, or one row
@@ -1729,3 +1730,9 @@ GET    /lake/{uri}                what the handlers found at uri; ?ls what is in
                                   everything below it, ?read the object with its content, ?content its bytes
 PUT    /lake/{uri}                store the object in the body: content, identity, kind, name
 DELETE /lake/{uri}                remove the object at uri
+
+An unknown name answers 404 and a value lake refuses 400, each with its error.
+
+## `serve(lake: 'Collection', host: 'str' = '127.0.0.1', port: 'int' = 8765) -> 'None'`
+
+api(lake) on uvicorn at host and port, for a program that serves the Lake alone.

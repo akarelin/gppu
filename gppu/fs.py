@@ -8173,8 +8173,9 @@ def _json(value: Any) -> Any:
   return str(value)
 
 
-def serve(lake: Collection, host: str = '127.0.0.1', port: int = 8765) -> None:
-  """Serve lake's configuration and content as REST resources. A write to the configuration carries its author as who.
+def api(lake: Collection):
+  """lake's configuration and content as REST resources, a FastAPI app: an APIApp serves it among its apis(), serve() alone.
+  A write to the configuration carries its author as who. Needs FastAPI (the `ld` extra).
 
   GET    /config                    the names of the configuration's tables
   GET    /config/{table}[/{uid}]    a table's rows as configured, or one row
@@ -8186,103 +8187,75 @@ def serve(lake: Collection, host: str = '127.0.0.1', port: int = 8765) -> None:
                                     everything below it, ?read the object with its content, ?content its bytes
   PUT    /lake/{uri}                store the object in the body: content, identity, kind, name
   DELETE /lake/{uri}                remove the object at uri
+
+  An unknown name answers 404 and a value lake refuses 400, each with its error.
   """
-  from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-  from urllib.parse import parse_qs
+  from fastapi import Body, FastAPI, Response
 
-  class Handler(BaseHTTPRequestHandler):
-    def _route(self) -> tuple[str, str | None, dict[str, str]]:
-      url = urlsplit(self.path)
-      query = {key: values[0] for key, values in parse_qs(url.query, keep_blank_values=True).items()}
-      for collection in ('/config/locations', '/config', '/lake'):
-        if url.path == collection:
-          return collection, None, query
-        if url.path.startswith(collection + '/'):
-          return collection, unquote(url.path[len(collection) + 1:]), query
-      raise LookupError(f'no resource at {url.path}')
+  def reply(payload: Any, status: int = 200, content_type: str = 'application/json; charset=utf-8') -> Response:
+    data = payload if isinstance(payload, bytes) else json.dumps(payload, default=_json, ensure_ascii=False).encode('utf-8')
+    return Response(data, status_code=status, media_type=content_type)
 
-    def _body(self) -> dict[str, Any]:
-      return json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+  app = FastAPI(title='gppufs')
+  app.add_exception_handler(LookupError, lambda request, error: reply({'error': str(error)}, 404))
+  for refused in (ValueError, TypeError):
+    app.add_exception_handler(refused, lambda request, error: reply({'error': str(error)}, 400))
 
-    def _reply(self, status: int, payload: Any, content_type: str = 'application/json; charset=utf-8') -> None:
-      data = payload if isinstance(payload, bytes) else json.dumps(payload, default=_json, ensure_ascii=False).encode('utf-8')
-      self.send_response(status)
-      self.send_header('Content-Type', content_type)
-      self.send_header('Content-Length', str(len(data)))
-      self.end_headers()
-      self.wfile.write(data)
+  @app.get('/config/locations')
+  def locations(): return reply([location.data for location in lake.locations.values()])
 
-    def _answer(self, method: Callable[[], tuple[int, Any] | tuple[int, Any, str]]) -> None:
-      try:
-        self._reply(*method())
-      except LookupError as error:
-        self._reply(404, {'error': str(error)})
-      except (ValueError, TypeError) as error:
-        self._reply(400, {'error': str(error)})
+  @app.get('/config/locations/{uid:path}')
+  def location(uid: str): return reply(lake.location(uid).data)
 
-    def do_GET(self) -> None:
-      def get():
-        collection, name, query = self._route()
-        if collection == '/config/locations':
-          if name is None:
-            return 200, [location.data for location in lake.locations.values()]
-          return 200, lake.location(name).data
-        if collection == '/config':
-          if name is None:
-            return 200, lake.config()
-          table, _, uid = name.partition('/')
-          rows = lake.config(table)
-          return 200, rows[uid] if uid else rows
-        if 'ls' in query:
-          return 200, lake.ls(name)
-        if 'walk' in query:
-          return 200, lake.walk(name, query.get('level', 'files'), query.get('recursive') == '1')
-        if 'read' in query:
-          return 200, lake.read(name)
-        if 'content' in query:
-          with lake.open(name) as stream:
-            return 200, stream.read(), 'application/octet-stream'
-        return 200, lake.info(name)
-      self._answer(get)
+  @app.post('/config/locations')
+  def add(body: dict = Body(...)):
+    lake.add(**body)
+    return reply(lake.location(body.get('uid') or body['provider'] + ('/' + body['path'] if body.get('path') else '')).data, 201)
 
-    def do_POST(self) -> None:
-      def post():
-        collection, name, _ = self._route()
-        if collection != '/config/locations' or name is not None:
-          raise LookupError('Locations are added at /config/locations')
-        body = self._body()
-        lake.add(**body)
-        return 201, lake.location(body.get('uid') or body['provider'] + ('/' + body['path'] if body.get('path') else '')).data
-      self._answer(post)
+  @app.patch('/config/locations/{uid:path}')
+  def change(uid: str, body: dict = Body(...)):
+    id = lake.location(uid).data['id']
+    lake.location(uid).save(**body)
+    return reply(next(location.data for location in lake.locations.values() if location.data['id'] == id))
 
-    def do_PATCH(self) -> None:
-      def patch():
-        collection, name, _ = self._route()
-        if collection != '/config/locations' or name is None:
-          raise LookupError('a Location is changed at /config/locations/{uid}')
-        body = self._body()
-        id = lake.location(name).data['id']
-        lake.location(name).save(**body)
-        return 200, next(location.data for location in lake.locations.values() if location.data['id'] == id)
-      self._answer(patch)
+  @app.get('/config')
+  def tables(): return reply(lake.config())
 
-    def do_PUT(self) -> None:
-      def put():
-        collection, name, _ = self._route()
-        if collection != '/lake' or name is None:
-          raise LookupError('objects are stored at /lake/{uri}')
-        body = self._body()
-        lake.write(name, DataObject(name, body['content'], body.get('identity'), body.get('kind', 'object'), body.get('name', '')))
-        return 204, b''
-      self._answer(put)
+  @app.get('/config/{name:path}')
+  def table(name: str):
+    table, _, uid = name.partition('/')
+    rows = lake.config(table)
+    return reply(rows[uid] if uid else rows)
 
-    def do_DELETE(self) -> None:
-      def delete():
-        collection, name, _ = self._route()
-        if collection != '/lake' or name is None:
-          raise LookupError('objects are removed at /lake/{uri}')
-        lake.delete(name)
-        return 204, b''
-      self._answer(delete)
+  @app.get('/lake')
+  @app.get('/lake/{uri:path}')
+  def found(uri: str | None = None, ls: str | None = None, walk: str | None = None, level: str = 'files', recursive: str | None = None,
+           read: str | None = None, content: str | None = None):   # a flag is there, ?ls, or not
+    if ls is not None:
+      return reply(lake.ls(uri))
+    if walk is not None:
+      return reply(lake.walk(uri, level, recursive == '1'))
+    if read is not None:
+      return reply(lake.read(uri))
+    if content is not None:
+      with lake.open(uri) as stream:
+        return reply(stream.read(), content_type='application/octet-stream')
+    return reply(lake.info(uri))
 
-  ThreadingHTTPServer((host, port), Handler).serve_forever()
+  @app.put('/lake/{uri:path}')
+  def write(uri: str, body: dict = Body(...)):
+    lake.write(uri, DataObject(uri, body['content'], body.get('identity'), body.get('kind', 'object'), body.get('name', '')))
+    return reply(b'', 204)
+
+  @app.delete('/lake/{uri:path}')
+  def delete(uri: str):
+    lake.delete(uri)
+    return reply(b'', 204)
+
+  return app
+
+
+def serve(lake: Collection, host: str = '127.0.0.1', port: int = 8765) -> None:
+  """api(lake) on uvicorn at host and port, for a program that serves the Lake alone."""
+  import uvicorn
+  uvicorn.run(api(lake), host=host, port=port)
