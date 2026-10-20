@@ -1738,6 +1738,6 @@ DELETE /lake/{uri}                remove the object at uri
 
 An unknown name answers 404 and a value lake refuses 400, each with its error.
 
-## `serve(lake: 'Collection', host: 'str' = '127.0.0.1', port: 'int' = 8765) -> 'None'`
+## `serve(lake: 'Collection', host: 'str', port: 'int') -> 'None'`
 
 api(lake) on uvicorn at host and port, for a program that serves the Lake alone.

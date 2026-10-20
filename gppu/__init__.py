@@ -16,6 +16,11 @@ from .app import (
     APIApp,
     mixin_Rest,
 
+    # Environment and State
+    Environment,
+    State,
+    is_table_key,
+
     # sync lifecycle (AppDaemon / Y2)
     _YMRO,
     YStepper,
@@ -137,8 +142,6 @@ from .gppu import (
     _Base,
 )
 
-from .environment import Environment, State
-
 from .iot import (
     # y2xxx classes
     y2slug,
@@ -211,7 +214,7 @@ __all__ = [
     'format_size', 'format_duration', 'format_since',
 
     # Env
-    'Env', 'Environment', 'State',
+    'Env', 'Environment', 'State', 'is_table_key',
 
     # Config access
     'glob', 'glob_int', 'glob_list', 'glob_dict',

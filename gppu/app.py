@@ -12,21 +12,285 @@ the lifecycle by overriding ``POSSIBLE_STEPS``. These are stepper hooks;
 ``AsyncApp`` is the conventional asyncio counterpart: construction runs a
 synchronous ``setup()`` hook, and ``run()`` opens one ``TaskGroup`` before
 calling ``start()``. Long-lived work is added with ``_spawn()``.
+
+Environment and State: what an app knows at startup, the Y2 way.
+
+Environment is the basic level, with no configuration file: platform, host, user, home,
+os and the trace rules. Once `Environment.from_env` has loaded the app's configuration —
+and through its `!include` of the shared one, everything the fleet knows — lookups into
+it are strict, and the questions a utility used to answer for itself are rules of the
+configuration — its macros — reached as `Environment.<table>.<rule>(...)`: where a
+location is on a host, what its address is on a connection, which path an address means
+here, how a command runs on a host. gppu knows no rule by name.
+
+State holds what the configuration constructs. Both are single instances, as in Y2. Every key of the configuration carrying
+`templates` is a table; every other mapping under it is a row keyed by its uid. A row
+resolves through the table's TemplateSet — the template builds the default dict from the uid, the row
+updates it with what differs — is checked against the tables it references, and is
+built by the class its `kind` names — the app that cares registers it, any other app
+gets a plain _DC carrying the kind. A row marked `service` registers in
+State.services. Construction runs once, at startup.
+
+CliApp's parameters: what an app's ``main`` asks for, read from its signature, as Windmill reads a script's ``main``.
+
+    def main(self, since: str = '7d', dry_run: bool = False) -> dict:
+      \"\"\"Archive what changed.
+
+      Args:
+        since: How far back to look.
+      \"\"\"
+
+Each parameter is a command-line option, ``--since 3d``, ``--dry-run``; a positional-only one is a positional
+argument. A value comes from, in order: the command line, the app's configuration under the parameter's name, the
+signature's default. Anything still missing is an error.
+
+The same description serves the command line, ``schema`` (JSON Schema, for a form or a REST manifest) and a call
+from another app. The first docstring line is the description; ``Args:`` lines are the help.
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 import inspect
 import json
+import re
+import socket
+import types
+import typing
 from abc import abstractmethod
-from pathlib import Path
 from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
-from typing import Any, final
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Literal, final
 
-from .gppu import Env, Logger, _Base, _DC, _mixin
-from .environment import Environment
-from .params import call, parser, resolve, schema
+from .gppu import TRACE_RULES, Env, Logger, OSType, TemplateSet, _Base, _DC, _mixin, deepget
+
+_MISSING = object()
+
+
+# region Environment and State
+def is_table_key(name: str) -> bool:   # what a table holds beside its rows: its macros, its generators, its templates and
+  return name in ('macros', 'generators', 'templates') or name.endswith('_templates')   # its named templates
+
+
+def platform_name() -> str:
+  """The platform vocabulary of the shared configuration, for gppu's `detect_os`: windows, wsl, debian, macos."""
+  return {OSType.W11: 'windows', OSType.WSL: 'wsl', OSType.LINUX: 'debian', OSType.MACOS: 'macos'}[Env.os]
+
+
+class _Environment:
+  """The global environment and configuration registry.
+
+  Provides system attributes (os, platform, host, user, home), strict data lookups
+  via `glob`, `glob_list`, and `glob_dict`, and dynamic access to table rules and macros.
+  Initialized once at startup via `from_env` or `from_dict`.
+  """
+  os = Env.os   # Env's, which detects them once
+  platform: str = platform_name()
+  host: str = socket.gethostname().split('.')[0].lower()
+  user: str = Env.user
+  home: Path = Env.home
+
+  # -- loading: gppu Env underneath, State constructed on top --------------------------
+  def from_env(self, name: str | None = None, app_path: Path | None = None) -> None:
+    Env.from_env(name=name, app_path=app_path)
+    State.load()
+
+  def from_dict(self, d: dict) -> None:
+    Env.from_dict(d)
+    State.load()
+
+  def trace(self) -> dict: return TRACE_RULES
+
+  # -- lookups: strict, as in Y2 — a missing key raises, nothing has a default -------------
+  def glob(self, path: str) -> Any:
+    result = deepget(path, Env.data, default=_MISSING)
+    if result is _MISSING: raise KeyError(path)
+    return result
+
+  def glob_list(self, path: str) -> list:
+    result = self.glob(path)
+    if not isinstance(result, list): raise TypeError(f'{path} is not a list')
+    return result
+
+  def glob_dict(self, path: str) -> dict:
+    result = self.glob(path)
+    if not isinstance(result, dict): raise TypeError(f'{path} is not a mapping')
+    return result
+
+  # -- rules: Environment.<table>.<rule>(...) is a macro of that table ---------------------
+  def __getattr__(self, table: str):
+    if table in State.templates: return _Rules(table, State.templates[table])
+    raise AttributeError(f'no table named {table!r}')
+
+
+class _Rules:
+  def __init__(self, table: str, templates: TemplateSet):
+    self._table, self._globals = table, templates.environment.globals
+
+  def __getattr__(self, name: str):
+    rule = self._globals.get(name)
+    if not callable(rule): raise AttributeError(f'{self._table} defines no rule {name!r}')
+    return rule
+
+
+class _State:
+  def __init__(self) -> None:
+    self.tables: dict[str, dict[str, Any]] = {}
+    self.templates: dict[str, TemplateSet] = {}
+    self.services: dict[str, Any] = {}
+    self.kinds: dict[str, type] = {}
+
+  def register(self, **kinds: type) -> None:
+    """The classes a template's `kind` may name."""
+    self.kinds.update(kinds)
+
+  def reset(self) -> None:
+    for table in self.tables: delattr(self, table)
+    self.tables, self.templates, self.services = {}, {}, {}
+
+  def rows(self, table: str) -> dict[str, dict]:
+    """The rows of a table: every mapping under its key that is not macros, generators or templates."""
+    return {uid: row for uid, row in Env.glob_dict(table).items() if not is_table_key(uid) and isinstance(row, dict)}
+
+  def load(self) -> None:
+    """Construct every table of the loaded configuration."""
+    self.reset()
+    names = [name for name, content in Env.data.items() if isinstance(content, dict) and 'templates' in content]
+    rows = {name: self.rows(name) for name in names}   # what a macro sees under a table's name: its rows, resolved
+    for name in names:                                  # once the table is, so a table resolved later sees what an
+      if hasattr(self, name): raise ValueError(f'{name}: a table cannot be named after a State member')   # earlier one computed
+      templates = Env.template_set(name, Environment=Environment, State=self, **rows)
+      resolved = {uid: templates.resolve({'uid': uid, **row}) for uid, row in rows[name].items()}
+      rows[name].clear(); rows[name].update(resolved)
+      table = {}
+      for uid, data in resolved.items():
+        obj = self.kinds.get(data.get('kind'), _DC)(data=data)   # the app that cares registers the class
+        table[uid] = obj
+        if data.get('service'): self.services[uid] = obj
+      self.tables[name], self.templates[name] = table, templates
+      setattr(self, name, table)
+
+
+Environment = _Environment()
+State = _State()
+# endregion
+
+
+# region Parameters
+_JSON_TYPES = {str: 'string', int: 'integer', float: 'number', bool: 'boolean', Path: 'string', dict: 'object', list: 'array'}
+_ARG_LINE = re.compile(r'^\s+(\w+)(?:\s*\([^)]*\))?:\s*(.+)$')
+
+
+@dataclass
+class Param:
+  name: str
+  type: Any
+  default: Any
+  help: str
+  positional: bool = False
+
+  @property
+  def required(self) -> bool: return self.default is _MISSING
+
+  @property
+  def option(self) -> str: return '--' + self.name.replace('_', '-')
+
+
+def _unwrap(annotation: Any) -> Any:
+  """``X | None`` is X: None is a default, not a type."""
+  if isinstance(annotation, types.UnionType) or typing.get_origin(annotation) is typing.Union:
+    args = [a for a in typing.get_args(annotation) if a is not type(None)]
+    if len(args) == 1: return args[0]
+  return annotation
+
+
+def _help(fn: Callable) -> tuple[str, dict[str, str]]:
+  doc = inspect.getdoc(fn) or ''
+  lines = doc.splitlines()
+  helps, inside = {}, False
+  for line in lines:
+    if line.strip() in ('Args:', 'Arguments:', 'Parameters:'): inside = True; continue
+    if inside and (m := _ARG_LINE.match(line)): helps[m.group(1)] = m.group(2)
+    elif inside and line and not line[0].isspace(): inside = False
+  return (lines[0] if lines else ''), helps
+
+
+def parameters(fn: Callable) -> list[Param]:
+  hints = typing.get_type_hints(fn)
+  _, helps = _help(fn)
+  return [Param(name, _unwrap(hints.get(name, str)), _MISSING if p.default is p.empty else p.default, helps.get(name, ''),
+                p.kind is p.POSITIONAL_ONLY)
+          for name, p in inspect.signature(fn).parameters.items()
+          if name not in ('self', 'cls') and p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)]
+
+
+def convert(param: Param, value: Any) -> Any:
+  """value as the parameter's type. A command line gives strings; configuration gives YAML types."""
+  kind, origin = param.type, typing.get_origin(param.type)
+  if value is None: return None
+  if origin is Literal:
+    if value not in typing.get_args(kind): raise ValueError(f'{param.name}: {value!r} is not one of {typing.get_args(kind)}')
+    return value
+  if origin is list or kind is list:
+    items = value if isinstance(value, list) else [value]
+    inner = (typing.get_args(kind) or (str,))[0]
+    return [inner(v) for v in items]
+  if kind is dict or origin is dict: return json.loads(value) if isinstance(value, str) else dict(value)
+  if kind is bool and isinstance(value, str): return value.lower() in ('1', 'true', 'yes', 'on')
+  return kind(value) if isinstance(kind, type) and not isinstance(value, kind) else value
+
+
+def parser(fn: Callable, prog: str) -> argparse.ArgumentParser:
+  description, _ = _help(fn)
+  cli = argparse.ArgumentParser(prog=prog, description=description, argument_default=argparse.SUPPRESS)
+  cli.add_argument('--schema', action='store_true', help='print the parameters as JSON Schema and exit')
+  for p in parameters(fn):
+    if p.positional:
+      choices = typing.get_args(p.type) if typing.get_origin(p.type) is Literal else None
+      cli.add_argument(p.name, nargs=None if p.required else '?', choices=choices, help=p.help)
+    elif p.type is bool: cli.add_argument(p.option, dest=p.name, action=argparse.BooleanOptionalAction, help=p.help)
+    elif typing.get_origin(p.type) is list or p.type is list: cli.add_argument(p.option, dest=p.name, nargs='*', help=p.help)
+    elif typing.get_origin(p.type) is Literal: cli.add_argument(p.option, dest=p.name, choices=typing.get_args(p.type), help=p.help)
+    else: cli.add_argument(p.option, dest=p.name, help=p.help)
+  return cli
+
+
+def resolve(fn: Callable, given: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
+  """The keyword arguments for fn: given, else config under the parameter's name, else the default. Missing raises."""
+  unknown = set(given) - {p.name for p in parameters(fn)}
+  if unknown: raise TypeError(f'{fn.__qualname__}: no parameter {sorted(unknown)}')
+  kwargs = {}
+  for p in parameters(fn):
+    if p.name in given: value = given[p.name]
+    elif (found := deepget(p.name, dict(config), _MISSING)) is not _MISSING: value = found
+    elif not p.required: value = p.default
+    else: raise LookupError(f'{p.name}: required; pass {p.option} or set {p.name} in configuration')
+    kwargs[p.name] = convert(p, value)
+  return kwargs
+
+
+def call(fn: Callable, kwargs: Mapping[str, Any]) -> Any:
+  """fn with resolved arguments: the positional-only ones by position, the rest by name."""
+  names = [p.name for p in parameters(fn) if p.positional]
+  return fn(*(kwargs[name] for name in names), **{k: v for k, v in kwargs.items() if k not in names})
+
+
+def schema(fn: Callable) -> dict:
+  """The parameters as JSON Schema."""
+  description, _ = _help(fn)
+  props, required = {}, []
+  for p in parameters(fn):
+    if typing.get_origin(p.type) is Literal: prop = {'enum': list(typing.get_args(p.type))}
+    else: prop = {'type': _JSON_TYPES.get(typing.get_origin(p.type) or p.type, 'string')}
+    if p.help: prop['description'] = p.help
+    if not p.required: prop['default'] = str(p.default) if isinstance(p.default, Path) else p.default
+    else: required.append(p.name)
+    props[p.name] = prop
+  return {'type': 'object', 'description': description, 'properties': props, 'required': required}
+# endregion
+
 
 # region YMRO lifecycle
 class _YMRO:
@@ -198,7 +462,7 @@ class App(_App, _DC):
 
 
 class CliApp(App):
-  """Runs ``main`` once; the command line gives its parameters (gppu.params). What it returns is printed as JSON on
+  """Runs ``main`` once; the command line gives its parameters (Parameters, above). What it returns is printed as JSON on
   stdout; logs go to stderr. A parameter the command line does not give comes from the app's table in the
   configuration, named after the app, or from the whole configuration when there is no such table.
 

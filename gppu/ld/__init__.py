@@ -1,10 +1,11 @@
 """Linked Data: records and the links between them, on Postgres, and what an API of a type is built from (_Projects/Linked Data,
-"Linked Data - Universal types, statuses and sharding", # Implementation). The core's tables (`Record`, `Node`, `Collection`, `View`,
-`Event`, `Message`, `Activity`, `Link`) and what the types made from content, resource and container take (`Content`, `Resource`,
-`Container`), the rules a record is written by on its class (`Stored.write`, `contained`), the core's paths (`app`: `/types`,
-`/records`, `/links`), and for a domain's API: `typed()`, its types' create, read, update and search; `listed()` and `paged()`, its
-lists and pages; `api_at()`, the API with its own documentation; `served()`, the APIs at one address. The tables are made by the
-store's `schema.sql` (RAN `Projects/ld`); `connect()` opens the store.
+"Linked Data - Universal types, statuses and sharding", # Implementation). `_Record`, every record's columns and its operations
+(# Universals, Operations: create, read, update, delete, list, search), with no table; the types that add columns or are abstract as
+data models on it (`_Event`, `_Activity`, `_View`, `_Link`; `_Content`, `_Container`, `_Resource`); and each type's class, which only
+defines its table: the core's (`Record`, `Node`, `Collection`, `View`, `Event`, `Message`, `Activity`, `Link`) here, a domain's in
+its own module. The core's paths (`app`: `/types`, `/records`, `/links`), and for a domain's API: `typed()`, its types' paths;
+`api_at()`, the API with its own documentation; `served()`, the APIs at one address. The tables are made by the store's
+`schema.sql` (RAN `Projects/ld`); `connect()` opens the store.
 
 Needs the `ld` extra, and fastapi-querybuilder installed with `--no-deps`: its metadata lists poetry, uvicorn and aiosqlite as runtime
 dependencies."""
@@ -12,6 +13,7 @@ import json
 import re
 from datetime import UTC, datetime, timedelta
 from enum import IntEnum
+from collections.abc import Sequence
 from typing import Annotated, Any, ClassVar, Literal, Self, TypeVar, Union
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -47,6 +49,7 @@ LIST = 1000   # the most records a list sends: the older data's largest list of 
 LIST_BYTES = 1_000_000   # and the most data it sends, `data` and `meta` as Postgres stores them: that folder's are 187 kB (work 45 kB; a session's messages up to 145 MB, so they are read a page at a time)
 DATETIME, DURATION = TypeAdapter(datetime), TypeAdapter(timedelta)
 STATUSES = ('new', 'active', 'pending', 'discarded', 'rejected', 'archived')   # every record's (the spec's Record, and # States); a type adds its own
+STORE = ('id', 'created', 'updated', 'type')   # the columns Postgres fills: a caller does not send them
 
 
 def connect(dsn: str):
@@ -69,33 +72,6 @@ Page = CustomizedPage[CursorPage[T], UseName('Page'), UseIncludeTotal(True), Use
                       UseFieldsAliases(next_page='next', previous_page='previous')]   # `limit` records after `cursor`, the total, and `next`
 Params = Page.__params_type__
 LEAST = {str: '', int: 0, UUID: UUID(int=0), datetime: datetime.min.replace(tzinfo=ZoneInfo('UTC'))}   # what an empty column is sorted as
-
-
-def sort_key(key):
-    """A sort key a page can read after: one over a column a record may leave empty sorts that record as the column's least value."""
-    column = next(c for c in iterate(key.element) if isinstance(c, Column))   # under querybuilder's lower() of a text column
-    return UnaryExpression(func.coalesce(key.element, LEAST[column.type.python_type]), modifier=key.modifier) if column.nullable else key
-
-
-async def listed(db: AsyncSession, query, what: str) -> list:
-    """A `list` (# Universals, Operations), not paged: every row the query selects, in its order, refused with 422 naming their count
-    and size when they are more than a list sends, `LIST` rows or `LIST_BYTES` of their `data` and `meta` as stored."""
-    held = query.order_by(None).subquery()
-    n, size = (await db.exec(select(func.count(), func.coalesce(func.sum(func.pg_column_size(held.c.data) + func.pg_column_size(held.c.meta)), 0)))).one()
-    if n > LIST or size > LIST_BYTES:
-        raise HTTPException(422, f'{n} {what}, {size} bytes of data, more than a list sends ({LIST}, {LIST_BYTES} bytes): search them, a page at a time')
-    return (await db.exec(query)).all()
-
-
-async def paged(db: AsyncSession, query, model, params):
-    """A page of a search: `limit` records after the last one of the page before (sqlakeyset), so the order ends with the id, which no
-    two rows share, and its keys are ones a page can read after. Every match when no limit is given."""
-    keys = [sort_key(k) for k in query._order_by_clauses]   # querybuilder's sort, read as sqlakeyset reads it
-    query = query.order_by(None).order_by(*keys, model.id)
-    if params.size is None:
-        rows = (await db.scalars(query)).all()   # querybuilder's select is SQLAlchemy's: rows of one record each
-        return create_page(rows, params=params, total=len(rows))
-    return await apaginate(db, query, params=params)
 
 
 async def saved[M](db: AsyncSession, row: M) -> M:
@@ -141,36 +117,6 @@ def nul_free(v: Any) -> Any:
     if isinstance(v, list):
         return [nul_free(x) for x in v]
     return v
-
-
-class RecordFields(SQLModel):
-    """A record as a caller sends it: create sends its fields, update sends what changes. A field it does not have is refused."""
-    model_config = ConfigDict(extra='forbid')
-    # String, not SQLModel's own AutoString: search looks for its text only in String columns
-    subtype: str | None = Field(None, sa_type=String, description='Plain text refining the `type`, from a short list per type that Postgres does not enforce.')
-    status: str | None = Field(None, sa_type=String, description='Slug: ' + ', '.join(f'`{s}`' for s in STATUSES) + ' on any record, or one its type adds; any other is refused.')
-    name: str | None = Field(None, sa_type=String, description='Name used for display.')
-    data: dict = Field(default_factory=dict, sa_type=JSONB, description='What the record says about the thing. On update, merged into what is there; a null removes a key.')
-    meta: dict = Field(default_factory=dict, sa_type=JSONB, description='How the record came to be: who made it, from what, when it was seen. `meta.tags`: always a list of strings. Merged on update as `data` is.')
-    parent_id: UUID | None = Field(None, description='The container the record belongs to.')
-
-    @model_validator(mode='before')
-    @classmethod
-    def storable(cls, v: Any) -> Any:
-        return nul_free(v)
-
-    @field_validator('meta')
-    @classmethod
-    def tags(cls, meta: dict) -> dict:
-        if meta.get('tags') is not None and not (isinstance(meta['tags'], list) and all(isinstance(t, str) for t in meta['tags'])):
-            raise ValueError('meta.tags is a list of strings')
-        return meta
-
-
-class LinkFields(RecordFields):
-    """A link as a caller sends it: it joins one node to another, so it has a direction."""
-    from_id: UUID | None = Field(None, description='The node where it starts.')
-    to_id: UUID | None = Field(None, description='The node where it ends.')
 
 
 def utc(t: Any) -> datetime | None:
@@ -248,7 +194,7 @@ def as_text(v: Any) -> str:
     return v if isinstance(v, str) else json.dumps(v)
 
 
-def held(expr, condition: Any) -> list:
+def clauses(expr, condition: Any) -> list:
     """The clauses of one condition on a key inside data or meta: `{"$eq": "Feature"}`, or a value alone, which is `$eq`; the operators
     of record search but `$isempty` and `$isnotempty`, which read whether the key holds anything."""
     ops = condition if isinstance(condition, dict) else {'$eq': condition}
@@ -270,51 +216,6 @@ def held(expr, condition: Any) -> list:
     return clauses
 
 
-def queried(model, conditions: QueryParams):
-    """The select of a search: querybuilder's, of the conditions it reads, and of the two it does not, each at the top of `filters`: a
-    key inside `data` or `meta`, `{"data.kind": {"$eq": "Feature"}}`, and a span overlapping a span, `{"span": {"$overlaps": {"start":
-    "…", "end": "…"}}}`, in any of a span's forms, an end left out an open one."""
-    try:
-        sent = json.loads(conditions.filters) if conditions.filters else {}
-    except json.JSONDecodeError as e:
-        raise HTTPException(422, f'filters is not JSON: {e}')
-    if not isinstance(sent, dict):
-        raise HTTPException(422, 'filters is a JSON object of conditions')
-    ours = {k: v for k, v in sent.items() if INSIDE.fullmatch(k) or (k == 'span' and isinstance(v, dict) and '$overlaps' in v)}
-    rest = {k: v for k, v in sent.items() if k not in ours}
-    query = build_query(model, QueryParams(json.dumps(rest) if rest else None, conditions.sort, conditions.search, conditions.search_fields, conditions.case_sensitive))
-    for key, condition in ours.items():
-        if key == 'span':
-            if not hasattr(model, 'span'):
-                raise HTTPException(422, f'a {model.__tablename__} has no span')
-            span = SPAN.validate_python(condition['$overlaps'])
-            query = query.where(model.span.op('&&')(bindparam(None, span, type_=SpanColumn())))
-        else:
-            query = query.where(*held(inside(model, key), condition))
-    return query
-
-
-class EventFields(RecordFields):
-    """An event as a caller sends it: a thing that happened, and when."""
-    ts: datetime | None = Field(None, sa_type=DateTime(timezone=True), sa_column_kwargs={'nullable': False}, description='When it happened.')
-
-
-class ActivityFields(RecordFields):
-    """An activity as a caller sends it: a named span of time."""
-    span: Span | None = Field(None, sa_type=SpanColumn, sa_column_kwargs={'nullable': False}, description='When it went on: `start` and `end`; `date` and `duration`; a `date` alone, one day; a `ts` alone, one second.')
-
-
-class ViewFields(RecordFields):
-    """A view as a caller sends it: a query against external data, and when it was last run."""
-    query: dict | None = Field(None, sa_type=JSONB(none_as_null=True), sa_column_kwargs={'nullable': False}, description='The query against external data.')   # none is SQL's NULL, not JSON's null, so Postgres refuses a view without one
-    last_refreshed: datetime | None = Field(None, sa_type=DateTime(timezone=True), description='When it was last run, so its result can be refreshed.')
-
-
-class Fields(EventFields, ActivityFields, ViewFields):
-    """A record as a caller sends it to `/records`: a record's fields, an event's `ts`, an activity's `span`, a view's `query` and
-    `last_refreshed`; each type takes those its table has."""
-
-
 class TypeCode(TypeDecorator):
     """A record's `type` as Postgres computes it from the `id` (schema.sql), read as the `Type` it names."""
     impl = SmallInteger
@@ -324,8 +225,14 @@ class TypeCode(TypeDecorator):
         return None if value is None else Type(value) if value in Type else value   # a link's 0xA1 to 0xAF have no name in record_types
 
 
-class Stored(SQLModel):
-    """The columns the store fills in, and how a record is written and read. A table is named by its class, its type by its table."""
+# ++     _Record: every record's columns and its operations; a type's class only defines its table
+
+class _Record(SQLModel):
+    """Everything stored is a record (# Record), and every type is built on it: its columns and its operations (# Universals,
+    Operations), with no table of its own. A type's class is made from it, or from a data model on it, and only defines its table,
+    `class Node(_Record, table=True)`, so it is created, read, updated, deleted, listed and searched in its own table by its own
+    rules. What a caller sends is a record without the columns Postgres fills (`STORE`); a field its type has not is refused."""
+    model_config = ConfigDict(extra='forbid')
     __mapper_args__ = {'eager_defaults': True}   # the id, type and times the table makes come back with the insert
     id: UUID | None = Field(None, primary_key=True, sa_column_kwargs={'server_default': FetchedValue()},
                             description="The record's identity in this system; its first byte is the `type`.")
@@ -333,146 +240,278 @@ class Stored(SQLModel):
     created: datetime | None = Field(None, sa_type=DateTime(timezone=True), sa_column_kwargs={'server_default': FetchedValue(), 'nullable': False}, description='When the record was made.')
     updated: datetime | None = Field(None, sa_type=DateTime(timezone=True), sa_column_kwargs={'onupdate': func.now()}, description='When the record was last changed.')
     type: Type | int | None = Field(None, sa_type=TypeCode, sa_column_kwargs={'server_default': FetchedValue()}, description='What the record is: the first byte of its `id`. Read only.')
+    # String, not SQLModel's own AutoString: search looks for its text only in String columns
+    subtype: str | None = Field(None, sa_type=String, description='Plain text refining the `type`, from a short list per type that Postgres does not enforce.')
+    status: str | None = Field(None, sa_type=String, description='Slug: ' + ', '.join(f'`{s}`' for s in STATUSES) + ' on any record, or one its type adds; any other is refused.')
+    name: str | None = Field(None, sa_type=String, description='Name used for display.')
+    data: dict = Field(default_factory=dict, sa_type=JSONB, description='What the record says about the thing. On update, merged into what is there; a null removes a key.')
+    meta: dict = Field(default_factory=dict, sa_type=JSONB, description='How the record came to be: who made it, from what, when it was seen. `meta.tags`: always a list of strings. Merged on update as `data` is.')
+    parent_id: UUID | None = Field(None, description='The container the record belongs to.')
     STATUSES: ClassVar[tuple[str, ...]] = ()   # the statuses its type adds to every record's
     PARENTS: ClassVar[tuple[Type, ...]] = ()   # the types its parent is, where the spec names them; else any container
+    CODES: ClassVar[range | None] = None   # the first bytes its ids take where they are more than its type's code: a link's 0xA0 to 0xAF
+
+    @model_validator(mode='before')
+    @classmethod
+    def storable(cls, v: Any) -> Any:
+        return nul_free(v)
+
+    @field_validator('meta')
+    @classmethod
+    def tags(cls, meta: dict) -> dict:
+        if meta.get('tags') is not None and not (isinstance(meta['tags'], list) and all(isinstance(t, str) for t in meta['tags'])):
+            raise ValueError('meta.tags is a list of strings')
+        return meta
 
     @classmethod
-    def makes(cls) -> Type:
-        """The type its table makes: a table makes its own type only."""
-        return Type[cls.__tablename__.upper()]
+    def __get_pydantic_json_schema__(cls, schema: core_schema.CoreSchema, handler: GetJsonSchemaHandler) -> dict:
+        """What a caller sends is a record without the columns Postgres fills; what the API answers has them."""
+        json_schema = handler(schema)
+        if handler.mode == 'validation':
+            for key in STORE:
+                handler.resolve_ref_schema(json_schema).get('properties', {}).pop(key, None)
+        return json_schema
 
     @classmethod
-    def takes(cls, code: int) -> bool:
-        """Whether an id whose first byte is `code` is made in its table."""
-        return code == cls.makes()
-
-    @classmethod
-    async def write(cls, db: AsyncSession, id: UUID | None, sent: SQLModel) -> Self:
-        """Merged into the record when the id is there, `data` and `meta` merged and a null removing a key; created when it is not, with
-        that id. Stored at the commit. A field its table has not (an event's `ts` sent to a node), an id of another type, and a parent
-        that is not a container its type may be in are refused."""
-        if extra := sent.model_fields_set - cls.model_fields.keys():
-            raise HTTPException(422, f'a {cls.__tablename__} has no {", ".join(sorted(extra))}')
-        if id and (row := await db.get(cls, id)):
-            kind = made(row.type)   # its own type, also when written as the type it is read as: a task's through /records
-            statused(sent, kind)
-            change = {k: getattr(sent, k) for k in sent.model_fields_set - {'id'}}   # what was sent, a span still a Span
-            for key in ('data', 'meta'):
-                if key in change:
-                    change[key] = {k: v for k, v in (getattr(row, key) | change[key]).items() if v is not None}
-            row = row.sqlmodel_update(change)
-        else:
-            if id and not cls.takes(id.bytes[0]):   # an id's first byte is its type: a file's id would make a record in the wrong table
-                raise HTTPException(422, f'{id} is of type {id.bytes[0]:#04x}, which this path does not make')
-            kind = cls
-            statused(sent, kind)
-            row = cls.model_validate(sent, update={'id': id})
-            db.add(row)
-        if 'parent_id' in sent.model_fields_set and row.parent_id:
-            await contained(db, kind, row)
-        return row
+    async def create(cls, db: AsyncSession, sent: '_Record') -> Self:
+        """A new record of its type from what is sent, with the id the store makes. Stored at the commit."""
+        return await cls.update(db, None, sent)
 
     @classmethod
     async def read(cls, db: AsyncSession, id: UUID) -> Self:
         """404 when there is none (`missing`)."""
         return await db.get_one(cls, id)
 
+    @classmethod
+    async def update(cls, db: AsyncSession, id: UUID | None, sent: '_Record') -> Self:
+        """Merged into the record of that id when it is there, `data` and `meta` merged and a null removing a key; created with that id
+        when it is not: an insert is an upsert. Stored at the commit. The columns Postgres fills, a field its table has not (an event's
+        `ts` sent to a node), an id of another type, a status its type has not and a parent that is not a container its type may be in
+        are refused."""
+        if filled := sent.model_fields_set & set(STORE):
+            raise HTTPException(422, f'{", ".join(sorted(filled))}: the store fills them')
+        if extra := sent.model_fields_set - cls.model_fields.keys():
+            raise HTTPException(422, f'a {cls.__tablename__} has no {", ".join(sorted(extra))}')
+        if id and (row := await db.get(cls, id)):
+            kind = table(row.type)   # its own type's rules, also when it is written as the type it is read as: a task through /records
+            kind.check_status(sent)
+            change = {k: getattr(sent, k) for k in sent.model_fields_set}   # what was sent, a span still a Span
+            for key in ('data', 'meta'):
+                if key in change:
+                    change[key] = {k: v for k, v in (getattr(row, key) | change[key]).items() if v is not None}
+            row = row.sqlmodel_update(change)
+        else:
+            if id and tables().get(id.bytes[0]) is not cls:   # an id's first byte is its type: a file's id would make a record in the wrong table
+                raise HTTPException(422, f'{id} is of type {id.bytes[0]:#04x}, which this path does not make')
+            kind = cls
+            kind.check_status(sent)
+            row = cls.model_validate(sent, update={'id': id})
+            db.add(row)
+        if 'parent_id' in sent.model_fields_set and row.parent_id:
+            await kind.check_parent(db, row)
+        return row
 
-def made(code: int) -> type[Stored]:
+    @classmethod
+    async def delete(cls, db: AsyncSession, id: UUID) -> None:
+        """With the links from it and to it; refused while it holds records, which are deleted or moved out first. 404 when there is
+        none. Gone at the commit."""
+        await cls.read(db, id)
+        if n := (await db.exec(select(func.count()).select_from(Record).where(Record.parent_id == id))).one():
+            raise HTTPException(422, f'{id} holds {n} records: delete them or move them out first')
+        await db.execute(delete(Link).where(or_(Link.from_id == id, Link.to_id == id)))
+        await db.execute(delete(cls).where(cls.id == id))
+
+    @classmethod
+    async def list(cls, db: AsyncSession, *where, order: tuple, what: str) -> Sequence[Self]:
+        """A `list` (# Universals, Operations), not paged: every record of its table `where` selects, in `order`; refused with 422
+        naming their count and size, `what` they are, when they are more than a list sends, `LIST` rows or `LIST_BYTES` of their
+        `data` and `meta` as stored."""
+        query = select(cls).where(*where)
+        found = query.subquery()
+        n, size = (await db.exec(select(func.count(), func.coalesce(func.sum(func.pg_column_size(found.c.data) + func.pg_column_size(found.c.meta)), 0)))).one()
+        if n > LIST or size > LIST_BYTES:
+            raise HTTPException(422, f'{n} {what}, {size} bytes of data, more than a list sends ({LIST}, {LIST_BYTES} bytes): search them, a page at a time')
+        return (await db.exec(query.order_by(*order))).all()
+
+    @classmethod
+    async def search(cls, db: AsyncSession, params, *where, conditions: QueryParams | None = None, only: bool = False):
+        """A page of a search (# Universals, Operations): the records of its table `conditions` find (`find`) and `where` selects,
+        `limit` of them after the last one of the page before (sqlakeyset), so the order ends with the id, which no two rows share;
+        every match when no limit is given. `only` keeps to its own table's records, not those of the types made from it."""
+        query = (cls.find(conditions) if conditions else select(cls)).where(*where)
+        if only:
+            query = query.with_hint(cls.__table__, 'ONLY', 'postgresql')
+
+        def after(key):
+            """A sort key a page can read after: one over a column a record may leave empty sorts that record as the column's least value."""
+            column = next(c for c in iterate(key.element) if isinstance(c, Column))   # under querybuilder's lower() of a text column
+            return UnaryExpression(func.coalesce(key.element, LEAST[column.type.python_type]), modifier=key.modifier) if column.nullable else key
+        keys = [after(k) for k in query._order_by_clauses]   # querybuilder's sort, read as sqlakeyset reads it
+        query = query.order_by(None).order_by(*keys, cls.id)
+        if params.size is None:
+            rows = (await db.scalars(query)).all()   # querybuilder's select is SQLAlchemy's: rows of one record each
+            return create_page(rows, params=params, total=len(rows))
+        return await apaginate(db, query, params=params)
+
+    @classmethod
+    def find(cls, conditions: QueryParams):
+        """The select of a search: querybuilder's, of the conditions it reads, and of the two it does not, each at the top of `filters`:
+        a key inside `data` or `meta`, `{"data.kind": {"$eq": "Feature"}}`, and a span overlapping a span, `{"span": {"$overlaps":
+        {"start": "…", "end": "…"}}}`, in any of a span's forms, an end left out an open one."""
+        try:
+            sent = json.loads(conditions.filters) if conditions.filters else {}
+        except json.JSONDecodeError as e:
+            raise HTTPException(422, f'filters is not JSON: {e}')
+        if not isinstance(sent, dict):
+            raise HTTPException(422, 'filters is a JSON object of conditions')
+        ours = {k: v for k, v in sent.items() if INSIDE.fullmatch(k) or (k == 'span' and isinstance(v, dict) and '$overlaps' in v)}
+        rest = {k: v for k, v in sent.items() if k not in ours}
+        query = build_query(cls, QueryParams(json.dumps(rest) if rest else None, conditions.sort, conditions.search, conditions.search_fields, conditions.case_sensitive))
+        for key, condition in ours.items():
+            if key == 'span':
+                if not hasattr(cls, 'span'):
+                    raise HTTPException(422, f'a {cls.__tablename__} has no span')
+                span = SPAN.validate_python(condition['$overlaps'])
+                query = query.where(cls.span.op('&&')(bindparam(None, span, type_=SpanColumn())))
+            else:
+                query = query.where(*clauses(inside(cls, key), condition))
+        return query
+
+    @classmethod
+    def check_status(cls, sent: '_Record'):
+        """A status is every record's (`STATUSES`) or one its type adds; any other is refused."""
+        if sent.status not in (None, *STATUSES, *cls.STATUSES):
+            raise HTTPException(422, f"a {cls.__tablename__}'s status is {', '.join(STATUSES + cls.STATUSES)}, not {sent.status}")
+
+    @classmethod
+    async def check_parent(cls, db: AsyncSession, row: '_Record'):
+        """A record's parent is a container (`_Container`), of a type its own type may be in where the spec names one (`PARENTS`), and
+        neither the record itself nor a record it holds: containers nest."""
+        if not (parent := await db.get(Record, row.parent_id)):   # every table inherits record: a record of any type
+            raise HTTPException(422, f'no record {row.parent_id} to hold it')
+        holder = table(parent.type)
+        if cls.PARENTS and parent.type not in cls.PARENTS:
+            raise HTTPException(422, f"a {cls.__tablename__}'s parent is a {' or a '.join(t.name.lower() for t in cls.PARENTS)}, not a {holder.__tablename__}")
+        if not issubclass(holder, _Container):
+            raise HTTPException(422, f'{parent.id} is a {holder.__tablename__}, not a container')
+        seen, at = set(), parent
+        while at and at.id not in seen:   # up the containers it would be in
+            if at.id == row.id:
+                raise HTTPException(422, f'{row.id} would be in itself')
+            seen.add(at.id)
+            at = at.parent_id and await db.get(Record, at.parent_id)
+
+
+def tables() -> dict:
+    """Every type's table class imported, by its type's code, `Type` named as its table is; a link's 0xA0 to 0xAF are all link's.
+    A domain's are those of its module once it is imported."""
+    found, todo = {}, [_Record]
+    while todo:
+        cls = todo.pop()
+        todo += cls.__subclasses__()
+        if hasattr(cls, '__table__'):
+            found |= dict.fromkeys(cls.CODES or (Type[cls.__tablename__.upper()],), cls)
+    return found
+
+
+def table(code: int):
     """The class of the table a type is made in, wherever it is defined: work's and sessions' are outside gppu."""
-    for table in Stored.__subclasses__():
-        if hasattr(table, '__table__') and table.takes(code):
-            return table
-    raise RuntimeError(f'no table here makes type {code:#04x}: the module that makes it is not imported')
+    if not (found := tables().get(code)):
+        raise RuntimeError(f'no table here makes type {code:#04x}: the module that makes it is not imported')
+    return found
 
 
-def statused(sent: SQLModel, table: type[Stored]):
-    """A status is every record's (`STATUSES`) or one its table's type adds; any other is refused."""
-    if sent.status not in (None, *STATUSES, *table.STATUSES):
-        raise HTTPException(422, f"a {table.__tablename__}'s status is {', '.join(STATUSES + table.STATUSES)}, not {sent.status}")
+# ++     The data models: what a type adds to a record, and the abstract types
 
-
-class Content:
-    """What a type made from content takes: a record that is the content itself, held in the record, where a resource only points
-    to something outside."""
-
-
-class Container:
-    """What a type made from container takes: the records whose `parent_id` it is belong to it. A record's parent is a container."""
-
-
-class Resource(Container):
-    """What a type made from resource takes: a container that points to something outside Linked Data, reached rather than stored."""
-
-
-async def contained(db: AsyncSession, kind: type[Stored], row: Stored):
-    """A record's parent is a container (`Container`), of a type its own type may be in where the spec names one (`PARENTS`), and
-    neither the record itself nor a record it holds: containers nest."""
-    if not (parent := await db.get(Record, row.parent_id)):   # every table inherits record: a record of any type
-        raise HTTPException(422, f'no record {row.parent_id} to hold it')
-    table = made(parent.type)
-    if kind.PARENTS and parent.type not in kind.PARENTS:
-        raise HTTPException(422, f"a {kind.__tablename__}'s parent is a {' or a '.join(t.name.lower() for t in kind.PARENTS)}, not a {table.__tablename__}")
-    if not issubclass(table, Container):
-        raise HTTPException(422, f'{parent.id} is a {table.__tablename__}, not a container')
-    seen, at = set(), parent
-    while at and at.id not in seen:   # up the containers it would be in
-        if at.id == row.id:
-            raise HTTPException(422, f'{row.id} would be in itself')
-        seen.add(at.id)
-        at = at.parent_id and await db.get(Record, at.parent_id)
-
-
-class Record(RecordFields, Stored, table=True):
-    """Everything stored is a record, and every type is built on it: reading `record` returns every type's rows with these columns."""
-
-
-class Node(RecordFields, Stored, table=True):
-    """A record that links join and that can hold other records: every type but record and link."""
-
-
-class Collection(RecordFields, Stored, table=True):
-    """A node that groups the nodes linked to it; one node can be in many collections."""
-
-
-class View(ViewFields, Container, Stored, table=True):
-    """A container that holds a query against external data and when it was last run, so its result can be refreshed."""
-
-
-class Event(EventFields, Stored, table=True):
-    """Something that happened at one moment, `ts`."""
-
-
-class Message(EventFields, Content, Stored, table=True):
-    """An event that is also content: content with the one moment it happened, `ts`."""
-
-
-class Activity(ActivityFields, Stored, table=True):
-    """A named timespan."""
-
-
-class Link(LinkFields, Stored, table=True):
-    """A record that joins one node to another, so it has a direction; its id is 0xA0 to 0xAF (`LINKS`)."""
+class _Link(_Record):
+    """A link's columns: it joins one node to another, so it has a direction. Its ids are 0xA0 to 0xAF (`LINKS`)."""
+    CODES = LINKS
+    from_id: UUID | None = Field(None, description='The node where it starts.')
+    to_id: UUID | None = Field(None, description='The node where it ends.')
 
     @classmethod
-    def takes(cls, code: int) -> bool:
-        return code in LINKS
-
-    @classmethod
-    async def write(cls, db: AsyncSession, id: UUID | None, sent: SQLModel) -> Self:
+    async def update(cls, db: AsyncSession, id: UUID | None, sent: _Record) -> Self:
         """As a record is written; an end it is sent that is not a node is refused."""
-        row = await super().write(db, id, sent)
+        row = await super().update(db, id, sent)
         for end in (getattr(row, k) for k in ('from_id', 'to_id') if k in sent.model_fields_set):
             if end and not await db.get(Node, end):   # node's table inherits every type but record and link
                 raise HTTPException(422, f'{end} is not a node')
         return row
 
 
-TABLES = {t.makes(): t for t in (Record, Node, Collection, View, Event, Message, Activity, Link)}   # the types the core makes, each in its own table
-READ = TABLES | {Type.CONTENT: Node, Type.RESOURCE: Node, Type.CONTAINER: Node, Type.FS_NODE: Node, Type.FS_LOCATION: Node, Type.FS_FILE: Node,
-                 Type.FS_INDEX: Node, Type.SESSION: Activity, Type.SESSION_MESSAGE: Message, Type.WORK: Activity, Type.TASK: Activity,
-                 Type.PROJECT: Activity} | dict.fromkeys(LINKS, Link)   # and the others, read with the columns of the type each is made from
-AnyRecord = Record | Node | Collection | View | Event | Message | Activity | Link   # a record read with the columns of its type's table
+class _Event(_Record):
+    """An event's column: when the thing happened."""
+    ts: datetime | None = Field(None, sa_type=DateTime(timezone=True), sa_column_kwargs={'nullable': False}, description='When it happened.')
+
+
+class _Activity(_Record):
+    """An activity's column: a named span of time."""
+    span: Span | None = Field(None, sa_type=SpanColumn, sa_column_kwargs={'nullable': False}, description='When it went on: `start` and `end`; `date` and `duration`; a `date` alone, one day; a `ts` alone, one second.')
+
+
+class _View(_Record):
+    """A view's columns: a query against external data, and when it was last run."""
+    query: dict | None = Field(None, sa_type=JSONB(none_as_null=True), sa_column_kwargs={'nullable': False}, description='The query against external data.')   # none is SQL's NULL, not JSON's null, so Postgres refuses a view without one
+    last_refreshed: datetime | None = Field(None, sa_type=DateTime(timezone=True), description='When it was last run, so its result can be refreshed.')
+
+
+class Fields(_Event, _Activity, _View):
+    """A record as a caller sends it to `/records`, of any type the core makes: a record's columns, an event's `ts`, an activity's
+    `span`, a view's `query` and `last_refreshed`; each type takes those its table has."""
+
+
+class _Content(_Record):
+    """A record that is the content itself, held in the record, where a resource only points to something outside."""
+
+
+class _Container(_Record):
+    """A record that other records belong to through their `parent_id`. A record's parent is a container."""
+
+
+class _Resource(_Container):
+    """A container that points to something outside Linked Data, reached rather than stored."""
+
+
+# ++     The core's types: each its table
+
+class Record(_Record, table=True):
+    """Everything stored is a record, and every type is built on it: reading `record` returns every type's rows with these columns."""
+
+
+class Node(_Record, table=True):
+    """A record that links join and that can hold other records: every type but record and link."""
+
+
+class Collection(_Record, table=True):
+    """A node that groups the nodes linked to it; one node can be in many collections."""
+
+
+class View(_View, _Container, table=True):
+    """A container that holds a query against external data and when it was last run, so its result can be refreshed."""
+
+
+class Event(_Event, table=True):
+    """Something that happened at one moment, `ts`."""
+
+
+class Message(_Event, _Content, table=True):
+    """An event that is also content: content with the one moment it happened, `ts`."""
+
+
+class Activity(_Activity, table=True):
+    """A named timespan."""
+
+
+class Link(_Link, table=True):
+    """A record that joins one node to another, so it has a direction; its id is 0xA0 to 0xAF (`LINKS`)."""
+
+
+CORE = (Record, Node, Collection, View, Event, Message, Activity, Link)   # the types the core makes, each in its own table
+READ = {code: t for code, t in tables().items() if t in CORE} | {
+    Type.CONTENT: Node, Type.RESOURCE: Node, Type.CONTAINER: Node, Type.FS_NODE: Node, Type.FS_LOCATION: Node, Type.FS_FILE: Node,
+    Type.FS_INDEX: Node, Type.SESSION: Activity, Type.SESSION_MESSAGE: Message, Type.WORK: Activity, Type.TASK: Activity,
+    Type.PROJECT: Activity}   # and the others, read with the columns of the type each is made from
+AnyRecord = Union[CORE]   # a record read with the columns of its type's table
 
 
 class TypeFields(SQLModel):
@@ -508,15 +547,9 @@ router = APIRouter()
 async def types(db: Db):
     """Every type a record can be, by its code: what `type` takes in a record search, and the schema its records are read with."""
     rows = (await db.exec(select(RecordType).order_by(RecordType.id))).all()
-    return [TypeRead(**t.model_dump(), read_as=READ.get(t.id, Record).__name__, statuses=list(STATUSES + statuses_of(t.id))) for t in rows]
-
-
-def statuses_of(code: int) -> tuple[str, ...]:
-    """The statuses a type adds to every record's, its table's where its module is imported."""
-    try:
-        return made(code).STATUSES
-    except RuntimeError:
-        return ()
+    imported = tables()   # a type's statuses are its table's where its module is imported
+    return [TypeRead(**t.model_dump(), read_as=READ.get(t.id, Record).__name__, statuses=list(STATUSES + (imported[t.id].STATUSES if t.id in imported else ())))
+            for t in rows]
 
 
 # ++     What controls read: a field's values, a tree a level at a time, a record's parents, the records linked to it, its neighbourhood
@@ -536,7 +569,7 @@ async def values(db: Db, field: str, type: Type | None = None, conditions: Query
     records hold it, most first: what a dropdown, a selector or a filter offers. `field` is a column, `type`, `subtype`, `status`,
     `name` or `parent_id`, or a key inside data or meta by its path, `data.kind`. A `list`: more values than a list sends are refused."""
     model = READ.get(type, Record)
-    query = queried(model, conditions)
+    query = model.find(conditions)
     found = (query.where(model.type == type) if type else query).order_by(None).subquery()
     if INSIDE.fullmatch(field):
         value = inside(found.c, field)
@@ -566,16 +599,16 @@ async def roots(db: Db, type: Type):
     """The records of a `type` that are in no container, by name, each with how many records it holds: the top of a tree control.
     A `list`."""
     model = READ.get(type, Record)
-    return await holding(db, await listed(db, select(model).where(model.type == type, model.parent_id.is_(None)).order_by(model.name, model.id), f'{type.name.lower()}s are roots'))
+    return await holding(db, await model.list(db, model.type == type, model.parent_id.is_(None), order=(model.name, model.id), what=f'{type.name.lower()}s are roots'))
 
 
 @router.post('/records', response_model=AnyRecord, tags=['records'], summary='Create a record')
 async def record_create(db: Db, record: Fields, type: Type = Type.RECORD):
     """Of the `type` given, in its type's table: a record, a node, a collection, a view with its `query`, an event or a message with
     its `ts`, an activity with its `span`. It comes back with the `id`, `type` and `created` the store gave it."""
-    if type not in TABLES:
+    if (model := tables().get(type)) not in CORE:
         raise HTTPException(422, f'the core does not make a {type.name.lower()}')
-    return await saved(db, await TABLES[type].write(db, None, record))
+    return await saved(db, await model.create(db, record))
 
 
 @router.get('/records/{id}', response_model=AnyRecord, tags=['records'], summary='Read a record')
@@ -589,7 +622,7 @@ async def record_read(db: Db, id: UUID):
 async def record_update(db: Db, id: UUID, record: Fields):
     """Merged with what is sent when the `id` is there, created with that `id` when it is not. Fields not sent are left as they are.
     The `id` says its type, so its table; a domain's type is updated in the columns it is read with."""
-    return await saved(db, await READ.get(id.bytes[0], Record).write(db, id, record))
+    return await saved(db, await READ.get(id.bytes[0], Record).update(db, id, record))
 
 
 @router.get('/records', response_model=Page[AnyRecord], tags=['records'], summary='Search records')
@@ -607,9 +640,8 @@ async def record_search(db: Db, type: Type | None = None, conditions: QueryParam
 
     A page is `limit` records after `cursor`, with the `total` and `next`, the cursor of the page after it, none after the last.
     Every match when no `limit` is given."""
-    model = READ.get(type, Record)
-    query = queried(model, conditions)   # querybuilder's select, over the type's table or the one it is made from
-    return await paged(db, query.where(model.type == type) if type else query, model, params)
+    model = READ.get(type, Record)   # the type's table, or the one it is made from
+    return await model.search(db, params, *([model.type == type] if type else []), conditions=conditions)
 
 
 @router.get('/records/{id}/records', response_model=list[AnyRecord], tags=['records'], summary="List a record's children")
@@ -619,8 +651,7 @@ async def record_list(db: Db, id: UUID, type: Type | None = None):
     not paged: more than `LIST` children, or more than `LIST_BYTES` of their `data` and `meta`, are refused with their count and
     size, and search pages them."""
     model = READ.get(type, Record)
-    query = select(model).where(model.parent_id == id, *([model.type == type] if type else [])).order_by(model.created)
-    return await listed(db, query, f'records are under {id}')
+    return await model.list(db, model.parent_id == id, *([model.type == type] if type else []), order=(model.created,), what=f'records are under {id}')
 
 
 @router.get('/records/{id}/tree', response_model=list[Held], tags=['records'], summary="List a record's children for a tree")
@@ -628,8 +659,7 @@ async def record_tree(db: Db, id: UUID, type: Type | None = None):
     """The records whose parent it is, of one `type` or of every type, by name, each with how many records it holds: a level of a
     tree control, opened a level at a time. A `list`."""
     model = READ.get(type, Record)
-    query = select(model).where(model.parent_id == id, *([model.type == type] if type else [])).order_by(model.name, model.id)
-    return await holding(db, await listed(db, query, f'records are under {id}'))
+    return await holding(db, await model.list(db, model.parent_id == id, *([model.type == type] if type else []), order=(model.name, model.id), what=f'records are under {id}'))
 
 
 @router.get('/records/{id}/parents', response_model=list[AnyRecord], tags=['records'], summary="Read a record's parents")
@@ -664,7 +694,7 @@ async def record_linked(db: Db, id: UUID, direction: Literal['from', 'to'] | Non
     the links' subtype, an empty one (`subtype=`) the links that have none; `type` the type of the records at the other end. A `list`."""
     ends = {'from': [Link.from_id == id], 'to': [Link.to_id == id]}.get(direction, [or_(Link.from_id == id, Link.to_id == id)])
     which = [] if subtype is None else [Link.subtype.is_(None)] if subtype == '' else [Link.subtype == subtype]
-    links = await listed(db, select(Link).where(*ends, *which).order_by(Link.created, Link.id), f'links are at {id}')
+    links = await Link.list(db, *ends, *which, order=(Link.created, Link.id), what=f'links are at {id}')
     other = {l.id: l.to_id if l.from_id == id else l.from_id for l in links}
     found = await records_of(db, set(other.values()))
     return [Linked(link=l, record=found[other[l.id]]) for l in links if other[l.id] in found and (type is None or found[other[l.id]].type == type)]
@@ -695,39 +725,30 @@ async def record_graph(db: Db, id: UUID, depth: int = Query(1, ge=1, le=3, descr
     return Graph(nodes=list(found.values()), links=list(links.values()))
 
 
-async def removed(db: AsyncSession, model: type[Stored], id: UUID):
-    """A record deleted, with the links from it and to it: refused while it holds records, which are deleted or moved first."""
-    await model.read(db, id)
-    if n := (await db.exec(select(func.count()).select_from(Record).where(Record.parent_id == id))).one():
-        raise HTTPException(422, f'{id} holds {n} records: delete them or move them out first')
-    await db.execute(delete(Link).where(or_(Link.from_id == id, Link.to_id == id)))
-    await db.execute(delete(model).where(model.id == id))
-    await db.commit()
-
-
 @router.delete('/records/{id}', status_code=204, tags=['records'], summary='Delete a record')
 async def record_delete(db: Db, id: UUID):
     """Of any type, from its type's table, with its links; refused while it holds records. 404 when there is none."""
-    await removed(db, made(id.bytes[0]), id)
+    await table(id.bytes[0]).delete(db, id)
+    await db.commit()
 
 
 @router.get('/records/{id}/links', response_model=Page[Link], tags=['links'], summary="Search a node's links")
 async def record_links(db: Db, id: UUID, conditions: QueryParams = Depends(), params: Params = Depends()):
     """From it and to it; `filters`, `sort`, `search` and paging as in record search."""
-    return await paged(db, queried(Link, conditions).where(or_(Link.from_id == id, Link.to_id == id)), Link, params)
+    return await Link.search(db, params, or_(Link.from_id == id, Link.to_id == id), conditions=conditions)
 
 
 @router.get('/links', response_model=Page[Link], tags=['links'], summary='Search links')
 async def link_search(db: Db, conditions: QueryParams = Depends(), params: Params = Depends()):
     """`filters` on any of a link's columns, `from_id` and `to_id` among them, and on keys inside its data and meta; `sort`, `search`
     and paging as in record search."""
-    return await paged(db, queried(Link, conditions), Link, params)
+    return await Link.search(db, params, conditions=conditions)
 
 
 @router.post('/links', response_model=Link, tags=['links'], summary='Create a link')
-async def link_create(db: Db, record: LinkFields):
+async def link_create(db: Db, record: _Link):
     """It needs `from_id` (its creator) and `to_id`."""
-    return await saved(db, await Link.write(db, None, record))
+    return await saved(db, await Link.create(db, record))
 
 
 @router.get('/links/{id}', response_model=Link, tags=['links'], summary='Read a link')
@@ -737,58 +758,59 @@ async def link_read(db: Db, id: UUID):
 
 
 @router.put('/links/{id}', response_model=Link, tags=['links'], summary='Update a link')
-async def link_update(db: Db, id: UUID, record: LinkFields):
+async def link_update(db: Db, id: UUID, record: _Link):
     """As a record is updated: merged when the `id` is there, created when it is not."""
-    return await saved(db, await Link.write(db, id, record))
+    return await saved(db, await Link.update(db, id, record))
 
 
 @router.delete('/links/{id}', status_code=204, tags=['links'], summary='Delete a link')
 async def link_delete(db: Db, id: UUID):
-    """The link alone; the nodes at its ends stay."""
-    await db.execute(delete(Link).where(Link.id == id))
+    """The link alone; the nodes at its ends stay. 404 when there is none."""
+    await Link.delete(db, id)
     await db.commit()
 
 
-def typed(path: str, fields: type[SQLModel], name: str, *models: type[Stored]) -> APIRouter:
-    """A domain's path for its types: create, read, update and search, each type in its own table, with the fields a caller sends,
-    written by its table's class. A path of several types takes the `type` a create makes, the first by default, and the one a
-    search reads, every one of them by default; a read or an update's `id` says its type."""
-    routes, base, tables = APIRouter(tags=[name]), models[0], {m.makes(): m for m in models}
+def typed(path: str, body: type[_Record], name: str, *models: type[_Record]) -> APIRouter:
+    """A domain's path for its types: create, read, update, delete and search, each type in its own table, `body` what a caller sends.
+    A path of several types takes the `type` a create makes, the first by default, and the one a search reads, every one of them by
+    default; a read, an update or a delete's `id` says its type."""
+    routes, base = APIRouter(tags=[name]), models[0]
+    own = {code: m for code, m in tables().items() if m in models}
     One = Union[models]   # a record of the path, read with its own type's columns
 
     def named(type: Type | None = None):
         """The table of the `type` named, one of the path's."""
-        if type is not None and type not in tables:
-            raise HTTPException(422, f'{path} has {", ".join(t.name.lower() for t in tables)}, not {type.name.lower()}')
-        return type and tables[type]
+        if type is not None and type not in own:
+            raise HTTPException(422, f'{path} has {", ".join(t.name.lower() for t in own)}, not {type.name.lower()}')
+        return type and own[type]
     kind = named if len(models) > 1 else lambda: base
 
     @routes.post(path, response_model=One, summary=f'Create a {name}')
-    async def create(db: Db, record: fields, model=Depends(kind)):
+    async def create(db: Db, record: body, model=Depends(kind)):
         """It comes back with the `id`, `type` and `created` the store gave it."""
-        return await saved(db, await (model or base).write(db, None, record))
+        return await saved(db, await (model or base).create(db, record))
 
     @routes.get(path + '/{id}', response_model=One, summary=f'Read a {name}')
     async def read(db: Db, id: UUID):
         """404 when there is none."""
-        return await tables.get(id.bytes[0], base).read(db, id)
+        return await own.get(id.bytes[0], base).read(db, id)
 
     @routes.put(path + '/{id}', response_model=One, summary=f'Update a {name}')
-    async def update(db: Db, id: UUID, record: fields):
+    async def update(db: Db, id: UUID, record: body):
         """Merged with what is sent when the `id` is there, created with that `id` when it is not."""
-        return await saved(db, await tables.get(id.bytes[0], base).write(db, id, record))
+        return await saved(db, await own.get(id.bytes[0], base).update(db, id, record))
 
     @routes.delete(path + '/{id}', status_code=204, summary=f'Delete a {name}')
     async def remove(db: Db, id: UUID):
         """With its links; refused while it holds records, which are deleted or moved out first. 404 when there is none."""
-        await removed(db, tables.get(id.bytes[0], base), id)
+        await own.get(id.bytes[0], base).delete(db, id)
+        await db.commit()
 
     @routes.get(path, response_model=Page[One], summary=f'Search {name}s')
     async def search(db: Db, conditions: QueryParams = Depends(), params: Params = Depends(), model=Depends(kind)):
         """`filters`, `sort`, `search` and paging as in record search: of a type, its own table's records, not those of the types made
         from it; of every type of the path, with the columns of the first."""
-        query = queried(model or base, conditions)
-        return await paged(db, query.with_hint(model.__table__, 'ONLY', 'postgresql') if model else query, model or base, params)
+        return await (model or base).search(db, params, conditions=conditions, only=bool(model))
 
     return routes
 
