@@ -39,7 +39,7 @@ class FSFile(_Record, table=True):
     __tablename__ = 'fs_file'
 
 
-class FSIndex(RecordFields, Resource, Stored, table=True):
+class FSIndex(_Resource, table=True):
     """A pointer to one gppufs index: the SQLite file beside a location, or inside an archive, holding what a walk read of every
     file there."""
     __tablename__ = 'fs_index'
@@ -107,8 +107,8 @@ async def contents(db: Db, id: UUID):
     """A `list`: the file system records whose parent it is, the locations inside a location among them, by name, each with the
     columns of an FS node. What a location's files are is in gppufs's index beside them, not here."""
     await FSNode.read(db, id)
-    return await listed(db, select(FSNode).where(FSNode.parent_id == id).order_by(FSNode.name, FSNode.id), f'file system records are under {id}')
+    return await FSNode.list(db, FSNode.parent_id == id, order=(FSNode.name, FSNode.id), what=f'file system records are under {id}')
 
 
 app = api_at('/files', 'files', 'The file systems as gppufs reads and configures them: their locations, files and indexes.',
-             routes, typed('/files', RecordFields, 'file', FSNode, FSLocation, FSFile, FSIndex))   # /files/locations before /files/{id}, which would take its word
+             routes, typed('/files', _Record, 'file', FSNode, FSLocation, FSFile, FSIndex))   # /files/locations before /files/{id}, which would take its word

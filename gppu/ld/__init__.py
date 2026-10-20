@@ -438,6 +438,11 @@ class _Link(_Record):
                 raise HTTPException(422, f'{end} is not a node')
         return row
 
+    @classmethod
+    async def delete(cls, db: AsyncSession, id: UUID) -> None:
+        """The link alone; the nodes at its ends stay, and a link that is not there is gone already. Gone at the commit."""
+        await db.execute(delete(cls).where(cls.id == id))
+
 
 class _Event(_Record):
     """An event's column: when the thing happened."""
@@ -765,7 +770,7 @@ async def link_update(db: Db, id: UUID, record: _Link):
 
 @router.delete('/links/{id}', status_code=204, tags=['links'], summary='Delete a link')
 async def link_delete(db: Db, id: UUID):
-    """The link alone; the nodes at its ends stay. 404 when there is none."""
+    """The link alone; the nodes at its ends stay."""
     await Link.delete(db, id)
     await db.commit()
 
@@ -775,7 +780,8 @@ def typed(path: str, body: type[_Record], name: str, *models: type[_Record]) -> 
     A path of several types takes the `type` a create makes, the first by default, and the one a search reads, every one of them by
     default; a read, an update or a delete's `id` says its type."""
     routes, base = APIRouter(tags=[name]), models[0]
-    own = {code: m for code, m in tables().items() if m in models}
+    found = tables()
+    own = {code: m for m in models for code, t in found.items() if t is m}   # the path's types, in its order
     One = Union[models]   # a record of the path, read with its own type's columns
 
     def named(type: Type | None = None):
