@@ -1,7 +1,7 @@
 ---
 fileClass: Document
 created: 2026-10-19
-updated: 2026-10-19
+updated: 2026-10-20
 generated: { by: claude-code/opus-5-5, at: 2026-10-19T10:55 }
 ---
 
@@ -13,13 +13,21 @@ Alex's requirements (2026-10-18, deciding where Linked Data lives): Linked Data 
 
 ## Plan
 1. Documentation from gppu's code: done. kb.karel.in/gppu/v3/: every module's reference, also what has no docstring; the package's exports on the home page; graph.html, graphify's graph grouped by gppu's modules, read without a model. Every gppu build publishes the documentation of the version it builds, before releasing it, and the home page names that version; it shows gppu 3.6.23. It is public at kb.karelin.ai/gppu/, published with every static site by RAN `Systems/static_sites/deploy.sh`; inside the network kb.karel.in's home page links it, and kb.karel.in/gppu leads to it (RAN `trix_kb.conf`).
-2. One Span: done. gppu's `TimeSpan` holds an open end, its bounds and the specification's forms; `gppu.ld.Span` is that `TimeSpan` with Linked Data's reading rules (gppu daf7b13).
-3. One ORM: done. `gppu.data._SQABase`, which nothing used, is the ORM `gppu.ld` uses, and `gppu.ld.connect()` opens its store through `gppu.data.async_engine`; `_PGBase` is unchanged, since CCTV-detective, admin_ui, Plaud and CRAP's file_indexer use it (gppu d2d1e27).
+2. One Span: open. gppu's `TimeSpan` holds an open end, its bounds and the specification's forms (gppu daf7b13). `gppu.ld` still defines a second class, `Span`, a `TimeSpan` under the name of gppu's abstract `Span`: it reads a time without a zone as UTC where `TimeSpan` reads it in `MY_TZ`, and adds an ISO 8601 duration and pydantic's reading, writing and schema.
+3. One ORM: open. `gppu.ld.connect()` opens its store through `gppu.data.async_engine`, but `gppu.ld` makes its own sessions (`database()`) beside `gppu.data._SQABase.session()`, which nothing uses; `_PGBase` is unchanged, since CCTV-detective, admin_ui, Plaud and CRAP's file_indexer use it (gppu d2d1e27).
 4. gppufs on Linked Data inside gppu: done, one difference open (below).
 5. APIApp: done. `gppu.app.APIApp` is the AsyncApp that serves HTTP on uvicorn at its configuration's host and port: its own objects at `/rest` and each ASGI app its `apis()` gives at its path (gppu 6a36245). RAN `Projects/ld/api.py` is an APIApp serving Linked Data at `/ld/v1` (RAN 592adca5e). gppufs's `/config` and `/lake` are a FastAPI app, `gppu.fs.api(lake)`, which an APIApp serves among its apis, in place of `serve()`'s own `ThreadingHTTPServer` (gppu 86c9b53).
 6. One environment: done. `Environment` takes os, user and home from `Env`, which detects them once, and names its platform from `Env.os`; `params` reads the configuration with `deepget` instead of its own copy; `deepget` returns a falsy value at a nested path, where a nested `false` used to come back as the default; `detect_os` knows macOS (gppu d0f192a). The rest are layers over `Env`, not copies of it: `_Config` is an object's section, `Vault` its secrets, `_MqttConfig` a source that loads into `Env`, `GppuCatalog` reads `Env` unless given a mapping or an exported catalog folder.
 7. `fs-dumpoftext.py` to `archive/`: done (gppu 6d75c1e).
 8. No hard code in gppu: surveyed; what was against the specification is gone, and where the ignore rules live is Alex's decision (below).
+9. Every name `gppu.ld` introduces: why it exists, and why it is not named as gppu or the specification names the same thing: in progress, Alex reviewing `gppu/ld/__init__.py` against the specification (below).
+
+## 9. gppu.ld's names
+- The specification's own words are Universals (a span's four forms) and Operations (`create`, `read`, `update`, `delete`, `list`, `search`). Its # gppu and # Implementation lines naming `Span`, `Stored`, `listed()` and `paged()` were written from the code, and it says of them "These names are the code's, not approved".
+- Not gppu's: `custom_bookmark_type` (sqlakeyset), `CustomizedPage` (fastapi_pagination), `Annotated` (typing).
+- One word, two things: `held()`, the clauses of a condition on a key inside `data` or `meta`, and `Held`, a tree row with how many records it holds.
+- One thing, several implementations: a type code to its class (`made()`, `Stored.makes()` and `takes()`, `TABLES`, `READ`); a type's statuses (`statused()`, `statuses_of()`); a tree entry (`Held` beside `gppu.tui.TreeEntry`); `Container`, `Record` and `Collection` in both `gppu.fs` and `gppu.ld`, as different classes.
+- The participle names (`listed`, `paged`, `queried`, `saved`, `made`, `statused`, `contained`, `held`, `holding`) are one agent's habit; gppu's own code names by verb or noun (`glob_list`, `children`, `save`, `commit`).
 
 ## 8. No hard code in gppu
 - Done: `gppu.fs` read an offset-free time in a Pacific zone of its own; it uses gppu's `MY_TZ` (gppu 483dc05).
