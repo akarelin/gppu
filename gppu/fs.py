@@ -8270,7 +8270,7 @@ def api(lake: Collection):
   return app
 
 
-def serve(lake: Collection, host: str = '127.0.0.1', port: int = 8765) -> None:
+def serve(lake: Collection, host: str, port: int) -> None:
   """api(lake) on uvicorn at host and port, for a program that serves the Lake alone."""
   import uvicorn
   uvicorn.run(api(lake), host=host, port=port)
