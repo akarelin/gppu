@@ -32,10 +32,9 @@ Documentation from the code's docstrings, with this README and the documents bes
 
 | Module | Purpose |
 |--------|---------|
-| [`gppu.app`](gppu/app.py) | `CliApp` for command-line utilities: configuration and logging on construction, typed options and `--help` from `main`, `--schema`, parameter binding and JSON results. `App` for direct calls; `AsyncApp` for asyncio work. |
+| [`gppu.app`](gppu/app.py) | `CliApp` for command-line utilities: configuration and logging on construction, typed options and `--help` from `main`, `--schema`, parameter binding and JSON results. `App` for direct calls; `AsyncApp` for asyncio work.<br>[Environment and State](docs/environment.md): `Environment`: the basic level with no file (platform, host, user, home, os, trace), strict lookups, the configuration's macros called by name (`place`, `folder`, `uri`, `location_of`, `local_of`).<br>`State`: every table of the loaded configuration resolved through its templates, checked against what it references and built into objects; `services` for the rows marked so |
 | `gppu` (core)<br> | **Environment**: `Env` config loader with `!include`, typed path access (`glob`, `glob_int`, `glob_list`, `glob_dict`). <br>**Logger**: colored `Info`/`Warn`/`Error`/`Debug`/`Dump`. <br>**Vault**: `Vault.get`/`create`/`update`/`list` with Azure Key Vault and `SECRET_*` env-var backends; `!secret` YAML tag.<br>Plus: type coercion, dict utilities, YAML/JSON I/O, time helpers, OS detection + `full_path` path resolution (env vars, `~`, WSL drive mapping), async helpers, template population |
 | [`gppu.handlers`](docs/handlers.md) | Generated handler API and supported-format reference. |
-| [`gppu.environment`](docs/environment.md) | `Environment`: the basic level with no file (platform, host, user, home, os, trace), strict lookups, the configuration's macros called by name (`place`, `folder`, `uri`, `location_of`, `local_of`).<br>`State`: every table of the loaded configuration resolved through its templates, checked against what it references and built into objects; `services` for the rows marked so |
 | `gppu.ymro` | YMRO lifecycle: multi-inheritance-aware init→load→start steppers (`YInit`/`YLoad`/`YStart`/`mixin_Stepper`).<br>`Tracer` flight recorder: JSONL trace of object snapshots, triggers, callbacks, and periodic state (AppDaemon hooks via `Tracer.install`); `_tracer` before/after/instead method decorators |
 | [`gppu.data`](DATA.md) | `Cache` unified caching (JSON/pickle/sqlite/diskcache/DB backends), <br>database base classes: `_PGBase` (psycopg2) and `_SQABase` (SQLAlchemy),<br>`_PersistentDC` persisted pseudo-dataclasses with `Persistence` multi-backend storage (json/pickle/sqlite/postgres) |
 | [`gppu.iot`](IOT.md) | y2 types: `y2list`, `y2path`, `y2topic`, `y2slug`, `y2eid` (token-list strings for topics/slugs/entity ids).<br>MQTT plumbing for the any2mqtt services: `mqtt_connstring`, `MqttMixin` (reconnecting aiomqtt client with callback dispatch, MQTT5 expiry/user-properties), `Transformer` (config-driven scalar transform stage).<br>Control mixins: `_IORuntime` (thread-hosted asyncio loop, per-key gating), `_HTTPControl` (aiohttp), `_SerialControl` (telnetlib3), `_SerialHTTPControl`. Third-party deps via `mqtt`/`iot` extras |
@@ -144,7 +143,7 @@ if __name__ == '__main__':
     MyApp.cli()
 ```
 
-No arguments runs `main` with configuration values. `--days 7` overrides `days`; `--help` and `--schema` describe the same method without running it. Returned data goes to stdout as JSON and logs go to stderr. See [`gppu.app.CliApp`](gppu/app.py) and [`gppu.params`](gppu/params.py).
+No arguments runs `main` with configuration values. `--days 7` overrides `days`; `--help` and `--schema` describe the same method without running it. Returned data goes to stdout as JSON and logs go to stderr. See [`gppu.app.CliApp`](gppu/app.py) and its parameters in the same module.
 
 ### 3. For TUI apps — subclass `TUIApp` and use `Env` the same way:
 

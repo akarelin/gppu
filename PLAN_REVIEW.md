@@ -9,7 +9,7 @@ generated: { by: claude-code/opus-5-5, at: 2026-10-19T10:55 }
 
 Goal: gppu does what it is meant to. gppufs and Linked Data are native to gppu, built on gppu's own configuration, logging, apps and primitives; each thing has one implementation; the documentation is generated from gppu's code alone. Nothing that works is dropped; backwards compatibility is not a constraint.
 
-Alex's requirements (2026-10-18, deciding where Linked Data lives): Linked Data is a submodule of gppu, its base API for records in gppu; the locations API gppu already has serves it; it uses the primitives gppu already has, such as spans and paths; gppu's Postgres and ORM are improved, its unused ORM replaced by the one Linked Data uses; an API app is a type of gppu app. (2026-10-19): gppu is not rewritten and what works is kept; documentation is generated correctly; functionality spread over several files is put right; gppufs and Linked Data are native to gppu, not side modules that do not use it.
+Alex's requirements (2026-10-18, deciding where Linked Data lives): Linked Data is a submodule of gppu, its base API for records in gppu; the locations API gppu already has serves it; it uses the primitives gppu already has, such as spans and paths; gppu's Postgres and ORM are improved, its unused ORM replaced by the one Linked Data uses; an API app is a type of gppu app. (2026-10-19): gppu is not rewritten and what works is kept; documentation is generated correctly; functionality spread over several files is put right; gppufs and Linked Data are native to gppu, not side modules that do not use it. (2026-10-20): `app.py` is the environment and all app logic.
 
 ## Plan
 1. Documentation from gppu's code: done. kb.karel.in/gppu/v3/: every module's reference, also what has no docstring; the package's exports on the home page; graph.html, graphify's graph grouped by gppu's modules, read without a model. Every gppu build publishes the documentation of the version it builds, before releasing it, and the home page names that version; it shows gppu 3.6.23. It is public at kb.karelin.ai/gppu/, published with every static site by RAN `Systems/static_sites/deploy.sh`; inside the network kb.karel.in's home page links it, and kb.karel.in/gppu leads to it (RAN `trix_kb.conf`).
@@ -21,6 +21,7 @@ Alex's requirements (2026-10-18, deciding where Linked Data lives): Linked Data 
 7. `fs-dumpoftext.py` to `archive/`: done (gppu 6d75c1e).
 8. No hard code in gppu: surveyed; what was against the specification is gone, and where the ignore rules live is Alex's decision (below).
 9. Every name `gppu.ld` introduces: why it exists, and why it is not named as gppu or the specification names the same thing: in progress, Alex reviewing `gppu/ld/__init__.py` against the specification (below).
+10. `app.py` is the environment and all app logic: done. `Environment`, `State` and `is_table_key` (was `gppu/environment.py`) and CliApp's parameters (was `gppu/params.py`) are in `gppu/app.py`; `is_table_key` is exported as `gppu.is_table_key`, and CRAP's admin_ui and lake read it from `gppu.app`. `Env`, `_Config` and `_Base` stay in `gppu/gppu.py`, since `gppu.ld`, out of scope, reads `glob` from there and `Env.from_env` serves configuration without an app.
 
 ## 9. gppu.ld's names
 - Decided by Alex: the base class of `gppu.ld`'s table classes is `_Record`, as gppu names its bases (`_Base`, `_PGBase`). `_Record` defines no table and does all the work; a type's class only defines its table.
@@ -64,8 +65,8 @@ Configuration and environment:
 - `Env` (`gppu/gppu.py`): class-level configuration, `from_env`, `glob`, `glob_dict`.
 - `mixin_Config`, `_Config` (`gppu/gppu.py`): an object's own section, `my()`.
 - `Vault` and `VaultProvider*` (`gppu/gppu.py`): secrets from the environment or Azure Key Vault.
-- `_Environment`, `_Rules`, `_State` (`gppu/environment.py`): platform and host, tables, macros and rows built from the configuration, over `Env.from_env`.
-- `params.py`: `main`'s parameters from the command line, then the configuration, then the signature.
+- `_Environment`, `_Rules`, `_State` (`gppu/app.py`): platform and host, tables, macros and rows built from the configuration, over `Env.from_env`.
+- Parameters (`gppu/app.py`): `main`'s parameters from the command line, then the configuration, then the signature.
 - `GppuCatalog` (`gppu/fs.py`): reads its own YAML (`locations.yaml`, sources, replicas) beside `Env`.
 - `_MqttConfig` (`gppu/iot.py`): MQTT's configuration as an app.
 
