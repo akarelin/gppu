@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Any, ClassVar, Optional
 from contextlib import asynccontextmanager, contextmanager
 
-from .gppu import Env
-from .gppu import _Base, _DC
+from .app import Env, _Base
+from .gppu import _DC
 
 
 class _PersistentBase(_Base):

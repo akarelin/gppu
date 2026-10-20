@@ -18,7 +18,8 @@ import httpx
 
 from . import Type
 from ..fs import Collection, FileSystem, GppuCatalog, GppuFileSystem, Location
-from ..gppu import full_path, glob
+from ..app import glob
+from ..gppu import full_path
 
 client: httpx.Client   # the API, opened by connect()
 

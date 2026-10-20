@@ -188,7 +188,7 @@ def test_one_line_yaml_enables_console_and_file(configured_output, tmp_path):
   core.Info('both destinations')
   assert 'both destinations' in console.getvalue()
   assert path.read_text().strip() == 'both destinations'
-  assert core.enable_file_logging() == path
+  assert core.enable_file_logging(log_file=str(path)) == path
   core.Info('once')
   assert path.read_text().count('once') == 1
 

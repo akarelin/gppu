@@ -1311,17 +1311,17 @@ _file_handlers: dict[str, logging.Handler] = {}
 
 
 def enable_file_logging(name: str | None = None, log_dir: str | Path | None = None,
-                        level: int = logging.DEBUG) -> Path:
-  """Mirror logs to Env's explicit `log_file`, or an explicit name + log_dir.
+                        level: int = logging.DEBUG, log_file: str | None = None) -> Path:
+  """Mirror logs to an explicit `log_file`, or an explicit name + log_dir.
 
-  Env enables this automatically when YAML declares `log_file`. No directory
+  Env passes its `log_file` when YAML declares one. No directory
   or filename is inferred. Creation errors propagate to the caller.
   """
   if log_dir is not None:
     if not name: raise ValueError('File logging with log_dir requires a name')
     path = full_path(Path(log_dir) / f'{name}.log')
   else:
-    value = Env.glob('log_file')
+    value = log_file
     if not isinstance(value, str) or not value.strip():
       raise ValueError('File logging requires an explicit log_file in configuration')
     path = full_path(value)
@@ -1396,226 +1396,6 @@ async def Dump(filename: str, data={}, **kw) -> None:
 # endregion
 
 
-# region Environment
-def _config_changes(before: dict, after: dict, prefix: str = '') -> frozenset[str]:
-  changed = set()
-  for key in before.keys() | after.keys():
-    path = f'{prefix}/{key}' if prefix else str(key)
-    if key not in before or key not in after:
-      changed.add(path)
-    elif isinstance(before[key], dict) and isinstance(after[key], dict):
-      changed.update(_config_changes(before[key], after[key], path))
-    elif isinstance(before[key], list) and isinstance(after[key], list):
-      if json.dumps(before[key], sort_keys=True) != json.dumps(after[key], sort_keys=True): changed.add(path)
-    elif type(before[key]) is not type(after[key]) or before[key] != after[key]:
-      changed.add(path)
-  return frozenset(changed)
-
-
-class Env:
-  data: dict[str, Any] = {}
-  initialized: bool = False
-  changed_paths: frozenset[str] = frozenset()
-  _listeners: list[tuple[str, Callable[[frozenset[str]], None]]] = []
-
-  name: str
-  app_path: Path
-
-  home: Path = Path.home()
-  user: str = getpass.getuser()
-  os: OSType = detect_os()
-
-  _logger: logging.Logger
-
-  @staticmethod
-  def _load_dict(d: dict) -> None:
-    s = json.dumps(d)
-    data = json.loads(Template(s).safe_substitute())
-    if not isinstance(data, dict): raise TypeError('configuration must be a mapping')
-    if 'trace_rules' in data and not isinstance(data['trace_rules'], dict):
-      raise TypeError('trace_rules must be a mapping')
-    if 'log_file' in data and (not isinstance(data['log_file'], str) or not data['log_file'].strip()):
-      raise ValueError('File logging requires an explicit log_file in configuration')
-    changed = _config_changes(Env.data, data)
-    if Env.initialized and not changed:
-      Env.changed_paths = changed
-      return
-    if 'trace_rules' in Env.data and 'trace_rules' not in data: TRACE_RULES.clear()
-    if Env.initialized or Env.data: Env.reset(); Logger.Info('INFO', 'Environment', 'WRED', 'reset()')
-    Env.data = data
-    Env.initialized = True
-    if 'trace_rules' in Env.data:
-      rules = Env.glob('trace_rules')
-      if not isinstance(rules, dict): raise TypeError('trace_rules must be a mapping')
-      TRACE_RULES.clear()
-      TRACE_RULES.update(rules)
-    if 'log_file' in Env.data: enable_file_logging()
-    Env.changed_paths = changed
-    for path, callback in tuple(Env._listeners):
-      relevant = frozenset(key for key in changed if not path or key == path
-                           or key.startswith(path + '/') or path.startswith(key + '/'))
-      if relevant: callback(relevant)
-
-  @staticmethod
-  def reset() -> None:
-    for handler in tuple(_file_handlers.values()):
-      _log_root.removeHandler(handler)
-      handler.close()
-    _file_handlers.clear()
-    Env.data = {}
-    Env.initialized = False
-    Env.changed_paths = frozenset()
-
-  @staticmethod
-  def on_change(callback: Callable[[frozenset[str]], None], path: str = '') -> Callable[[], None]:
-    """Observe changed slash paths after loading; return a callable to unsubscribe.
-
-    Callbacks are synchronous. The consumer decides how to apply each change.
-    Registrations survive configuration reloads and reset().
-    """
-    if inspect.iscoroutinefunction(callback): raise TypeError('configuration change callbacks must be synchronous')
-    entry = (path.strip('/'), callback)
-    Env._listeners.append(entry)
-    def unsubscribe():
-      if entry in Env._listeners: Env._listeners.remove(entry)
-    return unsubscribe
-
-  @staticmethod
-  def update_config(data: dict, path: str = '') -> None:
-    """Replace one configuration subtree; an empty path replaces the whole config."""
-    if not isinstance(data, dict): raise TypeError('configuration must be a mapping')
-    if not path:
-      Env._load_dict(data)
-      return
-    updated = deepcopy(Env.data)
-    node = updated
-    *parents, key = path.split('/')
-    for parent in parents:
-      if parent not in node: node[parent] = {}
-      node = node[parent]
-      if not isinstance(node, dict): raise TypeError(f'configuration parent is not a mapping: {path}')
-    node[key] = data
-    Env._load_dict(updated)
-
-  @staticmethod
-  async def from_mqtt(config: dict) -> None:
-    """Load exact topics into their declared Env paths through gppu's MQTT transport.
-
-    config contains connection and topics (MQTT topic -> Env path). Disconnect
-    once all topics arrive. Apps needing updates use their own mqtt_config().
-    """
-    from .iot import _MqttConfig
-    await _MqttConfig(config).run()
-
-  @staticmethod
-  def template_set(path: str = '', **context) -> 'TemplateSet':
-    """The macros, generators and templates of one table of the configuration.
-
-    A table that declares them resolves its own rows; the root's macros are offered to
-    every table, and the rest of the configuration to every generator, so one can reach
-    the tables it computes against."""
-    table = Env.glob_dict(path) if path else Env.data
-    macros = chr(10).join(block for block in (Env.data.get('macros', '') if path else '', table.get('macros', '')) if block)
-    return TemplateSet(macros=macros, generators=table.get('generators'), templates=table.get('templates'),
-                       named=Env.named_templates(), context=Env.data | context)
-
-  @staticmethod
-  def named_templates() -> dict[str, dict]:
-    """Every `*_templates` block of the configuration, the root's and every table's, by block
-    name: the named templates any rule may render, as in Y2. A name is unique across the
-    configuration."""
-    blocks: dict[str, dict] = {}
-    for holder in (Env.data, *(content for content in Env.data.values() if isinstance(content, dict))):
-      for key, block in holder.items():
-        if not (key.endswith('_templates') and isinstance(block, dict)): continue
-        if clash := set(blocks.get(key, {})) & set(block): raise ValueError(f'{key}: {sorted(clash)} defined twice')
-        blocks.setdefault(key, {}).update(block)
-    return blocks
-
-  @staticmethod
-  def glob(path, default=None) -> Any: return Env.data if path == '' else deepget(path, Env.data, default=default)
-  @staticmethod
-  def glob_int(path, default: int = 0) -> int: return deepget_int(path, Env.data, default=default)
-  @staticmethod
-  def glob_list(path, default=[]) -> list: return deepget_list(path, Env.data, default=default)
-  @staticmethod
-  def glob_dict(path, default={}) -> dict: return Env.data if path == '' else deepget_dict(path, Env.data, default=default)
-  @staticmethod
-  @sync
-  async def dump():
-    Dump('Env.data', Env.data)
-    return await asyncio.sleep(0)  # Make it truly async
-
-  @staticmethod
-  def from_dict(d: dict) -> None:
-    """Initialize Env from a dict. A ``topology`` key (a yaml path) is loaded as
-    the base data; ``tunables`` (an inline dict) and the remaining keys override
-    it — mirroring Y2's Environment loader. Without ``topology`` the dict itself
-    is the data (back-compatible)."""
-    config = dict(d)
-    topology = config.pop('topology', None)
-    tunables = config.pop('tunables', None)
-    data = dict_from_yml(topology) if topology else {}
-    if isinstance(tunables, dict): data.update(tunables)
-    data.update(config)
-    Env._load_dict(data)
-
-  @staticmethod
-  def from_env(name: Optional[str] = None, app_path: Optional[Path] = None) -> None:
-    """Initialize Env from name + app_path, resolving config file and loading YAML."""
-    import __main__
-    Env._main_file = Path(getattr(__main__, '__file__', 'app')).resolve()
-    Env._main_dir = Env._main_file.parent
-
-    # Under PyInstaller __main__.__file__ resolves to __main__; use exe name instead
-    if name:
-      Env.name = name
-    elif getattr(sys, 'frozen', False):
-      Env.name = Path(sys.executable).stem
-    else:
-      Env.name = Env._main_file.stem
-    Env.app_path = Env._resolve_app_path(app_path)
-    Env.config_file = Env._config_file()
-
-    Env._logger = _logger.getChild(Env.name)
-    for attr_name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)):
-      setattr(Env, attr_name, staticmethod(partial(fn, logger=Env._logger)))
-
-    config_data = dict_from_yml(Env.config_file)
-    Env.from_dict(config_data)   # resolves a `topology:` key if the config has one
-
-  @staticmethod
-  def _resolve_app_path(app_path: Optional[Path] = None) -> Path:
-    if not app_path: return Env._main_dir
-    if app_path.is_absolute(): return app_path
-    # Walk up from script location to find the relative path
-    parent = Env._main_dir
-    while parent != parent.parent:
-      candidate = parent / app_path
-      if candidate.exists(): return candidate
-      parent = parent.parent
-    return Env._main_dir / app_path
-
-  @staticmethod
-  def _config_file() -> Path:
-    """``<name>.yaml`` then ``config.yaml``, searched from ``app_path`` upward —
-    so a service in a subdir (e.g. /app/brultech) finds the suite's /app/config.yaml.
-    Each is matched as a Jinja document too, so a templated configuration is found
-    with no change at the call site."""
-    stem = Path(Env.name).with_suffix('.yaml').name
-    names = (stem, f'{stem}.j2', 'config.yaml', 'config.yaml.j2')
-    for parent in (Env.app_path, *Env.app_path.parents):
-      for name in names:
-        candidate = parent / name
-        if candidate.exists(): return candidate
-    raise FileNotFoundError(f"Config ({' or '.join(names)}) not found walking up from '{Env.app_path}'")
-
-# Global aliases for Env.glob* methods
-glob = Env.glob
-glob_int = Env.glob_int
-glob_list = Env.glob_list
-glob_dict = Env.glob_dict
-# endregion
 
 
 # region Vault / Secrets
@@ -1768,21 +1548,6 @@ class Vault:
 class _mixin: pass
 
 
-class mixin_Config(_mixin):
-  _my: dict[str, Any] = {}
-
-  def _config_from_key(self, key: str) -> None: self._my.update(Env.glob_dict(key))
-  def _config_copy(self, other: mixin_Config) -> None: self._my = dict(other._my)
-  def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
-  def _config_from_env(self) -> None: self._my = deepcopy(Env.data)
-
-  def my(self, path, default=None) -> Any: return deepget(path, self._my, default=default)
-  def my_int(self, path, default: int = 0) -> int: return deepget_int(path, self._my, default=default)
-  def my_float(self, path, default: float = float('nan')) -> float: return deepget_float(path, self._my, default=default)
-  def my_list(self, path, default: list = []) -> list: return deepget_list(path, self._my, default=default or [])
-  def my_dict(self, path, default: dict = {}) -> dict: return deepget_dict(path, self._my, default=default or {})
-
-
 class Logger:
   """Namespace wrapper exposing logging helpers."""
   trace_folder: str = '.'
@@ -1821,23 +1586,6 @@ class mixin_Logger(protocol_Logger, _mixin):
 
 # region Foundation
 class _Logger(mixin_Logger): pass
-
-
-class _Config(mixin_Config):
-  _base_path: Path
-
-  def __init__(self, **kw) -> None:
-    super().__init__(**kw)
-    if Env.initialized:
-      self._config_from_env()
-    self._base_path = Path('.')
-
-  # def my_path(self, path) -> Path: return self._base_path / self.my(path)
-
-
-class _Base(_Logger, _Config): pass
-# _App / App moved to gppu.app (App needs _DC, below; defined there to keep the
-# App family together with the lifecycle/AsyncApp).
 # endregion
 
 

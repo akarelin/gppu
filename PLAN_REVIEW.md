@@ -21,7 +21,7 @@ Alex's requirements (2026-10-18, deciding where Linked Data lives): Linked Data 
 7. `fs-dumpoftext.py` to `archive/`: done (gppu 6d75c1e).
 8. No hard code in gppu: surveyed; what was against the specification is gone, and where the ignore rules live is Alex's decision (below).
 9. Every name `gppu.ld` introduces: why it exists, and why it is not named as gppu or the specification names the same thing: in progress, Alex reviewing `gppu/ld/__init__.py` against the specification (below).
-10. `app.py` is the environment and all app logic: done. `Environment`, `State` and `is_table_key` (was `gppu/environment.py`) and CliApp's parameters (was `gppu/params.py`) are in `gppu/app.py`; `is_table_key` is exported as `gppu.is_table_key`, and CRAP's admin_ui and lake read it from `gppu.app`. `Env`, `_Config` and `_Base` stay in `gppu/gppu.py`, since `gppu.ld`, out of scope, reads `glob` from there and `Env.from_env` serves configuration without an app.
+10. `app.py` is the environment and all app logic: done. `Environment`, `State` and `is_table_key` (was `gppu/environment.py`) and CliApp's parameters (was `gppu/params.py`) are in `gppu/app.py`; `is_table_key` is exported as `gppu.is_table_key`, and CRAP's admin_ui and lake read it from `gppu.app`. `Env`, `glob`, `mixin_Config`, `_Config` and `_Base` are in `gppu/app.py` too; `gppu/gppu.py` keeps the logging, which needs no `Env`: `enable_file_logging` takes the `log_file` `Env` reads. CRAP's file_indexer and `gppu.ld.gppufs` read `Env` and `glob` from `gppu.app`.
 
 ## 9. gppu.ld's names
 - Decided by Alex: the base class of `gppu.ld`'s table classes is `_Record`, as gppu names its bases (`_Base`, `_PGBase`). `_Record` defines no table and does all the work; a type's class only defines its table.
@@ -62,8 +62,8 @@ Alex's requirements (2026-10-18, deciding where Linked Data lives): Linked Data 
 
 ## Inventory
 Configuration and environment:
-- `Env` (`gppu/gppu.py`): class-level configuration, `from_env`, `glob`, `glob_dict`.
-- `mixin_Config`, `_Config` (`gppu/gppu.py`): an object's own section, `my()`.
+- `Env` (`gppu/app.py`): class-level configuration, `from_env`, `glob`, `glob_dict`.
+- `mixin_Config`, `_Config` (`gppu/app.py`): an object's own section, `my()`.
 - `Vault` and `VaultProvider*` (`gppu/gppu.py`): secrets from the environment or Azure Key Vault.
 - `_Environment`, `_Rules`, `_State` (`gppu/app.py`): platform and host, tables, macros and rows built from the configuration, over `Env.from_env`.
 - Parameters (`gppu/app.py`): `main`'s parameters from the command line, then the configuration, then the signature.

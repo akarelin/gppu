@@ -16,7 +16,15 @@ from .app import (
     APIApp,
     mixin_Rest,
 
-    # Environment and State
+    # Env, its configuration mixins, and Environment and State
+    Env,
+    glob,
+    glob_int,
+    glob_list,
+    glob_dict,
+    mixin_Config,
+    _Config,
+    _Base,
     Environment,
     State,
     is_table_key,
@@ -122,24 +130,12 @@ from .gppu import (
 
     # Mixins
     _mixin,
-    mixin_Config,
     Logger,
     protocol_Logger,
     mixin_Logger,
 
-    # Env
-    Env,
-
-    # Config access (aliases for Env.glob*)
-    glob,
-    glob_int,
-    glob_list,
-    glob_dict,
-
     # Foundation classes
     _Logger,
-    _Config,
-    _Base,
 )
 
 from .iot import (
