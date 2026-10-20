@@ -6,14 +6,15 @@ Linked Data holds what gppufs is configured with and where its indexes are; the 
 file system is 0x20-0x2F: an FS node is the base of every file system type, an FS location a place files are reached, an FS file
 one file as a single thing wherever its copies are, an FS index a pointer to one gppufs index. Each is created, read, updated and
 searched at `/files`, and `GET /files/locations` gives the locations in use as rows of gppufs's configuration table, which
-`gppu.fs.GppuCatalog` is made from. Credentials are not stored: a Provider reads them where it declares them."""
+`gppu.fs.GppuCatalog` is made from; `GET /files/address` finds the location an address is in, `GET /files/{id}/files` lists what a
+location holds. Credentials are not stored: a Provider reads them where it declares them."""
 from uuid import UUID
 
 import pydantic
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from sqlmodel import or_, select
 
-from . import Db, RecordFields, Resource, Stored, Type, api_at, typed
+from . import Db, RecordFields, Resource, Stored, Type, api_at, listed, typed
 
 NOT_IN_USE = ('discarded', 'rejected', 'archived')   # the statuses of a location not in use (# States)
 
@@ -79,6 +80,34 @@ async def locations(db: Db):
         return r
     return [r.data | {'id': r.id, 'name': r.name, 'parent': r.parent_id and rows[r.parent_id].data['uid'], 'connection': top.data['uid']}
             | ({'tags': r.meta['tags']} if 'tags' in r.meta else {}) for r in rows.values() if (top := root(r))]
+
+
+class Addressed(pydantic.BaseModel):
+    """Where an address is: the location in use that holds it, and the rest of the address inside the location."""
+    location: Configured = pydantic.Field(description="The location, as a row of gppufs's configuration table.")
+    path: str = pydantic.Field(description='The rest of the address inside it, empty for the location itself.')
+
+
+@routes.get('/files/address', response_model=Addressed, summary='Find the location an address is in')
+async def address(db: Db, uri: str):
+    """The location in use whose canonical uri or uid is the longest start of `uri`, a whole segment, and the rest of the address
+    inside it: the location gppufs reads that file or folder from. 404 when no location in use holds it."""
+    best = None
+    for row in await locations(db):
+        for start in (row['canonical'], row['uid']):
+            if (uri == start or uri.startswith(start.rstrip('/') + '/')) and (not best or len(start) > len(best[1])):
+                best = (row, start)
+    if not best:
+        raise HTTPException(404, f'no location in use holds {uri}')
+    return Addressed(location=best[0], path=uri[len(best[1]):].strip('/'))
+
+
+@routes.get('/files/{id}/files', response_model=list[FSNode], summary="List what a location holds")
+async def contents(db: Db, id: UUID):
+    """A `list`: the file system records whose parent it is, the locations inside a location among them, by name, each with the
+    columns of an FS node. What a location's files are is in gppufs's index beside them, not here."""
+    await FSNode.read(db, id)
+    return await listed(db, select(FSNode).where(FSNode.parent_id == id).order_by(FSNode.name, FSNode.id), f'file system records are under {id}')
 
 
 app = api_at('/files', 'files', 'The file systems as gppufs reads and configures them: their locations, files and indexes.',

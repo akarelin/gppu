@@ -8,9 +8,11 @@ store's `schema.sql` (RAN `Projects/ld`); `connect()` opens the store.
 
 Needs the `ld` extra, and fastapi-querybuilder installed with `--no-deps`: its metadata lists poetry, uvicorn and aiosqlite as runtime
 dependencies."""
+import json
+import re
 from datetime import UTC, datetime, timedelta
 from enum import IntEnum
-from typing import Annotated, Any, ClassVar, Self, TypeVar, Union
+from typing import Annotated, Any, ClassVar, Literal, Self, TypeVar, Union
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -21,18 +23,18 @@ from fastapi_pagination.cursor import CursorPage   # a page carries the cursor o
 from fastapi_pagination.customization import (CustomizedPage, UseExcludedFields, UseFieldsAliases, UseIncludeTotal, UseName,
                                               UseOptionalParams, UseParamsFields)
 from fastapi_pagination.ext.sqlalchemy import apaginate   # querybuilder builds SQLAlchemy selects
-from fastapi_querybuilder import QueryBuilder, QueryParams, build_query
+from fastapi_querybuilder import QueryParams, build_query
 from psycopg.errors import UndefinedFunction
 from pydantic import ConfigDict, GetCoreSchemaHandler, GetJsonSchemaHandler, TypeAdapter, ValidationError, field_validator, model_validator
 from pydantic_core import core_schema
 from sqlakeyset import custom_bookmark_type
-from sqlalchemy import DateTime, FetchedValue, SmallInteger, String, TypeDecorator
+from sqlalchemy import DateTime, FetchedValue, SmallInteger, String, TypeDecorator, bindparam
 from sqlalchemy.dialects.postgresql import JSONB, TSTZRANGE, Range
 from sqlalchemy.exc import DataError, IntegrityError, NoResultFound, StatementError
 from sqlalchemy.ext.asyncio import create_async_engine  # noqa: F401  RAN Projects/ld's checks make their engine with ld.create_async_engine
 from sqlalchemy.sql.elements import UnaryExpression
 from sqlalchemy.sql.visitors import iterate
-from sqlmodel import Column, Field, SQLModel, delete, func, or_, select
+from sqlmodel import Column, Field, SQLModel, delete, func, not_, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..data import async_engine
@@ -228,6 +230,68 @@ class SpanColumn(TypeDecorator):
 
 
 custom_bookmark_type(Span, 'span', deserializer=SPAN.validate_json, serializer=lambda s: SPAN.dump_json(s).decode())   # a page sorted by span carries one in its cursor
+
+
+# ++     Conditions querybuilder does not read: a key inside `data` or `meta`, and a span overlapping another
+
+INSIDE = re.compile(r'(data|meta)\.(\w[\w.-]*)')   # `data.kind`, `meta.generated.by`: a key inside a record's data or meta, by its path
+
+
+def inside(model, key: str):
+    """The text a record's `data` or `meta` holds at a key's path (`data.planned.end`), or None when it holds none."""
+    column, path = INSIDE.fullmatch(key).groups()
+    return func.jsonb_extract_path_text(getattr(model, column), *path.split('.'))
+
+
+def as_text(v: Any) -> str:
+    """A value as Postgres gives a JSON value's text: a string as it is, anything else as JSON writes it (`true`, `3`)."""
+    return v if isinstance(v, str) else json.dumps(v)
+
+
+def held(expr, condition: Any) -> list:
+    """The clauses of one condition on a key inside data or meta: `{"$eq": "Feature"}`, or a value alone, which is `$eq`; the operators
+    of record search but `$isempty` and `$isnotempty`, which read whether the key holds anything."""
+    ops = condition if isinstance(condition, dict) else {'$eq': condition}
+    clauses = []
+    for op, v in ops.items():
+        match op:
+            case '$eq': clauses.append(expr == as_text(v))
+            case '$ne': clauses.append(or_(expr.is_(None), expr != as_text(v)))
+            case '$gt': clauses.append(expr > as_text(v))
+            case '$gte': clauses.append(expr >= as_text(v))
+            case '$lt': clauses.append(expr < as_text(v))
+            case '$lte': clauses.append(expr <= as_text(v))
+            case '$in': clauses.append(expr.in_([as_text(x) for x in v]))
+            case '$contains': clauses.append(expr.ilike(f'%{v}%'))
+            case '$startswith': clauses.append(expr.ilike(f'{v}%'))
+            case '$isempty': clauses.append(or_(expr.is_(None), expr == ''))
+            case '$isnotempty': clauses.append(not_(or_(expr.is_(None), expr == '')))
+            case _: raise HTTPException(422, f'a key inside data or meta takes $eq $ne $gt $gte $lt $lte $in $contains $startswith $isempty $isnotempty, not {op}')
+    return clauses
+
+
+def queried(model, conditions: QueryParams):
+    """The select of a search: querybuilder's, of the conditions it reads, and of the two it does not, each at the top of `filters`: a
+    key inside `data` or `meta`, `{"data.kind": {"$eq": "Feature"}}`, and a span overlapping a span, `{"span": {"$overlaps": {"start":
+    "…", "end": "…"}}}`, in any of a span's forms, an end left out an open one."""
+    try:
+        sent = json.loads(conditions.filters) if conditions.filters else {}
+    except json.JSONDecodeError as e:
+        raise HTTPException(422, f'filters is not JSON: {e}')
+    if not isinstance(sent, dict):
+        raise HTTPException(422, 'filters is a JSON object of conditions')
+    ours = {k: v for k, v in sent.items() if INSIDE.fullmatch(k) or (k == 'span' and isinstance(v, dict) and '$overlaps' in v)}
+    rest = {k: v for k, v in sent.items() if k not in ours}
+    query = build_query(model, QueryParams(json.dumps(rest) if rest else None, conditions.sort, conditions.search, conditions.search_fields, conditions.case_sensitive))
+    for key, condition in ours.items():
+        if key == 'span':
+            if not hasattr(model, 'span'):
+                raise HTTPException(422, f'a {model.__tablename__} has no span')
+            span = SPAN.validate_python(condition['$overlaps'])
+            query = query.where(model.span.op('&&')(bindparam(None, span, type_=SpanColumn())))
+        else:
+            query = query.where(*held(inside(model, key), condition))
+    return query
 
 
 class EventFields(RecordFields):
@@ -426,6 +490,7 @@ class RecordType(TypeFields, table=True):
 class TypeRead(TypeFields):
     """A type as `GET /types` gives it."""
     read_as: str = Field(description="The schema of this document its records are read with: its own, or that of the type it is made from.")
+    statuses: list[str] = Field(description="The statuses its records take: every record's, then those its type adds.")
 
 
 async def types_agree():
@@ -443,7 +508,65 @@ router = APIRouter()
 async def types(db: Db):
     """Every type a record can be, by its code: what `type` takes in a record search, and the schema its records are read with."""
     rows = (await db.exec(select(RecordType).order_by(RecordType.id))).all()
-    return [TypeRead(**t.model_dump(), read_as=READ.get(t.id, Record).__name__) for t in rows]
+    return [TypeRead(**t.model_dump(), read_as=READ.get(t.id, Record).__name__, statuses=list(STATUSES + statuses_of(t.id))) for t in rows]
+
+
+def statuses_of(code: int) -> tuple[str, ...]:
+    """The statuses a type adds to every record's, its table's where its module is imported."""
+    try:
+        return made(code).STATUSES
+    except RuntimeError:
+        return ()
+
+
+# ++     What controls read: a field's values, a tree a level at a time, a record's parents, the records linked to it, its neighbourhood
+
+class Value(SQLModel):
+    """A value a field holds, and how many records hold it."""
+    value: Any = Field(description='The value; null for the records that hold none.')
+    records: int = Field(description='How many of the records found hold it.')
+
+
+VALUED = ('type', 'subtype', 'status', 'name', 'parent_id')   # the columns whose values a control offers; a key inside data or meta is reached by its path
+
+
+@router.get('/records/values', response_model=list[Value], tags=['records'], summary="List a field's values")
+async def values(db: Db, field: str, type: Type | None = None, conditions: QueryParams = Depends()):
+    """The values `field` holds among the records `type`, `filters` and `search` find (as in record search), each with how many
+    records hold it, most first: what a dropdown, a selector or a filter offers. `field` is a column, `type`, `subtype`, `status`,
+    `name` or `parent_id`, or a key inside data or meta by its path, `data.kind`. A `list`: more values than a list sends are refused."""
+    model = READ.get(type, Record)
+    query = queried(model, conditions)
+    found = (query.where(model.type == type) if type else query).order_by(None).subquery()
+    if INSIDE.fullmatch(field):
+        value = inside(found.c, field)
+    elif field in VALUED:
+        value = found.c[field]
+    else:
+        raise HTTPException(422, f"a field is {', '.join(VALUED)} or a key inside data or meta, data.kind; not {field}")
+    counted = select(value.label('value'), func.count().label('records')).group_by(value)
+    if (n := (await db.exec(select(func.count()).select_from(counted.subquery()))).one()) > LIST:
+        raise HTTPException(422, f'{field} holds {n} values, more than a list sends ({LIST}): search the records')
+    return [Value(value=v, records=c) for v, c in (await db.exec(counted.order_by(func.count().desc(), value))).all()]
+
+
+class Held(SQLModel):
+    """A record in a tree, and how many records it holds, so a tree control knows which to offer to open."""
+    record: AnyRecord = Field(description='The record, with the columns of its type.')
+    holds: int = Field(description='How many records it holds: those whose parent it is.')
+
+
+async def holding(db: AsyncSession, rows: list) -> list[Held]:
+    counts = dict((await db.exec(select(Record.parent_id, func.count()).where(Record.parent_id.in_([r.id for r in rows])).group_by(Record.parent_id))).all()) if rows else {}
+    return [Held(record=r, holds=counts.get(r.id, 0)) for r in rows]
+
+
+@router.get('/records/tree', response_model=list[Held], tags=['records'], summary="List a type's roots")
+async def roots(db: Db, type: Type):
+    """The records of a `type` that are in no container, by name, each with how many records it holds: the top of a tree control.
+    A `list`."""
+    model = READ.get(type, Record)
+    return await holding(db, await listed(db, select(model).where(model.type == type, model.parent_id.is_(None)).order_by(model.name, model.id), f'{type.name.lower()}s are roots'))
 
 
 @router.post('/records', response_model=AnyRecord, tags=['records'], summary='Create a record')
@@ -477,13 +600,15 @@ async def record_search(db: Db, type: Type | None = None, conditions: QueryParam
     `{"parent_id": {"$eq": "…"}, "status": {"$ne": "discarded"}, "name": {"$contains": "x"}}`, with the operators
     `$eq` `$ne` `$gt` `$gte` `$lt` `$lte` `$in` `$contains` `$startswith` `$isempty` `$isnotempty`, joined by `$and` `$or`.
     A time in a condition is UTC in whole seconds, `2026-10-16T13:00:00Z` or the same without the `Z`; one with an offset is refused.
-    A key inside `data` or `meta` is not a column: no condition reaches it.
+    A key inside `data` or `meta` is reached by its path, `{"data.kind": {"$eq": "Feature"}}`, `{"data.planned.end": {"$lt": "2026-11"}}`,
+    compared as text; an activity's span by the spans it overlaps, `{"span": {"$overlaps": {"start": "…", "end": "…"}}}`: both at
+    the top of `filters`, joined to the rest by and.
     `sort` is `column:asc` or `column:desc`; `search` is text looked for in every text column.
 
     A page is `limit` records after `cursor`, with the `total` and `next`, the cursor of the page after it, none after the last.
     Every match when no `limit` is given."""
     model = READ.get(type, Record)
-    query = build_query(model, conditions)   # querybuilder's select, over the type's table or the one it is made from
+    query = queried(model, conditions)   # querybuilder's select, over the type's table or the one it is made from
     return await paged(db, query.where(model.type == type) if type else query, model, params)
 
 
@@ -498,16 +623,105 @@ async def record_list(db: Db, id: UUID, type: Type | None = None):
     return await listed(db, query, f'records are under {id}')
 
 
+@router.get('/records/{id}/tree', response_model=list[Held], tags=['records'], summary="List a record's children for a tree")
+async def record_tree(db: Db, id: UUID, type: Type | None = None):
+    """The records whose parent it is, of one `type` or of every type, by name, each with how many records it holds: a level of a
+    tree control, opened a level at a time. A `list`."""
+    model = READ.get(type, Record)
+    query = select(model).where(model.parent_id == id, *([model.type == type] if type else [])).order_by(model.name, model.id)
+    return await holding(db, await listed(db, query, f'records are under {id}'))
+
+
+@router.get('/records/{id}/parents', response_model=list[AnyRecord], tags=['records'], summary="Read a record's parents")
+async def record_parents(db: Db, id: UUID):
+    """Up the containers it is in: its parent first, then that one's, to the top, each with the columns of its type; what a
+    breadcrumb draws. 404 when there is no such record."""
+    chain, seen, row = [], {id}, await READ.get(id.bytes[0], Record).read(db, id)
+    while row.parent_id and row.parent_id not in seen and (row := await db.get(READ.get(row.parent_id.bytes[0], Record), row.parent_id)):
+        seen.add(row.id)
+        chain.append(row)
+    return chain
+
+
+async def records_of(db: AsyncSession, ids) -> dict[UUID, Any]:
+    """The records of these ids, each read with the columns of its type, by id."""
+    by_type: dict[type, list] = {}
+    for i in ids:
+        by_type.setdefault(READ.get(i.bytes[0], Record), []).append(i)
+    return {r.id: r for model, some in by_type.items() for r in (await db.exec(select(model).where(model.id.in_(some)))).all()}
+
+
+class Linked(SQLModel):
+    """A record at the other end of a node's link, with the link."""
+    link: Link = Field(description='The link.')
+    record: AnyRecord = Field(description='The node at its other end, with the columns of its type.')
+
+
+@router.get('/records/{id}/linked', response_model=list[Linked], tags=['links'], summary='List the records linked to a node')
+async def record_linked(db: Db, id: UUID, direction: Literal['from', 'to'] | None = None, subtype: str | None = None, type: Type | None = None):
+    """The nodes at the other end of its links, each with its link, in the order the links were made: `direction` `from`, the links
+    it starts, `to`, those that end at it (a collection's members, the work collected into a project), both when left out; `subtype`
+    the links' subtype, an empty one (`subtype=`) the links that have none; `type` the type of the records at the other end. A `list`."""
+    ends = {'from': [Link.from_id == id], 'to': [Link.to_id == id]}.get(direction, [or_(Link.from_id == id, Link.to_id == id)])
+    which = [] if subtype is None else [Link.subtype.is_(None)] if subtype == '' else [Link.subtype == subtype]
+    links = await listed(db, select(Link).where(*ends, *which).order_by(Link.created, Link.id), f'links are at {id}')
+    other = {l.id: l.to_id if l.from_id == id else l.from_id for l in links}
+    found = await records_of(db, set(other.values()))
+    return [Linked(link=l, record=found[other[l.id]]) for l in links if other[l.id] in found and (type is None or found[other[l.id]].type == type)]
+
+
+class Graph(SQLModel):
+    """Nodes and the links between them."""
+    nodes: list[AnyRecord] = Field(description='The nodes, each with the columns of its type.')
+    links: list[Link] = Field(description='The links between them.')
+
+
+@router.get('/records/{id}/graph', response_model=Graph, tags=['links'], summary="Read a node's neighbourhood")
+async def record_graph(db: Db, id: UUID, depth: int = Query(1, ge=1, le=3, description='How many links away from it.')):
+    """The node, the nodes up to `depth` links away from it and the links between them: what a graph control draws around a record.
+    Refused, with their count, when they are more than a list sends."""
+    await READ.get(id.bytes[0], Record).read(db, id)
+    seen, frontier, links = {id}, {id}, {}
+    for _ in range(depth):
+        if not frontier:
+            break
+        for l in (await db.exec(select(Link).where(or_(Link.from_id.in_(frontier), Link.to_id.in_(frontier))))).all():
+            links[l.id] = l
+        reached = {e for l in links.values() for e in (l.from_id, l.to_id)}
+        frontier, seen = reached - seen, seen | reached
+        if len(seen) > LIST or len(links) > LIST:
+            raise HTTPException(422, f'{len(seen)} nodes and {len(links)} links within {depth} of {id}, more than a list sends ({LIST}): ask for fewer links away')
+    found = await records_of(db, seen)
+    return Graph(nodes=list(found.values()), links=list(links.values()))
+
+
+async def removed(db: AsyncSession, model: type[Stored], id: UUID):
+    """A record deleted, with the links from it and to it: refused while it holds records, which are deleted or moved first."""
+    await model.read(db, id)
+    if n := (await db.exec(select(func.count()).select_from(Record).where(Record.parent_id == id))).one():
+        raise HTTPException(422, f'{id} holds {n} records: delete them or move them out first')
+    await db.execute(delete(Link).where(or_(Link.from_id == id, Link.to_id == id)))
+    await db.execute(delete(model).where(model.id == id))
+    await db.commit()
+
+
+@router.delete('/records/{id}', status_code=204, tags=['records'], summary='Delete a record')
+async def record_delete(db: Db, id: UUID):
+    """Of any type, from its type's table, with its links; refused while it holds records. 404 when there is none."""
+    await removed(db, made(id.bytes[0]), id)
+
+
 @router.get('/records/{id}/links', response_model=Page[Link], tags=['links'], summary="Search a node's links")
-async def record_links(db: Db, id: UUID, query=QueryBuilder(Link), params: Params = Depends()):
+async def record_links(db: Db, id: UUID, conditions: QueryParams = Depends(), params: Params = Depends()):
     """From it and to it; `filters`, `sort`, `search` and paging as in record search."""
-    return await paged(db, query.where(or_(Link.from_id == id, Link.to_id == id)), Link, params)
+    return await paged(db, queried(Link, conditions).where(or_(Link.from_id == id, Link.to_id == id)), Link, params)
 
 
 @router.get('/links', response_model=Page[Link], tags=['links'], summary='Search links')
-async def link_search(db: Db, query=QueryBuilder(Link), params: Params = Depends()):
-    """`filters` on any of a link's columns, `from_id` and `to_id` among them; `sort`, `search` and paging as in record search."""
-    return await paged(db, query, Link, params)
+async def link_search(db: Db, conditions: QueryParams = Depends(), params: Params = Depends()):
+    """`filters` on any of a link's columns, `from_id` and `to_id` among them, and on keys inside its data and meta; `sort`, `search`
+    and paging as in record search."""
+    return await paged(db, queried(Link, conditions), Link, params)
 
 
 @router.post('/links', response_model=Link, tags=['links'], summary='Create a link')
@@ -530,7 +744,7 @@ async def link_update(db: Db, id: UUID, record: LinkFields):
 
 @router.delete('/links/{id}', status_code=204, tags=['links'], summary='Delete a link')
 async def link_delete(db: Db, id: UUID):
-    """Only links are deleted; any other record is kept, its `status` saying what became of it."""
+    """The link alone; the nodes at its ends stay."""
     await db.execute(delete(Link).where(Link.id == id))
     await db.commit()
 
@@ -564,11 +778,16 @@ def typed(path: str, fields: type[SQLModel], name: str, *models: type[Stored]) -
         """Merged with what is sent when the `id` is there, created with that `id` when it is not."""
         return await saved(db, await tables.get(id.bytes[0], base).write(db, id, record))
 
+    @routes.delete(path + '/{id}', status_code=204, summary=f'Delete a {name}')
+    async def remove(db: Db, id: UUID):
+        """With its links; refused while it holds records, which are deleted or moved out first. 404 when there is none."""
+        await removed(db, tables.get(id.bytes[0], base), id)
+
     @routes.get(path, response_model=Page[One], summary=f'Search {name}s')
     async def search(db: Db, conditions: QueryParams = Depends(), params: Params = Depends(), model=Depends(kind)):
         """`filters`, `sort`, `search` and paging as in record search: of a type, its own table's records, not those of the types made
         from it; of every type of the path, with the columns of the first."""
-        query = build_query(model or base, conditions)
+        query = queried(model or base, conditions)
         return await paged(db, query.with_hint(model.__table__, 'ONLY', 'postgresql') if model else query, model or base, params)
 
     return routes
@@ -617,10 +836,14 @@ def api_at(path: str, name: str, summary: str, *routers: APIRouter) -> FastAPI:
     return handled(built)
 
 
-def served(apis: dict[str, FastAPI]):
-    """Each API built on the core answers its path and the paths under it, the core every other. A mount of each at its path would
-    leave its bare path to the core, since a mount takes only the paths under it, so the path picks the API."""
-    async def route(scope, receive, send):
-        path = scope['path'][len(scope.get('root_path', '')):]
-        await next((a for p, a in apis.items() if path == p or path.startswith(p + '/')), app)(scope, receive, send)
-    return route
+def served(apis: dict[str, FastAPI]) -> FastAPI:
+    """The core and the APIs built on it as one API: every route in one OpenAPI document, `/openapi.json`, shown at `/docs`, each
+    API's routes under its tag; each API built on it keeps its own document at `{path}/docs` as well."""
+    tags = {t: a.summary for a in apis.values() for ops in a.openapi()['paths'].values() for op in ops.values() for t in op.get('tags', ())}   # each API's tags, described by its summary
+    one = FastAPI(title=app.title, version=app.version, summary='Records and the links between them, and the APIs built on them: '
+                  + ', '.join(p.strip('/') for p in apis) + '.',
+                  openapi_tags=app.openapi_tags + [{'name': t, 'description': s} for t, s in tags.items()])
+    one.include_router(router)
+    for api in apis.values():
+        one.include_router(api.router)
+    return handled(one)
