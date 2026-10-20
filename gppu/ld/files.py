@@ -14,17 +14,17 @@ import pydantic
 from fastapi import APIRouter, HTTPException
 from sqlmodel import or_, select
 
-from . import Db, RecordFields, Resource, Stored, Type, api_at, listed, typed
+from . import Db, Type, _Record, _Resource, api_at, typed
 
 NOT_IN_USE = ('discarded', 'rejected', 'archived')   # the statuses of a location not in use (# States)
 
 
-class FSNode(RecordFields, Stored, table=True):
+class FSNode(_Record, table=True):
     """The base of every file system type. Path: `/files`, with the others."""
     __tablename__ = 'fs_node'
 
 
-class FSLocation(RecordFields, Resource, Stored, table=True):
+class FSLocation(_Resource, table=True):
     """A place files are reached: a connection and a path, gppufs's `Location`. A root location is its connection and its Provider,
     its connection's parameters in `data.handler`, and has no parent; every other location is inside the location above it.
     `data.uid` is its gppufs uid, `data.canonical` its canonical uri, and the rest of `data` its configuration as gppufs has it.
@@ -33,7 +33,7 @@ class FSLocation(RecordFields, Resource, Stored, table=True):
     PARENTS = (Type.FS_LOCATION,)
 
 
-class FSFile(RecordFields, Stored, table=True):
+class FSFile(_Record, table=True):
     """One file as a single thing, wherever its copies are: a collection. The copies are in gppufs's indexes; the FS file is what
     other records refer to."""
     __tablename__ = 'fs_file'
