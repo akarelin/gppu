@@ -23,6 +23,7 @@ Alex's requirements (2026-10-18, deciding where Linked Data lives): Linked Data 
 9. Every name `gppu.ld` introduces: why it exists, and why it is not named as gppu or the specification names the same thing: in progress, Alex reviewing `gppu/ld/__init__.py` against the specification (below).
 
 ## 9. gppu.ld's names
+- Decided by Alex: the base class of `gppu.ld`'s table classes is `_Record`, as gppu names its bases (`_Base`, `_PGBase`).
 - The specification's own words are Universals (a span's four forms) and Operations (`create`, `read`, `update`, `delete`, `list`, `search`). Its # gppu and # Implementation lines naming `Span`, `Stored`, `listed()` and `paged()` were written from the code, and it says of them "These names are the code's, not approved".
 - Not gppu's: `custom_bookmark_type` (sqlakeyset), `CustomizedPage` (fastapi_pagination), `Annotated` (typing).
 - One word, two things: `held()`, the clauses of a condition on a key inside `data` or `meta`, and `Held`, a tree row with how many records it holds. `Collection` is three classes: the standard library's `collections.abc.Collection`, which `gppu.fs` itself uses; `gppu.fs.Collection`, the Lake, exported as `gppu.Collection`; and `gppu.ld.Collection`, the Linked Data type that groups the nodes linked to it.
