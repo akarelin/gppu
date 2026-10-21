@@ -113,6 +113,33 @@ def test_synced_index_is_read_without_renaming_or_touching_content(tmp_path, mon
     assert not (synced / '.synced.gppufs.sqlite').exists()
 
 
+def test_index_view_names_archive_members_for_windows_and_leaves_out_ignored(tmp_path):
+    root = tmp_path / 'original'
+    root.mkdir()
+    (root / 'note.txt').write_text('a note')
+    with zipfile.ZipFile(root / 'bundle.zip', 'w') as archive:
+        archive.writestr('inner/member.txt', 'from the archive')
+    GppuFileSystem(root).ls_sync()
+    index = root / '.original.gppufs.sqlite'
+    with sqlite3.connect(index) as db:   # rows an earlier gppufs wrote: archive members chained as fsspec chains them, an ignored file
+        metadata = db.execute("SELECT metadata FROM gppufs_entries WHERE path='note.txt'").fetchone()[0]
+        ignored = metadata.replace('"handlers": [', '"handlers": ["ignored", ')
+        db.executemany('INSERT INTO gppufs_entries VALUES (?, ?, NULL)', [
+            ('zip://inner/member.txt::bundle.zip', metadata), ('zip://gone.txt::missing.zip', metadata), ('.DS_Store', ignored)])
+    view = GppuIndexedFileSystem(index)
+    names = view.ls(detail=False)
+    assert '/member.txt' in names and '/gone.txt' in names and '/.DS_Store' not in names
+    assert not any(':' in name for name in names)
+    assert view.cat_file('/member.txt') == b'from the archive'
+    with pytest.raises(FileNotFoundError):
+        view.cat_file('/gone.txt')
+
+
+def test_a_drive_root_is_a_source(tmp_path):
+    fs = DesktopFileSystem({'Data': GppuFileSystem(tmp_path.anchor)})
+    assert fs.info('/Data')['type'] == 'directory'
+
+
 def test_transported_snapshot_never_reads_unrelated_sibling_files(tmp_path):
     root = tmp_path / 'original'
     root.mkdir()

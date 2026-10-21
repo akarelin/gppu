@@ -5,6 +5,7 @@ Original relative paths are kept for byte reads; the index is never renamed.
 """
 from __future__ import annotations
 
+import io
 import json
 import sqlite3
 from collections import Counter
@@ -15,6 +16,7 @@ import fsspec
 from fsspec import AbstractFileSystem
 
 from .fs import GppuFileSystem
+from .handlers import IGNORED
 
 
 class GppuIndexedFileSystem(AbstractFileSystem):
@@ -42,8 +44,11 @@ class GppuIndexedFileSystem(AbstractFileSystem):
         self._database.close()
 
     def _names(self, database):
-        paths = [row[0] for row in database.execute(
-            "SELECT path FROM gppufs_entries WHERE json_extract(metadata, '$.type') = 'file' ORDER BY path")]
+        # what the handlers call ignored is not listed, as gppufs lists it nowhere; an index written before that still holds it
+        paths = [path for path, handlers in database.execute(
+            "SELECT path, json_extract(metadata, '$.gppu.handlers') FROM gppufs_entries"
+            " WHERE json_extract(metadata, '$.type') = 'file' ORDER BY path")
+            if not set(json.loads(handlers or '[]')) & set(IGNORED)]
         paths = [path for path in paths if not path.endswith(('.gppufs.sqlite', '.gppufs.sqlite-wal', '.gppufs.sqlite-shm'))]
         parts = {path: self._parts(path) for path in paths}
         names = Counter(each[-1].casefold() for each in parts.values())
@@ -108,7 +113,8 @@ class GppuIndexedFileSystem(AbstractFileSystem):
             raise FileNotFoundError(f'{self.index}: this index snapshot has no bound original source for {path}')
         member, _, archive = self._relative(path).partition('::')
         if archive:   # the member, read from its archive in the location; an archive that is not there is not found
-            return fsspec.open(f"{member}::{self.source.root.rstrip('/')}/{archive}", mode).open()
+            files, inside = fsspec.core.url_to_fs(f"{member}::{self.source.root.rstrip('/')}/{archive}")
+            return io.BytesIO(files.cat_file(inside))   # whole: the archive closes when its filesystem goes
         return self.source.open(self.source.root.rstrip('/') + '/' + member, mode=mode, **kwargs)
 
 
