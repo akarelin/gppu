@@ -32,7 +32,7 @@ import webbrowser
 from pathlib import Path
 
 from gppu import Env, App, mixin_Config, dict_from_yml
-from gppu.gppu import _log_root, _sh, _EmptyMessageFilter, _LogColorizer, _ANSI
+from gppu.gppu import Logger, _EmptyMessageFilter, _LogColorizer
 from gppu.gppu import OSType
 from textual.app import App as TextualApp, ComposeResult
 from textual.binding import Binding
@@ -515,7 +515,7 @@ class _DebugLogHandler(logging.Handler):
 
   def emit(self, record: logging.LogRecord) -> None:
     try:
-      self._lines.append(_ANSI.sub('', self.format(record)))
+      self._lines.append(_LogColorizer.ANSI.sub('', self.format(record)))
     except Exception:
       self.handleError(record)
 
@@ -604,17 +604,17 @@ class TUIApp(mixin_Config, TextualApp):
 
   async def _process_messages(self, *args, **kwargs):
     # The debug panel is the console while Textual owns the terminal.
-    console_attached = _sh in _log_root.handlers
-    if console_attached: _log_root.removeHandler(_sh)
+    console_attached = Logger._console in Logger._root.handlers
+    if console_attached: Logger._root.removeHandler(Logger._console)
     try:
       return await super()._process_messages(*args, **kwargs)
     finally:
       logging.getLogger().removeHandler(self._log_handler)
-      if console_attached: _log_root.addHandler(_sh)
+      if console_attached: Logger._root.addHandler(Logger._console)
 
   def debug(self, msg: str) -> None:
     """Append a line to the debug buffer (visible via Ctrl-O)."""
-    self._debug_lines.append(_ANSI.sub('', str(msg)))
+    self._debug_lines.append(_LogColorizer.ANSI.sub('', str(msg)))
 
   def action_tuiapp_done(self) -> None:
     self.done(result=None)

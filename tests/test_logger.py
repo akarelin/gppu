@@ -13,15 +13,15 @@ def output(monkeypatch, tmp_path):
     core = importlib.import_module('gppu.gppu')
     previous_rules = dict(TRACE_RULES)
     console = io.StringIO()
-    original = core._sh.setStream(console)
+    original = core.Logger._console.setStream(console)
     init_logger('logging-verification', trace_rules={'all': True})
     path = core.enable_file_logging('verification', log_dir=tmp_path)
     yield core, console, path
-    core._sh.setStream(original)
-    for handler in tuple(core._file_handlers.values()):
-        core._log_root.removeHandler(handler)
+    core.Logger._console.setStream(original)
+    for handler in tuple(core.Logger._file_handlers.values()):
+        core.Logger._root.removeHandler(handler)
         handler.close()
-    core._file_handlers.clear()
+    core.Logger._file_handlers.clear()
     TRACE_RULES.clear()
     TRACE_RULES.update(previous_rules)
 
@@ -39,12 +39,12 @@ def test_standard_handlers_accept_gppu_multiple_arguments(output):
     core, _, _ = output
     text = io.StringIO()
     handler = logging.StreamHandler(text)
-    core._logger.addHandler(handler)
+    core.Logger._logger.addHandler(handler)
     try:
         core.Info('WBLUE', 'message', 'NONE', 'value')
-        core._logger.info('ordinary %s', 'message')
+        core.Logger._logger.info('ordinary %s', 'message')
     finally:
-        core._logger.removeHandler(handler)
+        core.Logger._logger.removeHandler(handler)
     assert text.getvalue().splitlines() == ['message value', 'ordinary message']
 
 
@@ -158,10 +158,10 @@ def configured_output():
   Env.reset()
   TRACE_RULES.clear()
   console = io.StringIO()
-  original = core._sh.setStream(console)
+  original = core.Logger._console.setStream(console)
   yield core, console
   Env.reset()
-  core._sh.setStream(original)
+  core.Logger._console.setStream(original)
   TRACE_RULES.clear()
   TRACE_RULES.update(previous_rules)
 
@@ -176,7 +176,7 @@ def test_env_defaults_to_console_without_legacy_environment_paths(configured_out
   core.Debug('hidden trace')
   assert 'console message' in console.getvalue()
   assert 'hidden trace' not in console.getvalue()
-  assert not core._file_handlers
+  assert not core.Logger._file_handlers
   assert not (tmp_path / 'invented').exists()
 
 
@@ -221,7 +221,7 @@ def test_reloading_env_closes_previous_file(configured_output, tmp_path):
   core.Info('console only')
   assert first.read_text().strip() == 'first message'
   assert second.read_text().strip() == 'second message'
-  assert not core._file_handlers
+  assert not core.Logger._file_handlers
 
 
 @pytest.mark.parametrize('value', [None, '', True])

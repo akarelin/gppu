@@ -28,9 +28,7 @@ from pathlib import Path
 from string import Template
 from typing import Any, Optional, final
 
-from . import gppu as _core   # _core._logger is rebound by init_logger
-from .gppu import (TRACE_RULES, Debug, Dump, Error, Info, Logger, OSType, Warn, _DC, _Logger, _file_handlers,
-                   _log_root, _mixin, deepget, deepget_dict, deepget_float, deepget_int, deepget_list, detect_os, dict_from_yml,
+from .gppu import (TRACE_RULES, Debug, Dump, Error, Info, Logger, OSType, Warn, _DC, _Logger, _mixin, deepget, deepget_dict, deepget_float, deepget_int, deepget_list, detect_os, dict_from_yml,
                    enable_file_logging, sync, y2path)
 
 _trace_mro = False
@@ -74,10 +72,10 @@ class Env:
 
   @staticmethod
   def reset() -> None:
-    for handler in tuple(_file_handlers.values()):
-      _log_root.removeHandler(handler)
+    for handler in tuple(Logger._file_handlers.values()):
+      Logger._root.removeHandler(handler)
       handler.close()
-    _file_handlers.clear()
+    Logger._file_handlers.clear()
     Env.data = {}
     Env.initialized = False
 
@@ -126,7 +124,7 @@ class Env:
     Env.app_path = Env._resolve_app_path(app_path)
     Env.config_file = Env._config_file()
 
-    Env._logger = _core._logger.getChild(Env.name)
+    Env._logger = Logger._logger.getChild(Env.name)
     for attr_name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)):
       setattr(Env, attr_name, staticmethod(partial(fn, logger=Env._logger)))
 

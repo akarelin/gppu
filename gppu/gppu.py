@@ -1238,197 +1238,174 @@ def _colorize(text: str, colorcode:str, fmt=None):
 
 
 
-_ANSI = re.compile(r'\x1b\[[0-9;]*m')
-
-
-def _traced(record: logging.LogRecord) -> bool:
-  if record.levelno != logging.DEBUG: return True
-  function = _remove_prefixes(record.funcName or '', _SHORTEN_BY_PREFIX)
-  names = [function, record.module, f'{record.module}.{function}']
-  if class_name := getattr(record, 'gppu_class', ''):
-    names += [class_name, f'{class_name}.{function}']
-  return all(TRACE_RULES[name] if name in TRACE_RULES else TRACE_RULES.get('all', False) for name in names)
-
-
-def _fmt(record: logging.LogRecord, *, no_prefix: bool = False) -> str:
-  args = list(record.gppu_args) if hasattr(record, 'gppu_args') else [record.getMessage()]
-  if not no_prefix:
-    function = _remove_prefixes(record.funcName or '', _SHORTEN_BY_PREFIX)
-    class_name = getattr(record, 'gppu_class', '')
-    caller = f'{class_name}.{function}' if class_name else function
-    severity = 'Warn' if record.levelno == logging.WARNING else record.levelname.title()
-    color = _SEVERITY_COLORS.get(severity, _SEVERITY_COLORS[None])
-    args = [color, severity, 'GRAY1', caller, 'NONE'] + args
-  text = pcp(*args)
-  if record.exc_info:
-    text += '\n' + logging.Formatter().formatException(record.exc_info)
-  if record.stack_info: text += '\n' + record.stack_info
-  return text
-
-
 class _LogColorizer(logging.Formatter):
+  """A record as gppu's coloured line: severity, caller, then the arguments as they were given."""
+  ANSI = re.compile(r'\x1b\[[0-9;]*m')
+  no_prefix = False
+
   def format(self, record: logging.LogRecord) -> str:
-    return _fmt(record)
+    args = list(record.gppu_args) if hasattr(record, 'gppu_args') else [record.getMessage()]
+    if not self.no_prefix:
+      function = _remove_prefixes(record.funcName or '', _SHORTEN_BY_PREFIX)
+      class_name = getattr(record, 'gppu_class', '')
+      caller = f'{class_name}.{function}' if class_name else function
+      severity = 'Warn' if record.levelno == logging.WARNING else record.levelname.title()
+      args = [_SEVERITY_COLORS.get(severity, _SEVERITY_COLORS[None]), severity, 'GRAY1', caller, 'NONE'] + args
+    text = pcp(*args)
+    if record.exc_info: text += '\n' + logging.Formatter().formatException(record.exc_info)
+    if record.stack_info: text += '\n' + record.stack_info
+    return text
+
+
+class _PlainFormatter(_LogColorizer):
+  """The line without colours or prefix, for the log file."""
+  no_prefix = True
+
+  def format(self, record: logging.LogRecord) -> str: return self.ANSI.sub('', super().format(record))
+
+
+class _EmptyMessageFilter(logging.Filter):
+  """Drops an empty record, and a Debug record the trace rules do not trace."""
+
+  def filter(self, record: logging.LogRecord) -> bool:
+    if record.levelno == logging.DEBUG:
+      function = _remove_prefixes(record.funcName or '', _SHORTEN_BY_PREFIX)
+      names = [function, record.module, f'{record.module}.{function}']
+      if class_name := getattr(record, 'gppu_class', ''): names += [class_name, f'{class_name}.{function}']
+      if not all(TRACE_RULES[name] if name in TRACE_RULES else TRACE_RULES.get('all', False) for name in names): return False
+    return bool(record.getMessage().strip() or record.exc_info)
 # endregion
 
 
 # region Logger
-# ^~            Logger                                            
+# ^~            Logger
 TRACE_RULES: dict = {}
 
-_log_root = logging.getLogger('gppu')
-_log_root.setLevel(logging.DEBUG)
-_logger = _log_root
 
+class Logger:
+  """The app's default global logger: every app that runs has it, on the console. ``Logger.Info(...)`` logs to it;
+  a class with its own logger is a ``mixin_Logger``. Files mirror it after ``enable_file_logging``."""
+  trace_folder: str = '.'
+  trace_rules: dict = TRACE_RULES
 
-class _EmptyMessageFilter(logging.Filter):
-  def filter(self, record: logging.LogRecord) -> bool:
-    return _traced(record) and bool(record.getMessage().strip() or record.exc_info)
+  _root = logging.getLogger('gppu')
+  _root.setLevel(logging.DEBUG)
+  _logger = _root
+  _console = logging.StreamHandler(sys.stderr)
+  _console.setLevel(logging.DEBUG)
+  _console.setFormatter(_LogColorizer())
+  _console.addFilter(_EmptyMessageFilter())
+  _root.addHandler(_console)
+  _file_handlers: dict[str, logging.Handler] = {}   # on the shared parent, so classes made earlier receive them
 
+  @staticmethod
+  def init_logger(name: str = 'gppu', trace_rules: dict | None = None) -> None:
+    """Name the global logger, and optionally set the trace rules."""
+    if trace_rules is not None:
+      trace_rules = dict(trace_rules)
+      TRACE_RULES.clear()
+      TRACE_RULES.update(trace_rules)
+    Logger._logger = Logger._root if name == 'gppu' else Logger._root.getChild(name)
 
-_sh = logging.StreamHandler(sys.stderr)
-_sh.setLevel(logging.DEBUG)
-_sh.setFormatter(_LogColorizer())
-_sh.addFilter(_EmptyMessageFilter())
-_logger.addHandler(_sh)
+  @staticmethod
+  def enable_file_logging(name: str | None = None, log_dir: str | Path | None = None,
+                          level: int = logging.DEBUG, log_file: str | None = None) -> Path:
+    """Mirror logs to an explicit `log_file`, or an explicit name + log_dir.
 
-
-class _PlainFormatter(logging.Formatter):
-  def format(self, record: logging.LogRecord) -> str:
-    return _ANSI.sub('', _fmt(record, no_prefix=True))
-
-
-# File handlers live on the shared parent so pre-existing mixins receive them.
-_file_handlers: dict[str, logging.Handler] = {}
-
-
-def enable_file_logging(name: str | None = None, log_dir: str | Path | None = None,
-                        level: int = logging.DEBUG, log_file: str | None = None) -> Path:
-  """Mirror logs to an explicit `log_file`, or an explicit name + log_dir.
-
-  Env passes its `log_file` when YAML declares one. No directory
-  or filename is inferred. Creation errors propagate to the caller.
-  """
-  if log_dir is not None:
-    if not name: raise ValueError('File logging with log_dir requires a name')
-    path = full_path(Path(log_dir) / f'{name}.log')
-  else:
-    value = log_file
-    if not isinstance(value, str) or not value.strip():
-      raise ValueError('File logging requires an explicit log_file in configuration')
-    path = full_path(value)
-  path.parent.mkdir(parents=True, exist_ok=True)
-  key = str(path)
-  if key in _file_handlers:
+    Env passes its `log_file` when YAML declares one. No directory
+    or filename is inferred. Creation errors propagate to the caller.
+    """
+    if log_dir is not None:
+      if not name: raise ValueError('File logging with log_dir requires a name')
+      path = full_path(Path(log_dir) / f'{name}.log')
+    else:
+      value = log_file
+      if not isinstance(value, str) or not value.strip():
+        raise ValueError('File logging requires an explicit log_file in configuration')
+      path = full_path(value)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    key = str(path)
+    if key in Logger._file_handlers:
+      return path
+    from logging.handlers import RotatingFileHandler
+    fh = RotatingFileHandler(path, maxBytes=4_000_000, backupCount=5, encoding='utf-8')
+    fh.setLevel(level)
+    fh.setFormatter(_PlainFormatter())
+    fh.addFilter(_EmptyMessageFilter())
+    Logger._root.addHandler(fh)
+    Logger._file_handlers[key] = fh
     return path
-  from logging.handlers import RotatingFileHandler
-  fh = RotatingFileHandler(path, maxBytes=4_000_000, backupCount=5, encoding='utf-8')
-  fh.setLevel(level)
-  fh.setFormatter(_PlainFormatter())
-  fh.addFilter(_EmptyMessageFilter())
-  _log_root.addHandler(fh)
-  _file_handlers[key] = fh
-  return path
+
+  @staticmethod
+  def file_log(msg: str, *args, level: int = logging.INFO) -> None:
+    """Emit a line only to gppu's file handler(s), bypassing the console handler.
+
+    For Textual TUI apps whose visible "console" is the on-screen panel: this
+    mirrors panel lines into the log file without writing to stderr (which would
+    corrupt the live TUI). No-op when file logging isn't enabled.
+    """
+    if not Logger._file_handlers:
+      return
+    record = Logger._logger.makeRecord(Logger._logger.name, level, '(app)', 0,
+                                       _LogColorizer.ANSI.sub('', pcp(msg, *args)), (), None,
+                                       func='file_log', extra={'gppu_args': (msg, *args)})
+    for h in Logger._file_handlers.values():
+      if record.levelno >= h.level:
+        h.handle(record)
+
+  @staticmethod
+  def _log(level: int, args: tuple, logger, options: dict) -> None:
+    target = Logger._logger if logger is None else logger
+    if not target.isEnabledFor(level): return
+    frame = inspect.currentframe().f_back.f_back
+    extra = dict(options.pop('extra')) if 'extra' in options else {}
+    extra['gppu_args'] = args
+    extra['gppu_class'] = type(frame.f_locals['self']).__name__ if 'self' in frame.f_locals else ''
+    del frame
+    stacklevel = options.pop('stacklevel') if 'stacklevel' in options else 1
+    target.log(level, _LogColorizer.ANSI.sub('', pcp(*args)), extra=extra, stacklevel=stacklevel + 2, **options)
+
+  @staticmethod
+  def Debug(*a, logger=None, **kw): Logger._log(logging.DEBUG, a, logger, kw)
+  @staticmethod
+  def Info(*a, logger=None, **kw): Logger._log(logging.INFO, a, logger, kw)
+  @staticmethod
+  def Warn(*a, logger=None, **kw): Logger._log(logging.WARNING, a, logger, kw)
+  @staticmethod
+  def Error(*a, logger=None, **kw): Logger._log(logging.ERROR, a, logger, kw)
+  @staticmethod
+  @sync
+  async def Dump(filename: str, data={}, **kw) -> None:
+    """ Saves data object to yml file in trace folder """
+    if '.' not in filename or not filename.endswith('.yml'): filename += '.yml'
+    if Logger.trace_folder:
+      filename = f"{Logger.trace_folder}/{filename}"
+    dict_to_yml(filename=filename, data=data)
 
 
-def file_log(msg: str, *args, level: int = logging.INFO) -> None:
-  """Emit a line only to gppu's file handler(s), bypassing the console handler.
-
-  For Textual TUI apps whose visible "console" is the on-screen panel: this
-  mirrors panel lines into the log file without writing to stderr (which would
-  corrupt the live TUI). No-op when file logging isn't enabled.
-  """
-  if not _file_handlers:
-    return
-  record = _logger.makeRecord(_logger.name, level, '(app)', 0,
-                              _ANSI.sub('', pcp(msg, *args)), (), None,
-                              func='file_log', extra={'gppu_args': (msg, *args)})
-  for h in _file_handlers.values():
-    if record.levelno >= h.level:
-      h.handle(record)
-
-
-def _init_logger_base(name: str = 'gppu', trace_rules: dict | None = None) -> None:
-  """Initialize global logger with a specific name and optional trace rules."""
-  global _logger
-  if trace_rules is not None:
-    trace_rules = dict(trace_rules)
-    TRACE_RULES.clear()
-    TRACE_RULES.update(trace_rules)
-  _logger = _log_root if name == 'gppu' else _log_root.getChild(name)
-
-init_logger = _init_logger_base
-
-
-def _log(level: int, args: tuple, logger, options: dict) -> None:
-  target = _logger if logger is None else logger
-  if not target.isEnabledFor(level): return
-  frame = inspect.currentframe().f_back.f_back
-  extra = dict(options.pop('extra')) if 'extra' in options else {}
-  extra['gppu_args'] = args
-  extra['gppu_class'] = type(frame.f_locals['self']).__name__ if 'self' in frame.f_locals else ''
-  del frame
-  stacklevel = options.pop('stacklevel') if 'stacklevel' in options else 1
-  target.log(level, _ANSI.sub('', pcp(*args)), extra=extra, stacklevel=stacklevel + 2, **options)
-
-
-def Debug(*a, logger=None, **kw): _log(logging.DEBUG, a, logger, kw)
-def Info(*a, logger=None, **kw): _log(logging.INFO, a, logger, kw)
-def Warn(*a, logger=None, **kw): _log(logging.WARNING, a, logger, kw)
-def Error(*a, logger=None, **kw): _log(logging.ERROR, a, logger, kw)
-@sync
-async def Dump(filename: str, data={}, **kw) -> None:
-  """ Saves data object to yml file in trace folder """
-  if '.' not in filename or not filename.endswith('.yml'): filename += '.yml'
-  if Logger.trace_folder:
-    filename = f"{Logger.trace_folder}/{filename}"
-  dict_to_yml(filename=filename, data=data)
-
-
+Debug, Info, Warn, Error, Dump = Logger.Debug, Logger.Info, Logger.Warn, Logger.Error, Logger.Dump
+init_logger, enable_file_logging, file_log = Logger.init_logger, Logger.enable_file_logging, Logger.file_log
 # endregion
-
-
-
-
 
 
 # region Mixins
 class _mixin: pass
 
 
-class Logger:
-  """Namespace wrapper exposing logging helpers."""
-  trace_folder: str = '.'
-  trace_rules: dict = TRACE_RULES
-
-  Debug = staticmethod(Debug)
-  Info = staticmethod(Info)
-  Warn = staticmethod(Warn)
-  Error = staticmethod(Error)
-  @staticmethod
-  def Dump(*a, **kw): Dump(*a, **kw)
-
-
-class protocol_Logger:
+class mixin_Logger(_mixin):
+  """A class with its own logger, a child of the global one: ``self.Info(...)`` names the class."""
+  _logger: logging.Logger
   Debug: Callable[..., Any]
   Info : Callable[..., Any]
   Warn : Callable[..., Any]
   Error: Callable[..., Any]
   Dump : Callable[..., Any]
 
-
-class mixin_Logger(protocol_Logger, _mixin):
-  _logger: logging.Logger
-
   @classmethod
   def __init_subclass__(cls, **kw):
     super().__init_subclass__(**kw)
-    cls._logger = _logger.getChild(cls.__name__)
-    for name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)): setattr(cls, name, staticmethod(partial(fn, logger=cls._logger)))
-
-  def __init__(self, *a, **kw):
-    super(mixin_Logger, self).__init__(*a, **kw)
-    for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'): setattr(self, name, getattr(self.__class__, name))
+    cls._logger = Logger._logger.getChild(cls.__name__)
+    for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'): setattr(cls, name, staticmethod(partial(getattr(Logger, name), logger=cls._logger)))
 
 class _Logger(mixin_Logger): pass
 # endregion

@@ -56,7 +56,6 @@ from .gppu import (
 
     # Logger setup
     init_logger,
-    _init_logger_base,
     enable_file_logging,
     file_log,
 
@@ -123,7 +122,6 @@ from .gppu import (
     # Mixins
     _mixin,
     Logger,
-    protocol_Logger,
     mixin_Logger,
 
     # Foundation classes
@@ -194,7 +192,7 @@ __all__ = [
 
     # Mixins
     '_mixin', 'mixin_Config',
-    'Logger', 'protocol_Logger', 'mixin_Logger',
+    'Logger', 'mixin_Logger',
 
     # Vault / Secrets
     'Vault', 'VaultProvider',
@@ -210,7 +208,7 @@ __all__ = [
     'glob', 'glob_int', 'glob_list', 'glob_dict',
 
     # Foundation classes
-    '_Logger', '_Config', '_Base', '_App', 'App', 'CliApp', 'AsyncApp', 'APIApp', 'mixin_Rest', '_init_logger_base',
+    '_Logger', '_Config', '_Base', '_App', 'App', 'CliApp', 'AsyncApp', 'APIApp', 'mixin_Rest',
 
     # y2xxx classes
     'y2list', 'y2path', 'y2uri', 'y2topic', 'y2slug', 'y2eid',
