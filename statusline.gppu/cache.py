@@ -6,12 +6,12 @@ from collections import Counter
 
 from gppu.data import Cache
 from gppu.gppu import Path
-from gppu.handlers import Handler
+from gppu.handlers import probe
 
 CACHE_DIR = Path(tempfile.gettempdir()) / "claude_statusline_cache"
-# Bump when the meaning of a cached count changes. v3: whole-file counts by signature,
-# where v2 held totals accumulated from a byte offset.
-SCHEMA = "v3"
+# Bump when the meaning of a cached count changes. v4: counts from the session record's
+# messages, with no system or compaction count; v3 read every line, v2 from a byte offset.
+SCHEMA = "v4"
 
 _dc = Cache(str(CACHE_DIR), ttl=86400, backend='sqlite', skip_env='')
 
@@ -29,8 +29,7 @@ def cached(key, ttl, fn):
 
 def _new_counts():
     return {"user": 0, "assistant": 0, "input": 0, "output": 0,
-            "cache_read": 0, "cache_create": 0, "system": 0,
-            "compactions": 0, "errors": 0}
+            "cache_read": 0, "cache_create": 0, "errors": 0}
 
 
 def _new_meta():
@@ -54,29 +53,23 @@ def _is_user_prompt(msg):
 
 
 def _read(path):
-    """Counts of one whole transcript, read through gppu.handlers: (tools, counts, meta, subagent).
+    """Counts of one whole transcript, from the session record gppu.handlers parses: (tools, counts, meta, subagent).
 
-    Lines that are not messages (system, compaction, meta) come from its records; prompts,
-    replies, tools, errors and tokens from its messages.
+    Everything comes from the record's messages, each one's data being its line: the session's
+    first and last time, its version, cwd and branch from the first meta line, prompts, replies,
+    tools, errors and tokens.
     """
-    session = Handler(path)
+    record = probe(path).parse(path)
     tools = Counter()
     counts = _new_counts()
     meta = _new_meta()
-    for e in session.records:
-        t = e.get("type")
-        if ts := e.get("timestamp", ""):
-            meta["first_ts"] = meta["first_ts"] or ts
-            meta["last_ts"] = ts
-        if t in ("user", "system") and e.get("isMeta") and not meta["version"]:
-            meta.update(version=e.get("version", ""), cwd=e.get("cwd", ""), branch=e.get("gitBranch", ""))
-        if t == "system":
-            counts["system"] += 1
-        if e.get("subtype") == "compact_boundary":
-            counts["compactions"] += 1
-    for m in session.messages:
+    for m in record["messages"]:
         e = m["data"]
         msg = e["message"]
+        meta["first_ts"] = meta["first_ts"] or e["timestamp"]
+        meta["last_ts"] = e["timestamp"]
+        if e.get("isMeta") and not meta["version"]:
+            meta.update(version=e.get("version", ""), cwd=e.get("cwd", ""), branch=e.get("gitBranch", ""))
         # Not m["subtype"] == "user": a subagent's first line carries its prompt beside a
         # tool result, which the handler calls a tool_result and the status line a prompt.
         if e["type"] == "user" and not e.get("isMeta") and _is_user_prompt(msg):
@@ -93,7 +86,7 @@ def _read(path):
             counts["output"] += u.get("output_tokens", 0)
             counts["cache_read"] += u.get("cache_read_input_tokens", 0)
             counts["cache_create"] += u.get("cache_creation_input_tokens", 0)
-    return dict(tools), counts, meta, session.subagent
+    return dict(tools), counts, meta, record["data"]["subagent"]
 
 
 def _merge_counts(a, b):
