@@ -906,6 +906,11 @@ class GppuIndex(Protocol):
 CACHE = Path('C:/.cache') if os.name == 'nt' else Path.home() / '.cache'
 
 
+# A folder's address -> the index it holds, asked of its store once in this process: every gppufs here reads it, and
+# records the index it makes, moves or removes.
+_INDEXES: dict[str, str | None] = {}
+
+
 def _scratch(prefix: str) -> tempfile.TemporaryDirectory:
   CACHE.mkdir(parents=True, exist_ok=True)
   return tempfile.TemporaryDirectory(prefix=prefix, dir=CACHE)
@@ -979,14 +984,21 @@ class GppuFileSystem(AbstractFileSystem):
     self._index = index              # the index that answers first; the file beside the location is a cache
     self._cacheless = False          # set when the store refuses the index it would keep beside itself
     self._memory: dict[str, sqlite3.Connection] = {}   # a remote store's index, held for this instance
-    self._indexes: dict[str, str | None] = {}   # folder -> the index it holds, asked of the store once
     self._locations = dict(locations) if locations else {}   # folder -> the location that is there
+    self._here: str | None = None   # the root as the location map names folders, resolved once
     self._database_path(self.root)  # Validate the required location name.
 
-  def _location_of(self, path: Path) -> dict[str, str] | None:
-    """Which configured location a path on this host is, or is inside: its location, canonical address, the path's
+  def _on_host(self, key: str) -> str:
+    """Where an entry is on this host, as the location map names folders: the root, resolved once, and the key below
+    it. Nothing below the root is followed as a link, and on a share each resolve is a round trip."""
+    if self._here is None:
+      self._here = full_path(self.root).as_posix()
+    return self._here if key == '.' else f"{self._here.rstrip('/')}/{key}"
+
+  def _location_of(self, key: str) -> dict[str, str] | None:
+    """Which configured location an entry on this host is, or is inside: its location, canonical address, the entry's
     address and its folder in it, the deepest location containing it winning; None when none does."""
-    here = full_path(path).as_posix()
+    here = self._on_host(key)
     base = max((folder for folder in self._locations if here == folder or here.startswith(folder.rstrip('/') + '/')),
                key=len, default=None)
     if base is None:
@@ -1002,19 +1014,24 @@ class GppuFileSystem(AbstractFileSystem):
     return f'{folder.rstrip("/")}/.{name}.gppufs.sqlite'
 
   def _existing_index(self, folder: str) -> str | None:
-    """Whether a folder holds an index of its own, asked of the store once per folder.
+    """Whether a folder holds an index of its own, asked of the store once per folder in this process.
 
-    ``_owner`` asks this of every ancestor of every entry, and on a store that is not the local
-    filesystem each ask is a round trip. A library of a thousand entries would otherwise spend its
-    walk asking SharePoint whether folders hold an index file they have never held. The answer does
-    not change under a walk, because gppufs is what creates that file and ``_database`` records it
-    here when it does.
+    ``_owner`` asks this of every ancestor of every entry, and each ask is a round trip on a store that
+    is not this host's and on a share this host mounts, where a folder without an index is also listed
+    for one renamed with it: a listing of a share's folder would otherwise ask every folder above it
+    again for each of its entries. gppufs is what makes, moves and removes that file, and records it in
+    ``_INDEXES`` when it does, so the answer holds for every gppufs in this process.
     """
-    if isinstance(self.fs, LocalFileSystem):
-      return self._index_at(folder)     # a local answer costs a stat, and the file can move under us
-    if folder not in self._indexes:
-      self._indexes[folder] = self._index_at(folder)
-    return self._indexes[folder]
+    address = self.fs.unstrip_protocol(folder)
+    if address not in _INDEXES:
+      _INDEXES[address] = self._index_at(folder)
+    return _INDEXES[address]
+
+  def _forget_indexes(self, folder: str) -> None:
+    """What this process knows of the indexes in a folder and below it, dropped: the folder moved, or its index did."""
+    address = self.fs.unstrip_protocol(folder).rstrip('/')
+    for known in [known for known in _INDEXES if known == address or known.startswith(address + '/')]:
+      del _INDEXES[known]
 
   def _index_at(self, folder: str) -> str | None:
     expected = self._database_path(folder)
@@ -1216,6 +1233,8 @@ class GppuFileSystem(AbstractFileSystem):
             if 'database is locked' not in str(error):
               raise
           else:
+            if write and not exists:
+              _INDEXES[self.fs.unstrip_protocol(self._path(owner))] = path   # gppufs made it: known without asking the store
             with database:
               yield database
             return
@@ -1234,6 +1253,8 @@ class GppuFileSystem(AbstractFileSystem):
           self.fs.pipe_file(path, database.serialize())
       except (NotImplementedError, OSError):   # the store serves read-only; only the cache file is lost
         self._cacheless = True
+      else:
+        _INDEXES[self.fs.unstrip_protocol(self._path(owner))] = path
 
   @staticmethod
   def _columns_of(database: sqlite3.Connection) -> bool:
@@ -1278,7 +1299,7 @@ class GppuFileSystem(AbstractFileSystem):
     uri to be named by, and an index keyed on that is an index for this host.
     """
     if self._locations:
-      located = self._location_of(Path(self._path(key)))
+      located = self._location_of(key)
       if located is not None:
         return located['address']
     return self._uri(key)
@@ -1392,6 +1413,7 @@ class GppuFileSystem(AbstractFileSystem):
       if len(matches) != 1:
         continue
       old, new = child['path'], self._key(matches[0]['name'])
+      self._forget_indexes(self._path(old))
       self._existing_index(self._path(new))
       with self._database(owner, write=True) as database:
         stored = database.execute('SELECT path, metadata, children FROM gppufs_entries').fetchall()
@@ -1652,7 +1674,7 @@ class GppuFileSystem(AbstractFileSystem):
     names = [record.subtype or record.type]
     if path.name.casefold().endswith(handlers.ARCHIVES):
       names.append('archive')
-    located = self._location_of(path) if isinstance(self.fs, LocalFileSystem) else None
+    located = self._location_of(key) if isinstance(self.fs, LocalFileSystem) else None
     if located is not None:
       names.append('location')
     gppu = {'path': str(path), 'type': 'folder' if folder else 'file',
@@ -1720,7 +1742,7 @@ class GppuFileSystem(AbstractFileSystem):
     out of date the moment the configuration names the place. Such a row is identified
     again; every other stored row is kept.
     """
-    if not self._locations or not self._location_of(Path(self._path(key))):
+    if not self._locations or not self._location_of(key):
       return False
     stored = self._stored(key)
     return stored is not None and 'location' not in stored[0]['gppu']
@@ -1974,13 +1996,14 @@ class GppuFileSystem(AbstractFileSystem):
     here.unlink()
     with self._lock:
       self._memory.clear()
+      self._forget_indexes(self.root)
     return kept
 
   def _address_of(self, key: str) -> str:
     """The address an entry had, worked out from the location map rather than from the vanished path."""
     if self._locations:
+      here = self._on_host(key)
       for folder in sorted(self._locations, key=lambda item: len(item), reverse=True):
-        here = full_path(Path(self._path(key))).as_posix()
         base = folder.rstrip('/')
         if here == base or here.startswith(base + '/'):
           return _address(str(self._locations[folder]['canonical']), '' if here == base else here[len(base) + 1:])

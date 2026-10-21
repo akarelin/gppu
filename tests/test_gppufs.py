@@ -14,6 +14,7 @@ import pytest
 import yaml
 from fsspec.implementations.memory import MemoryFileSystem
 
+import gppu.fs
 from gppu.fs import GppuCatalog, GppuFileSystem, _RarFileSystem
 
 
@@ -740,6 +741,27 @@ def test_info_identifies_again_a_row_from_before_the_location(tmp_path):
   assert fs.info()['gppu']['location']['address'] == 'work://'
   assert fs.info('notes')['gppu']['location']['address'] == 'work://notes'
   assert [row['gppu']['location']['address'] for row in fs.ls(recurse=True)] == ['work://notes', 'work://notes/note.md']
+
+
+def test_a_folder_is_asked_once_whether_it_holds_an_index(tmp_path, monkeypatch):
+  """On a share every ask is a round trip: a folder is asked once in a process whether it holds an index, not again for
+  each entry below it, and the root is resolved once, not for each entry's location."""
+  deep = tmp_path / 'a' / 'b'
+  deep.mkdir(parents=True)
+  for name in ('one.md', 'two.md'):
+    (deep / name).write_text('Text', encoding='utf-8')
+  asked, resolved = [], []
+  index_at, full_path = GppuFileSystem._index_at, gppu.fs.full_path
+  monkeypatch.setattr(GppuFileSystem, '_index_at', lambda self, folder: asked.append(folder) or index_at(self, folder))
+  monkeypatch.setattr(gppu.fs, 'full_path', lambda path, *args, **kwargs: resolved.append(path) or full_path(path, *args, **kwargs))
+  fs = GppuFileSystem(tmp_path, locations={tmp_path.as_posix(): {'location': 'work', 'canonical': 'work://'}})
+  fs.ls(recurse=True)
+  assert len(asked) == len(set(asked)) and len(resolved) == 1
+  asked.clear()
+  resolved.clear()
+  fs.ls(recurse=True)
+  assert fs.info('a/b/one.md')['gppu']['location']['address'] == 'work://a/b/one.md'
+  assert asked == [] and resolved == []
 
 
 def test_a_location_address_is_an_address_gppufs_answers_to(tmp_path):
