@@ -29,7 +29,6 @@ from .app import (
 
     # sync lifecycle (AppDaemon / Y2)
     _YMRO,
-    YStepper,
     mixin_Stepper,
 )
 
@@ -228,5 +227,5 @@ __all__ = [
     'EventLoopBridge', 'SerializedControl', 'HTTPControl', 'JSONHTTPControl',
 
     # lifecycle: sync YMRO (AppDaemon/Y2)
-    'YStepper', 'mixin_Stepper',
+    'mixin_Stepper',
 ]

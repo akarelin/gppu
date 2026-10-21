@@ -1,0 +1,56 @@
+"""YMRO: every class's part of a step, base class first, synchronous or asynchronous."""
+import asyncio
+
+import pytest
+
+from gppu import mixin_Stepper
+
+
+class Base(mixin_Stepper):
+  def __init__(self): self.seen = []
+  def __init(self): self.seen.append('base init')
+  def __load(self): self.seen.append('base load')
+  def __start(self): self.seen.append('base start')
+  def __stop(self): self.seen.append('base stop')
+
+
+class Child(Base):
+  def __load(self): self.seen.append('child load')
+  def __start(self): self.seen.append('child start')
+
+
+class AsyncChild(Base):
+  async def __load(self):
+    await asyncio.sleep(0)
+    self.seen.append('async load')
+
+
+def test_a_step_runs_every_class_part_base_first_and_once():
+  child = Child()
+  assert child.init() is None and child.load() is None and child.start() is None
+  child.start()
+  assert child.seen == ['base init', 'base load', 'child load', 'base start', 'child start']
+  assert child.initialized and child.loaded and child.started
+
+
+def test_load_needs_init():
+  with pytest.raises(RuntimeError, match='load before init'): Child().load()
+
+
+def test_stop_undoes_load_and_start_so_they_run_again():
+  child = Child()
+  child.init(); child.load(); child.start(); child.stop()
+  assert not child.loaded and not child.started and child.stopped
+  child.load(); child.start()
+  assert child.seen[-5:] == ['base stop', 'base load', 'child load', 'base start', 'child start']
+
+
+def test_an_asynchronous_part_makes_the_step_a_coroutine():
+  child = AsyncChild()
+  child.init()
+  step = child.load()
+  assert asyncio.iscoroutine(step) and not child.loaded
+  asyncio.run(step)
+  assert child.seen == ['base init', 'base load', 'async load'] and child.loaded
+  asyncio.run(child.load())   # done: the coroutine returns at once
+  assert child.seen.count('async load') == 1
