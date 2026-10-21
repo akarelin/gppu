@@ -938,6 +938,10 @@ def _probe_name(name: str, directory: bool) -> handlers.Record:
     return handlers.probe(stand_in)
 
 
+# What probe gives that counts as ignored in a folder's totals: an ignored path, an offline file, a junction and a symlink.
+IGNORED = ('ignored', 'offline', 'junction', 'symlink')
+
+
 class GppuFileSystem(AbstractFileSystem):
   """fsspec listings enriched by handlers and stored beside their location.
 
@@ -1213,7 +1217,8 @@ class GppuFileSystem(AbstractFileSystem):
       else:
         with closing(connection) as database:
           try:
-            database.execute('SELECT count(*) FROM sqlite_master')   # takes the lock a share may refuse
+            database.execute('BEGIN EXCLUSIVE')   # takes the lock a write commits with, which a share may refuse, before anything is written
+            database.execute('ROLLBACK')
             if write:
               with database:
                 self._prepare(database, owner, exists)   # and the first write, the lock a share refuses
@@ -1641,7 +1646,7 @@ class GppuFileSystem(AbstractFileSystem):
     nothing says more."""
     modified = gppu['modified_at'] and datetime.fromisoformat(str(gppu['modified_at']))
     spans = [span for span in (self._own_span(gppu),) if span]
-    if gppu['record']['subtype'] in handlers.IGNORED:
+    if gppu['record']['subtype'] in IGNORED:
       return {'files': 0, 'folders': 0, 'bytes': 0, 'span': None}   # counted as ignored: never counted
     if children is None:
       totals = {'files': 1, 'folders': 0, 'bytes': gppu['size']}
