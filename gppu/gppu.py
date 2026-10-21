@@ -71,7 +71,7 @@ def detect_os() -> OSType:
   else: return OSType.OTHER
 
 
-def full_path(path: str | pathlib.Path, base_dir: str | pathlib.Path | None = None, *, strict: bool = False) -> pathlib.Path:
+def full_path(path: str | Path, base_dir: str | Path | None = None, *, strict: bool = False) -> Path:
   """
     Resolve a user-supplied path to a local Path suitable for open()/read/write.
 
@@ -83,11 +83,11 @@ def full_path(path: str | pathlib.Path, base_dir: str | pathlib.Path | None = No
   """
   raw = os.path.expandvars(str(path))
 
-  if detect_os() == OSType.W11 and len(raw) >= 7 and raw.startswith('/mnt/') and raw[5].isalpha() and raw[6] == '/': result = pathlib.Path(f'{raw[5].upper()}:\\') / raw[7:]
-  else: result = pathlib.Path(raw)
+  if detect_os() == OSType.W11 and len(raw) >= 7 and raw.startswith('/mnt/') and raw[5].isalpha() and raw[6] == '/': result = Path(f'{raw[5].upper()}:\\') / raw[7:]
+  else: result = Path(raw)
   result = result.expanduser()
 
-  if not result.is_absolute(): result = (pathlib.Path.cwd() if base_dir is None else full_path(base_dir)) / result
+  if not result.is_absolute(): result = (Path.cwd() if base_dir is None else full_path(base_dir)) / result
   
   return result.resolve(strict=strict)
 # endregion
@@ -141,14 +141,14 @@ def now_ts(): return dt.now().timestamp()
 def timestamp(): return dt.now().strftime("%y%m%d-%H%M")
 def datestamp(): return dt.now().strftime("%y%m%d")
 
-def prepend_datestamp(path, separator=" ") -> pathlib.Path:
+def prepend_datestamp(path, separator=" ") -> Path:
   datestamp_str = datestamp()  
-  _ = pathlib.Path(path)
+  _ = Path(path)
   return _.parent / f"{datestamp_str}{separator}{_.name}"
 
-def append_timestamp(path, separator=" ") -> pathlib.Path:
+def append_timestamp(path, separator=" ") -> Path:
   timestamp_str = timestamp()
-  _ = pathlib.Path(path)
+  _ = Path(path)
   return _.parent / f"{_.stem}{separator}{timestamp_str}{_.suffix}"
 
 
@@ -334,7 +334,7 @@ class Path(y2path, pathlib.Path):
   _str_normcase = property(lambda self: pathlib.PurePath(self)._str_normcase)
 
   def __truediv__(self, other: str | y2path) -> Path: return type(self)(self, other)
-  def __eq__(self, other): return pathlib.Path(self) == other if isinstance(other, PurePath) and not isinstance(other, y2path) else y2path.__eq__(self, other)
+  def __eq__(self, other): return str(self) == str(type(self)(other)) if isinstance(other, PurePath) else y2path.__eq__(self, other)
   __hash__ = y2path.__hash__
 
   def copy(self, *args, **kwargs): return y2path.copy(self) if not args and not kwargs else pathlib.Path.copy(self, *args, **kwargs)
@@ -599,7 +599,7 @@ def dict_sanitize(data: dict | list, sort_keys=False) -> dict | list:
 def _tuple_representer(dumper: Dumper, data: tuple) -> Node:
   return dumper.represent_dict(dict(enumerate(data)))
 
-def dict_to_yml(filename: str | pathlib.Path, data=None, sort_keys=False):
+def dict_to_yml(filename: str | Path, data=None, sort_keys=False):
   class IndentedListDumper(yaml.Dumper):
     def increase_indent(self, flow=False, indentless=False):
       return super(IndentedListDumper, self).increase_indent(flow, False)
@@ -620,9 +620,9 @@ def dict_to_yml(filename: str | pathlib.Path, data=None, sort_keys=False):
       with open(str(filename) + '_error.txt', 'w+', encoding='utf-8') as ferr: ferr.write(error)
 
 
-def dict_from_yml(filename: str | pathlib.Path) -> dict:
+def dict_from_yml(filename: str | Path) -> dict:
   filename = full_path(filename)
-  dir_stack: list[pathlib.Path] = [filename.parent]
+  dir_stack: list[Path] = [filename.parent]
 
   class YmlLoader(FullLoader): pass
     # def __init__(self, stream: Any) -> None:
@@ -653,7 +653,7 @@ def dict_from_yml(filename: str | pathlib.Path) -> dict:
   # with open(filename, encoding='utf-8') as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
 
 
-def dict_to_json(filename: str | pathlib.Path, data=None, indent=2):
+def dict_to_json(filename: str | Path, data=None, indent=2):
   assert filename
   if not data: return
   with open(filename, 'w', encoding='utf-8') as f:
@@ -663,7 +663,7 @@ def dict_to_json(filename: str | pathlib.Path, data=None, indent=2):
       with open(str(filename)+'_error.txt', 'w', encoding='utf-8') as ferr: ferr.write(error)
 
 
-def dict_from_json(filename: str | pathlib.Path):
+def dict_from_json(filename: str | Path):
   with open(filename, encoding='utf-8') as f: return json.load(f)
 
 ## _________Code below has deviated from the golden rule                                                  
@@ -741,7 +741,7 @@ class JinjaDocument(SandboxedEnvironment):
   the template so a document can import macros and read the facts it applies them to.
   """
 
-  def __init__(self, search_path: pathlib.Path, **options):
+  def __init__(self, search_path: Path, **options):
     super().__init__(loader=FileSystemLoader(str(search_path)), undefined=StrictUndefined, autoescape=False,
                      trim_blocks=True, lstrip_blocks=True, keep_trailing_newline=True, **options)
     self.filters.update(jinja_helpers())
@@ -767,7 +767,7 @@ def jinja_template(template: str, /, **data) -> Any:
   return value
 
 
-def jinja_document(filename: str | pathlib.Path, /, **data) -> str:
+def jinja_document(filename: str | Path, /, **data) -> str:
   """Render a template file to text, with its own directory as the search path."""
   filename = full_path(filename)
   return JinjaDocument(filename.parent).get_template(filename.name).render(**data)
@@ -1301,8 +1301,8 @@ class _PlainFormatter(logging.Formatter):
 _file_handlers: dict[str, logging.Handler] = {}
 
 
-def enable_file_logging(name: str | None = None, log_dir: str | pathlib.Path | None = None,
-                        level: int = logging.DEBUG, log_file: str | None = None) -> pathlib.Path:
+def enable_file_logging(name: str | None = None, log_dir: str | Path | None = None,
+                        level: int = logging.DEBUG, log_file: str | None = None) -> Path:
   """Mirror logs to an explicit `log_file`, or an explicit name + log_dir.
 
   Env passes its `log_file` when YAML declares one. No directory
@@ -1310,7 +1310,7 @@ def enable_file_logging(name: str | None = None, log_dir: str | pathlib.Path | N
   """
   if log_dir is not None:
     if not name: raise ValueError('File logging with log_dir requires a name')
-    path = full_path(pathlib.Path(log_dir) / f'{name}.log')
+    path = full_path(Path(log_dir) / f'{name}.log')
   else:
     value = log_file
     if not isinstance(value, str) or not value.strip():
