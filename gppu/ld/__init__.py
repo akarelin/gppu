@@ -16,7 +16,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from enum import IntEnum
 from collections.abc import Sequence
-from typing import Annotated, Any, ClassVar, Self, TypeVar, Union
+from typing import Annotated, Any, Self, TypeVar, Union
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -220,7 +220,6 @@ class _Record(SQLModel):
     data: dict = Field(default_factory=dict, sa_type=JSONB, description='What the record says about the thing. On update, merged into what is there; a null removes a key.')
     meta: dict = Field(default_factory=dict, sa_type=JSONB, description='How the record came to be: who made it, from what, when it was seen. `meta.tags`: always a list of strings. Merged on update as `data` is.')
     parent_id: UUID | None = Field(None, description='The container the record belongs to.')
-    PARENTS: ClassVar[tuple[Type, ...]] = ()   # the types its parent is, where the spec names them
 
     @field_validator('meta')
     @classmethod
@@ -252,8 +251,8 @@ class _Record(SQLModel):
     async def update(cls, db: AsyncSession, id: UUID | None, sent: '_Record') -> Self:
         """Merged into the record of that id when it is there, `data` and `meta` merged and a null removing a key; created with that id
         when it is not: an insert is an upsert. Stored at the commit. Written by its class's rules: a task's own at its own path, a
-        record's through `/records`. The columns Postgres fills, a field its table has not (an event's `ts` sent to a node) and a
-        parent it may not be in are refused; Postgres refuses an id of another type."""
+        record's through `/records`. The columns Postgres fills and a field its table has not (an event's `ts` sent to a node) are
+        refused; Postgres refuses an id of another type."""
         if filled := sent.model_fields_set & set(STORE):
             raise HTTPException(422, f'{", ".join(sorted(filled))}: the store fills them')
         if extra := sent.model_fields_set - cls.model_fields.keys():
@@ -267,8 +266,6 @@ class _Record(SQLModel):
         else:
             row = cls.model_validate(sent, update={'id': id})
             db.add(row)
-        if 'parent_id' in sent.model_fields_set and row.parent_id:
-            await cls.check_parent(db, row)
         return row
 
     @classmethod
@@ -337,21 +334,6 @@ class _Record(SQLModel):
             else:
                 query = query.where(*clauses(inside(cls, key), condition))
         return query
-
-    @classmethod
-    async def check_parent(cls, db: AsyncSession, row: '_Record'):
-        """A record's parent is a record of a type its own type may be in where the spec names one (`PARENTS`), and neither the record
-        itself nor a record it holds: containers nest."""
-        if not (parent := await db.get(Record, row.parent_id)):   # every table inherits record: a record of any type
-            raise HTTPException(422, f'no record {row.parent_id} to hold it')
-        if cls.PARENTS and parent.type not in cls.PARENTS:
-            raise HTTPException(422, f"a {cls.__tablename__}'s parent is a {' or a '.join(t.name.lower() for t in cls.PARENTS)}, not a {Type(parent.type).name.lower()}")
-        seen, at = set(), parent
-        while at and at.id not in seen:   # up the containers it would be in
-            if at.id == row.id:
-                raise HTTPException(422, f'{row.id} would be in itself')
-            seen.add(at.id)
-            at = at.parent_id and await db.get(Record, at.parent_id)
 
 
 # ++     The data models: what a type adds to a record, and the abstract types
