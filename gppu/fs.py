@@ -2858,7 +2858,7 @@ class ArchiveHandler(Handler):
         extension = next(
             (
                 extension
-                for extension in ArchiveHandler.extensions
+                for extension in handlers.ARCHIVES
                 if name.endswith(extension)
             ),
             None,
@@ -6168,7 +6168,7 @@ class GppuFileSystem(AbstractFileSystem):
     """The physical archive containing this path, if it crosses an archive boundary."""
     for parent in reversed(PurePosixPath(key).parents):
       path = self._path(parent.as_posix())
-      if path.casefold().endswith(ArchiveHandler.extensions) and self.fs.isfile(path):
+      if path.casefold().endswith(handlers.ARCHIVES) and self.fs.isfile(path):
         return parent.as_posix()
     return None
 
@@ -6185,7 +6185,7 @@ class GppuFileSystem(AbstractFileSystem):
           source = posixpath.join(source, part)
         if position == len(parts) and not container:
           break
-        if not source.casefold().endswith(ArchiveHandler.extensions) or not fs.isfile(source):
+        if not source.casefold().endswith(handlers.ARCHIVES) or not fs.isfile(source):
           continue
         uri = (fs.unstrip_protocol(source) if archive_uri is None else
                archive_uri.replace('://', '://' + source, 1))
@@ -6585,34 +6585,27 @@ class GppuFileSystem(AbstractFileSystem):
     return str(PurePosixPath(key) / relative)
 
   def _identify_members(self, key: str) -> None:
-    """Identify an archive's members by probe, from their copies in a scratch folder, nothing parsed."""
-    uri = self._uri(key)
+    """Identify an archive's members from its listing, by probe from stand-ins of their names; no member is read."""
     metadata = self._stored(key)[0]
     with self._filesystem(key, container=True) as (fs, source):
       native = self._inventory(fs, source)
-      with tempfile.TemporaryDirectory(prefix='gppufs-') as scratch:
-        base = full_path(self._extract(uri, fs, source, native, Path(scratch)))
-        rows: dict[str, tuple[dict, list | None]] = {key: (metadata, [])}
-        members: dict[str, list[dict]] = {key: []}
-
-        def identify(folder: Path) -> None:
-          for path in sorted(folder.iterdir(), key=_display_order):
-            relative = path.relative_to(base).as_posix()
-            name = str(PurePosixPath(source) / relative)
-            if name not in native or self._index_name.fullmatch(path.name):
-              continue
-            address = self._member_address(key, relative)
-            record = handlers.probe(path)
-            rows[address] = self._row(address, native[name], record, path), [] if self._folder(record) else None
-            parent = self._member_address(key, PurePosixPath(relative).parent.as_posix())
-            members.setdefault(parent, []).append({'path': address, 'type': native[name]['type'], 'ino': None})
-            if self._folder(record):
-              identify(path)
-        identify(base)
-        for address, listing in members.items():
-          listing.sort(key=lambda entry: (entry['type'] != 'directory', entry['path'].casefold()))
-          rows[address] = rows[address][0], listing
-        self._store(key, rows, members[key])
+    rows: dict[str, tuple[dict, list | None]] = {key: (metadata, [])}
+    members: dict[str, list[dict]] = {key: []}
+    for name in sorted(native, key=lambda name: (native[name]['type'] != 'directory', name.casefold())):
+      relative = PurePosixPath(name).relative_to(PurePosixPath(source)).as_posix() if source else name
+      if relative in ('', '.') or self._index_name.fullmatch(PurePosixPath(name).name):
+        continue
+      address = self._member_address(key, relative)
+      item = native[name]
+      record = self._listed(address, item)
+      rows[address] = self._row(address, item, record, Path(PurePosixPath(name).name)), \
+        [] if item['type'] == 'directory' else None
+      parent = self._member_address(key, PurePosixPath(relative).parent.as_posix())
+      members.setdefault(parent, []).append({'path': address, 'type': item['type'], 'ino': None})
+    for address, listing in members.items():
+      listing.sort(key=lambda entry: (entry['type'] != 'directory', entry['path'].casefold()))
+      rows[address] = rows[address][0], listing
+    self._store(key, rows, members[key])
 
   def _parse(self, key: str, local: Path, native: dict[str, dict], source: str, *,
              in_archive: bool = False, archive_metadata: dict | None = None) -> None:
@@ -6762,7 +6755,7 @@ class GppuFileSystem(AbstractFileSystem):
     unknown."""
     folder = self._folder(record)
     names = [record.subtype or record.type]
-    if path.name.casefold().endswith(ArchiveHandler.extensions):
+    if path.name.casefold().endswith(handlers.ARCHIVES):
       names.append('archive')
     located = self._handlers.located(path) if isinstance(self.fs, LocalFileSystem) else None
     if located is not None:
@@ -7906,11 +7899,6 @@ FOLDER_CLASSES = {'.git': '.git', '.svn': '.git', '__pycache__': 'py_cache',
   '.idea': 'ide_config', '.vscode': 'ide_config'}
 
 
-class _IndexHandlers(FileHandler, IgnoredHandler, MarkdownHandler, BrowserHandler,
-                     SessionHandler, ArchiveHandler, FolderHandler):
-  """The September indexer's parser set; no per-file Git repository scan."""
-
-
 def _selection(path, level, boundaries):
   Location.relative(path)
   if level not in LEVELS:
@@ -7949,141 +7937,176 @@ def walk_container(container, path, level, recursive, boundaries):
   yield from visit(path)
 
 
+def _walked(name: str, kind: str, size: int | None, modified: datetime | None, record: handlers.Record,
+            unread: str | None = None) -> dict:
+  """One row of a walk: the entry's name below the walked folder, its type and size as listed, and the record its
+  handler read; a session is fingerprinted by its harness and uid."""
+  row = {'name': name, 'type': kind, 'size': size, 'modified_at': modified,
+         'handlers': [record.subtype or record.type], 'record': vars(record)}
+  if name.casefold().endswith(handlers.ARCHIVES):
+    row['handlers'].append('archive')
+  if isinstance(record, handlers.Session) and record.uid:
+    row['fingerprints'] = [('session', f'{record.subtype}/{record.uid}')]
+  elif record.subtype == handlers.SessionFolderHandler.subtype and record.data.get('uid'):
+    row['fingerprints'] = [('session', f"{record.data['harness']}/{record.data['uid']}")]
+  if 'target' in record.data:
+    row['target'] = record.data['target']
+  if unread is not None:
+    row['unread'] = [unread]
+  return row
+
+
+def _read(path: Path, parse: bool) -> tuple[handlers.Record, str | None]:
+  """What probe gives of path, read by its handler when parse is asked; a read that fails is said, not raised, so
+  the walk goes on."""
+  record = handlers.probe(path)
+  handler = handlers.HANDLERS.get((record.type, record.subtype))
+  if not parse or handler is None or issubclass(handler, handlers.FolderHandler):
+    return record, None
+  try:
+    return handler.parse(path), None
+  except Exception as error:   # the walk records what it could not read and goes on
+    return record, f'{handler.__name__}: {type(error).__name__}: {error}'
+
+
+def _archive(path: Path):
+  """The fsspec file system of an archive on this host, as gppufs opens one."""
+  name = path.name.casefold()
+  scheme = 'zip' if name.endswith('.zip') else 'tar' if name.endswith('.tar.gz') else 'gppu-rar'
+  return url_to_fs(f'{scheme}://::{path.as_posix()}', skip_instance_cache=True)[0]
+
+
 def walk_files(root: Path, path: str, level: str, recursive: bool,
                boundaries: Iterable[str]) -> Iterator[tuple[dict, list[dict]]]:
-  """Read through the handlers, extracting each selected archive once per walk."""
+  """FileIndexer's walk of a folder on this host: each folder and the rows of what it holds, probed, and from level
+  `handlers` read by their handlers; from level `archives` an archive's members too, read from copies through
+  gppufs's archive drivers. `refresh` lists folders only. A link, a Location below and a folder of FOLDER_CLASSES or
+  ignored are boundaries, not entered; an ignored file is not listed."""
   boundaries = _selection(path, level, boundaries)
-  handlers = _IndexHandlers()
-  archives = {}
+  parse = level in ('handlers', 'archives')
   scratch = None
 
-  def reading(record, name):
-    data = record.metadata
-    data.pop('path', None)
-    data.pop('location', None)
-    for probe in record.probes:
-      if probe.metadata:
-        data[probe.handler] = {key: value for key, value in probe.metadata.items()
-                               if key not in ('path', 'location')}
-      if probe.handler == 'session':
-        sessions = getattr(probe.obj, 'files', None) or [probe.obj]
-        data['fingerprints'] = [('session', f'{one.harness}/{one.uid}')
-                                for one in sessions if getattr(one, 'uid', None)]
-    data.update(name=name, type='directory' if record.is_folder else 'file')
-    if record.target is not None:
-      data['target'] = str(record.target)
-    if record.errors:
-      data['unread'] = [f'{error.handler}: {error.error_type}: {error.message}'
-                        for error in record.errors]
-    return data
-
-  def listed(record):
-    for child in handlers.children(record):
-      yield child
-      if child.is_folder:
-        yield from listed(child)
-
-  def extract(record):
+  def room() -> Path:
+    """A new empty folder in the walk's scratch."""
     nonlocal scratch
-    archive = Path(record.path)
-    if archive not in archives:
-      wanted = tuple({extension for handler in handlers.handler_types
-                      for extension in getattr(handler, 'extensions', ())})
-      members = [PurePosixPath(item.path) for item in listed(record)
-                 if not item.is_folder and item.name.casefold().endswith(wanted)]
-      if not members:
-        archives[archive] = {}
+    if scratch is None:
+      CACHE.mkdir(parents=True, exist_ok=True)
+      scratch = tempfile.TemporaryDirectory(prefix='container-index-', dir=CACHE)
+    folder = Path(scratch.name) / str(len(list(Path(scratch.name).iterdir())))
+    folder.mkdir()
+    return folder
+
+  def members(fs, under: str) -> Iterator[tuple[dict, list[dict]]]:
+    """An archive's members, listed once with no bytes read and identified by probe from stand-ins of their names;
+    the members a handler reads, nested archives among them, extracted once and read from their copies."""
+    listing = {item['name'].rstrip('/'): item for item in fs.find('', withdirs=True, detail=True).values()}
+    stand_ins, copies = room(), room()
+    identified: dict[str, handlers.Record] = {}
+    for member, item in listing.items():
+      stand_in = stand_ins / member
+      stand_in.parent.mkdir(parents=True, exist_ok=True)
+      if item['type'] == 'directory':
+        stand_in.mkdir(exist_ok=True)
       else:
-        if scratch is None:
-          CACHE.mkdir(parents=True, exist_ok=True)
-          scratch = tempfile.TemporaryDirectory(prefix='container-index-', dir=CACHE)
-        archives[archive] = handlers.extract_sync(archive,
-          Path(scratch.name) / str(len(archives)), members).files
+        stand_in.write_bytes(b'\0' if item.get('size') else b'')   # probe names a file's handler only when it holds something
+      identified[member] = handlers.probe(stand_in)
+    wanted = [member for member, record in identified.items() if listing[member]['type'] != 'directory' and (
+      member.casefold().endswith(handlers.ARCHIVES)
+      or handlers.HANDLERS.get((record.type, record.subtype)) not in (None, handlers.FileHandler))]
+    for member in wanted:
+      copy = copies / member
+      copy.parent.mkdir(parents=True, exist_ok=True)
+      fs.get_file(member, str(copy))
 
-  def probe(record):
-    if level not in ('handlers', 'archives') or record.is_folder:
-      return record
-    if 'archive' in record.handlers and level != 'archives':
-      return record
-    original = record
-    if record.location is not None:
-      if level != 'archives':
-        return record
-      physical = archives[Path(record.location)].get(PurePosixPath(record.path))
-      if physical is None:
-        return record
-    else:
-      physical = Path(record.path)
-    records = handlers.probe_sync(physical, recursive=False)
-    if not records:
-      return original
-    record = records[0]
-    if original.location is not None:
-      record = replace(record, path=record.path if 'archive' in record.handlers else original.path,
-        location=None if 'archive' in record.handlers else original.location,
-        size=original.size, modified_at=original.modified_at)
-    return record
+    def folder(prefix: str, under: str) -> Iterator[tuple[dict, list[dict]]]:
+      rows, descend, nested = [], [], []
+      children = [member for member in listing if PurePosixPath(member).parent.as_posix() == (prefix or '.')]
+      for member in sorted(children, key=lambda member: (listing[member]['type'] != 'directory', member.casefold())):
+        item, record, unread = listing[member], identified[member], None
+        name = f"{under}/{PurePosixPath(member).name}"
+        kind = 'directory' if item['type'] == 'directory' else 'file'
+        if kind == 'file' and (level == 'refresh' or record.subtype == 'ignored'):
+          continue
+        if member in wanted:
+          record, unread = _read(copies / member, parse)
+        row = _walked(name, kind, item.get('size'), GppuFileSystem._modified(item), record, unread)
+        if kind == 'directory':
+          if PurePosixPath(member).name in FOLDER_CLASSES or record.subtype == 'ignored':
+            row['boundary'] = FOLDER_CLASSES.get(PurePosixPath(member).name, 'Ignored')
+          elif recursive:
+            descend.append((member, name))
+        elif 'archive' in row['handlers']:
+          nested.append((copies / member, name, row))
+        rows.append(row)
+      found = []
+      for copy, name, row in nested:
+        try:
+          found.append(list(members(_archive(copy), name)))
+        except Exception as error:   # an archive read failure remains file evidence, never a successful enumeration
+          row['unread'] = [*row.get('unread', []), f'archive: {type(error).__name__}: {error}']
+      yield {'name': under, 'type': 'directory', 'size': 0}, rows
+      for found_listing in found:
+        yield from found_listing
+      for member, name in descend:
+        yield from folder(member, name)
 
-  def visit(record, under, in_archive=False):
-    if not in_archive and 'archive' not in record.handlers:
-      physical = Path(record.path)
-      if physical.is_symlink() or physical.is_junction():
-        raise PermissionError(f'{under}: a link cannot be selected for traversal')
-      if 'ignored' in record.handlers:
-        raise PermissionError(f'{under}: selected directory is excluded by {IgnoredHandler.reason(physical)}')
-      if not record.is_folder:
-        raise NotADirectoryError(str(physical))
-    children = handlers.children(record)
-    if not in_archive and 'archive' not in record.handlers:
-      record = handlers.record(Path(record.path))
-      failures = [error for error in record.errors if error.operation in ('list', 'stat')]
-      if failures:
-        raise OSError(f'{under}: directory enumeration failed: ' + '; '.join(
-          f'{error.error_type}: {error.message}' for error in failures))
-    rows, descend = [], []
-    for child in children:
-      name = f'{under}/{child.name}' if under else child.name
-      if 'ignored' in child.handlers and not child.is_folder:
+    yield from folder('', under)
+
+  def visit(folder: Path, under: str) -> Iterator[tuple[dict, list[dict]]]:
+    try:
+      entries = sorted(folder.iterdir(), key=_display_order)
+    except OSError as error:
+      raise OSError(f'{under}: directory enumeration failed: {type(error).__name__}: {error}') from error
+    rows, descend, archives = [], [], []
+    for entry in entries:
+      name = f'{under}/{entry.name}' if under else entry.name
+      record, unread = _read(entry, parse)
+      folder_like = GppuFileSystem._folder(record)
+      if record.subtype == 'ignored' and not entry.is_dir():
         continue
-      link = child.target is not None or (child.location is None and isinstance(child.path, Path)
-        and (child.path.is_symlink() or child.path.is_junction()))
-      if level == 'refresh' and not child.is_folder:
+      if level == 'refresh' and not (folder_like or entry.is_dir()):
         continue
-      child = child if link else probe(child)
-      row = reading(child, name)
-      if link:
+      stat = entry.lstat()
+      row = _walked(name, 'directory' if entry.is_dir() else 'file', None if entry.is_dir() else stat.st_size,
+                    handlers.Handler.valid_time(datetime.fromtimestamp(stat.st_mtime).astimezone()), record, unread)
+      if record.subtype in ('symlink', 'junction'):
         row['boundary'] = 'link'
-        row['target'] = str(child.path.resolve())
+        row['target'] = str(entry.resolve())
       elif name in boundaries:
         row['boundary'] = 'Location'
-      elif child.is_folder:
-        pattern = IgnoredHandler.match(child.name, FOLDER_CLASSES)
-        if pattern or 'ignored' in child.handlers:
-          row['boundary'] = FOLDER_CLASSES[pattern] if pattern else 'Ignored'
-          if child.location is None:
-            row['ignored_reason'] = IgnoredHandler.reason(Path(child.path))
+      elif entry.is_dir():
+        if entry.name in FOLDER_CLASSES or record.subtype == 'ignored':
+          row['boundary'] = FOLDER_CLASSES.get(entry.name, 'Ignored')
         elif recursive:
-          descend.append((child, name, in_archive))
-      elif level == 'archives' and 'archive' in child.handlers:
-        # An archive read failure remains file evidence and never a successful enumeration.
-        try:
-          extract(child)
-        except Exception as error:
-          row['unread'] = [*row.get('unread', []), f'archive: {type(error).__name__}: {error}']
-        else:
-          if not child.errors:
-            descend.append((child, name, True))
+          descend.append((entry, name))
+      elif level == 'archives' and 'archive' in row['handlers']:
+        archives.append((entry, name, row))
       rows.append(row)
-    yield reading(record, under), rows
-    for child, name, archived in descend:
-      yield from visit(child, name, archived)
-    handlers.invalidate_sync()
+    found = []
+    for entry, name, row in archives:
+      try:
+        found.append(list(members(_archive(entry), name)))
+      except Exception as error:   # an archive read failure remains file evidence, never a successful enumeration
+        row['unread'] = [*row.get('unread', []), f'archive: {type(error).__name__}: {error}']
+    yield {'name': under, 'type': 'directory', 'size': 0}, rows
+    for listing in found:
+      yield from listing
+    for entry, name in descend:
+      yield from visit(entry, name)
 
+  selected = root / path
+  if not selected.exists():
+    raise NotADirectoryError(str(selected))
+  record = handlers.probe(selected)
+  if record.subtype in ('symlink', 'junction'):
+    raise PermissionError(f'{path}: a link cannot be selected for traversal')
+  if record.subtype == 'ignored':
+    raise PermissionError(f'{path}: selected directory is excluded by the ignore rules')
+  if not GppuFileSystem._folder(record):
+    raise NotADirectoryError(str(selected))
   try:
-    selected = handlers.record(root / path)
     yield from visit(selected, path)
   finally:
-    handlers.invalidate_sync()
     if scratch is not None:
       scratch.cleanup()
 

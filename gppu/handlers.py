@@ -52,6 +52,8 @@ LOG_BLOCK = 65536   # how much of a log's tail is read at a time
 LOG_TIMESTAMP = re.compile(
     r"^\s*[\[(]?(?P<timestamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)"
 )
+# What gppufs and FileIndexer's walk open as archives, by the end of the name.
+ARCHIVES = (".rar", ".tar.gz", ".zip")
 # What a name says of its time, the first that matches: a span of two YYMMDD dates, a date and time with its GMT offset,
 # a date and time without a zone, which is local, Unix seconds; else an ISO date or a YYMMDD date, which is the whole day.
 NAMED_SPAN = re.compile(r"(?<![A-Za-z0-9])(\d{6})-(\d{6})(?![A-Za-z0-9])")

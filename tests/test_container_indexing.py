@@ -31,7 +31,7 @@ def test_file_location_uses_its_container_and_keeps_child_boundaries(tmp_path):
   rows = {row['name']: row for _, children in walked for row in children}
   assert rows['owned']['boundary'] == 'Location'
   assert rows['.git']['boundary'] == '.git'
-  assert rows['readme.md']['markdown']
+  assert rows['readme.md']['record']['data']['title'] == 'Example'
   assert rows['sub/nested.txt']['size'] == 6
   assert not list(tmp_path.glob('*.sqlite'))
 
@@ -45,14 +45,13 @@ def test_refresh_reports_only_folders_without_marking_files_missing(tmp_path):
 
 @pytest.mark.parametrize('level', ['files', 'handlers'])
 def test_archives_are_not_opened_below_archives_level(tmp_path, monkeypatch, level):
-  from gppu.fs import _IndexHandlers
+  import gppu.fs
   archive = tmp_path / 'data.zip'
   with zipfile.ZipFile(archive, 'w') as output:
     output.writestr('inside.txt', 'inside')
   def forbidden(*args, **kwargs):
     pytest.fail('archive contents must not be read at this level')
-  monkeypatch.setattr(_IndexHandlers, 'extract_sync', forbidden)
-  monkeypatch.setattr(_IndexHandlers, '_archive_children', forbidden)
+  monkeypatch.setattr(gppu.fs, '_archive', forbidden)
   walked = list(files(tmp_path).walk(level=level, recursive=True))
   assert len(walked) == 1
   assert walked[0][1][0]['name'] == 'data.zip'
@@ -64,17 +63,16 @@ def test_archive_members_have_original_paths_and_handler_readings(tmp_path):
     output.writestr('sub/plain.txt', 'text')
   walked = list(files(tmp_path).walk(level='archives', recursive=True))
   rows = {row['name']: row for _, children in walked for row in children}
-  assert rows['data.zip/sub/readme.md']['markdown']
+  assert rows['data.zip/sub/readme.md']['record']['data']['title'] == 'Archived'
   assert rows['data.zip/sub/plain.txt']['size'] == 4
   assert 'container-index-' not in json.dumps(rows, default=str)
 
 
 def test_a_failed_listing_is_not_a_successful_empty_directory(tmp_path, monkeypatch):
-  from gppu.fs import HandlerError, Record
-  from gppu.fs import _IndexHandlers
-  error = HandlerError('file', 'list', tmp_path, 'PermissionError', 'denied')
-  monkeypatch.setattr(_IndexHandlers, 'children', lambda *args: ())
-  monkeypatch.setattr(_IndexHandlers, 'record', lambda *args: Record(tmp_path, True, 0, None, (), errors=(error,)))
+  import pathlib
+  def denied(self):
+    raise PermissionError('denied')
+  monkeypatch.setattr(pathlib.Path, 'iterdir', denied)
   walk = files(tmp_path).walk()
   with pytest.raises(OSError, match='directory enumeration failed'):
     next(walk)
