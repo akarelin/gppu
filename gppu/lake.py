@@ -33,14 +33,14 @@ class Lake:
         location, path = catalog.location_of(store)
         self.store = Container(location.provider, location.provider.join(location.uri, path))
         self.templates = TemplateSet(named={'lake': dict(templates)})
-        self.root = location.provider.local(self.store.uri)   # the Lake on this host
-        self.files = GppuFileSystem(str(self.root), locations={self.root.as_posix(): {'location': location.uid,
-                                                                                       'canonical': str(self.store.uri)}})
+        self.root = location.provider.local(self.store.uri).as_posix().rstrip('/')   # the Lake on this host, as gppufs names
+        # a folder: a share's root, \\s1\Lake\, without the slash its Path keeps
+        self.files = GppuFileSystem(self.root, locations={self.root: {'location': location.uid, 'canonical': str(self.store.uri)}})
 
     def _here(self, uri: y2uri | str) -> str | None:
         """The Lake folder or file a uri names, as gppufs takes it; none for a uri outside the Lake."""
         below = _below(str(self.store.uri), str(uri))
-        return None if below is None else (self.root / unquote(below)).as_posix()
+        return None if below is None else f'{self.root}/{unquote(below)}'.rstrip('/')
 
     @staticmethod
     def _row(row: dict[str, Any]) -> dict[str, Any]:
