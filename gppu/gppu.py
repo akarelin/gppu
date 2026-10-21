@@ -119,8 +119,8 @@ def probe_path(path: str | Path) -> dict:
 
   path = pathlib.Path(path)
   info = path.info
-  file_stat = path.stat(follow_symlinks=False)
-  attributes = getattr(file_stat, "st_file_attributes", 0)
+  stat = path.stat(follow_symlinks=False)
+  attributes = getattr(stat, "st_file_attributes", 0)
 
   result = {
     "symlink": info.is_symlink(),
@@ -128,9 +128,9 @@ def probe_path(path: str | Path) -> dict:
     "folder": info.is_dir(follow_symlinks=False),
     "file": info.is_file(follow_symlinks=False),
     "offline": bool(attributes & 0x5000),
-    "created": dt.fromtimestamp(file_stat.st_birthtime, timezone.utc)
-               if getattr(file_stat, "st_birthtime", None) is not None else None,
-    "modified": dt.fromtimestamp(file_stat.st_mtime, timezone.utc),
+    "created": dt.fromtimestamp(stat.st_birthtime, timezone.utc)
+               if getattr(stat, "st_birthtime", None) is not None else None,
+    "modified": dt.fromtimestamp(stat.st_mtime, timezone.utc),
   }
 
   result["ignored"] = bool(path.name) and (
@@ -163,14 +163,14 @@ def probe_path(path: str | Path) -> dict:
     elif result["file"]:
       handler = (
         _CONFIG["suffix_handlers"].get(path.suffix.casefold(), "FileHandler")
-        if file_stat.st_size else "FileHandler"
+        if stat.st_size else "FileHandler"
       )
 
   result.update(
     handler=handler,
-    size=file_stat.st_size if result["file"] else None,
+    size=stat.st_size if result["file"] else None,
     target=path.readlink() if result["symlink"] or result["junction"] else None,
-    attributes=getattr(file_stat, "st_file_attributes", None),
+    attributes=getattr(stat, "st_file_attributes", None),
   )
   return result
 
