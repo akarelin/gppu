@@ -12,6 +12,7 @@ itself is configured with is the app's, in Env: the uri of the Lake saved object
   LakeFileSystem(url, root)         the Lake through its API as an fsspec filesystem, what a desktop or a UI browses it with"""
 import io
 import json
+import shutil
 import tempfile
 from datetime import date, datetime
 from pathlib import Path
@@ -24,6 +25,7 @@ from . import handlers
 from .fs import CACHE, Container, DataObject, GppuCatalog, GppuFileSystem, Location, _below
 from .gppu import TemplateSet, TimeSpan, y2uri
 
+PIECE = 1 << 20   # a download is sent a mebibyte at a time
 
 class Lake:
     """Every location in the catalog, read by uri, and one folder, store, where saved objects go."""
@@ -52,22 +54,17 @@ class Lake:
         return location.container(), str(path)
 
     @staticmethod
-    def read(obj: DataObject) -> handlers.Record:
-        """What gppu's handlers read of obj: its content as a file under its own name, read by the handler its name and content
-        call for, and by none when none does."""
-        with tempfile.TemporaryDirectory(prefix='lake-', dir=CACHE) as folder:
-            path = Path(folder) / obj.name
-            content = obj.content.read() if hasattr(obj.content, 'read') else obj.content
-            path.write_bytes(content if isinstance(content, bytes) else content.encode('utf-8') if isinstance(content, str)
-                             else json.dumps(content, ensure_ascii=False).encode('utf-8'))
-            found = handlers.probe(path)
-            handler = handlers.HANDLERS.get((found.type, found.subtype))
-            if handler is None:
-                return found
-            try:
-                return handler.parse(path)
-            except Exception as error:   # what a handler cannot read has no place in the Lake: the save is refused with its reason
-                raise ValueError(f'{obj.name}: {handler.__name__} cannot read it: {type(error).__name__}: {error}') from error
+    def read(path: Path) -> handlers.Record:
+        """What gppu's handlers read of the file at path: read by the handler its name and content call for, and by none when
+        none does."""
+        found = handlers.probe(path)
+        handler = handlers.HANDLERS.get((found.type, found.subtype))
+        if handler is None:
+            return found
+        try:
+            return handler.parse(path)
+        except Exception as error:   # what a handler cannot read has no place in the Lake: the save is refused with its reason
+            raise ValueError(f'{path.name}: {handler.__name__} cannot read it: {type(error).__name__}: {error}') from error
 
     def place(self, obj: DataObject, record: handlers.Record) -> str:
         """Where obj goes in the Lake, by the template of its record's type, `source` for a type the Lake has none for: rendered
@@ -84,11 +81,20 @@ class Lake:
         return str(Location.relative(path))
 
     def save(self, obj: DataObject) -> y2uri:
-        """Store obj where the Lake's layout places it, by what gppu's handlers read of it, and the uri it is stored at."""
-        content = obj.content.read() if hasattr(obj.content, 'read') else obj.content
-        obj = DataObject(obj.uri, content, obj.identity, obj.kind, obj.name)
-        path = self.place(obj, self.read(obj))
-        self.store.write(path, obj)
+        """Store obj where the Lake's layout places it, by what gppu's handlers read of it, and the uri it is stored at. Its
+        content is a file under its own name in CACHE while it is read and stored, a stream copied a piece at a time, so a large
+        file is never held whole."""
+        with tempfile.TemporaryDirectory(prefix='lake-', dir=CACHE) as folder:
+            scratch = Path(folder) / Path(obj.name).name   # its own name, never a path out of the folder
+            with scratch.open('wb') as file:
+                if hasattr(obj.content, 'read'):
+                    shutil.copyfileobj(obj.content, file)
+                else:
+                    file.write(obj.content if isinstance(obj.content, bytes) else obj.content.encode('utf-8')
+                               if isinstance(obj.content, str) else json.dumps(obj.content, ensure_ascii=False).encode('utf-8'))
+            path = self.place(obj, self.read(scratch))
+            with scratch.open('rb') as stream:
+                self.store.write(path, DataObject(obj.uri, stream, obj.identity, obj.kind, obj.name))
         uri = self.store.provider.join(self.store.uri, Location.relative(path))
         self.files.info(self._here(uri), refresh=True)   # the catalog holds what was saved
         return uri
@@ -157,6 +163,8 @@ def api(lake: Lake):
     A uri no location holds answers 404, a save to a place another object holds 409 and a value the Lake refuses 400, each with
     its error."""
     from fastapi import FastAPI, Request, Response
+    from fastapi.responses import StreamingResponse
+    from starlette.background import BackgroundTask
 
     def reply(payload: Any, status: int = 200, content_type: str = 'application/json; charset=utf-8') -> Response:
         data = payload if isinstance(payload, bytes) else json.dumps(payload, default=_json, ensure_ascii=False).encode('utf-8')
@@ -170,8 +178,11 @@ def api(lake: Lake):
 
     @app.post('/')
     async def save(request: Request, name: str, source: str = ''):
-        obj = DataObject(source, await request.body(), None, 'file', name)
-        return reply({'uri': str(lake.save(obj))}, 201)
+        with tempfile.TemporaryFile(dir=CACHE) as body:   # the body streamed to a file as it arrives, never held whole
+            async for chunk in request.stream():
+                body.write(chunk)
+            body.seek(0)
+            return reply({'uri': str(lake.save(DataObject(source, body, None, 'file', name)))}, 201)
 
     @app.get('/{uri:path}')
     def found(uri: str, ls: str | None = None, walk: str | None = None, level: str = 'files', recursive: str | None = None,
@@ -182,9 +193,10 @@ def api(lake: Lake):
             return reply(lake.walk(uri, level, recursive == '1'))
         if retrieve is not None:
             return reply(lake.retrieve(uri))
-        if content is not None:
-            with lake.open(uri) as stream:
-                return reply(stream.read(), content_type='application/octet-stream')
+        if content is not None:   # streamed a piece at a time, so a large file is never held whole
+            stream = lake.open(uri)
+            return StreamingResponse(iter(lambda: stream.read(PIECE), b''), media_type='application/octet-stream',
+                                     background=BackgroundTask(stream.close))
         return reply(lake.info(uri))
 
     @app.delete('/{uri:path}')
