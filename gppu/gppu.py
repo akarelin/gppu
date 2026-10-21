@@ -1567,7 +1567,7 @@ class Env(_Base):
   @staticmethod
   def _data() -> dict:
     """The configuration; a script that reads it first loads the default environment, from beside the script."""
-    if not Env.initialized: Env.from_env()
+    if not Env.initialized: Env.init()
     return Env.data
 
   @staticmethod
@@ -1595,27 +1595,58 @@ class Env(_Base):
     Env._load_dict(data)
 
   @staticmethod
-  def from_env(name: Optional[str] = None, app_path: Optional[Path] = None) -> None:
-    """Initialize Env from name + app_path, resolving config file and loading YAML."""
-    import __main__
-    Env._main_file = Path(getattr(__main__, '__file__', 'app')).resolve()
-    Env._main_dir = Env._main_file.parent
-
-    # Under PyInstaller __main__.__file__ resolves to __main__; use exe name instead
-    if name:
-      Env.name = name
-    elif getattr(sys, 'frozen', False):
-      Env.name = Path(sys.executable).stem
-    else:
-      Env.name = Env._main_file.stem
+  def from_env(name: Optional[str] = None, app_path: Optional[Path] = None, config: str | Path | None = None,
+               topology: bool = False) -> None:
+    """Initialize Env from name + app_path, resolving config file and loading YAML; ``config`` names the file, and
+    ``topology`` puts the nearest ``_config/config.yaml`` upward under it."""
+    Env._main_file, Env._main_dir = Env._main()
+    Env.name = name or Env._program_name()
     Env.app_path = Env._resolve_app_path(app_path)
-    Env.config_file = Env._config_file()
+    Env.config_file = full_path(config) if config else Env._config_file()
 
     Logger.init_logger(Env.name)
 
     config_data = dict_from_yml(Env.config_file) if Env.config_file else {}
+    if topology and 'topology' not in config_data: config_data['topology'] = Env._topology_file()
     Env.from_dict(config_data)   # resolves a `topology:` key if the config has one
-    Env.from_argv(sys.argv[1:])
+
+  @staticmethod
+  def init() -> None:
+    """Create the environment from ``APP``: ``name``, ``config`` (the file; found by the name when it is not set),
+    ``topology`` (the nearest ``_config/config.yaml`` upward goes under the configuration), ``cli`` (the command
+    line goes over it), and the log's ``log_file`` and ``trace_rules``, which the configuration and the command line
+    override."""
+    Env.from_env(name=APP['name'], config=APP['config'], topology=APP['topology'])
+    for key in ('log_file', 'trace_rules'):
+      if APP[key] is not None and key not in Env.data: Env.data[key] = APP[key]
+    if APP['cli']: Env.from_argv(sys.argv[1:])
+    if isinstance(rules := Env.data.get('trace_rules'), dict): TRACE_RULES.update(rules)
+    if Env.data.get('log_file'): Logger.enable_file_logging(log_file=Env.data['log_file'])
+
+  @staticmethod
+  def _topology_file() -> Path:
+    for parent in (Env.app_path, *Env.app_path.parents):
+      if (candidate := parent / '_config' / 'config.yaml').exists(): return candidate
+    raise FileNotFoundError(f"The program needs a topology: no _config/config.yaml walking up from '{Env.app_path}'")
+
+  @staticmethod
+  def _main() -> tuple[Path, Path]:
+    import __main__
+    main_file = Path(getattr(__main__, '__file__', 'app')).resolve()
+    return main_file, main_file.parent
+
+  @staticmethod
+  def _program_name() -> str:
+    # Under PyInstaller __main__.__file__ resolves to __main__; use exe name instead
+    return Path(sys.executable).stem if getattr(sys, 'frozen', False) else Env._main()[0].stem
+
+  @staticmethod
+  def _app() -> dict:
+    """APP as every program starts with it: named after the program, its configuration found by that name, no
+    topology, no command line."""
+    Env._main_file, Env._main_dir = Env._main()
+    Env.name, Env.app_path = Env._program_name(), Env._main_dir
+    return {'name': Env.name, 'config': None, 'topology': False, 'cli': False, 'log_file': None, 'trace_rules': None}
 
   @staticmethod
   def from_argv(argv: list[str]) -> None:
@@ -1659,6 +1690,7 @@ class Env(_Base):
     return None
 
 # Global aliases for Env.glob* methods
+APP: dict = Env._app()   # what the program's environment is created from; a program sets its keys at its start
 glob = Env.glob
 glob_int = Env.glob_int
 glob_list = Env.glob_list
@@ -1692,11 +1724,11 @@ class CliApp(_Base):
 
   @classmethod
   def cli(cls, argv: list[str] | None = None) -> Any:
-    """Start from the command line: build the app, then ``main``. ``argv`` stands in for the program's own."""
+    """Start from the command line: the command line over the configuration, build the app, then ``main``. ``argv``
+    stands in for the program's own."""
+    Env._data()
+    Env.from_argv(sys.argv[1:] if argv is None else argv)
     app = cls()
-    if argv is not None:
-      Env.from_argv(argv)
-      app._config_from_env()
     result = app.main()
     if result is not None: print(json.dumps(result, indent=2, default=str))
     return result

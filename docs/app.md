@@ -3,16 +3,26 @@
 Any Python program that imports gppu is already an app. Importing gppu gives it its environment, `Env`, which it never needs to know of: `Info`, `Warn`, `Error`, `Debug` and `glob` are Env's members promoted to module names. [examples/basic.py](../examples/basic.py) is the whole of it:
 
 ```python
-from gppu import Env, Info, Logger, glob
+from gppu import APP, Env, Info, glob
 
+APP['cli'] = True
 Info('started on', Env.host)
-if glob('trace'): Logger.trace_rules['all'] = True
-if glob('log_file'): Logger.enable_file_logging(log_file=glob('log_file'))
+if glob('greeting'): Info(glob('greeting'))
 ```
+
+## APP: what the program says about itself
+
+`APP` is a dictionary every program has from the import, of what its environment is created from. A program changes its keys at its start, before anything reads the environment; one that is content with them says nothing.
+
+- `name`: the program's name; at first, the stem of the script.
+- `config`: the configuration file; when it is not set, `<name>.yaml` or `config.yaml`, searched upward from the program's folder. A program with none runs without one.
+- `topology`: True when the program needs the topology: the nearest `_config/config.yaml` upward, such as `RAN/Hosts/_config/config.yaml` or `CRAP/_config/config.yaml`, goes under its configuration.
+- `cli`: True when the program is a command-line program: its command line overrides its configuration, the data and the log's parameters alike. `--key value` sets that key, a bare `--flag` sets it to True, and a slash path names a nested key, `--chrome/profile Work`; arguments that are not a key or its value are the program's own.
+- `log_file` and `trace_rules`: the log's parameters, which the configuration and the command line override: `--log_file C:/.cache/x.log` mirrors the log to that file, `--trace_rules/all` shows every Debug line.
 
 ## The environment
 
-`Env` is an app of a special kind: static, global, one per program. Its first read of the configuration loads it: `<name>.yaml` or `config.yaml`, searched upward from the program's folder, named after the program; a program with no such file runs without one. The command line goes over it: `--key value` sets that key, a bare `--flag` sets it to True, a slash path names a nested key; other arguments are the program's own. Env also holds what needs no file: `host`, `platform`, `os`, `user`, `home`.
+`Env` is an app of a special kind: static, global, one per program, created from `APP` on the first read of its configuration. It also holds what needs no file: `host`, `platform`, `os`, `user`, `home`.
 
 ## The log
 
@@ -23,7 +33,7 @@ if glob('log_file'): Logger.enable_file_logging(log_file=glob('log_file'))
 `_Base` is the parent the environment and the apps share: `mixin_Logger`, the log under the class's own name, with `mixin_Config`, the configuration. An object built on it is named as given or after the program, and its `_my` is a copy of Env, read with `self.my(...)`, `self.my_int(...)`, `self.my_list(...)` and `self.my_dict(...)`.
 
 - `App` is `_Base` with the data class `_DC`, for a program that is more than a script: what it is constructed with is its data.
-- `CliApp` runs `main` and prints what it returns as JSON: `MyApp.cli()`.
+- `CliApp` runs `main` and prints what it returns as JSON: `MyApp.cli()`. Its command line overrides its configuration, as `APP['cli']` does for any program.
 - `AsyncApp` composes `_Base` with `mixin_Stepper`, the YMRO steps, and `mixin_EventLoopBridge`. Construction runs `init`; `await app.run()` runs `init`, `load` and `start` on the app's loop and returns when the work they spawned with `self._spawn(...)` has finished. `app.stop()` cancels it.
   - `init` does light loading, what can be loaded and parsed, as a constructor does.
   - `load` does the heavy loading of data.
