@@ -1414,6 +1414,7 @@ class mixin_Logger(_mixin):
   @classmethod
   def __init_subclass__(cls, **kw):
     super().__init_subclass__(**kw)
+    if issubclass(cls, _Env): return   # the environment logs with the global log, under the program's name
     cls._logger = _Env._logger.getChild(cls.__name__)
     for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'): setattr(cls, name, staticmethod(partial(getattr(_Env, name), logger=cls._logger)))
 
@@ -1481,8 +1482,53 @@ class _DC(UserDict):
 # endregion
 
 
+# region Configuration mixins
+class _either:
+  """A method that binds to the instance, or to the class when called on the class, as on Env."""
+  def __init__(self, fn: Callable) -> None: self.fn = fn
+  def __get__(self, obj, cls) -> Callable: return partial(self.fn, cls if obj is None else obj)
+
+
+class mixin_Config(_mixin):
+  _my: dict[str, Any] = {}
+
+  def _config_from_key(self, key: str) -> None: self._my.update(Env.glob_dict(key))
+  def _config_copy(self, other: mixin_Config) -> None: self._my = dict(other._config_data())
+  def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
+  def _config_from_env(self) -> None: self._my = deepcopy(Env._data())
+  def _config_data(self) -> dict: return self._my
+
+  @_either
+  def my(self, path: str | y2path, default=None) -> Any: return self._config_data() if path == '' else deepget(path, self._config_data(), default=default)
+  @_either
+  def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self._config_data(), default=default)
+  @_either
+  def my_float(self, path: str | y2path, default: float = float('nan')) -> float: return deepget_float(path, self._config_data(), default=default)
+  @_either
+  def my_list(self, path: str | y2path, default: list = []) -> list: return deepget_list(path, self._config_data(), default=default or [])
+  @_either
+  def my_dict(self, path: str | y2path, default: dict = {}) -> dict: return self._config_data() if path == '' else deepget_dict(path, self._config_data(), default=default or {})
+
+
+class _Config(mixin_Config):
+  """``_my`` is a copy of Env, which loads the program's default environment on its first read, as for a script."""
+  _base_path: Path
+
+  def __init__(self, **kw) -> None:
+    super().__init__(**kw)
+    self._my = deepcopy(Env._data())
+    self._base_path = Path('.')
+
+  # def my_path(self, path) -> Path: return self._base_path / self.my(path)
+
+
+class _Base(_Logger, _Config): pass
+# endregion
+
+
 # region Env: the configuration
-class Env(_Env):
+class Env(_Env, _Base):
+  """The program's environment: the special app, static and global, one per program; an app object copies it."""
   data: dict[str, Any] = {}
   initialized: bool = False
 
@@ -1525,13 +1571,9 @@ class Env(_Env):
     return Env.data
 
   @staticmethod
-  def glob(path: str | y2path, default=None) -> Any: return Env._data() if path == '' else deepget(path, Env._data(), default=default)
-  @staticmethod
-  def glob_int(path: str | y2path, default: int = 0) -> int: return deepget_int(path, Env._data(), default=default)
-  @staticmethod
-  def glob_list(path: str | y2path, default=[]) -> list: return deepget_list(path, Env._data(), default=default)
-  @staticmethod
-  def glob_dict(path: str | y2path, default={}) -> dict: return Env._data() if path == '' else deepget_dict(path, Env._data(), default=default)
+  def _config_data() -> dict: return Env._data()
+
+  glob, glob_int, glob_list, glob_dict = (mixin_Config.__dict__[n] for n in ('my', 'my_int', 'my_list', 'my_dict'))
   @staticmethod
   @sync
   async def dump():
@@ -1624,36 +1666,6 @@ glob_dict = Env.glob_dict
 # endregion
 
 
-# region Configuration mixins
-class mixin_Config(_mixin):
-  _my: dict[str, Any] = {}
-
-  def _config_from_key(self, key: str) -> None: self._my.update(Env.glob_dict(key))
-  def _config_copy(self, other: mixin_Config) -> None: self._my = dict(other._my)
-  def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
-  def _config_from_env(self) -> None: self._my = deepcopy(Env.data)
-
-  def my(self, path: str | y2path, default=None) -> Any: return deepget(path, self._my, default=default)
-  def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self._my, default=default)
-  def my_float(self, path: str | y2path, default: float = float('nan')) -> float: return deepget_float(path, self._my, default=default)
-  def my_list(self, path: str | y2path, default: list = []) -> list: return deepget_list(path, self._my, default=default or [])
-  def my_dict(self, path: str | y2path, default: dict = {}) -> dict: return deepget_dict(path, self._my, default=default or {})
-
-
-class _Config(mixin_Config):
-  """``_my`` is a copy of Env, which loads the program's default environment on its first read, as for a script."""
-  _base_path: Path
-
-  def __init__(self, **kw) -> None:
-    super().__init__(**kw)
-    self._my = deepcopy(Env._data())
-    self._base_path = Path('.')
-
-  # def my_path(self, path) -> Path: return self._base_path / self.my(path)
-
-
-class _Base(_Logger, _Config): pass
-# endregion
 
 
 # region App
