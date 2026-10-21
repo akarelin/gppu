@@ -14,7 +14,7 @@ dependencies."""
 from datetime import UTC, datetime, timedelta
 from enum import IntEnum
 from collections.abc import Sequence
-from typing import Annotated, Any, Self, TypeVar, Union
+from typing import Any, ClassVar, Self, TypeVar, Union
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -36,7 +36,6 @@ from sqlalchemy.exc import DataError, IntegrityError, NoResultFound, StatementEr
 from sqlalchemy.sql.elements import UnaryExpression
 from sqlalchemy.sql.visitors import iterate
 from sqlmodel import Column, Field, SQLModel, delete, func, or_, select
-from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..data import _SQABase
 from ..gppu import TimeSpan
@@ -49,13 +48,18 @@ DATETIME, DURATION = TypeAdapter(datetime), TypeAdapter(timedelta)
 STORE = ('id', 'created', 'updated', 'type')   # the columns Postgres fills: a caller does not send them
 
 
-async def database(request: Request):
-    """A database session per request, not a Linked Data session: the store's, of the app serving the API (`served()`), committed
-    when the call ends and rolled back on an error. The store's zone is UTC, so a filter's time without a zone is compared as UTC."""
-    async with request.app.state.store.session() as db:
-        yield db
-
-Db = Annotated[AsyncSession, Depends(database)]
+async def transaction():
+    """Each request is one transaction, a FastAPI dependency with yield of the API `served()` serves: the request's database
+    session, the store's scoped session for the task serving it, committed when the call ends, rolled back on an error and
+    removed. The store's zone is UTC, so a filter's time without a zone is compared as UTC."""
+    try:
+        yield
+        await _Record.db().commit()
+    except Exception:
+        await _Record.db().rollback()
+        raise
+    finally:
+        await _Record.db.remove()
 
 Page = CustomizedPage[CursorPage[T], UseName('Page'), UseIncludeTotal(True), UseOptionalParams(),
                       UseParamsFields(size=Query(None, ge=1, alias='limit', description='How many records a page holds.')),
@@ -63,12 +67,6 @@ Page = CustomizedPage[CursorPage[T], UseName('Page'), UseIncludeTotal(True), Use
                       UseFieldsAliases(next_page='next', previous_page='previous')]   # `limit` records after `cursor`, the total, and `next`
 Params = Page.__params_type__
 LEAST = {str: '', int: 0, UUID: UUID(int=0), datetime: datetime.min.replace(tzinfo=ZoneInfo('UTC'))}   # what an empty column is sorted as
-
-
-async def saved[M](db: AsyncSession, row: M) -> M:
-    """The row, with what the call wrote, committed together."""
-    await db.commit()
-    return row
 
 
 class Type(IntEnum):
@@ -166,6 +164,7 @@ class _Record(SQLModel):
     `class Node(_Record, table=True)`, so it is created, read, updated, deleted, listed and searched in its own table by its own
     rules. What a caller sends is a record without the columns Postgres fills (`STORE`); a field its type has not is refused."""
     model_config = ConfigDict(extra='forbid')
+    db: ClassVar[Any] = None   # the store's scoped session, set once by served(): called, the session of the request being served
     __mapper_args__ = {'eager_defaults': True}   # the id, type and times the table makes come back with the insert
     id: UUID | None = Field(None, primary_key=True, sa_column_kwargs={'server_default': FetchedValue()},
                             description="The record's identity in this system; its first byte is the `type`.")
@@ -198,26 +197,26 @@ class _Record(SQLModel):
         return json_schema
 
     @classmethod
-    async def create(cls, db: AsyncSession, sent: '_Record') -> Self:
+    async def create(cls, sent: '_Record') -> Self:
         """A new record of its type from what is sent, with the id the store makes. Stored at the commit."""
-        return await cls.update(db, None, sent)
+        return await cls.update(None, sent)
 
     @classmethod
-    async def read(cls, db: AsyncSession, id: UUID) -> Self:
+    async def read(cls, id: UUID) -> Self:
         """404 when there is none (`missing`)."""
-        return await db.get_one(cls, id)
+        return await cls.db().get_one(cls, id)
 
     @classmethod
-    async def update(cls, db: AsyncSession, id: UUID | None, sent: '_Record') -> Self:
+    async def update(cls, id: UUID | None, sent: '_Record') -> Self:
         """Merged into the record of that id when it is there, `data` and `meta` merged and a null removing a key; created with that id
-        when it is not: an insert is an upsert. Stored at the commit. Written by its class's rules: a task's own at its own path, a
+        when it is not: an insert is an upsert. Written at once, so what Postgres fills comes back, and stored at the commit. Written by its class's rules: a task's own at its own path, a
         record's through `/records`. The columns Postgres fills and a field its table has not (an event's `ts` sent to a node) are
         refused; Postgres refuses an id of another type."""
         if filled := sent.model_fields_set & set(STORE):
             raise HTTPException(422, f'{", ".join(sorted(filled))}: the store fills them')
         if extra := sent.model_fields_set - cls.model_fields.keys():
             raise HTTPException(422, f'a {cls.__tablename__} has no {", ".join(sorted(extra))}')
-        if id and (row := await db.get(cls, id)):
+        if id and (row := await cls.db().get(cls, id)):
             change = {k: getattr(sent, k) for k in sent.model_fields_set}   # what was sent, a span still a Span
             for key in ('data', 'meta'):
                 if key in change:
@@ -225,33 +224,34 @@ class _Record(SQLModel):
             row = row.sqlmodel_update(change)
         else:
             row = cls.model_validate(sent, update={'id': id})
-            db.add(row)
+            cls.db().add(row)
+        await cls.db().flush()
         return row
 
     @classmethod
-    async def delete(cls, db: AsyncSession, id: UUID) -> None:
+    async def delete(cls, id: UUID) -> None:
         """With the links from it and to it; refused while it holds records, which are deleted or moved out first. 404 when there is
         none. Gone at the commit."""
-        await cls.read(db, id)
-        if n := (await db.exec(select(func.count()).select_from(Record).where(Record.parent_id == id))).one():
+        await cls.read(id)
+        if n := (await cls.db().exec(select(func.count()).select_from(Record).where(Record.parent_id == id))).one():
             raise HTTPException(422, f'{id} holds {n} records: delete them or move them out first')
-        await db.execute(delete(Link).where(or_(Link.from_id == id, Link.to_id == id)))
-        await db.execute(delete(cls).where(cls.id == id))
+        await cls.db().execute(delete(Link).where(or_(Link.from_id == id, Link.to_id == id)))
+        await cls.db().execute(delete(cls).where(cls.id == id))
 
     @classmethod
-    async def list(cls, db: AsyncSession, *where, order: tuple, what: str) -> Sequence[Self]:
+    async def list(cls, *where, order: tuple, what: str) -> Sequence[Self]:
         """A `list` (# Universals, Operations), not paged: every record of its table `where` selects, in `order`; refused with 422
         naming their count and size, `what` they are, when they are more than a list sends, `LIST` rows or `LIST_BYTES` of their
         `data` and `meta` as stored."""
         query = select(cls).where(*where)
         found = query.subquery()
-        n, size = (await db.exec(select(func.count(), func.coalesce(func.sum(func.pg_column_size(found.c.data) + func.pg_column_size(found.c.meta)), 0)))).one()
+        n, size = (await cls.db().exec(select(func.count(), func.coalesce(func.sum(func.pg_column_size(found.c.data) + func.pg_column_size(found.c.meta)), 0)))).one()
         if n > LIST or size > LIST_BYTES:
             raise HTTPException(422, f'{n} {what}, {size} bytes of data, more than a list sends ({LIST}, {LIST_BYTES} bytes): search them, a page at a time')
-        return (await db.exec(query.order_by(*order))).all()
+        return (await cls.db().exec(query.order_by(*order))).all()
 
     @classmethod
-    async def search(cls, db: AsyncSession, params, *where, conditions: QueryParams | None = None, only: bool = False):
+    async def search(cls, params, *where, conditions: QueryParams | None = None, only: bool = False):
         """A page of a search (# Universals, Operations): the records of its table fastapi-querybuilder's query of `conditions` and
         `where` select, `limit` of them after the last one of the page before (sqlakeyset), so the order ends with the id, which no two
         rows share; every match when no limit is given. `only` keeps to its own table's records, not those of the types made from it."""
@@ -266,9 +266,9 @@ class _Record(SQLModel):
         keys = [after(k) for k in query._order_by_clauses]   # querybuilder's sort, read as sqlakeyset reads it
         query = query.order_by(None).order_by(*keys, cls.id)
         if params.size is None:
-            rows = (await db.scalars(query)).all()   # querybuilder's select is SQLAlchemy's: rows of one record each
+            rows = (await cls.db().scalars(query)).all()   # querybuilder's select is SQLAlchemy's: rows of one record each
             return create_page(rows, params=params, total=len(rows))
-        return await apaginate(db, query, params=params)
+        return await apaginate(cls.db(), query, params=params)
 
 
 # ++     The data models: what a type adds to a record, and the abstract types
@@ -279,18 +279,18 @@ class _Link(_Record):
     to_id: UUID | None = Field(None, description='The node where it ends.')
 
     @classmethod
-    async def update(cls, db: AsyncSession, id: UUID | None, sent: _Record) -> Self:
+    async def update(cls, id: UUID | None, sent: _Record) -> Self:
         """As a record is written; an end it is sent that is not a node is refused."""
-        row = await super().update(db, id, sent)
+        row = await super().update(id, sent)
         for end in (getattr(row, k) for k in ('from_id', 'to_id') if k in sent.model_fields_set):
-            if end and not await db.get(Node, end):   # node's table inherits every type but record and link
+            if end and not await cls.db().get(Node, end):   # node's table inherits every type but record and link
                 raise HTTPException(422, f'{end} is not a node')
         return row
 
     @classmethod
-    async def delete(cls, db: AsyncSession, id: UUID) -> None:
+    async def delete(cls, id: UUID) -> None:
         """The link alone; the nodes at its ends stay, and a link that is not there is gone already. Gone at the commit."""
-        await db.execute(delete(cls).where(cls.id == id))
+        await cls.db().execute(delete(cls).where(cls.id == id))
 
 
 class _Event(_Record):
@@ -380,28 +380,27 @@ def typed(path: str, body: type[_Record], name: str, *models: type[_Record]) -> 
         return own[type] if type is not None else base
 
     @routes.post(path, response_model=One, summary=f'Create a {name}')
-    async def create(db: Db, record: body, model=Depends(made if len(models) > 1 else lambda: base)):
+    async def create(record: body, model=Depends(made if len(models) > 1 else lambda: base)):
         """It comes back with the `id`, `type` and `created` the store gave it."""
-        return await saved(db, await model.create(db, record))
+        return await model.create(record)
 
     @routes.get(path + '/{id}', response_model=One, summary=f'Read a {name}')
-    async def read(db: Db, id: UUID):
+    async def read(id: UUID):
         """404 when there is none."""
-        return await own.get(id.bytes[0], base).read(db, id)
+        return await own.get(id.bytes[0], base).read(id)
 
     @routes.put(path + '/{id}', response_model=One, summary=f'Update a {name}')
-    async def update(db: Db, id: UUID, record: body):
+    async def update(id: UUID, record: body):
         """Merged with what is sent when the `id` is there, created with that `id` when it is not."""
-        return await saved(db, await own.get(id.bytes[0], base).update(db, id, record))
+        return await own.get(id.bytes[0], base).update(id, record)
 
     @routes.delete(path + '/{id}', status_code=204, summary=f'Delete a {name}')
-    async def delete(db: Db, id: UUID):
+    async def delete(id: UUID):
         """With its links; refused while it holds records, which are deleted or moved out first. 404 when there is none."""
-        await own.get(id.bytes[0], base).delete(db, id)
-        await db.commit()
+        await own.get(id.bytes[0], base).delete(id)
 
     @routes.get(path, response_model=Page[One], summary=f'Search {name}s')
-    async def search(db: Db, type: Type | None = None, conditions: QueryParams = Depends(), params: Params = Depends()):
+    async def search(type: Type | None = None, conditions: QueryParams = Depends(), params: Params = Depends()):
         """Of one `type`, or of every type of the path with the columns of the first; a type of the path, its own table's records,
         not those of the types made from it, and any other through the first, with its columns.
 
@@ -409,16 +408,13 @@ def typed(path: str, body: type[_Record], name: str, *models: type[_Record]) -> 
         `{"parent_id": {"$eq": "…"}, "status": {"$ne": "discarded"}, "name": {"$contains": "x"}}`, with the operators
         `$eq` `$ne` `$gt` `$gte` `$lt` `$lte` `$in` `$contains` `$startswith` `$isempty` `$isnotempty`, joined by `$and` `$or`.
         A time in a condition is UTC in whole seconds, `2026-10-16T13:00:00Z` or the same without the `Z`; one with an offset is refused.
-        A key inside `data` or `meta` is reached by its path, `{"data.kind": {"$eq": "Feature"}}`, `{"data.planned.end": {"$lt": "2026-11"}}`,
-        compared as text; an activity's span by the spans it overlaps, `{"span": {"$overlaps": {"start": "…", "end": "…"}}}`: both at
-        the top of `filters`, joined to the rest by and.
         `sort` is `column:asc` or `column:desc`; `search` is text looked for in every text column.
 
         A page is `limit` records after `cursor`, with the `total` and `next`, the cursor of the page after it, none after the last.
         Every match when no `limit` is given."""
         if type in own:
-            return await own[type].search(db, params, conditions=conditions, only=True)
-        return await base.search(db, params, *([base.type == type] if type else []), conditions=conditions)
+            return await own[type].search(params, conditions=conditions, only=True)
+        return await base.search(params, *([base.type == type] if type else []), conditions=conditions)
 
     return routes
 
@@ -427,23 +423,23 @@ router = APIRouter()
 
 
 @router.get('/types', response_model=list[RecordType], tags=['type'], summary='List the types')
-async def types(db: Db):
+async def types():
     """Every type a record can be, by its code: what `type` takes in a record search."""
-    return (await db.exec(select(RecordType).order_by(RecordType.id))).all()
+    return (await _Record.db().exec(select(RecordType).order_by(RecordType.id))).all()
 
 
 @router.get('/records/{id}/records', response_model=list[Record], tags=['record'], summary="List a record's children")
-async def record_list(db: Db, id: UUID, type: Type | None = None):
+async def record_list(id: UUID, type: Type | None = None):
     """`list`, a simple select of like records (# Universals, Operations): the records whose parent it is, of one `type` or of
     every type, in the order they were made. No query, that is search, and not paged: more than `LIST` children, or more than
     `LIST_BYTES` of their `data` and `meta`, are refused with their count and size, and search pages them."""
-    return await Record.list(db, Record.parent_id == id, *([Record.type == type] if type else []), order=(Record.created,), what=f'records are under {id}')
+    return await Record.list(Record.parent_id == id, *([Record.type == type] if type else []), order=(Record.created,), what=f'records are under {id}')
 
 
 @router.get('/records/{id}/links', response_model=Page[Link], tags=['link'], summary="Search a node's links")
-async def record_links(db: Db, id: UUID, conditions: QueryParams = Depends(), params: Params = Depends()):
+async def record_links(id: UUID, conditions: QueryParams = Depends(), params: Params = Depends()):
     """From it and to it; `filters`, `sort`, `search` and paging as in record search."""
-    return await Link.search(db, params, or_(Link.from_id == id, Link.to_id == id), conditions=conditions)
+    return await Link.search(params, or_(Link.from_id == id, Link.to_id == id), conditions=conditions)
 
 
 router.include_router(typed('/records', Fields, 'record', Record, Node, Collection, View, Event, Message, Activity, Link))
@@ -494,15 +490,15 @@ def api_at(path: str, name: str, summary: str, *routers: APIRouter) -> FastAPI:
 
 
 def served(apis: dict[str, FastAPI], store: _SQABase) -> FastAPI:
-    """The core and the APIs built on it as one API on `store`, the app's, whose sessions its requests read and write: every route in
-    one OpenAPI document, `/openapi.json`, shown at `/docs`, each API's routes under its tag; each API built on it keeps its own
+    """The core and the APIs built on it as one API on `store`, the app's: its scoped session is every record's (`_Record.db`), set
+    once here, and each request is one transaction (`transaction`). Every route in one OpenAPI document, `/openapi.json`, shown at `/docs`, each API's routes under its tag; each API built on it keeps its own
     document at `{path}/docs` as well. With no APIs, the core alone."""
     tags = {t: a.summary for a in apis.values() for ops in a.openapi()['paths'].values() for op in ops.values() for t in op.get('tags', ())}   # each API's tags, described by its summary
     one = FastAPI(title=app.title, version=app.version, summary='Records and the links between them, and the APIs built on them: '
                   + ', '.join(p.strip('/') for p in apis) + '.',
-                  openapi_tags=app.openapi_tags + [{'name': t, 'description': s} for t, s in tags.items()])
+                  openapi_tags=app.openapi_tags + [{'name': t, 'description': s} for t, s in tags.items()], dependencies=[Depends(transaction)])
     one.include_router(router)
     for api in apis.values():
         one.include_router(api.router)
-    one.state.store = store
+    _Record.db = store.scoped_session
     return handled(one)

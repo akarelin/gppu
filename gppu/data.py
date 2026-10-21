@@ -85,20 +85,34 @@ def async_engine(dsn: str):
 class _SQABase(_PersistentBase):
   """SQLModel ORM database access: SQLAlchemy's async engine on psycopg 3 (`async_engine`), as gppu.ld uses it.
 
-  `session()` is one database session, committed when it closes and rolled back on an error.
+  `session()` is one database session, committed when it closes and rolled back on an error. `scoped_session` is
+  SQLAlchemy's `async_scoped_session` on the engine: called, it gives the session of the asyncio task calling, so each
+  request served has its own without passing it along; `remove()` closes it.
   Needs the `ld` extra.
   """
   _engine: Any
+  _scoped: Any
 
   def __init__(self, **kw):
     super().__init__(**kw)
     self._engine = None
+    self._scoped = None
 
   @property
   def engine(self):
     """Lazy engine - creates on first use."""
     if self._engine is None: self._engine = async_engine(self.db_connection_string)
     return self._engine
+
+  @property
+  def scoped_session(self):
+    """The session of the asyncio task calling, one per task (SQLAlchemy's async_scoped_session); made on first use."""
+    if self._scoped is None:
+      import asyncio
+      from sqlalchemy.ext.asyncio import async_scoped_session, async_sessionmaker
+      from sqlmodel.ext.asyncio.session import AsyncSession
+      self._scoped = async_scoped_session(async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False), scopefunc=asyncio.current_task)
+    return self._scoped
 
   @asynccontextmanager
   async def session(self):
