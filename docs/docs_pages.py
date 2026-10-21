@@ -11,10 +11,9 @@ import subprocess
 import tempfile
 from pathlib import Path, PurePath
 
-import mkdocs_gen_files
-
 ROOT = Path(__file__).parents[1]   # the repository, beside docs/
 PACKAGE = ROOT / 'gppu'
+WRITTEN = ROOT / 'docs' / 'written'   # what Claude Code wrote of each module (docs/written.py), at the top of its page
 GUIDES = 'guides'                  # where the site carries gppu's documents, laid out as in the repository, so their links hold
 LINK = re.compile(r'(?P<lead>\]\(|href="|src=")(?P<target>[^)"#\s]+)')   # a document's links, Markdown's and its HTML's
 
@@ -145,21 +144,30 @@ def relinked(document: str, published: set) -> str:
     return LINK.sub(relink, (ROOT / document).read_text(encoding='utf-8'))
 
 
-with mkdocs_gen_files.open('graph.html', 'w') as f:
-    f.write(graph())
+def build():
+    """Every page, made while mkdocs builds the site."""
+    with mkdocs_gen_files.open('graph.html', 'w') as f:
+        f.write(graph())
 
-for name, source in modules():
-    if name == 'gppu':   # the package itself: its version, its docstring and what it exports, on the home page
-        with mkdocs_gen_files.open('index.md', 'a') as f:
-            f.write(f'\n**Version** {version()}\n\n::: gppu\n    options:\n      members: false\n      show_root_heading: false\n\n'
-                    f'{exports(name, source)}\n')
-        continue
-    body = f'::: {name}\n' if defines(source) else (   # a package: its docstring and what it gathers, defined on its modules' pages
-        f'::: {name}\n    options:\n      members: false\n      show_root_heading: false\n\n{exports(name, source)}\n')
-    with mkdocs_gen_files.open(page(name, source), 'w') as f:
-        f.write(f'# {name}\n\n{body}')
+    for name, source in modules():
+        if name == 'gppu':   # the package itself: its version, its docstring and what it exports, on the home page
+            with mkdocs_gen_files.open('index.md', 'a') as f:
+                f.write(f'\n**Version** {version()}\n\n::: gppu\n    options:\n      members: false\n      show_root_heading: false\n\n'
+                        f'{exports(name, source)}\n')
+            continue
+        body = f'::: {name}\n' if defines(source) else (   # a package: its docstring and what it gathers, defined on its modules' pages
+            f'::: {name}\n    options:\n      members: false\n      show_root_heading: false\n\n{exports(name, source)}\n')
+        written = WRITTEN / f'{name}.md'
+        description = written.read_text(encoding='utf-8').split('\n', 1)[1] + '\n' if written.exists() else ''
+        with mkdocs_gen_files.open(page(name, source), 'w') as f:
+            f.write(f'# {name}\n\n{description}{body}')
 
-published = set(documents())
-for document in published:
-    with mkdocs_gen_files.open(f'{GUIDES}/{document}', 'w') as f:
-        f.write(relinked(document, published))
+    published = set(documents())
+    for document in published:
+        with mkdocs_gen_files.open(f'{GUIDES}/{document}', 'w') as f:
+            f.write(relinked(document, published))
+
+
+if __name__ != 'docs_pages':   # run by mkdocs-gen-files; docs/written.py imports it for modules() alone
+    import mkdocs_gen_files
+    build()
