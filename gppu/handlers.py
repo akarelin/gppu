@@ -3,18 +3,18 @@
 There is a handler for every type of data, and probe, which knows every handler there is (HANDLERS) and, given a
 path whose type is not known in advance, which handler to call:
 
-    handler = probe('D:/Dev/gppu/README.md')    # MarkdownHandler
-    record = handler.parse('D:/Dev/gppu/README.md')    # or await handler.parse(...) inside an event loop
+    handler = probe('D:/Dev/gppu/README.md')            # MarkdownHandler; await probe(...) in an event loop
+    record = handler.parse('D:/Dev/gppu/README.md')     # await handler.parse(...) in an event loop
 
 A handler is a class of class methods. `identify(path, stat, head)` says whether the path is of its type from what
 probe gives it: the path, its stat, and `head(n)`, the file's first n bytes. A handler does no I/O of its own there,
 so probing a path takes one stat and at most one read of the most bytes a handler asks for: a suffix needs none, a
 SQLite file's header 16 once its suffix says SQLite, a session's first lines up to SESSION_HEAD once its suffix
-says .jsonl; probe is synchronous. `parse(path)`, asynchronous, gives the record the handler's `read` makes of the
-path in a thread, what
+says .jsonl. probe and parse are asynchronous, awaited inside an event loop and returned directly outside one.
+`parse(path)` reads the path into a record, what
 Linked Data holds of the thing: its type, subtype, name, span, data and, in meta, the path it was read from; a
 session's record also has its messages. A subtype is a subclass of its type: it identifies a path only where its
-type does, and its read adds to its type's. probe returns the most specific handler that identifies the path. A
+type does, and its parse adds to its type's. probe returns the most specific handler that identifies the path. A
 program adds a handler by subclassing and appending it to HANDLERS:
 
     class BillingCSVHandler(CSVHandler):
@@ -194,16 +194,11 @@ class Handler:
     @classmethod
     @sync
     async def parse(cls, path: str | Path) -> dict[str, Any]:
-        """The path as a Linked Data record, read by the handler's read in a thread: awaited inside an event loop,
-        returned directly outside one."""
-        return await asyncio.to_thread(cls.read, path)
-
-    @classmethod
-    def read(cls, path: str | Path) -> dict[str, Any]:
-        """The path's record: its size and modified time as its stat gives them. A handler's read adds to its
-        type's."""
+        """The path as a Linked Data record: its size and modified time as its stat gives them. A handler's parse adds
+        to its type's; what it reads, it reads in a thread. Awaited inside an event loop, returned directly outside
+        one."""
         path = full_path(path)
-        stat = path.stat(follow_symlinks=False)
+        stat = await asyncio.to_thread(path.stat, follow_symlinks=False)
         return {"type": cls.type, "subtype": cls.subtype, "name": path.name or str(path), "span": None,
                 "data": {"size": stat.st_size, "modified": datetime.fromtimestamp(stat.st_mtime, timezone.utc)},
                 "meta": {"source": str(path)}}
@@ -247,10 +242,11 @@ class IgnoredHandler(Handler):
         return cls.reason(path, stat) is not None
 
     @classmethod
-    def read(cls, path: str | Path) -> dict[str, Any]:
-        record = super().read(path)
+    @sync
+    async def parse(cls, path: str | Path) -> dict[str, Any]:
+        record = await super().parse(path)
         path = full_path(path)
-        record["data"]["reason"] = cls.reason(path, path.stat(follow_symlinks=False))
+        record["data"]["reason"] = cls.reason(path, await asyncio.to_thread(path.stat, follow_symlinks=False))
         return record
 
     @classmethod
@@ -286,9 +282,10 @@ class LinkHandler(Handler):
                 or getattr(stat, "st_reparse_tag", 0) == getattr(stat_module, "IO_REPARSE_TAG_MOUNT_POINT", None))
 
     @classmethod
-    def read(cls, path: str | Path) -> dict[str, Any]:
-        record = super().read(path)
-        record["data"]["target"] = os.readlink(path)
+    @sync
+    async def parse(cls, path: str | Path) -> dict[str, Any]:
+        record = await super().parse(path)
+        record["data"]["target"] = await asyncio.to_thread(os.readlink, path)
         return record
 
 
@@ -303,23 +300,22 @@ class FolderHandler(Handler):
         return stat_module.S_ISDIR(stat.st_mode)
 
     @classmethod
-    def read(cls, path: str | Path) -> dict[str, Any]:
-        record = super().read(path)
-        files = folders = size = 0
-        times = []
-        with os.scandir(full_path(path)) as entries:
-            for entry in entries:
-                if entry.is_dir(follow_symlinks=False):
-                    folders += 1
-                    continue
-                stat = entry.stat(follow_symlinks=False)
-                files += 1
-                size += stat.st_size
-                if (time := cls.valid_time(datetime.fromtimestamp(stat.st_mtime, timezone.utc))) is not None:
-                    times.append(time)
-        record["data"].update(files=files, folders=folders, bytes=size)
+    @sync
+    async def parse(cls, path: str | Path) -> dict[str, Any]:
+        record = await super().parse(path)
+        entries = await asyncio.to_thread(cls._entries, full_path(path))
+        files = [stat for folder, stat in entries if not folder]
+        times = [time for stat in files if (time := cls.valid_time(datetime.fromtimestamp(stat.st_mtime, timezone.utc)))]
+        record["data"].update(files=len(files), folders=len(entries) - len(files), bytes=sum(stat.st_size for stat in files))
         record["span"] = cls.spanning(times)
         return record
+
+    @staticmethod
+    def _entries(path: Path) -> list[tuple[bool, os.stat_result | None]]:
+        """Each entry the folder directly holds: whether it is a folder, and a file's stat."""
+        with os.scandir(path) as entries:
+            return [(True, None) if entry.is_dir(follow_symlinks=False) else (False, entry.stat(follow_symlinks=False))
+                    for entry in entries]
 
 
 class FileHandler(Handler):
@@ -346,14 +342,18 @@ class SqliteHandler(FileHandler):
                 and head(len(cls.MAGIC)) == cls.MAGIC)
 
     @classmethod
-    def read(cls, path: str | Path) -> dict[str, Any]:
-        record = super().read(path)
-        with closing(sqlite3.connect(full_path(path).as_uri() + "?mode=ro&immutable=1", uri=True)) as database:
+    @sync
+    async def parse(cls, path: str | Path) -> dict[str, Any]:
+        record = await super().parse(path)
+        record["data"]["tables"] = await asyncio.to_thread(cls._tables, full_path(path))
+        return record
+
+    @staticmethod
+    def _tables(path: Path) -> dict[str, list[str]]:
+        with closing(sqlite3.connect(path.as_uri() + "?mode=ro&immutable=1", uri=True)) as database:
             names = [name for (name,) in database.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
-            record["data"]["tables"] = {name: [row[1] for row in database.execute(f'PRAGMA table_info("{name}")')]
-                                        for name in names}
-        return record
+            return {name: [row[1] for row in database.execute(f'PRAGMA table_info("{name}")')] for name in names}
 
 
 class MarkdownHandler(FileHandler):
@@ -379,10 +379,11 @@ class MarkdownHandler(FileHandler):
         return super().identify(path, stat, head) and path.suffix.casefold() == ".md"
 
     @classmethod
-    def read(cls, path: str | Path) -> dict[str, Any]:
-        record = super().read(path)
+    @sync
+    async def parse(cls, path: str | Path) -> dict[str, Any]:
+        record = await super().parse(path)
         path = full_path(path)
-        frontmatter = cls._frontmatter(path)
+        frontmatter = await asyncio.to_thread(cls._frontmatter, path)
         name, title = frontmatter.get("name", frontmatter.get("title")), frontmatter.get("title", frontmatter.get("name"))
         tags = frontmatter.get("tags")
         tags = [] if tags is None else tags if isinstance(tags, list) else [tags]
@@ -444,10 +445,10 @@ class CSVHandler(FileHandler):
         return super().identify(path, stat, head) and path.suffix.casefold() == ".csv"
 
     @classmethod
-    def read(cls, path: str | Path) -> dict[str, Any]:
-        record = super().read(path)
-        with full_path(path).open(encoding="utf-8-sig", newline="") as stream:
-            rows = [tuple(row) for row in csv.reader(stream, strict=True)]
+    @sync
+    async def parse(cls, path: str | Path) -> dict[str, Any]:
+        record = await super().parse(path)
+        rows = await asyncio.to_thread(cls._rows, full_path(path))
         header, rows = (rows[0], rows[1:]) if rows else ((), [])
         keys = {key.casefold() for key in cls.time_keys}
         columns = [index for index, name in enumerate(header) if name.strip().casefold() in keys]
@@ -455,6 +456,11 @@ class CSVHandler(FileHandler):
         record["span"] = cls.spanning([time for row in rows for index in columns
                                        if index < len(row) and (time := cls._time(row[index])) is not None])
         return record
+
+    @staticmethod
+    def _rows(path: Path) -> list[tuple[str, ...]]:
+        with path.open(encoding="utf-8-sig", newline="") as stream:
+            return [tuple(row) for row in csv.reader(stream, strict=True)]
 
     @classmethod
     def _time(cls, value: str) -> datetime | None:
@@ -495,9 +501,10 @@ class LogHandler(FileHandler):
         return super().identify(path, stat, head) and path.suffix.casefold() == ".log"
 
     @classmethod
-    def read(cls, path: str | Path) -> dict[str, Any]:
-        record = super().read(path)
-        rows = full_path(path).read_text(encoding="utf-8-sig").splitlines()
+    @sync
+    async def parse(cls, path: str | Path) -> dict[str, Any]:
+        record = await super().parse(path)
+        rows = (await asyncio.to_thread(full_path(path).read_text, encoding="utf-8-sig")).splitlines()
         record["data"]["rows"] = len(rows)
         record["span"] = cls.spanning([time for row in rows if (time := cls._time(row)) is not None])
         return record
@@ -525,8 +532,9 @@ class EmailHandler(FileHandler):
         return super().identify(path, stat, head) and path.suffix.casefold() in (".eml", ".msg")
 
     @classmethod
-    def read(cls, path: str | Path) -> dict[str, Any]:
-        record = super().read(path)
+    @sync
+    async def parse(cls, path: str | Path) -> dict[str, Any]:
+        record = await super().parse(path)
         stamp, separator, rest = full_path(path).stem.partition(" - ")
         content, separator2, party = rest.rpartition(" - ")
         if not (separator and separator2):
@@ -603,10 +611,11 @@ class SessionHandler(FileHandler):
                 and cls._harness(cls._head(head(SESSION_HEAD), stat.st_size)) is not None)
 
     @classmethod
-    def read(cls, path: str | Path) -> dict[str, Any]:
-        record = super().read(path)
+    @sync
+    async def parse(cls, path: str | Path) -> dict[str, Any]:
+        record = await super().parse(path)
         path = full_path(path)
-        records = cls._records(path)
+        records = await asyncio.to_thread(cls._records, path)
         harness = cls._harness(records[:SNIFF])
         turns = getattr(cls, cls.TURNS[harness])(records)
         times = tuple(cls._timestamps(records))
@@ -670,7 +679,7 @@ class SessionHandler(FileHandler):
         before, each numbered by its place in the file, counted from 1. A Codex delta names no session, so its uid is
         given. The session's times are its messages' first and last (a resumed session's copied lines are out of time
         order); with none, its lines', a moment when they are one (a Codex session opened and left). Linked Data's
-        sessions API reads what a session hook sends through this, as SessionHandler.read reads its file."""
+        sessions API reads what a session hook sends through this, as SessionHandler.parse reads its file."""
         if harness == "cc":
             session, messages = cls._claude_lines(lines, offset, uid)
         elif harness == "cx":
@@ -1489,11 +1498,14 @@ class SessionFolderHandler(FolderHandler):
                                                        or SessionHandler._agy_session_folder(path))
 
     @classmethod
-    def read(cls, path: str | Path) -> dict[str, Any]:
-        record = super().read(path)
+    @sync
+    async def parse(cls, path: str | Path) -> dict[str, Any]:
+        record = await super().parse(path)
         path = full_path(path)
-        sessions = [SessionHandler.read(file) for file in sorted(path.rglob("*.jsonl"), key=lambda item: str(item).casefold())
-                    if probe(file) is SessionHandler]
+        files = await asyncio.to_thread(lambda: sorted(path.rglob("*.jsonl"), key=lambda item: str(item).casefold()))
+        files = [file for file, handler in zip(files, await asyncio.gather(*(probe(file) for file in files)))
+                 if handler is SessionHandler]
+        sessions = list(await asyncio.gather(*(SessionHandler.parse(file) for file in files)))
         harnesses = SessionHandler._uniq([session["subtype"] for session in sessions] + [SessionHandler._home_harness(path)])
         if len(harnesses) != 1:
             raise ValueError(f"{path}: a session folder holds one harness, not {harnesses}")
@@ -1513,16 +1525,22 @@ HANDLERS: list[type[Handler]] = [
 ]
 
 
-def probe(path: str | Path) -> type[Handler]:
+@sync
+async def probe(path: str | Path) -> type[Handler]:
     """The handler to call for a path whose type is not known: the most specific of HANDLERS that identifies it, one
-    no other identifying handler is a subtype of; of two alike, the first. The path is stat'ed once and its first
-    bytes are read at most once, as many as the handler asking for most asks. The path is taken as given, a link as
-the link."""
-    path = Path(path)
-    stat = path.stat(follow_symlinks=False)
-    head = Head(path, stat)
-    found = [handler for handler in HANDLERS if handler.identify(path, stat, head)]
-    specific = [handler for handler in found if not any(other is not handler and issubclass(other, handler) for other in found)]
-    if not specific:
-        raise ValueError(f"{path}: no handler identifies it")
-    return specific[0]
+    no other identifying handler is a subtype of; of two alike, the first. Probing does no more than that takes: the
+    path is stat'ed once and its first bytes are read at most once, as many as the handler asking for most asks, in a
+    thread, since on a file share a stat alone can take seconds. Awaited inside an event loop, returned directly
+    outside one. The path is taken as given, a link as the link."""
+
+    def which() -> type[Handler]:
+        given = Path(path)
+        stat = given.stat(follow_symlinks=False)
+        head = Head(given, stat)
+        found = [handler for handler in HANDLERS if handler.identify(given, stat, head)]
+        specific = [handler for handler in found if not any(other is not handler and issubclass(other, handler) for other in found)]
+        if not specific:
+            raise ValueError(f"{given}: no handler identifies it")
+        return specific[0]
+
+    return await asyncio.to_thread(which)
