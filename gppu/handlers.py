@@ -1,21 +1,27 @@
 """Handlers: a universal way to get information about a file or a folder.
 
-Handler(path) detects what kind of handler the path needs and returns it, holding the path's information:
+There is a handler for every type of data, and probe, which knows every handler there is (HANDLERS) and, given a
+path whose type is not known in advance, which handler to call:
 
-    info = Handler('D:/Dev/gppu/README.md')    # a MarkdownHandler
-    info.title, info.tags, info.span, info.data
-    info.record                                # the same as a Linked Data record
+    handler = probe('D:/Dev/gppu/README.md')    # MarkdownHandler
+    record = handler.parse('D:/Dev/gppu/README.md')
 
-Each type and subtype of file or folder is one class. Its `handles(path)` says whether a path is its own, and
-its constructor reads it. A subtype is a subclass of its type and is asked only after the type handles the path,
-so the answer is the most specific subtype. A program adds a subtype by subclassing:
+A handler is a class of class methods. `identify(path, stat, head)` says whether the path is of its type from what
+probe gives it: the path, its stat, and `head(n)`, the file's first n bytes. A handler does no I/O of its own there,
+so probing a path takes one stat and at most one read of the most bytes a handler asks for: a suffix needs none, a
+SQLite file's header 16 once its suffix says SQLite, a session's first lines up to SESSION_HEAD once its suffix
+says .jsonl. `parse(path)` reads the path into a record, what
+Linked Data holds of the thing: its type, subtype, name, span, data and, in meta, the path it was read from; a
+session's record also has its messages. A subtype is a subclass of its type: it identifies a path only where its
+type does, and its parse adds to its type's. probe returns the most specific handler that identifies the path. A
+program adds a handler by subclassing and appending it to HANDLERS:
 
     class BillingCSVHandler(CSVHandler):
         time_keys = (*CSVHandler.time_keys, 'billed_at')
 
-A handler reads the path it is given and nothing else: no index, no location, no fsspec. A read that fails
-raises. Its record is what Linked Data holds of the thing: type, subtype, name, span, data and meta; a session's
-messages are the session messages Linked Data holds under it.
+    HANDLERS.append(BillingCSVHandler)
+
+A handler reads the path it is given and nothing else: no index, no location, no fsspec. A read that fails raises.
 """
 from __future__ import annotations
 
@@ -26,18 +32,18 @@ import fnmatch
 import os
 import re
 import sqlite3
+import stat as stat_module
 from collections.abc import Iterator, Mapping
 from contextlib import closing
 from copy import deepcopy
 from dataclasses import dataclass
-from functools import cached_property
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Literal
 from uuid import UUID, uuid5
 
 import yaml
 
-from .gppu import MY_TZ, Path, TimeSpan, full_path
+from .gppu import MY_TZ, Path, full_path
 
 # Times tools write in place of a time: Windows FILETIME zero, Unix epoch zero, DOS zero, and the constant
 # Android build tools stamp on every APK member. Anything at or before DOS zero is not a time either.
@@ -136,82 +142,61 @@ OPENING = re.compile(r"\s*<([\w:-]+)([^>]*)>")
 SUMMARY = re.compile(r'\bsummary="([^"]*)"')
 ELEMENT = re.compile(r"<([\w:-]+)[^>]*>.*?</\1>", re.S)
 TAGS = re.compile(r"</?[\w:-]+[^>]*>")
+# The most a session's identification reads: the first SNIFF objects of 5,385 real sessions identified their harness
+# within 434 KB, half of them within 4 KB.
+SESSION_HEAD = 512 * 1024
 SESSION_UID = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.I,
 )
 
 
-class Handler:
-    """A file or a folder and what is known about it: its size, when it was modified, the span it covers.
+class Head:
+    """A file's first bytes, read once for probing: head(n) is the first n, read again only when a handler asks for
+    more than it holds. A folder has none."""
 
-    Handler(path) returns the most specific subtype's handler for the path; a type's or subtype's own class, called
-    with a path that is not of it, raises ValueError.
+    def __init__(self, path: Path, stat: os.stat_result) -> None:
+        self.path, self.file, self.data = path, stat_module.S_ISREG(stat.st_mode), b""
+
+    def __call__(self, n: int) -> bytes:
+        if self.file and n > len(self.data):
+            with self.path.open("rb") as stream:
+                self.data = stream.read(n)
+        return self.data[:n]
+
+
+class Handler:
+    """The base of every handler: a file or a folder, its size and when it was modified.
+
+    `type` is the class below Handler a handler descends from, file, folder or ignored, unless the handler names
+    its own; `subtype` is the handler's own name, markdown for MarkdownHandler, None for a type itself.
     """
 
-    path: Path
-    size: int
-    modified: datetime | None
-    span: TimeSpan | None = None
+    type: str
+    subtype: str | None = None
 
-    def __new__(cls, path: str | Path) -> Handler:
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        top = next(base for base in reversed(cls.__mro__) if issubclass(base, Handler) and base is not Handler)
+        if "type" not in cls.__dict__:
+            cls.type = top.type if "type" in top.__dict__ else top.__name__.removesuffix("Handler").casefold()
+        name = cls.__name__.removesuffix("Handler").casefold()
+        if "subtype" not in cls.__dict__:
+            cls.subtype = None if cls is top else name
+
+    @classmethod
+    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
+        """Whether the path is of this handler's type: anything that is there is."""
+        return True
+
+    @classmethod
+    def parse(cls, path: str | Path) -> dict[str, Any]:
+        """The path as a Linked Data record; its size and modified time are its stat's, as stat gives them."""
         path = full_path(path)
-        kind = cls._kind(path)
-        if kind is None:
-            raise ValueError(f"{path}: not a {cls.__name__}")
-        return super().__new__(kind)
-
-    @classmethod
-    def _kind(cls, path: Path) -> type[Handler] | None:
-        if not cls.handles(path):
-            return None
-        for kind in cls.__subclasses__():
-            if (found := kind._kind(path)) is not None:
-                return found
-        return cls
-
-    @classmethod
-    def handles(cls, path: Path) -> bool:
-        """Whether this path is this kind's own."""
-        return path.exists() or path.is_symlink()
-
-    def __init__(self, path: str | Path) -> None:
-        self.path = full_path(path)
-        stat = self.path.stat(follow_symlinks=False)
-        self.size = 0 if self.path.is_dir() and not self.path.is_symlink() else stat.st_size
-        self.modified = self.valid_time(datetime.fromtimestamp(stat.st_mtime, timezone.utc))
-
-    @property
-    def type(self) -> str:
-        """What the path is: the class below Handler its handler descends from, file, folder or ignored."""
-        top = next(base for base in reversed(type(self).__mro__) if issubclass(base, Handler) and base is not Handler)
-        return top.__name__.removesuffix("Handler").casefold()
-
-    @property
-    def subtype(self) -> str | None:
-        """What refines its type: the handler's own class, markdown for MarkdownHandler; None for the type itself."""
-        name = type(self).__name__.removesuffix("Handler").casefold()
-        return None if name == self.type else name
-
-    @property
-    def name(self) -> str:
-        """The name used for display: the path's own name."""
-        return self.path.name or str(self.path)
-
-    @property
-    def data(self) -> dict[str, Any]:
-        """What the handler says about the thing."""
-        return {"size": self.size, "modified": self.modified}
-
-    @property
-    def record(self) -> dict[str, Any]:
-        """The thing as a Linked Data record: its type, subtype, name, span, data, and in meta the path it was read from."""
-        span = None if self.span is None else {"start": self.span.start, "end": self.span.end}
-        return {"type": self.type, "subtype": self.subtype, "name": self.name, "span": span, "data": self.data,
-                "meta": {"source": str(self.path)}}
-
-    def __repr__(self) -> str:
-        return f"{type(self).__name__}({str(self.path)!r})"
+        stat = path.stat(follow_symlinks=False)
+        return {"type": cls.type, "subtype": cls.subtype, "name": path.name or str(path), "span": None,
+                "data": {"size": stat.st_size, "modified": datetime.fromtimestamp(stat.st_mtime, timezone.utc)},
+                "meta": {"source": str(path)}}
 
     @staticmethod
     def valid_time(value: datetime | None) -> datetime | None:
@@ -231,9 +216,9 @@ class Handler:
         return value if value.tzinfo is not None else value.replace(tzinfo=MY_TZ)
 
     @staticmethod
-    def spanning(times: list[datetime] | tuple[datetime, ...]) -> TimeSpan | None:
-        """The earliest to the latest of times, or None when there are none."""
-        return TimeSpan(start=min(times), end=max(times)) if times else None
+    def spanning(times: list[datetime] | tuple[datetime, ...]) -> dict[str, datetime] | None:
+        """The span from the earliest to the latest of times, or None when there are none."""
+        return {"start": min(times), "end": max(times)} if times else None
 
 
 class IgnoredHandler(Handler):
@@ -248,16 +233,23 @@ class IgnoredHandler(Handler):
     folder_patterns = IGNORED_FOLDER_PATTERNS
 
     @classmethod
-    def handles(cls, path: Path) -> bool:
-        return cls.reason(path) is not None
+    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
+        return cls.reason(path, stat) is not None
 
     @classmethod
-    def reason(cls, path: Path) -> str | None:
+    def parse(cls, path: str | Path) -> dict[str, Any]:
+        record = super().parse(path)
+        path = full_path(path)
+        record["data"]["reason"] = cls.reason(path, path.stat(follow_symlinks=False))
+        return record
+
+    @classmethod
+    def reason(cls, path: Path, stat: os.stat_result) -> str | None:
         """The rule that names this path, or None."""
         if not path.name:
             return None
-        folder = path.is_dir() and not path.is_symlink()
-        if not folder and not path.is_file():
+        folder = stat_module.S_ISDIR(stat.st_mode)
+        if not folder and not stat_module.S_ISREG(stat.st_mode):
             return None
         if pattern := cls.match(path.name, cls.name_patterns):
             return f"name:{pattern}"
@@ -265,7 +257,7 @@ class IgnoredHandler(Handler):
             return None
         if pattern := cls.match(path.name, cls.folder_patterns):
             return f"folder:{pattern}"
-        if getattr(path.stat(follow_symlinks=False), "st_file_attributes", 0) & WINDOWS_SYSTEM:
+        if getattr(stat, "st_file_attributes", 0) & WINDOWS_SYSTEM:
             return "folder:FILE_ATTRIBUTE_SYSTEM"
         return None
 
@@ -273,9 +265,21 @@ class IgnoredHandler(Handler):
     def match(name: str, patterns: tuple[str, ...]) -> str | None:
         return next((pattern for pattern in patterns if fnmatch.fnmatchcase(name, pattern)), None)
 
-    @property
-    def data(self) -> dict[str, Any]:
-        return {**super().data, "reason": self.reason(self.path)}
+
+class LinkHandler(Handler):
+    """A symbolic link or a Windows junction, as stat gives it, and the path it points to; what is there is the
+    target's own, probed at the target."""
+
+    @classmethod
+    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
+        return (stat_module.S_ISLNK(stat.st_mode)
+                or getattr(stat, "st_reparse_tag", 0) == getattr(stat_module, "IO_REPARSE_TAG_MOUNT_POINT", None))
+
+    @classmethod
+    def parse(cls, path: str | Path) -> dict[str, Any]:
+        record = super().parse(path)
+        record["data"]["target"] = os.readlink(path)
+        return record
 
 
 class FolderHandler(Handler):
@@ -284,83 +288,73 @@ class FolderHandler(Handler):
     A subfolder's modified time is when something was added to it, so the span is its files' alone.
     """
 
-    files: int
-    folders: int
-    bytes: int
+    @classmethod
+    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
+        return stat_module.S_ISDIR(stat.st_mode)
 
     @classmethod
-    def handles(cls, path: Path) -> bool:
-        return path.is_dir() and not path.is_symlink()
-
-    def __init__(self, path: str | Path) -> None:
-        super().__init__(path)
-        self.files = self.folders = self.bytes = 0
+    def parse(cls, path: str | Path) -> dict[str, Any]:
+        record = super().parse(path)
+        files = folders = size = 0
         times = []
-        with os.scandir(self.path) as entries:
+        with os.scandir(full_path(path)) as entries:
             for entry in entries:
                 if entry.is_dir(follow_symlinks=False):
-                    self.folders += 1
+                    folders += 1
                     continue
                 stat = entry.stat(follow_symlinks=False)
-                self.files += 1
-                self.bytes += stat.st_size
-                if (time := self.valid_time(datetime.fromtimestamp(stat.st_mtime, timezone.utc))) is not None:
+                files += 1
+                size += stat.st_size
+                if (time := cls.valid_time(datetime.fromtimestamp(stat.st_mtime, timezone.utc))) is not None:
                     times.append(time)
-        self.span = self.spanning(times)
-
-    @property
-    def data(self) -> dict[str, Any]:
-        return {**super().data, "files": self.files, "folders": self.folders, "bytes": self.bytes}
+        record["data"].update(files=files, folders=folders, bytes=size)
+        record["span"] = cls.spanning(times)
+        return record
 
 
 class FileHandler(Handler):
-    """A file of a kind no more specific handler knows: its size and modified time."""
+    """A file of a type no more specific handler identifies: its size and modified time."""
 
     @classmethod
-    def handles(cls, path: Path) -> bool:
-        return path.is_file()
+    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
+        return stat_module.S_ISREG(stat.st_mode)
 
 
 class SqliteHandler(FileHandler):
-    """A SQLite file, known by its header, and its tables with their columns.
+    """A SQLite file, known by its extension and its header, and its tables with their columns.
 
     It is opened immutable, so SQLite writes no -wal or -shm beside it, and no row is read: what is in the
     tables is the file's content, not what the file is.
     """
 
     MAGIC = b"SQLite format 3\x00"
-
-    tables: dict[str, tuple[str, ...]]
+    extensions = (".sqlite", ".sqlite3", ".db")
 
     @classmethod
-    def handles(cls, path: Path) -> bool:
-        with path.open("rb") as stream:
-            return stream.read(len(cls.MAGIC)) == cls.MAGIC
+    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
+        return (super().identify(path, stat, head) and path.suffix.casefold() in cls.extensions
+                and head(len(cls.MAGIC)) == cls.MAGIC)
 
-    def __init__(self, path: str | Path) -> None:
-        super().__init__(path)
-        with closing(sqlite3.connect(self.path.as_uri() + "?mode=ro&immutable=1", uri=True)) as database:
+    @classmethod
+    def parse(cls, path: str | Path) -> dict[str, Any]:
+        record = super().parse(path)
+        with closing(sqlite3.connect(full_path(path).as_uri() + "?mode=ro&immutable=1", uri=True)) as database:
             names = [name for (name,) in database.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
-            self.tables = {name: tuple(row[1] for row in database.execute(f'PRAGMA table_info("{name}")'))
-                           for name in names}
-
-    @property
-    def data(self) -> dict[str, Any]:
-        return {**super().data, "tables": {name: list(columns) for name, columns in self.tables.items()}}
+            record["data"]["tables"] = {name: [row[1] for row in database.execute(f'PRAGMA table_info("{name}")')]
+                                        for name in names}
+        return record
 
 
 class MarkdownHandler(FileHandler):
     """A .md file and its whole YAML frontmatter.
 
     Frontmatter is there when the first line is --- and a later line closes it with ---; it is an empty
-    document or a mapping, and its timestamps stay as written. The body is not read. title and name are
-    each the field of that name, then the other one, then the file's stem. tags is a list or one value.
-    The span is created to updated, both required; a date starts at midnight, a time without an offset is
-    in MY_TZ.
+    document or a mapping, and its timestamps stay as written. The body is not read. The record's name is the
+    frontmatter's name, then its title, then the file's stem; data.title is its title, then its name, then the
+    stem. data.tags is a list or one value. The span is created to updated, both required; a date starts at
+    midnight, a time without an offset is in MY_TZ.
     """
-
-    frontmatter: dict[str, Any]
 
     class _Loader(yaml.SafeLoader):
         """Safe YAML that keeps timestamp scalars as written."""
@@ -371,18 +365,28 @@ class MarkdownHandler(FileHandler):
     }
 
     @classmethod
-    def handles(cls, path: Path) -> bool:
-        return path.suffix.casefold() == ".md"
+    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
+        return super().identify(path, stat, head) and path.suffix.casefold() == ".md"
 
-    def __init__(self, path: str | Path) -> None:
-        super().__init__(path)
-        self.frontmatter = self._frontmatter()
-        created, updated = self._time(self.frontmatter.get("created")), self._time(self.frontmatter.get("updated"))
+    @classmethod
+    def parse(cls, path: str | Path) -> dict[str, Any]:
+        record = super().parse(path)
+        path = full_path(path)
+        frontmatter = cls._frontmatter(path)
+        name, title = frontmatter.get("name", frontmatter.get("title")), frontmatter.get("title", frontmatter.get("name"))
+        tags = frontmatter.get("tags")
+        tags = [] if tags is None else tags if isinstance(tags, list) else [tags]
+        record["name"] = path.stem if name is None else str(name)
+        record["data"].update(title=path.stem if title is None else str(title),
+                              tags=[str(tag) for tag in tags if tag is not None], frontmatter=frontmatter)
+        created, updated = cls._time(frontmatter.get("created")), cls._time(frontmatter.get("updated"))
         if created is not None and updated is not None:
-            self.span = TimeSpan(start=min(created, updated), end=max(created, updated))
+            record["span"] = cls.spanning([created, updated])
+        return record
 
-    def _frontmatter(self) -> dict[str, Any]:
-        with self.path.open(encoding="utf-8-sig") as stream:
+    @classmethod
+    def _frontmatter(cls, path: Path) -> dict[str, Any]:
+        with path.open(encoding="utf-8-sig") as stream:
             if stream.readline().strip() != "---":
                 return {}
             lines = []
@@ -391,33 +395,13 @@ class MarkdownHandler(FileHandler):
                     break
                 lines.append(line)
             else:
-                raise ValueError(f"{self.path}: YAML frontmatter has no closing ---")
-        frontmatter = yaml.load("".join(lines), Loader=self._Loader)
+                raise ValueError(f"{path}: YAML frontmatter has no closing ---")
+        frontmatter = yaml.load("".join(lines), Loader=cls._Loader)
         if frontmatter is None:
             return {}
         if not isinstance(frontmatter, dict):
-            raise ValueError(f"{self.path}: YAML frontmatter must be a mapping")
+            raise ValueError(f"{path}: YAML frontmatter must be a mapping")
         return frontmatter
-
-    @property
-    def title(self) -> str:
-        value = self.frontmatter.get("title", self.frontmatter.get("name"))
-        return self.path.stem if value is None else str(value)
-
-    @property
-    def name(self) -> str:
-        value = self.frontmatter.get("name", self.frontmatter.get("title"))
-        return self.path.stem if value is None else str(value)
-
-    @property
-    def tags(self) -> tuple[str, ...]:
-        value = self.frontmatter.get("tags")
-        values = [] if value is None else value if isinstance(value, list) else [value]
-        return tuple(str(item) for item in values if item is not None)
-
-    @property
-    def data(self) -> dict[str, Any]:
-        return {**super().data, "title": self.title, "tags": list(self.tags), "frontmatter": self.frontmatter}
 
     @classmethod
     def _time(cls, value: Any) -> datetime | None:
@@ -434,7 +418,7 @@ class MarkdownHandler(FileHandler):
 
 
 class CSVHandler(FileHandler):
-    """A .csv file: its header, its rows as text, and the span of the times in its time columns.
+    """A .csv file: its header, how many rows it has, and the span of the times in its time columns.
 
     The table is read strictly in the excel dialect. A time column is one whose header, stripped and in any
     case, is one of time_keys; its values are ISO dates or times, Unix seconds above 1,000,000,000 or
@@ -445,27 +429,22 @@ class CSVHandler(FileHandler):
     time_keys = TIME_KEYS
     time_formats: tuple[str, ...] = ()
 
-    header: tuple[str, ...]
-    rows: tuple[tuple[str, ...], ...]
+    @classmethod
+    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
+        return super().identify(path, stat, head) and path.suffix.casefold() == ".csv"
 
     @classmethod
-    def handles(cls, path: Path) -> bool:
-        return path.suffix.casefold() == ".csv"
-
-    def __init__(self, path: str | Path) -> None:
-        super().__init__(path)
-        with self.path.open(encoding="utf-8-sig", newline="") as stream:
-            records = tuple(tuple(row) for row in csv.reader(stream, strict=True))
-        self.header = records[0] if records else ()
-        self.rows = records[1:]
-        keys = {key.casefold() for key in self.time_keys}
-        columns = [index for index, name in enumerate(self.header) if name.strip().casefold() in keys]
-        self.span = self.spanning([time for row in self.rows for index in columns
-                                   if index < len(row) and (time := self._time(row[index])) is not None])
-
-    @property
-    def data(self) -> dict[str, Any]:
-        return {**super().data, "header": self.header, "rows": len(self.rows)}
+    def parse(cls, path: str | Path) -> dict[str, Any]:
+        record = super().parse(path)
+        with full_path(path).open(encoding="utf-8-sig", newline="") as stream:
+            rows = [tuple(row) for row in csv.reader(stream, strict=True)]
+        header, rows = (rows[0], rows[1:]) if rows else ((), [])
+        keys = {key.casefold() for key in cls.time_keys}
+        columns = [index for index, name in enumerate(header) if name.strip().casefold() in keys]
+        record["data"].update(header=list(header), rows=len(rows))
+        record["span"] = cls.spanning([time for row in rows for index in columns
+                                       if index < len(row) and (time := cls._time(row[index])) is not None])
+        return record
 
     @classmethod
     def _time(cls, value: str) -> datetime | None:
@@ -494,27 +473,24 @@ class CSVHandler(FileHandler):
 
 
 class LogHandler(FileHandler):
-    """A .log file: its rows, and the span of the times that begin them.
+    """A .log file: how many rows it has, and the span of the times that begin them.
 
     A row's time comes after optional whitespace and one optional [ or (, as YYYY-MM-DD, T or a space,
     HH:MM:SS, an optional fraction after a dot or a comma, and an optional Z or offset. A time without an
     offset is in MY_TZ; placeholders and future times do not count.
     """
 
-    rows: tuple[str, ...]
+    @classmethod
+    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
+        return super().identify(path, stat, head) and path.suffix.casefold() == ".log"
 
     @classmethod
-    def handles(cls, path: Path) -> bool:
-        return path.suffix.casefold() == ".log"
-
-    def __init__(self, path: str | Path) -> None:
-        super().__init__(path)
-        self.rows = tuple(self.path.read_text(encoding="utf-8-sig").splitlines())
-        self.span = self.spanning([time for row in self.rows if (time := self._time(row)) is not None])
-
-    @property
-    def data(self) -> dict[str, Any]:
-        return {**super().data, "rows": len(self.rows)}
+    def parse(cls, path: str | Path) -> dict[str, Any]:
+        record = super().parse(path)
+        rows = full_path(path).read_text(encoding="utf-8-sig").splitlines()
+        record["data"]["rows"] = len(rows)
+        record["span"] = cls.spanning([time for row in rows if (time := cls._time(row)) is not None])
+        return record
 
     @classmethod
     def _time(cls, row: str) -> datetime | None:
@@ -530,45 +506,38 @@ class EmailHandler(FileHandler):
     """A .msg or .eml file and what its name says: YYMMDD.HHMMSS - subject - party[ - collision].
 
     The message itself is not read. The time is in MY_TZ; splitting from the right lets the subject hold
-    the separator. A name outside the convention leaves timestamp, subject, party and collision None.
+    the separator. A name outside the convention says nothing, and the record has no timestamp, subject,
+    party or collision.
     """
 
-    timestamp: datetime | None = None
-    subject: str | None = None
-    party: str | None = None
-    collision: int | None = None
+    @classmethod
+    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
+        return super().identify(path, stat, head) and path.suffix.casefold() in (".eml", ".msg")
 
     @classmethod
-    def handles(cls, path: Path) -> bool:
-        return path.suffix.casefold() in (".eml", ".msg")
-
-    def __init__(self, path: str | Path) -> None:
-        super().__init__(path)
-        stamp, separator, rest = self.path.stem.partition(" - ")
+    def parse(cls, path: str | Path) -> dict[str, Any]:
+        record = super().parse(path)
+        stamp, separator, rest = full_path(path).stem.partition(" - ")
         content, separator2, party = rest.rpartition(" - ")
         if not (separator and separator2):
-            return
+            return record
         collision = None
         if party.isdecimal():
             collision = int(party)
             content, separator, party = content.rpartition(" - ")
             if not separator:
-                return
+                return record
         if not content.strip() or not party.strip():
-            return
+            return record
         try:
-            timestamp = datetime.strptime(stamp, "%y%m%d.%H%M%S").replace(tzinfo=MY_TZ)
+            timestamp = cls.valid_time(datetime.strptime(stamp, "%y%m%d.%H%M%S").replace(tzinfo=MY_TZ))
         except ValueError:
-            return
-        self.timestamp, self.subject, self.party, self.collision = (
-            self.valid_time(timestamp), content.strip(), party.strip(), collision)
-        if self.timestamp is not None:
-            self.span = TimeSpan(start=self.timestamp, end=self.timestamp)
-
-    @property
-    def data(self) -> dict[str, Any]:
-        named = {"timestamp": self.timestamp, "subject": self.subject, "party": self.party, "collision": self.collision}
-        return {**super().data, **{key: value for key, value in named.items() if value is not None}}
+            return record
+        named = {"timestamp": timestamp, "subject": content.strip(), "party": party.strip(), "collision": collision}
+        record["data"].update({key: value for key, value in named.items() if value is not None})
+        if timestamp is not None:
+            record["span"] = cls.spanning([timestamp])
+        return record
 
 
 @dataclass(frozen=True)
@@ -595,10 +564,15 @@ class SessionHandler(FileHandler):
     * Agy: USER_INPUT from USER_EXPLICIT or PLANNER_RESPONSE from MODEL, with a string created_at.
     * Hermes: role session_meta with a string session_id.
 
-    Every object of the file is kept in records; a blank, truncated or non-object line is skipped. turns are
-    the user and assistant messages, the span runs from the first record time to the last, and the topic is
-    the first line a person typed. A subagent's file names the session that spawned it as parent_uid.
+    Its record is a session, its subtype the harness. Every object of the file is read; a blank, truncated or
+    non-object line is skipped. The lines of cc and cx are read as Linked Data reads them (parse_lines): the
+    uid, the name, the span from the first message to the last, data.title, topic, cwd and models, meta.parent_uid,
+    and the record's messages. For the other harnesses the record has the uid its harness gives, the span from
+    the first record time to the last, and no messages. data.normalized_name is the file's name from its start,
+    turns, duration and the first line a person typed.
     """
+
+    type = "session"
 
     RECOGNIZERS = (
         ("cx", "_is_codex"), ("copilot", "_is_copilot"), ("gemini", "_is_gemini"), ("cc", "_is_claude_code"),
@@ -613,125 +587,80 @@ class SessionHandler(FileHandler):
              "cc": "_claude_code_turns", "openclaw": "_openclaw_turns", "agy": "_agy_turns",
              "hermes": "_hermes_turns"}
 
-    harness: Harness
-    uid: str | None
-    parent_uid: str | None
-    subagent: bool
-    records: tuple[Mapping[str, Any], ...]
-    turns: tuple[SessionTurn, ...]
-    models: tuple[str, ...]
-    topic: str
-    sidechain_only: bool
+    @classmethod
+    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
+        return (super().identify(path, stat, head) and path.suffix.casefold() == ".jsonl" and stat.st_size > 0
+                and cls._harness(cls._head(head(SESSION_HEAD), stat.st_size)) is not None)
 
     @classmethod
-    def handles(cls, path: Path) -> bool:
-        return (path.suffix.casefold() == ".jsonl" and path.stat().st_size > 0
-                and cls._harness(cls._head(path)) is not None)
+    def parse(cls, path: str | Path) -> dict[str, Any]:
+        record = super().parse(path)
+        path = full_path(path)
+        records = cls._records(path)
+        harness = cls._harness(records[:SNIFF])
+        turns = getattr(cls, cls.TURNS[harness])(records)
+        times = tuple(cls._timestamps(records))
+        if harness == "copilot":
+            created = cls.valid_time(cls._stamp(records[0]["v"].get("creationDate")))
+            times = tuple(time for time in (created, *(turn.timestamp for turn in turns)) if time is not None)
+        uid = getattr(cls, cls.UID[harness])(records, path)
+        parent = cls.PARENT.get(harness)
+        parent_uid, subagent = getattr(cls, parent)(records) if parent else (None, False)
+        mainline = any(line.get("isSidechain") is False for line in records)
+        sidechain = any(line.get("isSidechain") is True for line in records)
+        span = cls.spanning(times)
+        record["subtype"], record["uid"], record["name"], record["span"] = harness, uid, cls._topic(turns) or uid, span
+        record["data"].update(subagent=subagent, sidechain_only=sidechain and not mainline, lines=len(records),
+                              turns=len(turns), models=list(cls._models(records)),
+                              normalized_name=cls.normalized_name(path, uid, turns, span))
+        if parent_uid:
+            record["meta"]["parent_uid"] = parent_uid
+        if harness in ("cc", "cx"):
+            session, messages = cls.parse_lines(harness, records)
+            data = {"title": session["title"], "topic": session["topic"], "cwd": session["cwd"],
+                    "models": sorted(session["models"]) or None}
+            record["uid"] = session["uid"]
+            record["name"] = (cls.first_line(session["title"] or "") or cls.first_line(session["name"] or "")
+                              or session["uid"])
+            record["span"] = cls.spanning(session["times"])
+            record["data"].update({key: value for key, value in data.items() if value is not None})
+            record["meta"].pop("parent_uid", None)
+            if session["parent_uid"]:
+                record["meta"]["parent_uid"] = session["parent_uid"]
+            record["messages"] = messages
+        return record
 
-    def __init__(self, path: str | Path) -> None:
-        super().__init__(path)
-        records = self.records = self._records(self.path)
-        self.harness = self._harness(records[:SNIFF])
-        self.turns = getattr(self, self.TURNS[self.harness])(records)
-        times = tuple(self._timestamps(records))
-        if self.harness == "copilot":
-            created = self.valid_time(self._stamp(records[0]["v"].get("creationDate")))
-            times = tuple(time for time in (created, *(turn.timestamp for turn in self.turns)) if time is not None)
-        self.span = self.spanning(times)
-        self.uid = getattr(self, self.UID[self.harness])(records, self.path)
-        parent = self.PARENT.get(self.harness)
-        self.parent_uid, self.subagent = getattr(self, parent)(records) if parent else (None, False)
-        mainline = any(record.get("isSidechain") is False for record in records)
-        sidechain = any(record.get("isSidechain") is True for record in records)
-        self.sidechain_only = sidechain and not mainline
-        self.models = self._models(records)
-        self.topic = self._topic(self.turns)
+    @classmethod
+    def human_messages(cls, turns: tuple[SessionTurn, ...]) -> tuple[str, ...]:
+        """What a person typed: the mainline user messages that are not meta, without their envelopes, leaving
+        out generated ones."""
+        return tuple(text for turn in turns if turn.role == "user" and not turn.meta and not turn.sidechain
+                     and (text := cls.typed(turn.text)))
 
-    @property
-    def data(self) -> dict[str, Any]:
-        """The session's identity and description, without its text."""
-        return {**super().data, "harness": self.harness, "uid": self.uid, "parent_uid": self.parent_uid,
-                "subagent": self.subagent, "sidechain_only": self.sidechain_only, "records": len(self.records),
-                "turns": len(self.turns), "models": self.models, "topic": self.topic,
-                "normalized_name": self.normalized_name}
-
-    @property
-    def user_messages(self) -> tuple[str, ...]:
-        """The mainline user messages that are not meta."""
-        return tuple(turn.text for turn in self.turns if turn.role == "user" and not turn.meta and not turn.sidechain)
-
-    @property
-    def human_messages(self) -> tuple[str, ...]:
-        """What a person typed: user messages without their envelopes, leaving out generated ones."""
-        return tuple(text for message in self.user_messages if (text := self.typed(message)))
-
-    @property
-    def length(self) -> str:
-        """The session's duration in its largest unit: ~3h."""
-        if self.span is None or not (seconds := round((self.span.end - self.span.start).total_seconds())):
-            return ""
-        unit, size = next(pair for pair in UNITS if seconds >= pair[1])
-        return f"~{round(seconds / size)}{unit}"
-
-    @property
-    def label(self) -> str:
-        """Its start, turn count, duration and topic: 261020-1412 42~3h - the topic."""
-        start = f"{self.span.start.astimezone():%y%m%d-%H%M} " if self.span else ""
-        topic = f" - {self.topic}" if self.topic else ""
-        return f"{start}{len(self.turns)}{self.length}{topic}"
-
-    @property
-    def normalized_name(self) -> str:
-        """The file's name from its label, its uid and its suffix, within NAME_LIMIT."""
-        tail = (f".{self.uid}" if self.uid else "") + self.path.suffix
-        label = self.label
+    @classmethod
+    def normalized_name(cls, path: Path, uid: str | None, turns: tuple[SessionTurn, ...],
+                        span: dict[str, datetime] | None) -> str:
+        """The file's name from its start, turn count, duration and topic, its uid and its suffix, within
+        NAME_LIMIT: 261020-1412 42~3h - the topic.<uid>.jsonl."""
+        length = ""
+        if span is not None and (seconds := round((span["end"] - span["start"]).total_seconds())):
+            unit, size = next(pair for pair in UNITS if seconds >= pair[1])
+            length = f"~{round(seconds / size)}{unit}"
+        topic = cls._topic(turns)
+        label = (f"{span['start'].astimezone():%y%m%d-%H%M} " if span else "") + f"{len(turns)}{length}" + (f" - {topic}" if topic else "")
+        tail = (f".{uid}" if uid else "") + path.suffix
         if len(label) + len(tail) > NAME_LIMIT:
             label = label[: NAME_LIMIT - len(tail)].rstrip()
         return f"{label}{tail}"
 
-    @property
-    def type(self) -> str:
-        return "session"
-
-    @property
-    def subtype(self) -> str:
-        """Its harness."""
-        return self.harness
-
-    @property
-    def record(self) -> dict[str, Any]:
-        """The session as Linked Data makes it from its lines: its harness and uid, its name the title its harness gives it,
-        else its first prompt as a person reads it, else its uid; its span its messages' first to last time, else its
-        lines'; its title, topic, cwd and models; and the session that spawned it in meta.parent_uid."""
-        session, messages = self._linked
-        times = session["times"]
-        data = {"title": session["title"], "topic": session["topic"], "cwd": session["cwd"],
-                "models": sorted(session["models"]) or None}
-        meta = {"source": str(self.path)} | ({"parent_uid": session["parent_uid"]} if session["parent_uid"] else {})
-        return {"type": self.type, "subtype": self.subtype, "uid": session["uid"],
-                "name": self.first_line(session["title"] or "") or self.first_line(session["name"] or "") or session["uid"],
-                "span": {"start": times[0], "end": times[1]} if times else None,
-                "data": {key: value for key, value in data.items() if value is not None}, "meta": meta}
-
-    @property
-    def messages(self) -> list[dict[str, Any]]:
-        """Its session messages as Linked Data makes them from its lines: each one's id in its harness, its time, its
-        subtype (user, agent, thinking, tool_use, tool_result), its name the first line of its text, the line itself as
-        its data, and the line's place in the file, counted from 1."""
-        return self._linked[1]
-
-    @cached_property
-    def _linked(self) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        return self.parse(self.harness, self.records)
-
     @classmethod
-    def parse(cls, harness: str, lines: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...], offset: int = 0,
+    def parse_lines(cls, harness: str, lines: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...], offset: int = 0,
               uid: str | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         """The session and the messages a harness's lines say: the whole file, or the lines after the offset lines read
         before, each numbered by its place in the file, counted from 1. A Codex delta names no session, so its uid is
         given. The session's times are its messages' first and last (a resumed session's copied lines are out of time
         order); with none, its lines', a moment when they are one (a Codex session opened and left). Linked Data's
-        sessions API reads what a session hook sends through this, as a SessionHandler reads its file."""
+        sessions API reads what a session hook sends through this, as SessionHandler.parse reads its file."""
         if harness == "cc":
             session, messages = cls._claude_lines(lines, offset, uid)
         elif harness == "cx":
@@ -1298,22 +1227,24 @@ class SessionHandler(FileHandler):
         return tuple(records)
 
     @staticmethod
-    def _head(path: Path) -> tuple[Mapping[str, Any], ...]:
-        """Read up to ``SNIFF`` leading JSONL objects, or return no records."""
+    def _head(data: bytes, size: int) -> tuple[Mapping[str, Any], ...]:
+        """Up to SNIFF leading JSONL objects of a file's first bytes, its last line left out when the bytes end
+        inside it; none when a line is not an object."""
 
+        if len(data) < size:
+            data = data[: data.rfind(b"\n") + 1]
         found: list[Mapping[str, Any]] = []
         try:
-            with path.open("r", encoding="utf-8") as stream:
-                for line in stream:
-                    if not line.strip():
-                        continue
-                    value = json.loads(line)
-                    if not isinstance(value, dict):
-                        return ()
-                    found.append(value)
-                    if len(found) >= SNIFF:
-                        break
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            for line in data.decode("utf-8").splitlines():
+                if not line.strip():
+                    continue
+                value = json.loads(line)
+                if not isinstance(value, dict):
+                    return ()
+                found.append(value)
+                if len(found) >= SNIFF:
+                    break
+        except (UnicodeDecodeError, json.JSONDecodeError):
             return ()
         return tuple(found)
 
@@ -1534,35 +1465,54 @@ class SessionHandler(FileHandler):
         return text
 
 
+
 class SessionFolderHandler(FolderHandler):
     """A harness's session folder: a Hermes home (state.db), an Agy home (antigravity_state.pbtxt or
     jetski_state.pbtxt), or an Agy session folder named by its UUID with a transcript under
-    .system_generated/logs. Its sessions are every session file below it, all of one harness.
+    .system_generated/logs. Its sessions are every session file below it, all of one harness; its record has
+    their records as its sessions.
     """
 
-    harness: Harness
-    sessions: tuple[SessionHandler, ...]
+    @classmethod
+    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
+        return super().identify(path, stat, head) and (SessionHandler._home_harness(path) is not None
+                                                       or SessionHandler._agy_session_folder(path))
 
     @classmethod
-    def handles(cls, path: Path) -> bool:
-        return SessionHandler._home_harness(path) is not None or SessionHandler._agy_session_folder(path)
-
-    def __init__(self, path: str | Path) -> None:
-        super().__init__(path)
-        self.sessions = tuple(SessionHandler(file) for file in sorted(self.path.rglob("*.jsonl"), key=lambda item: str(item).casefold())
-                              if file.is_file() and SessionHandler.handles(file))
-        harnesses = SessionHandler._uniq([session.harness for session in self.sessions] + [SessionHandler._home_harness(self.path)])
+    def parse(cls, path: str | Path) -> dict[str, Any]:
+        record = super().parse(path)
+        path = full_path(path)
+        sessions = [SessionHandler.parse(file) for file in sorted(path.rglob("*.jsonl"), key=lambda item: str(item).casefold())
+                    if probe(file) is SessionHandler]
+        harnesses = SessionHandler._uniq([session["subtype"] for session in sessions] + [SessionHandler._home_harness(path)])
         if len(harnesses) != 1:
-            raise ValueError(f"{self.path}: a session folder holds one harness, not {harnesses}")
-        self.harness = harnesses[0]
-        self.span = self.spanning([time for session in self.sessions if session.span for time in (session.span.start, session.span.end)])
+            raise ValueError(f"{path}: a session folder holds one harness, not {harnesses}")
+        uids = {session["uid"] for session in sessions if session["uid"]}
+        record["data"].update(harness=harnesses[0], sessions=len(sessions))
+        if len(uids) == 1:
+            record["data"]["uid"] = uids.pop()
+        record["span"] = cls.spanning([time for session in sessions if session["span"] for time in session["span"].values()])
+        record["sessions"] = sessions
+        return record
 
-    @property
-    def uid(self) -> str | None:
-        """The sessions' id when they all agree on one."""
-        values = {session.uid for session in self.sessions if session.uid}
-        return values.pop() if len(values) == 1 else None
 
-    @property
-    def data(self) -> dict[str, Any]:
-        return {**super().data, "harness": self.harness, "uid": self.uid, "sessions": len(self.sessions)}
+# The handlers probe knows, every type and subtype there is; a program adds its own by appending it.
+HANDLERS: list[type[Handler]] = [
+    IgnoredHandler, LinkHandler, FolderHandler, SessionFolderHandler, FileHandler, SqliteHandler, MarkdownHandler, CSVHandler,
+    LogHandler, EmailHandler, SessionHandler,
+]
+
+
+def probe(path: str | Path) -> type[Handler]:
+    """The handler to call for a path whose type is not known: the most specific of HANDLERS that identifies it, one
+    no other identifying handler is a subtype of; of two alike, the first. The path is stat'ed once and its first
+    bytes are read at most once, as many as the handler asking for most asks. The path is taken as given, a link as
+the link."""
+    path = Path(path)
+    stat = path.stat(follow_symlinks=False)
+    head = Head(path, stat)
+    found = [handler for handler in HANDLERS if handler.identify(path, stat, head)]
+    specific = [handler for handler in found if not any(other is not handler and issubclass(other, handler) for other in found)]
+    if not specific:
+        raise ValueError(f"{path}: no handler identifies it")
+    return specific[0]
