@@ -10,7 +10,7 @@ from pathlib import Path
 from types import FunctionType
 from typing import Any
 
-from gppu import fs as handlers
+from gppu import handlers
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "docs" / "handlers.md"
