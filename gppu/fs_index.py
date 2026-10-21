@@ -1,0 +1,108 @@
+"""Read an existing gppufs SQLite index as a flat, read-only fsspec filesystem.
+
+The index is the source of the listing, including for a copied or synced index.
+Original relative paths are kept for byte reads; the index is never renamed.
+"""
+from __future__ import annotations
+
+import json
+import sqlite3
+from collections import Counter
+from contextlib import nullcontext
+from pathlib import Path, PurePosixPath
+
+from fsspec import AbstractFileSystem
+
+from .fs import GppuFileSystem
+
+
+class GppuIndexedFileSystem(AbstractFileSystem):
+    protocol = 'gppu-index'
+    cachable = False
+
+    def __init__(self, index: str | Path):
+        super().__init__()
+        self.index = Path(index)
+        # A colocated index moves or syncs with its folder. A provenance-named
+        # snapshot is only an index; its parent is not the original data root.
+        self.source = GppuFileSystem(self.index.parent) if self.index.name.startswith('.') else None
+        self._paths: dict[str, str] = {}  # display name -> original relative path; metadata stays in SQLite
+        uri = self.index.as_uri()
+        if self.index.anchor.startswith('\\\\'):
+            uri = uri.replace('file://', 'file:////', 1)
+        self._database = sqlite3.connect(uri + '?mode=ro', uri=True, check_same_thread=False)
+        with self.database() as database:
+            database.execute('SELECT path, metadata, children FROM gppufs_entries LIMIT 0')
+
+    def database(self):
+        return nullcontext(self._database)
+
+    def close(self):
+        self._database.close()
+
+    def _names(self, database):
+        paths = [row[0] for row in database.execute(
+            "SELECT path FROM gppufs_entries WHERE json_extract(metadata, '$.type') = 'file' ORDER BY path")]
+        paths = [path for path in paths if not path.endswith(('.gppufs.sqlite', '.gppufs.sqlite-wal', '.gppufs.sqlite-shm'))]
+        names = Counter(PurePosixPath(path).name.casefold() for path in paths)
+        aliases = {}
+        for path in paths:
+            relative = PurePosixPath(path)
+            if relative.is_absolute() or '..' in relative.parts:
+                raise ValueError(f'{self.index}: index path is not relative: {path}')
+            name = relative.name if names[relative.name.casefold()] == 1 else ' › '.join(relative.parts)
+            if name.casefold() in aliases:
+                raise ValueError(f'{self.index}: indexed names collide on Windows: {name}')
+            aliases[name.casefold()] = (name, path)
+        self._paths = {key: path for key, (_, path) in aliases.items()}
+        return aliases
+
+    def _metadata(self, database, path, name):
+        found = database.execute('SELECT metadata FROM gppufs_entries WHERE path=?', (path,)).fetchone()
+        if found is None:
+            raise FileNotFoundError(path)
+        row = json.loads(found[0])
+        return dict(row, name=name, type='file')
+
+    def _relative(self, path):
+        name = str(path).strip('/')
+        if '/' in name or '\\' in name:
+            raise FileNotFoundError(path)
+        if name.casefold() not in self._paths:
+            with self.database() as database:
+                self._names(database)
+        try:
+            return self._paths[name.casefold()]
+        except KeyError:
+            raise FileNotFoundError(path) from None
+
+    def info(self, path='', **kwargs):
+        if not str(path).strip('/'):
+            return {'name': '/', 'type': 'directory', 'size': 0}
+        relative = self._relative(path)
+        with self.database() as database:
+            return self._metadata(database, relative, str(path))
+
+    def ls(self, path='', detail=True, **kwargs):
+        if str(path).strip('/'):
+            row = self.info(path)
+            return [row] if detail else [row['name']]
+        with self.database() as database:
+            names = self._names(database)
+            if not detail:
+                return ['/' + name for name, _ in names.values()]
+            return [self._metadata(database, relative, '/' + name) for name, relative in names.values()]
+
+    def _open(self, path, mode='rb', **kwargs):
+        if mode != 'rb':
+            raise PermissionError('an indexed view is read-only')
+        if self.source is None:
+            raise FileNotFoundError(f'{self.index}: this index snapshot has no bound original source for {path}')
+        return self.source.open(self.source.root.rstrip('/') + '/' + self._relative(path), mode=mode, **kwargs)
+
+
+def indexes(files: GppuFileSystem, folder: str):
+    """Index paths immediately in folder; GppuIndexedFileSystem validates their tables."""
+    for row in files.fs.ls(folder, detail=True):
+        if row['type'] == 'file' and row['name'].endswith('.gppufs.sqlite'):
+            yield Path(row['name'])

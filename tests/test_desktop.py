@@ -7,6 +7,7 @@ import pytest
 
 from gppu.desktop import DesktopFileSystem
 from gppu.fs import GppuFileSystem
+from gppu.fs_index import GppuIndexedFileSystem
 
 
 def test_desktop_archive_navigation_and_reads(tmp_path):
@@ -17,7 +18,7 @@ def test_desktop_archive_navigation_and_reads(tmp_path):
         archive.writestr('folder/inner.zip', inner.getvalue())
     (tmp_path / 'plain.txt').write_text('ordinary file')
     fs = DesktopFileSystem({'Lake': GppuFileSystem(tmp_path)})
-    assert fs.ls('/', detail=False) == ['/Lake']
+    assert fs.ls('/', detail=False) == ['/Lake', '/Indexed']
     assert fs.info('/Lake/outer.zip')['type'] == 'directory'
     assert fs.ls('/Lake/outer.zip', detail=False) == ['/Lake/outer.zip/folder']
     assert fs.info('/Lake/outer.zip/folder/inner.zip')['type'] == 'directory'
@@ -64,3 +65,65 @@ def test_unrelated_copied_index_is_preserved(tmp_path):
     assert '/Data/copied/actual.txt' in fs.ls('/Data/copied', detail=False)
     assert old_index.read_bytes() == before
     assert not (copied / '.copied.gppufs.sqlite').exists()
+    snapshot = copied / '261021 original.gppufs.sqlite'
+    shutil.copyfile(old_index, snapshot)
+    assert all(not name.endswith('.gppufs.sqlite') for name in fs.ls('/Data/copied', detail=False))
+
+
+def test_index_view_reads_deep_entries_without_listing_source(tmp_path, monkeypatch):
+    root = tmp_path / 'source'
+    folder = root / 'account' / 'year' / 'month' / 'day'
+    folder.mkdir(parents=True)
+    (folder / 'note.txt').write_text('deep indexed content')
+    (root / 'other').mkdir()
+    (root / 'other' / 'note.txt').write_text('another note')
+    source = GppuFileSystem(root)
+    source.ls_sync(recurse=True)
+    fs = DesktopFileSystem({'Data': source})
+    views = fs.ls('/Indexed', detail=False)
+    assert '/Indexed/Data › source' in views
+    view = '/Indexed/Data › source'
+    monkeypatch.setattr(GppuFileSystem, 'ls_sync', lambda *a, **k: pytest.fail('indexed listing touched source hierarchy'))
+    names = fs.ls(view, detail=False)
+    assert view + '/account › year › month › day › note.txt' in names
+    assert view + '/other › note.txt' in names
+    assert fs.cat_file(view + '/account › year › month › day › note.txt') == b'deep indexed content'
+    assert fs.cat_file(view + '/other › note.txt') == b'another note'
+
+
+def test_synced_index_is_read_without_renaming_or_touching_content(tmp_path, monkeypatch):
+    root = tmp_path / 'original'
+    root.mkdir()
+    folder = root / 'a' / 'b' / 'c'
+    folder.mkdir(parents=True)
+    (folder / 'note.txt').write_text('the source')
+    GppuFileSystem(root).ls_sync(recurse=True)
+    synced = tmp_path / 'synced'
+    synced.mkdir()
+    index = synced / '.original.gppufs.sqlite'
+    shutil.copyfile(root / '.original.gppufs.sqlite', index)
+    before = index.read_bytes()
+    view = GppuIndexedFileSystem(index)
+    monkeypatch.setattr(GppuFileSystem, 'ls_sync', lambda *a, **k: pytest.fail('read original hierarchy'))
+    assert view.ls(detail=False) == ['/note.txt']
+    assert view.info('/note.txt')['size'] == len('the source')
+    with pytest.raises(FileNotFoundError):
+        view.cat_file('/note.txt')
+    assert index.read_bytes() == before
+    assert not (synced / '.synced.gppufs.sqlite').exists()
+
+
+def test_transported_snapshot_never_reads_unrelated_sibling_files(tmp_path):
+    root = tmp_path / 'original'
+    root.mkdir()
+    (root / 'note.txt').write_text('original')
+    GppuFileSystem(root).ls_sync()
+    destination = tmp_path / 'destination'
+    destination.mkdir()
+    (destination / 'note.txt').write_text('unrelated')
+    snapshot = destination / '261021 original.gppufs.sqlite'
+    shutil.copyfile(root / '.original.gppufs.sqlite', snapshot)
+    view = GppuIndexedFileSystem(snapshot)
+    assert view.ls(detail=False) == ['/note.txt']
+    with pytest.raises(FileNotFoundError, match='no bound original source'):
+        view.cat_file('/note.txt')
