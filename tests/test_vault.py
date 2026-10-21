@@ -111,6 +111,28 @@ class TestEnvAlwaysWinsOverProvider:
             assert Vault.get("only-in-azure") == "from-azure"
 
 
+class TestAzureGet:
+    """Only a secret the vault does not hold reads as missing; a failure to reach the vault raises."""
+
+    class Client:
+        def __init__(self, error):
+            self.error = error
+
+        def get_secret(self, name):
+            raise self.error
+
+    def test_a_secret_the_vault_does_not_hold_is_none(self):
+        from azure.core.exceptions import ResourceNotFoundError
+        with patch.object(VaultProviderAzure, "_ensure_client", return_value=self.Client(ResourceNotFoundError("absent"))):
+            assert VaultProviderAzure("myvault").get("absent") is None
+
+    def test_a_vault_that_refuses_raises(self):
+        from azure.core.exceptions import ClientAuthenticationError
+        with patch.object(VaultProviderAzure, "_ensure_client", return_value=self.Client(ClientAuthenticationError("refused"))):
+            with pytest.raises(ClientAuthenticationError):
+                VaultProviderAzure("myvault").get("any")
+
+
 class TestCreateUpdate:
     def test_create_writes_when_absent(self):
         writes = []

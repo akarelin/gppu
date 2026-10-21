@@ -41,8 +41,9 @@ class VaultProviderAzure(VaultProvider):
     return self._client
 
   def get(self, name: str) -> str | None:
+    from azure.core.exceptions import ResourceNotFoundError
     try: return self._ensure_client().get_secret(name).value
-    except Exception: return None
+    except ResourceNotFoundError: return None   # a secret the vault does not hold; any other failure raises
 
   def set(self, name: str, value: str) -> None:
     self._ensure_client().set_secret(name, value)
