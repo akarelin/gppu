@@ -1,0 +1,4 @@
+# Windows desktop browsing through gppufs. Source paths are read by gppufs.
+mount_point: 'G:'
+sources:
+  Lake: '\\s1\Lake'

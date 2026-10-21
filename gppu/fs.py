@@ -1058,12 +1058,17 @@ class GppuFileSystem(AbstractFileSystem):
     matches = []
     for path in candidates:
       local = isinstance(self.fs, LocalFileSystem)
-      with closing(sqlite3.connect(Path(path).as_uri() + '?mode=ro' if local else ':memory:', uri=local)) as database:
+      uri = Path(path).as_uri() if local else ':memory:'
+      if local and Path(path).anchor.startswith('\\\\'):
+        uri = uri.replace('file://', 'file:////', 1)  # SQLite requires an empty authority for a UNC path.
+      with closing(sqlite3.connect(uri + '?mode=ro' if local else uri, uri=local)) as database:
         if not isinstance(self.fs, LocalFileSystem):
           database.deserialize(self.fs.cat_file(path))
         row = database.execute('SELECT ino FROM gppufs_index').fetchone()
       if row is not None and (identity is None or row[0] == identity):
         matches.append(path)
+    if not matches:
+      return None  # A copied index belongs to its original folder, not this folder's inode.
     if len(matches) != 1:
       raise ValueError(f'{folder}: cannot identify a unique index after rename')
     self.fs.mv(matches[0], expected)
