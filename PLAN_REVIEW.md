@@ -33,8 +33,13 @@ Alex's requirements (2026-10-18, deciding where Linked Data lives): Linked Data 
   - Probe, by path, nothing read: done, Alex's `probe_path(path)` and `Path.probe()` in `gppu/gppu.py`; `handlers.probe` gives it as a Record.
   - Record as the spec's Record, with its Event, Activity and Session: done.
   - Probe is fsspec's info: done, gppufs identifies an entry of this host's file system by probe and `info` reads nothing; `refresh=True` parses.
-  - One handler for every file type: in progress, gppufs still parses, lists archives and identifies remote stores through `gppu/fs.py`'s own handlers.
-  - Listing a folder without URIs: open.
+  - One handler for every file type: in progress, in four steps:
+    - gppufs's row: in progress. It keeps the keys gppu and CRAP read (name, parent, path, type, size, modified_at, handlers, files, folders, bytes, span, is_container, probed, probed_at); what a handler read is its Record, under `record`, instead of a key per handler.
+    - gppufs parses through `gppu/handlers.py`: open.
+    - The handlers only `gppu/fs.py` has (archive, location, git, browser, image, video, ChatGPT and Anthropic exports) in `gppu/handlers.py`: open.
+    - `gppu/fs.py`'s handlers, its Record, Probe and FileStats gone, their tests rewritten on `gppu/handlers.py`: open.
+  - gppufs's `ls` and `info` without `asyncio.to_thread`: open.
+  - Listing a folder without URIs: open. It changes Provider, which CRAP's M365, Telegram and Plaud providers subclass; they break until CRAP is changed.
 
 ## 9. gppu.ld's names
 - Decided by Alex: the base class of `gppu.ld`'s table classes is `_Record`, as gppu names its bases (`_Base`, `_PGBase`). `_Record` defines no table and does all the work; a type's class only defines its table. The `Fields` classes are the data models on `_Record`. Alex's spec defines the types and their statuses; the store and the persistence know nothing of statuses and check none. The code does not know how Postgres makes its tables: how they inherit is Postgres', and each table class is used as SQLModel uses one. The operations are written once, on `_Record`, and every table inherits them. Linked Data gives gppufs its catalog; the Lake is not Linked Data's.
