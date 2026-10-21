@@ -68,13 +68,19 @@ class Env(_Env):
     Env.initialized = False
 
   @staticmethod
-  def glob(path: str | y2path, default=None) -> Any: return Env.data if path == '' else deepget(path, Env.data, default=default)
+  def _data() -> dict:
+    """The configuration; a script that reads it first loads the default environment, from beside the script."""
+    if not Env.initialized: Env.from_env()
+    return Env.data
+
   @staticmethod
-  def glob_int(path: str | y2path, default: int = 0) -> int: return deepget_int(path, Env.data, default=default)
+  def glob(path: str | y2path, default=None) -> Any: return Env._data() if path == '' else deepget(path, Env._data(), default=default)
   @staticmethod
-  def glob_list(path: str | y2path, default=[]) -> list: return deepget_list(path, Env.data, default=default)
+  def glob_int(path: str | y2path, default: int = 0) -> int: return deepget_int(path, Env._data(), default=default)
   @staticmethod
-  def glob_dict(path: str | y2path, default={}) -> dict: return Env.data if path == '' else deepget_dict(path, Env.data, default=default)
+  def glob_list(path: str | y2path, default=[]) -> list: return deepget_list(path, Env._data(), default=default)
+  @staticmethod
+  def glob_dict(path: str | y2path, default={}) -> dict: return Env._data() if path == '' else deepget_dict(path, Env._data(), default=default)
   @staticmethod
   @sync
   async def dump():
