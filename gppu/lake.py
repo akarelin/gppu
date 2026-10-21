@@ -1,6 +1,7 @@
 """gppu.lake: the Lake. An object is saved to the Lake without a uri, and the Lake decides where it is stored and answers with
 its uri; an object is retrieved by its uri. Linked Data is Linked Data and the Lake is the Lake: their APIs are separate, /ld and
-/lake.
+/lake. The Lake is a catalog on gppufs: a Lake folder is listed through gppufs's GppuFileSystem, its index beside the Lake, and a
+UI lists it through the Lake's API, never the file system or gppufs.
 
 The Lake is configured in two places. Its locations are Linked Data's, a catalog made by gppu.ld.gppufs.catalog(). What the Lake
 itself is configured with is the app's, in Env: the uri of the Lake saved objects are stored in, and the templates of its layout
@@ -16,7 +17,7 @@ from typing import Any, BinaryIO, Mapping
 from urllib.parse import unquote, urlsplit
 
 from . import handlers
-from .fs import CACHE, Container, DataObject, GppuCatalog, Location
+from .fs import CACHE, Container, DataObject, GppuCatalog, GppuFileSystem, Location, _below
 from .gppu import TemplateSet, TimeSpan, y2uri
 
 
@@ -28,6 +29,19 @@ class Lake:
         location, path = catalog.location_of(store)
         self.store = Container(location.provider, location.provider.join(location.uri, path))
         self.templates = TemplateSet(named={'lake': dict(templates)})
+        self.root = location.provider.local(self.store.uri)   # the Lake on this host
+        self.files = GppuFileSystem(str(self.root), locations={self.root.as_posix(): {'location': location.uid,
+                                                                                       'canonical': str(self.store.uri)}})
+
+    def _here(self, uri: y2uri | str) -> str | None:
+        """The Lake folder or file a uri names, as gppufs takes it; none for a uri outside the Lake."""
+        below = _below(str(self.store.uri), str(uri))
+        return None if below is None else (self.root / unquote(below)).as_posix()
+
+    @staticmethod
+    def _row(row: dict[str, Any]) -> dict[str, Any]:
+        """A gppufs row as the Lake answers it: named by its uri in the Lake."""
+        return row | {'name': row['gppu']['location']['address']}
 
     def _at(self, uri: y2uri | str) -> tuple[Container, str]:
         location, path = self.catalog.location_of(uri)
@@ -71,7 +85,9 @@ class Lake:
         obj = DataObject(obj.uri, content, obj.identity, obj.kind, obj.name)
         path = self.place(obj, self.read(obj))
         self.store.write(path, obj)
-        return self.store.provider.join(self.store.uri, Location.relative(path))
+        uri = self.store.provider.join(self.store.uri, Location.relative(path))
+        self.files.info(self._here(uri), refresh=True)   # the catalog holds what was saved
+        return uri
 
     def retrieve(self, uri: y2uri | str) -> DataObject:
         """The object at uri with its content."""
@@ -79,7 +95,10 @@ class Lake:
         return container.read(path)
 
     def ls(self, uri: y2uri | str) -> list[dict[str, Any]]:
-        """What is directly inside uri."""
+        """What is directly inside uri: a Lake folder from its catalog, gppufs, each entry with what its handlers read; any other
+        through its location's Container."""
+        if (here := self._here(uri)) is not None:
+            return [self._row(row) for row in self.files.ls(here, detail=True)]
         container, path = self._at(uri)
         return container.ls(path)
 
@@ -89,7 +108,9 @@ class Lake:
         return list(container.walk(path, level=level, recursive=recursive))
 
     def info(self, uri: y2uri | str) -> dict[str, Any]:
-        """What the handlers found at uri, without its content."""
+        """What the handlers found at uri, without its content: in the Lake from its catalog, gppufs."""
+        if (here := self._here(uri)) is not None:
+            return self._row(self.files.info(here))
         container, path = self._at(uri)
         return container.info(path)
 

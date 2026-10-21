@@ -41,6 +41,8 @@ def test_a_session_is_placed_by_what_its_handler_reads(tmp_path):
     uri = lake.save(DataObject('', SESSION.encode(), None, 'file', f'{UID}.jsonl'))
     placed = outer / 'timeseries' / '2026' / 'Sessions' / '07' / 'cc' / UID / f'{UID}.jsonl'
     assert str(uri) == placed.as_uri() and placed.read_text() == SESSION
+    listed = lake.ls(placed.parent.as_uri())   # from the Lake's catalog, gppufs: named by uri, with what the handler read
+    assert [row['name'] for row in listed] == [str(uri)] and listed[0]['gppu']['record']['subtype'] == 'cc'
     with lake.open(uri) as stream:
         assert stream.read() == SESSION.encode()
 
