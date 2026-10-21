@@ -18,13 +18,17 @@ raises.
 from __future__ import annotations
 
 import csv
+import json
 import fnmatch
 import os
 import re
 import sqlite3
+from collections.abc import Iterator, Mapping
 from contextlib import closing
+from copy import deepcopy
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 
@@ -51,6 +55,72 @@ IGNORED_FOLDER_PATTERNS = (
     "System Volume Information", "OneDriveTemp", "Cache", ".cache",
 )
 WINDOWS_SYSTEM = 4
+Harness = Literal[
+    "chatgpt",
+    "cx",
+    "claude",
+    "cc",
+    "gemini",
+    "copilot",
+    "agy",
+    "hermes",
+    "openclaw",
+    "manus",
+]
+MODEL_KEYS = ("model", "modelId", "model_slug", "default_model_slug")
+ID_KEYS = ("sessionId", "session_id", "id", "remoteSessionId")
+ROLES = ("user", "assistant")
+SNIFF = 8
+UNITS = (("d", 86400), ("h", 3600), ("m", 60), ("s", 1))
+UNSAFE = '\\/:*?"<>|\r\n\t'
+NAME_LIMIT = 254
+PREAMBLE = ("# AGENTS.md instructions",)
+NON_HUMAN = (
+    re.compile(r"^\s*\*{0,2}you are a memory relevance compressor utility\b", re.I),
+    re.compile(r"^\s*Apply the current project instructions to this scenario:", re.I),
+    re.compile(
+        r"^\s*</?(?:system-reminder|command-message|command-name|local-command-caveat|local-command-stdout|local-command-stderr|environment_context|recommended_plugins|turn_aborted|scheduled-task|ide_opened_file|ide_selection|bash-input|bash-stdout|bash-stderr|task-notification|subagent_notification|codex_delegation|codex_internal_context|user_shell_command|image)\b",
+        re.I,
+    ),
+    # A slash command carrying no prompt of its own, mistypes included.
+    re.compile(r"^\s*/\S*\s*$"),
+    # The same command recorded without its slash.
+    re.compile(r"^\s*(?:upgrade|login|exit|plugins|marketplace)\s*$", re.I),
+    # An instruction file the harness prepends to the first turn.
+    re.compile(r"^\s*#\s*AGENTS\.md instructions\b", re.I),
+    # A probe that verifies a session's setup by demanding a fixed token back.
+    re.compile(
+        r"\b(?:reply|respond|output|answer)(?:\s+with)?(?:\s+the)?(?:\s+single)?"
+        r"(?:\s+word)?\s+(?:exactly\s+)?[A-Z][A-Z0-9_]{2,}[.!]?\s*$",
+        re.I | re.M,
+    ),
+    # The summary the harness writes in place of a turn when context runs out.
+    re.compile(
+        r"^\s*This session is being continued from a previous conversation\b", re.I
+    ),
+    # The harness reporting that a dispatched plan never started.
+    re.compile(r"^\s*ultraplan(?:\s+terminated|:\s*session creation failed)\b", re.I),
+    # The shell integration asking for a diagnosis of a failed command.
+    re.compile(r"^\s*A command failed\. Diagnose the error\b", re.I),
+    # A request relayed into a dispatched session, quoted rather than typed.
+    re.compile(r"^\s*[Uu]ser['’]s request:"),
+    # The harness marking a turn cut short, in place of anything typed.
+    re.compile(r"^\s*\[Request interrupted by user\b"),
+    # The link a hand-off from ChatGPT opens the session with.
+    re.compile(r"^\s*Continuing from \[[^\]]*\]\(chatgpt-conversation://", re.I),
+)
+ENVELOPE = re.compile(r"\A.*?^##\s*My request for Codex:[^\S\n]*$", re.S | re.M)
+REALTIME_INPUT = re.compile(
+    r"<realtime_delegation>\s*<input>(.*?)</input>", re.I | re.S
+)
+HOMES: dict[Harness, tuple[str, ...]] = {
+    "hermes": ("state.db",),
+    "agy": ("antigravity_state.pbtxt", "jetski_state.pbtxt"),
+}
+SESSION_UID = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.I,
+)
 
 
 class Handler:
@@ -461,3 +531,841 @@ class EmailHandler(FileHandler):
     def metadata(self) -> dict[str, Any]:
         named = {"timestamp": self.timestamp, "subject": self.subject, "party": self.party, "collision": self.collision}
         return {**super().metadata, **{key: value for key, value in named.items() if value is not None}}
+
+
+@dataclass(frozen=True)
+class SessionTurn:
+    """One user or assistant message of a session, and whether it was meta or on a sidechain."""
+
+    role: str
+    text: str
+    timestamp: datetime | None
+    meta: bool = False
+    sidechain: bool = False
+
+
+class SessionHandler(FileHandler):
+    """A native session: a non-empty .jsonl whose first eight objects say which harness wrote it.
+
+    The harness is told by its records, never by the file's name or folder:
+
+    * Codex (cx): type is session_meta, turn_context, event_msg or response_item, with an object payload.
+    * Copilot: a VS Code append log opening with sessionId, requests and responderUsername GitHub Copilot.
+    * Gemini CLI: a header with sessionId, projectHash and startTime.
+    * Claude Code (cc): a string sessionId, uuid or parentUuid, or type teleported-from.
+    * OpenClaw: a string modelId.
+    * Agy: USER_INPUT from USER_EXPLICIT or PLANNER_RESPONSE from MODEL, with a string created_at.
+    * Hermes: role session_meta with a string session_id.
+
+    Every object of the file is kept in records; a blank, truncated or non-object line is skipped. turns are
+    the user and assistant messages, the span runs from the first record time to the last, and the topic is
+    the first line a person typed. A subagent's file names the session that spawned it as parent_uid.
+    """
+
+    RECOGNIZERS = (
+        ("cx", "_is_codex"), ("copilot", "_is_copilot"), ("gemini", "_is_gemini"), ("cc", "_is_claude_code"),
+        ("openclaw", "_is_openclaw"), ("agy", "_is_agy"), ("hermes", "_is_hermes"),
+    )
+    UID = {"cx": "_codex_uid", "copilot": "_copilot_uid", "gemini": "_gemini_uid", "cc": "_claude_code_uid",
+           "openclaw": "_openclaw_uid", "agy": "_agy_uid", "hermes": "_hermes_uid"}
+    # What a file says of the conversation above it: Codex names a parent thread, Claude Code the session
+    # that spawned the subagent. The other harnesses name none.
+    PARENT = {"cx": "_parent", "cc": "_claude_code_parent"}
+    TURNS = {"cx": "_codex_turns", "copilot": "_copilot_turns", "gemini": "_gemini_turns",
+             "cc": "_claude_code_turns", "openclaw": "_openclaw_turns", "agy": "_agy_turns",
+             "hermes": "_hermes_turns"}
+
+    harness: Harness
+    uid: str | None
+    parent_uid: str | None
+    subagent: bool
+    records: tuple[Mapping[str, Any], ...]
+    turns: tuple[SessionTurn, ...]
+    models: tuple[str, ...]
+    topic: str
+    sidechain_only: bool
+
+    @classmethod
+    def handles(cls, path: Path) -> bool:
+        return (path.suffix.casefold() == ".jsonl" and path.stat().st_size > 0
+                and cls._harness(cls._head(path)) is not None)
+
+    def __init__(self, path: str | Path) -> None:
+        super().__init__(path)
+        records = self.records = self._records(self.path)
+        self.harness = self._harness(records[:SNIFF])
+        self.turns = getattr(self, self.TURNS[self.harness])(records)
+        times = tuple(self._timestamps(records))
+        if self.harness == "copilot":
+            created = self.valid_time(self._stamp(records[0]["v"].get("creationDate")))
+            times = tuple(time for time in (created, *(turn.timestamp for turn in self.turns)) if time is not None)
+        self.span = self.spanning(times)
+        self.uid = getattr(self, self.UID[self.harness])(records, self.path)
+        parent = self.PARENT.get(self.harness)
+        self.parent_uid, self.subagent = getattr(self, parent)(records) if parent else (None, False)
+        mainline = any(record.get("isSidechain") is False for record in records)
+        sidechain = any(record.get("isSidechain") is True for record in records)
+        self.sidechain_only = sidechain and not mainline
+        self.models = self._models(records)
+        self.topic = self._topic(self.turns)
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """The session's identity and description, without its text."""
+        return {**super().metadata, "harness": self.harness, "uid": self.uid, "parent_uid": self.parent_uid,
+                "subagent": self.subagent, "sidechain_only": self.sidechain_only, "records": len(self.records),
+                "turns": len(self.turns), "models": self.models, "topic": self.topic, "name": self.name}
+
+    @property
+    def user_messages(self) -> tuple[str, ...]:
+        """The mainline user messages that are not meta."""
+        return tuple(turn.text for turn in self.turns if turn.role == "user" and not turn.meta and not turn.sidechain)
+
+    @property
+    def human_messages(self) -> tuple[str, ...]:
+        """What a person typed: user messages without their envelopes, leaving out generated ones."""
+        return tuple(text for message in self.user_messages if (text := self.typed(message)))
+
+    @property
+    def length(self) -> str:
+        """The session's duration in its largest unit: ~3h."""
+        if self.span is None or not (seconds := round((self.span.end - self.span.start).total_seconds())):
+            return ""
+        unit, size = next(pair for pair in UNITS if seconds >= pair[1])
+        return f"~{round(seconds / size)}{unit}"
+
+    @property
+    def label(self) -> str:
+        """Its start, turn count, duration and topic: 261020-1412 42~3h - the topic."""
+        start = f"{self.span.start.astimezone():%y%m%d-%H%M} " if self.span else ""
+        topic = f" - {self.topic}" if self.topic else ""
+        return f"{start}{len(self.turns)}{self.length}{topic}"
+
+    @property
+    def name(self) -> str:
+        """The file's name from its label, its uid and its suffix, within NAME_LIMIT."""
+        tail = (f".{self.uid}" if self.uid else "") + self.path.suffix
+        label = self.label
+        if len(label) + len(tail) > NAME_LIMIT:
+            label = label[: NAME_LIMIT - len(tail)].rstrip()
+        return f"{label}{tail}"
+
+    @classmethod
+    def _harness(cls, records: tuple[Mapping[str, Any], ...]) -> Harness | None:
+        return next((harness for harness, recognize in cls.RECOGNIZERS if getattr(cls, recognize)(records)), None)
+
+    @staticmethod
+    def _is_codex(records: tuple[Mapping[str, Any], ...]) -> bool:
+        """Recognize Codex lifecycle and response records."""
+
+        return any(
+            record.get("type")
+            in ("session_meta", "turn_context", "event_msg", "response_item")
+            and isinstance(record.get("payload"), Mapping)
+            for record in records
+        )
+
+    @staticmethod
+    def _is_copilot(records: tuple[Mapping[str, Any], ...]) -> bool:
+        """Recognize the native VS Code Copilot append-log header."""
+        if not records or records[0].get("kind") != 0:
+            return False
+        body = records[0].get("v")
+        return (isinstance(body, Mapping) and isinstance(body.get("sessionId"), str)
+                and isinstance(body.get("requests"), list)
+                and body.get("responderUsername") == "GitHub Copilot")
+
+    @staticmethod
+    def _copilot_state(records: tuple[Mapping[str, Any], ...]) -> dict:
+        """Replay VS Code objectMutationLog entries without changing raw records.
+
+        Kind 2 replaces the array tail at ``i`` and then appends ``v``. Request
+        and response patches belong to the same conversation; they are not turns.
+        """
+        if not SessionHandler._is_copilot(records):
+            raise ValueError("Copilot append log has no initial session object")
+        body = deepcopy(records[0]["v"])
+        uid = body["sessionId"]
+        for record in records[1:]:
+            kind, path = record.get("kind"), record.get("k")
+            if type(kind) is not int or kind not in (1, 2, 3) or not isinstance(path, list) or not path:
+                raise ValueError("Copilot append log has an invalid mutation")
+            target = body
+            for key in path[:-1]:
+                if (isinstance(target, dict) and key in target
+                    or isinstance(target, list) and type(key) is int and 0 <= key < len(target)):
+                    target = target[key]
+                else:
+                    raise ValueError("Copilot append log mutation has no parent")
+            key = path[-1]
+            if not (isinstance(target, dict) and isinstance(key, str)
+                    or isinstance(target, list) and type(key) is int and 0 <= key < len(target)):
+                raise ValueError("Copilot append log mutation has an invalid target")
+            if kind == 1:
+                target[key] = deepcopy(record["v"])
+            elif kind == 3:
+                if not isinstance(target, dict):
+                    raise ValueError("Copilot deletion requires an object property")
+                target.pop(key, None)
+            else:
+                if isinstance(target, dict) and key not in target:
+                    target[key] = []  # Native Push initializes an absent array.
+                values = target[key]
+                if not isinstance(values, list):
+                    raise ValueError("Copilot Push target is not an array")
+                if "i" in record:
+                    index = record["i"]
+                    if type(index) is not int or not 0 <= index <= len(values):
+                        raise ValueError("Copilot Push index is outside its array")
+                    del values[index:]
+                if "v" in record:
+                    if not isinstance(record["v"], list):
+                        raise ValueError("Copilot Push values are not an array")
+                    values.extend(deepcopy(record["v"]))
+        if body["sessionId"] != uid or not isinstance(body["requests"], list):
+            raise ValueError("Copilot append log changed its session identity or requests type")
+        return body
+
+    @classmethod
+    def _copilot_uid(cls, records: tuple[Mapping[str, Any], ...], path: Path) -> str:
+        """Return the sessionId recorded in the native initial object."""
+        return records[0]["v"]["sessionId"]
+
+    @classmethod
+    def _copilot_turns(cls, records: tuple[Mapping[str, Any], ...]) -> tuple[SessionTurn, ...]:
+        """Read final messages and their explicitly recorded response completion times."""
+        turns = []
+        for request in cls._copilot_state(records)["requests"]:
+            if (not isinstance(request, Mapping) or not isinstance(request.get("message"), Mapping)
+                or not isinstance(request["message"].get("text"), str) or "timestamp" not in request):
+                raise ValueError("Copilot request requires its original message and timestamp")
+            if turn := cls._turn("user", request["message"]["text"], request["timestamp"]):
+                turns.append(turn)
+            response = request.get("response", [])
+            if not isinstance(response, list):
+                raise ValueError("Copilot response must be an array")
+            parts = []
+            for part in response:
+                if not isinstance(part, Mapping):
+                    continue
+                if isinstance(part.get("value"), str):
+                    parts.append(part["value"])
+                elif part.get("kind") == "inlineReference" and isinstance(part.get("name"), str):
+                    parts.append(part["name"])
+            text = "".join(parts)
+            state = request.get("modelState")
+            completed = state.get("completedAt") if isinstance(state, Mapping) else None
+            if completed is not None and (state.get("value") not in (1, 2, 3)
+                or type(completed) not in (int, float) or Handler.valid_time(cls._stamp(completed)) is None
+                or completed < request["timestamp"]):
+                raise ValueError("Copilot completion requires a terminal state and a valid recorded time")
+            if turn := cls._turn("assistant", text, completed):
+                turns.append(turn)
+        return tuple(turns)
+
+    @staticmethod
+    def _is_claude_code(records: tuple[Mapping[str, Any], ...]) -> bool:
+        """Recognize Claude Code session identifiers and record types."""
+
+        return any(
+            isinstance(record.get("sessionId"), str)
+            or record.get("type") == "teleported-from"
+            or isinstance(record.get("uuid"), str)
+            or isinstance(record.get("parentUuid"), str)
+            for record in records
+        )
+
+    @staticmethod
+    def _is_gemini(records: tuple[Mapping[str, Any], ...]) -> bool:
+        """Recognize a Gemini CLI chat log by the header it opens with.
+
+        Its first record is the chat's own header — a session id, the hash of the project it was
+        opened in, when it started and what kind it is — and its turns arrive as one ``$set`` of
+        messages. Claude Code is recognized by a ``sessionId`` alone, so without this the Gemini CLI
+        is read as Claude Code, its turns are not found and every chat of one service shares that
+        service's id.
+        """
+
+        return any(
+            isinstance(record.get("sessionId"), str)
+            and isinstance(record.get("projectHash"), str)
+            and isinstance(record.get("startTime"), str)
+            for record in records
+        )
+
+    @staticmethod
+    def _is_openclaw(records: tuple[Mapping[str, Any], ...]) -> bool:
+        """Recognize OpenClaw records from their model identifier."""
+
+        return any(isinstance(record.get("modelId"), str) for record in records)
+
+    @staticmethod
+    def _is_agy(records: tuple[Mapping[str, Any], ...]) -> bool:
+        """Recognize Agy user and planner transcript records."""
+
+        return any(
+            record.get("type") in ("USER_INPUT", "PLANNER_RESPONSE")
+            and record.get("source") in ("USER_EXPLICIT", "MODEL")
+            and isinstance(record.get("created_at"), str)
+            for record in records
+        )
+
+    @staticmethod
+    def _is_hermes(records: tuple[Mapping[str, Any], ...]) -> bool:
+        """Recognize a Hermes session metadata record."""
+
+        return any(
+            record.get("role") == "session_meta"
+            and isinstance(record.get("session_id"), str)
+            for record in records
+        )
+
+    @staticmethod
+    def _codex_uid(records: tuple[Mapping[str, Any], ...], path: Path) -> str | None:
+        """Return the immutable id from Codex session metadata."""
+
+        for record in records:
+            if record.get("type") != "session_meta" or not isinstance(
+                payload := record.get("payload"), Mapping
+            ):
+                continue
+            value = payload.get("id") or payload.get("session_id")
+            return value.strip() if isinstance(value, str) and value.strip() else None
+        return None
+
+    @staticmethod
+    def _agy_uid(records: tuple[Mapping[str, Any], ...], path: Path) -> str | None:
+        """Return the UUID-named Agy session folder beneath ``brain``."""
+
+        return next(
+            (
+                parent.name
+                for parent in path.parents
+                if parent.parent.name == "brain" and SESSION_UID.fullmatch(parent.name)
+            ),
+            None,
+        )
+
+    @classmethod
+    def _claude_code_uid(
+        cls, records: tuple[Mapping[str, Any], ...], path: Path
+    ) -> str | None:
+        """Return the identifier of the conversation this file holds.
+
+        A subagent transcript carries its parent's ``sessionId`` on every record and its own
+        ``agentId``, which is also what the file is named after. The agent id identifies the
+        conversation in the file; the session id identifies its parent.
+        """
+
+        return cls._record_uid(records, ("agentId",)) or cls._record_uid(records, ID_KEYS)
+
+    @classmethod
+    def _gemini_uid(
+        cls, records: tuple[Mapping[str, Any], ...], path: Path
+    ) -> str | None:
+        """Return the identifier of the chat this file holds: its session id and when it started.
+
+        The Gemini CLI reuses one session id for a service it runs — every chat of its a2a server is
+        logged under ``a2a-server`` — so the id alone names the service and not the conversation. The
+        start moment is in the header of every chat and is what tells one from another.
+        """
+
+        header = next(
+            (
+                record
+                for record in records
+                if isinstance(record.get("sessionId"), str)
+                and isinstance(record.get("startTime"), str)
+            ),
+            None,
+        )
+        if header is None:
+            return cls._record_uid(records, ID_KEYS)
+        return f"{header['sessionId']}/{header['startTime']}"
+
+    @classmethod
+    def _gemini_turns(
+        cls, records: tuple[Mapping[str, Any], ...]
+    ) -> tuple[SessionTurn, ...]:
+        """Read the messages a Gemini CLI chat sets, in the order it sets them.
+
+        Its content blocks carry the text and no label, where the shared reader wants a block that
+        says it is text, so the text is joined here and handed over as one string.
+        """
+
+        return tuple(
+            item
+            for record in records
+            for changed in [record.get("$set")]
+            if isinstance(changed, Mapping)
+            for message in changed.get("messages") or ()
+            if isinstance(message, Mapping)
+            for item in [
+                cls._turn(
+                    message.get("type"),
+                    cls._gemini_text(message.get("content")),
+                    message.get("timestamp"),
+                )
+            ]
+            if item is not None
+        )
+
+    @staticmethod
+    def _gemini_text(content: Any) -> str:
+        """Join the text of a Gemini CLI message's blocks."""
+
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list):
+            return ""
+        return "\n\n".join(
+            part["text"]
+            for part in content
+            if isinstance(part, Mapping)
+            and isinstance(part.get("text"), str)
+            and part["text"].strip()
+        )
+
+    @classmethod
+    def _openclaw_uid(
+        cls, records: tuple[Mapping[str, Any], ...], path: Path
+    ) -> str | None:
+        """Return the first OpenClaw session identifier."""
+
+        return cls._record_uid(records, ("id", "session_id"))
+
+    @classmethod
+    def _hermes_uid(
+        cls, records: tuple[Mapping[str, Any], ...], path: Path
+    ) -> str | None:
+        """Return the first Hermes session identifier."""
+
+        return cls._record_uid(records, ID_KEYS)
+
+    @staticmethod
+    def _record_uid(
+        records: tuple[Mapping[str, Any], ...], keys: tuple[str]
+    ) -> str | None:
+        """Find the first non-empty identifier in supported record scopes."""
+
+        for record in records:
+            scopes = [record]
+            scopes += [
+                value
+                for key in ("payload", "message", "data")
+                if isinstance(value := record.get(key), Mapping)
+            ]
+            for key in keys:
+                for scope in scopes:
+                    value = scope.get(key)
+                    if isinstance(value, str) and value.strip():
+                        return value.strip()
+        return None
+
+    @classmethod
+    def _codex_turns(
+        cls, records: tuple[Mapping[str, Any], ...]
+    ) -> tuple[SessionTurn, ...]:
+        """Extract Codex response messages, or legacy event messages when absent."""
+
+        response = tuple(
+            item
+            for record in records
+            if record.get("type") == "response_item"
+            and isinstance(payload := record.get("payload"), Mapping)
+            and payload.get("type") == "message"
+            for item in [
+                cls._turn(
+                    payload.get("role"), payload.get("content"), record.get("timestamp")
+                )
+            ]
+            if item is not None
+        )
+        if response:
+            return response
+        roles = {"user_message": "user", "agent_message": "assistant"}
+        return tuple(
+            item
+            for record in records
+            if record.get("type") == "event_msg"
+            and isinstance(payload := record.get("payload"), Mapping)
+            for item in [
+                cls._turn(
+                    roles.get(payload.get("type")),
+                    payload.get("message"),
+                    record.get("timestamp"),
+                )
+            ]
+            if item is not None
+        )
+
+    @classmethod
+    def _claude_code_turns(
+        cls, records: tuple[Mapping[str, Any], ...]
+    ) -> tuple[SessionTurn, ...]:
+        """Extract Claude Code user and assistant turns with record flags."""
+
+        return tuple(
+            item
+            for record in records
+            if record.get("type") in ROLES
+            and isinstance(message := record.get("message"), Mapping)
+            for item in [
+                cls._turn(
+                    message.get("role", record.get("type")),
+                    message.get("content"),
+                    record.get("timestamp"),
+                    record.get("isMeta") is True,
+                    record.get("isSidechain") is True,
+                )
+            ]
+            if item is not None
+        )
+
+    @classmethod
+    def _openclaw_turns(
+        cls, records: tuple[Mapping[str, Any], ...]
+    ) -> tuple[SessionTurn, ...]:
+        """Extract OpenClaw turns from nested message records."""
+
+        return tuple(
+            item
+            for record in records
+            if isinstance(message := record.get("message"), Mapping)
+            for item in [
+                cls._turn(
+                    message.get("role"),
+                    message.get("content"),
+                    record.get("timestamp", record.get("ts")),
+                )
+            ]
+            if item is not None
+        )
+
+    @classmethod
+    def _agy_turns(
+        cls, records: tuple[Mapping[str, Any], ...]
+    ) -> tuple[SessionTurn, ...]:
+        """Map Agy user input and planner responses to canonical turns."""
+
+        roles = {"USER_INPUT": "user", "PLANNER_RESPONSE": "assistant"}
+        return tuple(
+            item
+            for record in records
+            for item in [
+                cls._turn(
+                    roles.get(record.get("type")),
+                    record.get("content"),
+                    record.get("created_at"),
+                )
+            ]
+            if item is not None
+        )
+
+    @classmethod
+    def _hermes_turns(
+        cls, records: tuple[Mapping[str, Any], ...]
+    ) -> tuple[SessionTurn, ...]:
+        """Extract Hermes turns from flat role and content records."""
+
+        return tuple(
+            item
+            for record in records
+            for item in [
+                cls._turn(
+                    record.get("role"), record.get("content"), record.get("timestamp")
+                )
+            ]
+            if item is not None
+        )
+
+    @staticmethod
+    def _records(path: Path) -> tuple[Mapping[str, Any], ...]:
+        """Read valid JSON objects from a JSONL session file."""
+
+        # a writer crash or interrupted flush can leave one line truncated mid-record;
+        # skip that line rather than losing every record in the file over it.
+        records: list[Mapping[str, Any]] = []
+        with path.open("r", encoding="utf-8") as stream:
+            for line in stream:
+                if not line.strip():
+                    continue
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(value, dict):
+                    records.append(value)
+        if not records:
+            raise ValueError(f"{path}: session file is empty")
+        return tuple(records)
+
+    @staticmethod
+    def _head(path: Path) -> tuple[Mapping[str, Any], ...]:
+        """Read up to ``SNIFF`` leading JSONL objects, or return no records."""
+
+        found: list[Mapping[str, Any]] = []
+        try:
+            with path.open("r", encoding="utf-8") as stream:
+                for line in stream:
+                    if not line.strip():
+                        continue
+                    value = json.loads(line)
+                    if not isinstance(value, dict):
+                        return ()
+                    found.append(value)
+                    if len(found) >= SNIFF:
+                        break
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return ()
+        return tuple(found)
+
+    @classmethod
+    def _walk_values(cls, value: Any) -> Iterator[tuple[str, Any]]:
+        """Yield every mapping key and value recursively."""
+
+        if isinstance(value, Mapping):
+            for key, nested in value.items():
+                yield str(key), nested
+                yield from cls._walk_values(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                yield from cls._walk_values(nested)
+
+    @staticmethod
+    def _stamp(value: Any) -> datetime | None:
+        """Parse an ISO string or second/millisecond Unix timestamp."""
+
+        if isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+            except ValueError:
+                return None
+            return (
+                parsed
+                if parsed.tzinfo is not None
+                else parsed.replace(tzinfo=timezone.utc)
+            )
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and value > 1_000_000_000
+        ):
+            seconds = value / 1000 if value > 10_000_000_000 else value
+            try:
+                return datetime.fromtimestamp(seconds, timezone.utc)
+            except (OSError, OverflowError, ValueError):
+                return None
+        return None
+
+    @classmethod
+    def _timestamps(cls, records: tuple[Mapping[str, Any], ...]) -> Iterator[datetime]:
+        """Record times only: the record, its payload, or its message. Values quoted deeper inside content are not the session's time."""
+
+        for record in records:
+            for scope in (record, record.get("payload"), record.get("message")):
+                if not isinstance(scope, Mapping):
+                    continue
+                for key in TIME_KEYS:
+                    if (stamp := Handler.valid_time(cls._stamp(scope.get(key)))) is not None:
+                        yield stamp
+
+    @classmethod
+    def _models(cls, records: tuple[Mapping[str, Any], ...]) -> tuple[str, ...]:
+        """Return unique model names found anywhere in the records."""
+
+        return cls._uniq(
+            value
+            for record in records
+            for key, value in cls._walk_values(record)
+            if key in MODEL_KEYS
+        )
+
+    @classmethod
+    def _claude_code_parent(
+        cls, records: tuple[Mapping[str, Any], ...]
+    ) -> tuple[str | None, bool]:
+        """Return a Claude Code parent session id and whether the file is a subagent's.
+
+        A file carrying an ``agentId`` is a subagent's transcript, and the ``sessionId`` every
+        record carries is the session that spawned it.
+        """
+
+        if cls._record_uid(records, ("agentId",)) is None:
+            return None, False
+        return cls._record_uid(records, ID_KEYS), True
+
+    @staticmethod
+    def _parent(records: tuple[Mapping[str, Any], ...]) -> tuple[str | None, bool]:
+        """Return a Codex parent session id and whether the session is a subagent."""
+
+        for record in records:
+            if record.get("type") != "session_meta":
+                continue
+            payload = record.get("payload")
+            if not isinstance(payload, Mapping):
+                return None, False
+            source = payload.get("source")
+            subagent = payload.get("thread_source") == "subagent" or (
+                isinstance(source, Mapping) and "subagent" in source
+            )
+            parent = payload.get("parent_thread_id")
+            if not parent and isinstance(source, Mapping):
+                nested = source.get("subagent")
+                spawn = (
+                    nested.get("thread_spawn") if isinstance(nested, Mapping) else None
+                )
+                parent = (
+                    spawn.get("parent_thread_id")
+                    if isinstance(spawn, Mapping)
+                    else None
+                )
+            if subagent and not parent:
+                parent = payload.get("forked_from_id")
+            return (str(parent) if parent else None), subagent
+        return None, False
+
+    @staticmethod
+    def _content_text(content: Any) -> str:
+        """Join supported string and structured text content blocks."""
+
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list):
+            return ""
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                text = part
+            elif (
+                isinstance(part, Mapping)
+                and part.get("type") in ("text", "input_text", "output_text")
+                and isinstance(part.get("text"), str)
+            ):
+                text = part["text"]
+            else:
+                continue
+            if text.strip():
+                parts.append(text)
+        return "\n\n".join(parts)
+
+    @classmethod
+    def _turn(
+        cls,
+        role: Any,
+        content: Any,
+        timestamp: Any,
+        meta: bool = False,
+        sidechain: bool = False,
+    ) -> SessionTurn | None:
+        """Normalize one supported role and non-empty content into a turn."""
+
+        if isinstance(role, str) and role.casefold() == "human":
+            role = "user"
+        if not isinstance(role, str) or role.casefold() not in ROLES:
+            return None
+        text = cls._content_text(content)
+        if not text.strip():
+            return None
+        return SessionTurn(
+            role.casefold(), text, Handler.valid_time(cls._stamp(timestamp)), meta, sidechain
+        )
+
+    @staticmethod
+    def _topic(messages: tuple[SessionTurn]) -> str:
+        """The first line a person typed."""
+        for message in messages:
+            if message.role != "user" or message.meta or message.sidechain:
+                continue
+            if text := SessionHandler.typed(message.text):
+                return " ".join(
+                    "".join(
+                        " " if char in UNSAFE else char for char in text.splitlines()[0]
+                    ).split()
+                )
+        return ""
+
+    @staticmethod
+    def _uniq(values) -> tuple[str, ...]:
+        """Return non-empty strings once, preserving their first order."""
+
+        return tuple(
+            dict.fromkeys(
+                value.strip()
+                for value in values
+                if isinstance(value, str) and value.strip()
+            )
+        )
+
+    @staticmethod
+    def _home_harness(path: Path) -> Harness | None:
+        """Identify a harness home directory from its required marker file."""
+
+        return next(
+            (
+                harness
+                for harness, markers in HOMES.items()
+                if any((path / marker).exists() for marker in markers)
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _agy_session_folder(path: Path) -> bool:
+        """Recognize an Agy UUID folder containing a transcript file."""
+
+        return SESSION_UID.fullmatch(path.name) is not None and any(
+            (path / ".system_generated" / "logs" / name).is_file()
+            for name in ("transcript_full.jsonl", "transcript.jsonl")
+        )
+
+    @staticmethod
+    def typed(text: str) -> str:
+        """The text a person typed in a user message: the envelope stripped, '' when the message was generated."""
+        if match := REALTIME_INPUT.search(text):
+            text = match.group(1)
+        text = ENVELOPE.sub("", text, count=1).strip()
+        if not text or any(pattern.search(text) for pattern in NON_HUMAN):
+            return ""
+        first = text.splitlines()[0].strip()
+        if (
+            first.startswith("<")
+            and first.endswith(">")
+            or any(first.startswith(preamble) for preamble in PREAMBLE)
+        ):
+            return ""
+        return text
+
+
+class SessionFolderHandler(FolderHandler):
+    """A harness's session folder: a Hermes home (state.db), an Agy home (antigravity_state.pbtxt or
+    jetski_state.pbtxt), or an Agy session folder named by its UUID with a transcript under
+    .system_generated/logs. Its sessions are every session file below it, all of one harness.
+    """
+
+    harness: Harness
+    sessions: tuple[SessionHandler, ...]
+
+    @classmethod
+    def handles(cls, path: Path) -> bool:
+        return SessionHandler._home_harness(path) is not None or SessionHandler._agy_session_folder(path)
+
+    def __init__(self, path: str | Path) -> None:
+        super().__init__(path)
+        self.sessions = tuple(SessionHandler(file) for file in sorted(self.path.rglob("*.jsonl"), key=lambda item: str(item).casefold())
+                              if file.is_file() and SessionHandler.handles(file))
+        harnesses = SessionHandler._uniq([session.harness for session in self.sessions] + [SessionHandler._home_harness(self.path)])
+        if len(harnesses) != 1:
+            raise ValueError(f"{self.path}: a session folder holds one harness, not {harnesses}")
+        self.harness = harnesses[0]
+        self.span = self.spanning([time for session in self.sessions if session.span for time in (session.span.start, session.span.end)])
+
+    @property
+    def uid(self) -> str | None:
+        """The sessions' id when they all agree on one."""
+        values = {session.uid for session in self.sessions if session.uid}
+        return values.pop() if len(values) == 1 else None
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        return {**super().metadata, "harness": self.harness, "uid": self.uid, "sessions": len(self.sessions)}
