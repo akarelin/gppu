@@ -27,7 +27,7 @@ Xmqtt2Mqtt(name='xmqtt2mqtt').run()
 
 ## CliApp
 
-`CliApp` is a command-line utility. It defines `main`, and `MyApp.cli()` builds the app and runs `main`. Its `_my` is the configuration with the command line over it: `--days 7 --dry-run true`, each value read as YAML through gppu's YAML reader. What `main` returns is printed as JSON on stdout; logs go to stderr. `CliApp` has no steps.
+`CliApp` is a command-line utility. It defines `main`, and `MyApp.cli()` builds the app and runs `main`. Its `_my` is the configuration with the command line over it: `--days 7 --dry-run true`, each value a string. What `main` returns is printed as JSON on stdout; logs go to stderr. `CliApp` has no steps.
 
 ## AsyncApp and the steps
 

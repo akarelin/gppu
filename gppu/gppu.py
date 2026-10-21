@@ -626,17 +626,7 @@ YML_BARE_KEY = '__include_'
 
 def dict_from_yml(filename: str | pathlib.Path, /, **context) -> dict:
   filename = full_path(filename)
-  return dict(yml_from_text(_yml_text(filename, **context), filename.parent, **context) or {})
-
-
-def _yml_text(fn: pathlib.Path, /, **context) -> str:                                      # a `.j2` document is rendered
-  if fn.suffix.lower() == '.j2': return jinja_document(fn, **context)                      # before YAML reads it, so its
-  with open(fn, encoding='utf-8') as f: return f.read()                                    # macros write the document
-
-
-def yml_from_text(text: str, base: pathlib.Path, /, **context) -> Any:
-  """YAML text read as dict_from_yml reads a file; ``!include`` resolves from ``base``."""
-  dir_stack: list[pathlib.Path] = [base]
+  dir_stack: list[pathlib.Path] = [filename.parent]
   bare_seq = iter(range(1 << 30))
 
   class YmlLoader(FullLoader): pass
@@ -658,6 +648,10 @@ def yml_from_text(text: str, base: pathlib.Path, /, **context) -> Any:
 
   def yml_load(text: str) -> Any: return yml_merged(yaml.load(yml_keyed(text), Loader=YmlLoader))
 
+  def yml_text(fn: pathlib.Path) -> str:                                                   # a `.j2` document is rendered
+    if fn.suffix.lower() == '.j2': return jinja_document(fn, **context)                    # before YAML reads it, so its
+    with open(fn, encoding='utf-8') as f: return f.read()                                  # macros write the document
+
   def yml_include(loader: FullLoader, node: Node) -> Any:
     fn = full_path(loader.construct_scalar(node), dir_stack[-1])
 
@@ -666,7 +660,7 @@ def yml_from_text(text: str, base: pathlib.Path, /, **context) -> Any:
     try:
       if fn.suffix.lower().endswith('.json'):                                              # JSON (tabs/escapes YAML rejects)
         with open(fn, "r", encoding='utf-8') as f: return json.load(f)
-      return yml_load(_yml_text(fn, **context))
+      return yml_load(yml_text(fn))
     finally: dir_stack.pop()
 
   def yml_secret(loader: FullLoader, node: Node) -> Any: return Vault.get(loader.construct_scalar(node))
@@ -674,7 +668,9 @@ def yml_from_text(text: str, base: pathlib.Path, /, **context) -> Any:
   YmlLoader.add_constructor("!include", yml_include)
   YmlLoader.add_constructor("!secret", yml_secret)
 
-  return yml_load(text)
+  data = yml_load(yml_text(filename))
+
+  return dict(data or {})
 
 
   # with open(filename, encoding='utf-8') as f: return dict(yaml.load(f, Loader=yaml.FullLoader))

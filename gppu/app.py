@@ -1,24 +1,14 @@
-"""gppu.app — application bases and lifecycle.
-
-Import ``App`` from gppu for a synchronous utility, ``AsyncApp`` for asyncio
-work, or ``MqttApp`` for an MQTT service. For Textual, use ``gppu.tui.TUIApp``.
-
-The separate YMRO (Y2 Method Resolution Order) init→load→start lifecycle walks
-the MRO for ``__method``-named methods on every ancestor and calls them in order,
-giving cooperative multi-inheritance without explicit ``super()`` chains. Subclasses can extend
-the lifecycle by overriding ``POSSIBLE_STEPS``. These are stepper hooks;
-``App`` and ``AsyncApp`` do not run them.
-
-``AsyncApp`` is the conventional asyncio counterpart: construction runs a
-synchronous ``setup()`` hook, and ``run()`` opens one ``TaskGroup`` before
-calling ``start()``. Long-lived work is added with ``_spawn()``.
+"""gppu.app — the environment and the app bases. See docs/app.md.
 
 Env: the configuration. One global Env loads the app's configuration (`Env.from_env`), and
 through its `!include` of the shared one, everything the fleet knows; with it the basic level that
 needs no file: platform, host, user, home, os and the trace rules. Every object built on `_Config`
-copies the configuration into its `_my` and reads it with `self.my(...)`.
+has Env loaded by the time it exists, copies the configuration into its `_my` and reads it with
+`self.my(...)`.
 
-CliApp: the command line overrides keys of the configuration (``--since 3d --dry-run true``).
+``App`` and ``CliApp`` are regular apps, with no steps. ``AsyncApp`` composes ``_App`` with
+``mixin_Stepper``, the YMRO (Y2 Method Resolution Order) init, load and start steps; ``APIApp``
+serves HTTP on it. For Textual, use ``gppu.tui.TUIApp``; for MQTT, ``gppu.iot.MqttApp``.
 """
 from __future__ import annotations
 
@@ -41,7 +31,7 @@ from typing import Any, Optional, final
 from . import gppu as _core   # _core._logger is rebound by init_logger
 from .gppu import (TRACE_RULES, Debug, Dump, Error, Info, Logger, OSType, Warn, _DC, _Logger, _file_handlers,
                    _log_root, _mixin, deepget, deepget_dict, deepget_float, deepget_int, deepget_list, detect_os, dict_from_yml,
-                   enable_file_logging, sync, y2path, yml_from_text)
+                   enable_file_logging, sync, y2path)
 
 _trace_mro = False
 
@@ -353,7 +343,7 @@ class App(_App, _DC):
 
 class CliApp(_App):
   """Runs ``main`` once. Its ``_my`` is the configuration with the command line over it, ``--since 3d --dry-run true``,
-  each value read as YAML. ``main`` is the action; what it returns is printed as JSON on stdout, logs go to stderr.
+  each value a string. ``main`` is the action; what it returns is printed as JSON on stdout, logs go to stderr.
 
   Usage::
 
@@ -371,7 +361,7 @@ class CliApp(_App):
     args = self._argv
     if len(args) % 2 or any(not key.startswith('--') for key in args[::2]):
       raise SystemExit(f'{self.name}: arguments are --key value pairs')
-    for key, value in zip(args[::2], args[1::2]): self._my[key[2:]] = yml_from_text(value, Path.cwd())
+    for key, value in zip(args[::2], args[1::2]): self._my[key[2:]] = value
 
   def main(self) -> Any: raise NotImplementedError(f'{type(self).__name__} defines no main')
 
@@ -433,9 +423,10 @@ class mixin_EventLoopBridge(_mixin):
 class AsyncApp(_App, mixin_Stepper, mixin_EventLoopBridge):
   """Application base for long-lived asyncio services, on the YMRO steps.
 
-  ``run()`` runs init (light loading, with the configuration ready), load (the heavy
-  loading) and start, last, on the app's loop: ``asyncio.run(MyApp().run())``. A class
-  gives its part of a step as ``__init``, ``__load`` or ``__start``, sync or ``async def``.
+  Construction runs init; ``run()`` runs init (light loading, with the configuration ready),
+  load (the heavy loading) and start, last, on the app's loop: ``asyncio.run(MyApp().run())``.
+  An app gives its part of a step by overriding ``init``, ``load`` or ``start`` and calling
+  super; a mixin gives its part as ``__init``, ``__load`` or ``__start``, sync or ``async def``.
   A part adds concurrent work with ``self._spawn(coro)``; ``run()`` returns when all of it
   has finished, and ``app.stop()`` cancels it.
   The app is a ``mixin_EventLoopBridge`` onto its own running loop, so off-loop threads
@@ -596,8 +587,8 @@ class mixin_Rest:
 # region API application
 class APIApp(AsyncApp):
     """An AsyncApp that serves HTTP: on uvicorn, at the ``host`` and ``port`` of its configuration, each ASGI app
-    ``apis()`` gives at its path, from the end of ``start``. Override ``apis()``; work needed before serving is a
-    ``__load`` part. FastAPI and uvicorn come with the ``ld`` extra::
+    ``apis()`` gives at its path, from the end of ``start``. Override ``apis()``; work needed before serving is done
+    in ``load``. FastAPI and uvicorn come with the ``ld`` extra::
 
         class LDAPI(APIApp, _SQABase):   # its store: the configuration's `db`, the engine and each request's session
             def apis(self): return {'/ld/v1': ld.served({'/work': work.app}, self)}

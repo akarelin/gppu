@@ -14,9 +14,9 @@ def test_no_arguments_runs_on_the_configuration():
   assert Report.cli([]) == {'days': 1, 'dry_run': False, 'logs': ['a']}
 
 
-def test_the_command_line_overrides_keys_read_as_yaml():
+def test_the_command_line_overrides_keys():
   Env.from_dict({'days': 1, 'dry_run': False, 'logs': ['a']})
-  assert Report.cli(['--days', '7', '--dry_run', 'true', '--logs', '[b, c]']) == {'days': 7, 'dry_run': True, 'logs': ['b', 'c']}
+  assert Report.cli(['--days', '7', '--dry_run', 'true', '--logs', '[b, c]']) == {'days': '7', 'dry_run': 'true', 'logs': '[b, c]'}
 
 
 def test_arguments_are_key_value_pairs():

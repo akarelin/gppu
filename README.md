@@ -144,7 +144,7 @@ if __name__ == '__main__':
     MyApp.cli()
 ```
 
-No arguments runs `main` with configuration values. `--days 7` overrides `days`; every value is read as YAML, so `--dry-run true` is a boolean. Returned data goes to stdout as JSON and logs go to stderr. See [`gppu.app.CliApp`](gppu/app.py).
+No arguments runs `main` with configuration values. `--days 7` overrides `days`; every value is a string. Returned data goes to stdout as JSON and logs go to stderr. See [`gppu.app.CliApp`](gppu/app.py).
 
 ### 3. For TUI apps — subclass `TUIApp` and use `Env` the same way:
 
