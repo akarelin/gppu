@@ -731,6 +731,17 @@ def test_a_row_the_index_has_dropped_is_not_read_as_unlocated(tmp_path):
   assert fs._unlocated('note.md') is False
 
 
+def test_info_identifies_again_a_row_from_before_the_location(tmp_path):
+  """A folder indexed before the configuration named its location answers with the location, the folder itself as its children."""
+  (tmp_path / 'notes').mkdir()
+  (tmp_path / 'notes' / 'note.md').write_text('Text', encoding='utf-8')
+  GppuFileSystem(tmp_path).ls(recurse=True)
+  fs = GppuFileSystem(tmp_path, locations={tmp_path.as_posix(): {'location': 'work', 'canonical': 'work://'}})
+  assert fs.info()['gppu']['location']['address'] == 'work://'
+  assert fs.info('notes')['gppu']['location']['address'] == 'work://notes'
+  assert [row['gppu']['location']['address'] for row in fs.ls(recurse=True)] == ['work://notes', 'work://notes/note.md']
+
+
 def test_a_location_address_is_an_address_gppufs_answers_to(tmp_path):
   """The permalink is on every row the location handler identifies, so asking for it back must reach the entry."""
   (tmp_path / 'notes').mkdir()

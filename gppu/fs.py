@@ -1774,11 +1774,11 @@ class GppuFileSystem(AbstractFileSystem):
       if self._index_name.fullmatch(PurePosixPath(name).name):
         continue
       child_key = self._key(name)
-      if child_key in known:
-        if not self._unlocated(child_key):
-          listing.append(known[child_key])
-          continue
+      if self._unlocated(child_key):
         self._forget(child_key)   # the stored row predates the location; an insert alone would keep it
+      elif child_key in known:
+        listing.append(known[child_key])
+        continue
       if local:
         item = self.fs.info(name)  # A directory scan reports no inode on Windows; rename recovery needs it.
         record = handlers.probe(Path(self._path(child_key)))
@@ -1812,6 +1812,8 @@ class GppuFileSystem(AbstractFileSystem):
     """``info`` on the calling thread."""
     with self._lock:
       key = self._key(path)
+      if not refresh and self._unlocated(key):
+        self._forget(key)   # the stored row predates the location, as _reconcile treats a child
       cached = None if refresh else self._stored(key)
       if cached is None:
         physical = key
