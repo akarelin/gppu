@@ -152,6 +152,8 @@ from .iot import (
     JSONHTTPControl,
 )
 
+from .app_service import AppService   # an app that runs all the time and reloads its configuration from MQTT
+
 __version__ = VER_GPPU
 __all__ = [
     'Span', 'TimeSpan',
@@ -220,7 +222,7 @@ __all__ = [
     'y2list', 'y2path', 'y2uri', 'y2topic', 'y2slug', 'y2eid',
 
     # mqtt library
-    'mixin_Mqtt', 'MqttApp',
+    'mixin_Mqtt', 'MqttApp', 'AppService',
 
     # event-loop and device-control bridges
     'EventLoopBridge', 'SerializedControl', 'HTTPControl', 'JSONHTTPControl',

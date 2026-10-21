@@ -66,26 +66,9 @@ _MISSING = object()
 
 
 # region Env: the configuration
-def _config_changes(before: dict, after: dict, prefix: str = '') -> frozenset[str]:
-  changed = set()
-  for key in before.keys() | after.keys():
-    path = f'{prefix}/{key}' if prefix else str(key)
-    if key not in before or key not in after:
-      changed.add(path)
-    elif isinstance(before[key], dict) and isinstance(after[key], dict):
-      changed.update(_config_changes(before[key], after[key], path))
-    elif isinstance(before[key], list) and isinstance(after[key], list):
-      if json.dumps(before[key], sort_keys=True) != json.dumps(after[key], sort_keys=True): changed.add(path)
-    elif type(before[key]) is not type(after[key]) or before[key] != after[key]:
-      changed.add(path)
-  return frozenset(changed)
-
-
 class Env:
   data: dict[str, Any] = {}
   initialized: bool = False
-  changed_paths: frozenset[str] = frozenset()
-  _listeners: list[tuple[str, Callable[[frozenset[str]], None]]] = []
 
   name: str
   app_path: Path
@@ -107,10 +90,6 @@ class Env:
       raise TypeError('trace_rules must be a mapping')
     if 'log_file' in data and (not isinstance(data['log_file'], str) or not data['log_file'].strip()):
       raise ValueError('File logging requires an explicit log_file in configuration')
-    changed = _config_changes(Env.data, data)
-    if Env.initialized and not changed:
-      Env.changed_paths = changed
-      return
     if 'trace_rules' in Env.data and 'trace_rules' not in data: TRACE_RULES.clear()
     if Env.initialized or Env.data: Env.reset(); Logger.Info('INFO', 'Environment', 'WRED', 'reset()')
     Env.data = data
@@ -121,11 +100,6 @@ class Env:
       TRACE_RULES.clear()
       TRACE_RULES.update(rules)
     if 'log_file' in Env.data: enable_file_logging(log_file=Env.data['log_file'])
-    Env.changed_paths = changed
-    for path, callback in tuple(Env._listeners):
-      relevant = frozenset(key for key in changed if not path or key == path
-                           or key.startswith(path + '/') or path.startswith(key + '/'))
-      if relevant: callback(relevant)
 
   @staticmethod
   def reset() -> None:
@@ -135,48 +109,6 @@ class Env:
     _file_handlers.clear()
     Env.data = {}
     Env.initialized = False
-    Env.changed_paths = frozenset()
-
-  @staticmethod
-  def on_change(callback: Callable[[frozenset[str]], None], path: str | y2path = '') -> Callable[[], None]:
-    """Observe changed slash paths after loading; return a callable to unsubscribe.
-
-    Callbacks are synchronous. The consumer decides how to apply each change.
-    Registrations survive configuration reloads and reset().
-    """
-    if inspect.iscoroutinefunction(callback): raise TypeError('configuration change callbacks must be synchronous')
-    entry = (str(path).strip('/'), callback)
-    Env._listeners.append(entry)
-    def unsubscribe():
-      if entry in Env._listeners: Env._listeners.remove(entry)
-    return unsubscribe
-
-  @staticmethod
-  def update_config(data: dict, path: str | y2path = '') -> None:
-    """Replace one configuration subtree; an empty path replaces the whole config."""
-    if not isinstance(data, dict): raise TypeError('configuration must be a mapping')
-    if not path:
-      Env._load_dict(data)
-      return
-    updated = deepcopy(Env.data)
-    node = updated
-    *parents, key = y2path(path)
-    for parent in parents:
-      if parent not in node: node[parent] = {}
-      node = node[parent]
-      if not isinstance(node, dict): raise TypeError(f'configuration parent is not a mapping: {path}')
-    node[key] = data
-    Env._load_dict(updated)
-
-  @staticmethod
-  async def from_mqtt(config: dict) -> None:
-    """Load exact topics into their declared Env paths through gppu's MQTT transport.
-
-    config contains connection and topics (MQTT topic -> Env path). Disconnect
-    once all topics arrive. Apps needing updates use their own mqtt_config().
-    """
-    from .iot import _MqttConfig
-    await _MqttConfig(config).run()
 
   @staticmethod
   def glob(path: str | y2path, default=None) -> Any: return Env.data if path == '' else deepget(path, Env.data, default=default)

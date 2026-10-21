@@ -13,7 +13,6 @@ import json
 import re
 import ssl
 import threading
-import yaml
 
 from collections import UserList
 from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping
@@ -35,7 +34,7 @@ try:
   import aiohttp
 except ImportError:
   aiohttp = None  # type: ignore[assignment]
-from .app import AsyncApp, AsyncSubmission, Env, EventLoopBridge
+from .app import AsyncApp, AsyncSubmission, EventLoopBridge
 from .gppu import _DC, _DC_BASE_TYPE_MAP, y2list, y2path, y2topic, y2uri
 
 
@@ -133,7 +132,6 @@ class mixin_Mqtt:
   _mqtt_task: Any = None
   _callbacks: dict[y2topic, list[tuple[MqttCallback, object, bool, bool]]]
   _subscriptions: dict[y2topic, int]
-  _config_paths: dict[str, str]
   _mqtt_lock: asyncio.Lock
   _callback_lock: asyncio.Lock
 
@@ -153,7 +151,6 @@ class mixin_Mqtt:
     if getattr(self, '_mqtt_lock', None) is not None: return
     self._callbacks = {}
     self._subscriptions = {}
-    self._config_paths = {}
     self._mqtt_lock = asyncio.Lock()
     self._callback_lock = asyncio.Lock()
 
@@ -173,24 +170,6 @@ class mixin_Mqtt:
       client = self._client if qos != old_qos else None
 
     if client is not None: await client.subscribe(str(topic), qos=qos)
-
-  async def mqtt_config(self, topics: dict[str, str]) -> None:
-    """Receive Env configuration on this app's existing MQTT transport.
-
-    Register in subscribe() or while connected. This does not start a connection
-    or wait for initial delivery; Env.on_change() reports received changes.
-    """
-    if not Env.initialized: raise RuntimeError('load the MQTT bootstrap with Env.from_env() first')
-    self._ensure_mqtt_state()
-    topics = _mqtt_config_topics(topics)
-    self._config_paths = _mqtt_config_topics(self._config_paths | topics)
-    for topic in topics:
-      await self.mqtt_listen(self._receive_config, topic, qos=1, raise_errors=True)
-
-  async def _receive_config(self, topic: y2topic, payload: object) -> None:
-    data = yaml.safe_load(payload) if isinstance(payload, str) else payload
-    if not isinstance(data, dict): raise TypeError(f'MQTT configuration must be a mapping: {topic}')
-    Env.update_config(data, self._config_paths[str(topic)])
 
   async def mqtt_publish(self, topic: y2topic | str, payload: MqttPayload = '', **data: Any) -> None:
     client = self._client
@@ -322,43 +301,6 @@ class MqttApp(mixin_Mqtt, AsyncApp):
     await super().start()
     await self.subscribe()
     self._start_mqtt()
-
-
-def _mqtt_config_topics(topics: dict[str, str]) -> dict[str, str]:
-  if not isinstance(topics, dict) or not topics:
-    raise ValueError('MQTT configuration requires a topic to Env path mapping')
-  paths = []
-  for topic, path in topics.items():
-    if not isinstance(topic, str) or not topic or '+' in topic or '#' in topic:
-      raise ValueError('MQTT configuration topics must be exact topic names')
-    if not isinstance(path, str) or (path and any(not part for part in path.split('/'))):
-      raise ValueError('MQTT configuration paths must be slash paths or empty for the root')
-    if any(not path or not other or path == other or path.startswith(other + '/')
-           or other.startswith(path + '/') for other in paths):
-      raise ValueError('MQTT configuration paths must not overlap')
-    paths.append(path)
-  return dict(topics)
-
-
-class _MqttConfig(MqttApp):
-  """Read retained startup configuration, then close the temporary connection."""
-
-  def __init__(self, config: dict):
-    connection, topics = config['connection'], _mqtt_config_topics(config['topics'])
-    if not isinstance(connection, dict) or not connection.get('hostname'):
-      raise ValueError('MQTT configuration requires connection.hostname')
-    if not Env.initialized: raise RuntimeError('load the MQTT bootstrap with Env.from_env() first')
-    super().__init__(name='config-mqtt', data={'connection': connection})
-    self.topics = dict(topics)
-    self.pending = set(topics)
-
-  async def subscribe(self) -> None:
-    await self.mqtt_config(self.topics)
-
-  async def _receive_config(self, topic: y2topic, payload: object) -> None:
-    await super()._receive_config(topic, payload)
-    self.pending.discard(str(topic))
-    if not self.pending: await self.stop()
 # endregion
 
 
