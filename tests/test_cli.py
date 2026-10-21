@@ -8,10 +8,10 @@ class Report(CliApp):
   def main(self) -> dict: return {'days': self.my('days'), 'dry_run': self.my('dry_run'), 'logs': self.my('logs')}
 
 
-def test_no_arguments_runs_on_the_configuration_with_the_apps_section_over_it():
+def test_no_arguments_runs_on_the_configuration():
   Env.from_dict({'days': 1, 'dry_run': False, 'logs': ['a'], 'report': {'days': 3}})
   assert Report(name='report').name == 'report'
-  assert Report.cli([]) == {'days': 1, 'dry_run': False, 'logs': ['a']}   # the class's name is test_cli: no section
+  assert Report.cli([]) == {'days': 1, 'dry_run': False, 'logs': ['a']}
 
 
 def test_the_command_line_overrides_keys_read_as_yaml():
@@ -24,13 +24,3 @@ def test_arguments_are_key_value_pairs():
   with pytest.raises(SystemExit): Report.cli(['--days'])
   with pytest.raises(SystemExit): Report.cli(['days', '7'])
 
-
-class Loaded(CliApp):
-  def __init(self) -> None: self.seen = ['init']
-  def __load(self) -> None: self.seen.append('load')
-  def main(self) -> list: return self.seen + ['main']
-
-
-def test_the_steps_run_before_main():
-  Env.from_dict({})
-  assert Loaded.cli([]) == ['init', 'load', 'main']

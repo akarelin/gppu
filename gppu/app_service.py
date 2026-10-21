@@ -12,10 +12,8 @@ import json
 from collections.abc import Callable
 from copy import deepcopy
 
-import yaml
-
 from .app import Env
-from .gppu import y2path, y2topic
+from .gppu import y2path, y2topic, yml_from_text
 from .iot import MqttApp
 
 
@@ -118,7 +116,7 @@ class AppService(MqttApp):
       await self.mqtt_listen(self._receive_config, topic, qos=1, raise_errors=True)
 
   async def _receive_config(self, topic: y2topic, payload: object) -> None:
-    data = yaml.safe_load(payload) if isinstance(payload, str) else payload
+    data = yml_from_text(payload, self._app_file.parent) if isinstance(payload, str) else payload
     if not isinstance(data, dict): raise TypeError(f'MQTT configuration must be a mapping: {topic}')
     AppService.update_config(data, self._config_paths[str(topic)])
 

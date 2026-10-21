@@ -38,12 +38,10 @@ from pathlib import Path
 from string import Template
 from typing import Any, Optional, final
 
-import yaml
-
 from . import gppu as _core   # _core._logger is rebound by init_logger
 from .gppu import (TRACE_RULES, Debug, Dump, Error, Info, Logger, OSType, Warn, _DC, _Logger, _file_handlers,
                    _log_root, _mixin, deepget, deepget_dict, deepget_float, deepget_int, deepget_list, detect_os, dict_from_yml,
-                   enable_file_logging, sync, y2path)
+                   enable_file_logging, sync, y2path, yml_from_text)
 
 _trace_mro = False
 
@@ -196,12 +194,14 @@ class mixin_Config(_mixin):
 
 
 class _Config(mixin_Config):
+  """Env is loaded by the time the object exists, from beside its class when it is not loaded yet; ``_my`` takes it."""
+  name: str = ''
   _base_path: Path
 
   def __init__(self, **kw) -> None:
     super().__init__(**kw)
-    if Env.initialized:
-      self._config_from_env()
+    if not Env.initialized: Env.from_env(name=self.name, app_path=Path(inspect.getfile(type(self))).resolve().parent)
+    self._config_from_env()
     self._base_path = Path('.')
 
   # def my_path(self, path) -> Path: return self._base_path / self.my(path)
@@ -336,33 +336,19 @@ class mixin_Stepper(YStepper, _mixin): pass
 
 
 # region App
-class _App(mixin_Stepper, _Base):
-  """Base class with logging, configuration and the YMRO steps. Construction runs ``init``, and the environment is
-  its first part: Env is loaded, from beside the subclass when it is not loaded yet, and ``_my`` takes the
-  configuration; every class's own ``__init`` part runs after it."""
-
-  name: str = ''
+class _App(_Base):
+  """Base class with logging and configuration, named after its file unless given a name."""
 
   def __init__(self, name: str = '', **kw) -> None:
     self._app_file = Path(inspect.getfile(type(self))).resolve()
     self.name = name or self._app_file.stem
     super().__init__(**kw)
-    self.init()
-
-  def __init(self) -> None:
-    if not Env.initialized: Env.from_env(name=self.name, app_path=self._app_file.parent)
-    self._config_from_env()
-
-  def run(self) -> None:
-    """init, load and start."""
-    self.init(); self.load(); self.start()
 
 
 class App(_App, _DC):
   """Synchronous utility: define an entry method and call it after construction.
 
-  Read settings with ``self.my(...)``. Construction runs ``init``: Env first, loaded
-  beside the subclass when it is not loaded yet, then each class's ``__init`` part.
+  Read settings with ``self.my(...)``.
 
   Usage::
 
@@ -376,10 +362,8 @@ class App(_App, _DC):
 
 
 class CliApp(_App):
-  """Runs ``main`` once, after its steps. ``init`` makes its ``_my``: the configuration with the app's own section,
-  named after the app, over it, and the command line over both, ``--since 3d --dry-run true``, each value read as
-  YAML. ``load`` and ``start`` are the app's other steps, if it has any. ``main`` is the action; what it returns is printed as
-  JSON on stdout, logs go to stderr. A class gives its part of a step as ``def __init(self)``, ``__load`` or ``__start``.
+  """Runs ``main`` once. Its ``_my`` is the configuration with the command line over it, ``--since 3d --dry-run true``,
+  each value read as YAML. ``main`` is the action; what it returns is printed as JSON on stdout, logs go to stderr.
 
   Usage::
 
@@ -392,21 +376,20 @@ class CliApp(_App):
 
   _argv: list[str] = []
 
-  def __init(self) -> None:
-    self._config_from_key(self.name)
+  def __init__(self, name: str = '', **kw) -> None:
+    super().__init__(name=name, **kw)
     args = self._argv
     if len(args) % 2 or any(not key.startswith('--') for key in args[::2]):
       raise SystemExit(f'{self.name}: arguments are --key value pairs')
-    for key, value in zip(args[::2], args[1::2]): self._my[key[2:]] = yaml.safe_load(value)
+    for key, value in zip(args[::2], args[1::2]): self._my[key[2:]] = yml_from_text(value, Path.cwd())
 
   def main(self) -> Any: raise NotImplementedError(f'{type(self).__name__} defines no main')
 
   @classmethod
   def cli(cls, argv: list[str] | None = None) -> Any:
-    """Start from the command line: init, load and start, then ``main``."""
+    """Start from the command line: build the app, then ``main``."""
     cls._argv = sys.argv[1:] if argv is None else argv
     app = cls()
-    app.run()
     result = app.main()
     if result is not None: print(json.dumps(result, indent=2, default=str))
     return result
@@ -457,7 +440,7 @@ class mixin_EventLoopBridge(_mixin):
 
 
 # region async application
-class AsyncApp(_App, mixin_EventLoopBridge):
+class AsyncApp(_App, mixin_Stepper, mixin_EventLoopBridge):
   """Application base for long-lived asyncio services, on the YMRO steps.
 
   ``run()`` runs init (light loading, with the configuration ready), load (the heavy
@@ -478,6 +461,7 @@ class AsyncApp(_App, mixin_EventLoopBridge):
     self._task_group = None
     self._background_tasks = set()
     self._loop = None
+    self.init()
 
   def __stop(self) -> None:
     current = asyncio.current_task()

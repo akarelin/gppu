@@ -128,7 +128,7 @@ When the script folder needs a configuration entry point, `config.yaml` includes
 
 ### 2. Define the command's work
 
-This example takes `logs`, `level` and `days` from the configuration: the app's own section, named after the app, over the shared one. The command line overrides those keys.
+This example takes `logs`, `level` and `days` from the configuration. The command line overrides those keys.
 
 ```python
 from gppu import CliApp
