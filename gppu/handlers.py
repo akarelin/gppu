@@ -4,16 +4,17 @@ There is a handler for every type of data, and probe, which knows every handler 
 path whose type is not known in advance, which handler to call:
 
     handler = probe('D:/Dev/gppu/README.md')    # MarkdownHandler
-    record = handler.parse('D:/Dev/gppu/README.md')
+    record = handler.parse('D:/Dev/gppu/README.md')    # or await handler.parse(...) inside an event loop
 
 A handler is a class of class methods. `identify(path, stat, head)` says whether the path is of its type from what
 probe gives it: the path, its stat, and `head(n)`, the file's first n bytes. A handler does no I/O of its own there,
 so probing a path takes one stat and at most one read of the most bytes a handler asks for: a suffix needs none, a
 SQLite file's header 16 once its suffix says SQLite, a session's first lines up to SESSION_HEAD once its suffix
-says .jsonl. `parse(path)` reads the path into a record, what
+says .jsonl; probe is synchronous. `parse(path)`, asynchronous, gives the record the handler's `read` makes of the
+path in a thread, what
 Linked Data holds of the thing: its type, subtype, name, span, data and, in meta, the path it was read from; a
 session's record also has its messages. A subtype is a subclass of its type: it identifies a path only where its
-type does, and its parse adds to its type's. probe returns the most specific handler that identifies the path. A
+type does, and its read adds to its type's. probe returns the most specific handler that identifies the path. A
 program adds a handler by subclassing and appending it to HANDLERS:
 
     class BillingCSVHandler(CSVHandler):
@@ -25,6 +26,7 @@ A handler reads the path it is given and nothing else: no index, no location, no
 """
 from __future__ import annotations
 
+import asyncio
 import csv
 import html
 import json
@@ -43,7 +45,7 @@ from uuid import UUID, uuid5
 
 import yaml
 
-from .gppu import MY_TZ, Path, full_path
+from .gppu import MY_TZ, Path, full_path, sync
 
 # Times tools write in place of a time: Windows FILETIME zero, Unix epoch zero, DOS zero, and the constant
 # Android build tools stamp on every APK member. Anything at or before DOS zero is not a time either.
@@ -190,8 +192,16 @@ class Handler:
         return True
 
     @classmethod
-    def parse(cls, path: str | Path) -> dict[str, Any]:
-        """The path as a Linked Data record; its size and modified time are its stat's, as stat gives them."""
+    @sync
+    async def parse(cls, path: str | Path) -> dict[str, Any]:
+        """The path as a Linked Data record, read by the handler's read in a thread: awaited inside an event loop,
+        returned directly outside one."""
+        return await asyncio.to_thread(cls.read, path)
+
+    @classmethod
+    def read(cls, path: str | Path) -> dict[str, Any]:
+        """The path's record: its size and modified time as its stat gives them. A handler's read adds to its
+        type's."""
         path = full_path(path)
         stat = path.stat(follow_symlinks=False)
         return {"type": cls.type, "subtype": cls.subtype, "name": path.name or str(path), "span": None,
@@ -237,8 +247,8 @@ class IgnoredHandler(Handler):
         return cls.reason(path, stat) is not None
 
     @classmethod
-    def parse(cls, path: str | Path) -> dict[str, Any]:
-        record = super().parse(path)
+    def read(cls, path: str | Path) -> dict[str, Any]:
+        record = super().read(path)
         path = full_path(path)
         record["data"]["reason"] = cls.reason(path, path.stat(follow_symlinks=False))
         return record
@@ -276,8 +286,8 @@ class LinkHandler(Handler):
                 or getattr(stat, "st_reparse_tag", 0) == getattr(stat_module, "IO_REPARSE_TAG_MOUNT_POINT", None))
 
     @classmethod
-    def parse(cls, path: str | Path) -> dict[str, Any]:
-        record = super().parse(path)
+    def read(cls, path: str | Path) -> dict[str, Any]:
+        record = super().read(path)
         record["data"]["target"] = os.readlink(path)
         return record
 
@@ -293,8 +303,8 @@ class FolderHandler(Handler):
         return stat_module.S_ISDIR(stat.st_mode)
 
     @classmethod
-    def parse(cls, path: str | Path) -> dict[str, Any]:
-        record = super().parse(path)
+    def read(cls, path: str | Path) -> dict[str, Any]:
+        record = super().read(path)
         files = folders = size = 0
         times = []
         with os.scandir(full_path(path)) as entries:
@@ -336,8 +346,8 @@ class SqliteHandler(FileHandler):
                 and head(len(cls.MAGIC)) == cls.MAGIC)
 
     @classmethod
-    def parse(cls, path: str | Path) -> dict[str, Any]:
-        record = super().parse(path)
+    def read(cls, path: str | Path) -> dict[str, Any]:
+        record = super().read(path)
         with closing(sqlite3.connect(full_path(path).as_uri() + "?mode=ro&immutable=1", uri=True)) as database:
             names = [name for (name,) in database.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
@@ -369,8 +379,8 @@ class MarkdownHandler(FileHandler):
         return super().identify(path, stat, head) and path.suffix.casefold() == ".md"
 
     @classmethod
-    def parse(cls, path: str | Path) -> dict[str, Any]:
-        record = super().parse(path)
+    def read(cls, path: str | Path) -> dict[str, Any]:
+        record = super().read(path)
         path = full_path(path)
         frontmatter = cls._frontmatter(path)
         name, title = frontmatter.get("name", frontmatter.get("title")), frontmatter.get("title", frontmatter.get("name"))
@@ -434,8 +444,8 @@ class CSVHandler(FileHandler):
         return super().identify(path, stat, head) and path.suffix.casefold() == ".csv"
 
     @classmethod
-    def parse(cls, path: str | Path) -> dict[str, Any]:
-        record = super().parse(path)
+    def read(cls, path: str | Path) -> dict[str, Any]:
+        record = super().read(path)
         with full_path(path).open(encoding="utf-8-sig", newline="") as stream:
             rows = [tuple(row) for row in csv.reader(stream, strict=True)]
         header, rows = (rows[0], rows[1:]) if rows else ((), [])
@@ -485,8 +495,8 @@ class LogHandler(FileHandler):
         return super().identify(path, stat, head) and path.suffix.casefold() == ".log"
 
     @classmethod
-    def parse(cls, path: str | Path) -> dict[str, Any]:
-        record = super().parse(path)
+    def read(cls, path: str | Path) -> dict[str, Any]:
+        record = super().read(path)
         rows = full_path(path).read_text(encoding="utf-8-sig").splitlines()
         record["data"]["rows"] = len(rows)
         record["span"] = cls.spanning([time for row in rows if (time := cls._time(row)) is not None])
@@ -515,8 +525,8 @@ class EmailHandler(FileHandler):
         return super().identify(path, stat, head) and path.suffix.casefold() in (".eml", ".msg")
 
     @classmethod
-    def parse(cls, path: str | Path) -> dict[str, Any]:
-        record = super().parse(path)
+    def read(cls, path: str | Path) -> dict[str, Any]:
+        record = super().read(path)
         stamp, separator, rest = full_path(path).stem.partition(" - ")
         content, separator2, party = rest.rpartition(" - ")
         if not (separator and separator2):
@@ -593,8 +603,8 @@ class SessionHandler(FileHandler):
                 and cls._harness(cls._head(head(SESSION_HEAD), stat.st_size)) is not None)
 
     @classmethod
-    def parse(cls, path: str | Path) -> dict[str, Any]:
-        record = super().parse(path)
+    def read(cls, path: str | Path) -> dict[str, Any]:
+        record = super().read(path)
         path = full_path(path)
         records = cls._records(path)
         harness = cls._harness(records[:SNIFF])
@@ -660,7 +670,7 @@ class SessionHandler(FileHandler):
         before, each numbered by its place in the file, counted from 1. A Codex delta names no session, so its uid is
         given. The session's times are its messages' first and last (a resumed session's copied lines are out of time
         order); with none, its lines', a moment when they are one (a Codex session opened and left). Linked Data's
-        sessions API reads what a session hook sends through this, as SessionHandler.parse reads its file."""
+        sessions API reads what a session hook sends through this, as SessionHandler.read reads its file."""
         if harness == "cc":
             session, messages = cls._claude_lines(lines, offset, uid)
         elif harness == "cx":
@@ -1479,10 +1489,10 @@ class SessionFolderHandler(FolderHandler):
                                                        or SessionHandler._agy_session_folder(path))
 
     @classmethod
-    def parse(cls, path: str | Path) -> dict[str, Any]:
-        record = super().parse(path)
+    def read(cls, path: str | Path) -> dict[str, Any]:
+        record = super().read(path)
         path = full_path(path)
-        sessions = [SessionHandler.parse(file) for file in sorted(path.rglob("*.jsonl"), key=lambda item: str(item).casefold())
+        sessions = [SessionHandler.read(file) for file in sorted(path.rglob("*.jsonl"), key=lambda item: str(item).casefold())
                     if probe(file) is SessionHandler]
         harnesses = SessionHandler._uniq([session["subtype"] for session in sessions] + [SessionHandler._home_harness(path)])
         if len(harnesses) != 1:
