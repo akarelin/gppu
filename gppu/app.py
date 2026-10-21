@@ -392,13 +392,6 @@ class _YMRO:
 
   def _callall(self, method, *a, **kw): [m(*a, **kw) for m in self._ymro(method)]
 
-  async def _acallall(self, method: str, *a, **kw) -> None:
-    for m in self._ymro(method):
-      result = m(*a, **kw)
-      if asyncio.iscoroutine(result): await result
-
-  def _async(self, method: str) -> bool: return any(inspect.iscoroutinefunction(m) for m in self._ymro(method))
-
 
 class _YInit(_YMRO):
   @abstractmethod
@@ -407,13 +400,7 @@ class _YInit(_YMRO):
   @final
   def init(self):
     if self.initialized: return
-    if self._async('init'): return self._ainit()
     self._callall('init')
-    self.initialized = True
-
-  @final
-  async def _ainit(self):
-    await self._acallall('init')
     self.initialized = True
 
   @property
@@ -430,13 +417,7 @@ class _YLoad(_YInit):
   def load(self):
     if self.loaded: return
     assert self.initialized
-    if self._async('load'): return self._aload()
     self._callall('load')
-    self.loaded = True
-
-  @final
-  async def _aload(self):
-    await self._acallall('load')
     self.loaded = True
 
   @property
@@ -452,13 +433,7 @@ class _YStart(_YLoad):
   @final
   def start(self):
     if self.started: return
-    if self._async('start'): return self._astart()
     self._callall('start')
-    self.started = True
-
-  @final
-  async def _astart(self):
-    await self._acallall('start')
     self.started = True
 
   @property
@@ -470,15 +445,7 @@ class _YStart(_YLoad):
   @final
   def stop(self):
     if self.stopped: return
-    if self._async('stop'): return self._astop()
     self._callall('stop')
-    self.started = False
-    self.stopped = True
-    self.loaded = False
-
-  @final
-  async def _astop(self):
-    await self._acallall('stop')
     self.started = False
     self.stopped = True
     self.loaded = False

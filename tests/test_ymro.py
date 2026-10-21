@@ -3,7 +3,7 @@ import asyncio
 
 import pytest
 
-from gppu import mixin_Stepper
+from gppu import mixin_Stepper, sync
 
 
 class Base(mixin_Stepper):
@@ -20,6 +20,7 @@ class Child(Base):
 
 
 class AsyncChild(Base):
+  @sync
   async def __load(self):
     await asyncio.sleep(0)
     self.seen.append('async load')
@@ -44,12 +45,7 @@ def test_stop_undoes_load_and_start():
   assert child.seen[-1] == 'base stop'
 
 
-def test_an_asynchronous_part_makes_the_step_a_coroutine():
+def test_an_asynchronous_part_runs_through_sync():
   child = AsyncChild()
-  child.init()
-  step = child.load()
-  assert asyncio.iscoroutine(step) and not child.loaded
-  asyncio.run(step)
+  child.init(); child.load()
   assert child.seen == ['base init', 'base load', 'async load'] and child.loaded
-  assert child.load() is None   # done: nothing runs
-  assert child.seen.count('async load') == 1
