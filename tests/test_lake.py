@@ -62,15 +62,15 @@ def test_the_api_at_lake_answers_what_the_lake_answers(tmp_path):
     served = FastAPI()
     served.mount('/lake', api(lake))
     client = TestClient(served)
-    saved = client.post('/lake/', files={'file': (f'{UID}.jsonl', SESSION.encode())})
+    saved = client.post('/lake/', params={'name': f'{UID}.jsonl'}, content=SESSION.encode())
     assert saved.status_code == 201 and saved.json()['uri'].endswith(f'/Sessions/07/cc/{UID}/{UID}.jsonl')
     top = outer.as_uri()
     listed = client.get(f'/lake/{top}', params={'ls': ''})
     assert listed.status_code == 200 and [row['name'] for row in listed.json()] == [row['name'] for row in lake.ls(top)]
     assert client.get(f'/lake/{top}/a.txt', params={'content': ''}).content == b'a'
     assert client.get('/lake/file://nowhere/x').status_code == 404
-    taken = client.post('/lake/', files={'file': (f'{UID}.jsonl', SESSION.replace('hello', 'other').encode())})
+    taken = client.post('/lake/', params={'name': f'{UID}.jsonl'}, content=SESSION.replace('hello', 'other').encode())
     assert taken.status_code == 409 and 'error' in taken.json()
-    unread = client.post('/lake/', files={'file': (f'{UID}.jsonl', b'{"type": "user", "sessionId": "' + UID.encode() + b'"}\n')})
+    unread = client.post('/lake/', params={'name': f'{UID}.jsonl'}, content=b'{"type": "user", "sessionId": "' + UID.encode() + b'"}\n')
     assert unread.status_code == 400 and 'cannot read' in unread.json()['error']
-    assert client.post('/lake/', files={'file': ('note.txt', b'text')}).status_code == 400
+    assert client.post('/lake/', params={'name': 'note.txt'}, content=b'text').status_code == 400

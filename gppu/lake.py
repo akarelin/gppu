@@ -123,15 +123,15 @@ def _json(value: Any) -> Any:
 def api(lake: Lake):
     """lake as REST resources, a FastAPI app an APIApp serves at /lake. Needs FastAPI (the `ld` extra).
 
-    POST   /                 save the file sent, and the uri it came from, source, where there is one; the answer is the uri
-                             the Lake stored it at
+    POST   /?name=&source=   save the file that is the body, by its name and the uri it came from, source, where there is one;
+                             the answer is the uri the Lake stored it at
     GET    /{uri}            what the handlers found at uri; ?ls what is inside it, ?walk&level=&recursive= everything below it,
                              ?retrieve the object with its content, ?content its bytes
     DELETE /{uri}            remove the object at uri
 
     A uri no location holds answers 404, a save to a place another object holds 409 and a value the Lake refuses 400, each with
     its error."""
-    from fastapi import FastAPI, File, Form, Response, UploadFile
+    from fastapi import FastAPI, Request, Response
 
     def reply(payload: Any, status: int = 200, content_type: str = 'application/json; charset=utf-8') -> Response:
         data = payload if isinstance(payload, bytes) else json.dumps(payload, default=_json, ensure_ascii=False).encode('utf-8')
@@ -144,8 +144,8 @@ def api(lake: Lake):
         app.add_exception_handler(refused, lambda request, error: reply({'error': str(error)}, 400))
 
     @app.post('/')
-    def save(file: UploadFile = File(...), source: str = Form('')):
-        obj = DataObject(source, file.file.read(), None, 'file', file.filename)
+    async def save(request: Request, name: str, source: str = ''):
+        obj = DataObject(source, await request.body(), None, 'file', name)
         return reply({'uri': str(lake.save(obj))}, 201)
 
     @app.get('/{uri:path}')
