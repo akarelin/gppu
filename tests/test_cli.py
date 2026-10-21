@@ -23,3 +23,14 @@ def test_arguments_are_key_value_pairs():
   Env.from_dict({})
   with pytest.raises(SystemExit): Report.cli(['--days'])
   with pytest.raises(SystemExit): Report.cli(['days', '7'])
+
+
+class Loaded(CliApp):
+  def __init(self) -> None: self.seen = ['init']
+  def __load(self) -> None: self.seen.append('load')
+  def main(self) -> list: return self.seen + ['main']
+
+
+def test_the_steps_run_before_main():
+  Env.from_dict({})
+  assert Loaded.cli([]) == ['init', 'load', 'main']

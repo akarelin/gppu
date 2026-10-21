@@ -336,24 +336,33 @@ class mixin_Stepper(YStepper, _mixin): pass
 
 
 # region App
-class _App(_Base):
-  """Base class with logging, configuration, and automatic Env discovery."""
+class _App(mixin_Stepper, _Base):
+  """Base class with logging, configuration and the YMRO steps. Construction runs ``init``, and the environment is
+  its first part: Env is loaded, from beside the subclass when it is not loaded yet, and ``_my`` takes the
+  configuration; every class's own ``__init`` part runs after it."""
 
   name: str = ''
 
   def __init__(self, name: str = '', **kw) -> None:
-    app_file = Path(inspect.getfile(type(self))).resolve()
-    self.name = name or app_file.stem
-    if not Env.initialized:
-      Env.from_env(name=self.name, app_path=app_file.parent)
-    super().__init__(name=self.name, **kw)
+    self._app_file = Path(inspect.getfile(type(self))).resolve()
+    self.name = name or self._app_file.stem
+    super().__init__(**kw)
+    self.init()
+
+  def __init(self) -> None:
+    if not Env.initialized: Env.from_env(name=self.name, app_path=self._app_file.parent)
+    self._config_from_env()
+
+  def run(self) -> None:
+    """init, load and start."""
+    self.init(); self.load(); self.start()
 
 
 class App(_App, _DC):
   """Synchronous utility: define an entry method and call it after construction.
 
-  Read settings with ``self.my(...)``. Construction loads Env beside the subclass
-  when Env is uninitialized; an already loaded Env is reused.
+  Read settings with ``self.my(...)``. Construction runs ``init``: Env first, loaded
+  beside the subclass when it is not loaded yet, then each class's ``__init`` part.
 
   Usage::
 
@@ -366,10 +375,11 @@ class App(_App, _DC):
   pass
 
 
-class CliApp(App):
-  """Runs ``main`` once. Its ``_my`` is the configuration with the app's own section, named after the app, over it;
-  the command line overrides keys of ``_my``, ``--since 3d --dry-run true``, each value read as YAML. What ``main``
-  returns is printed as JSON on stdout; logs go to stderr.
+class CliApp(_App):
+  """Runs ``main`` once, after its steps. ``init`` makes its ``_my``: the configuration with the app's own section,
+  named after the app, over it, and the command line over both, ``--since 3d --dry-run true``, each value read as
+  YAML. ``load`` and ``start`` are the app's other steps, if it has any. ``main`` is the action; what it returns is printed as
+  JSON on stdout, logs go to stderr. A class gives its part of a step as ``def __init(self)``, ``__load`` or ``__start``.
 
   Usage::
 
@@ -380,17 +390,23 @@ class CliApp(App):
       if __name__ == '__main__': Archive.cli()
   """
 
+  _argv: list[str] = []
+
+  def __init(self) -> None:
+    self._config_from_key(self.name)
+    args = self._argv
+    if len(args) % 2 or any(not key.startswith('--') for key in args[::2]):
+      raise SystemExit(f'{self.name}: arguments are --key value pairs')
+    for key, value in zip(args[::2], args[1::2]): self._my[key[2:]] = yaml.safe_load(value)
+
   def main(self) -> Any: raise NotImplementedError(f'{type(self).__name__} defines no main')
 
   @classmethod
   def cli(cls, argv: list[str] | None = None) -> Any:
-    """Start from the command line: the configuration, its keys overridden by ``--key value``, then ``main``."""
+    """Start from the command line: init, load and start, then ``main``."""
+    cls._argv = sys.argv[1:] if argv is None else argv
     app = cls()
-    app._config_from_key(app.name)
-    args = sys.argv[1:] if argv is None else argv
-    if len(args) % 2 or any(not key.startswith('--') for key in args[::2]):
-      raise SystemExit(f'{app.name}: arguments are --key value pairs')
-    for key, value in zip(args[::2], args[1::2]): app._my[key[2:]] = yaml.safe_load(value)
+    app.run()
     result = app.main()
     if result is not None: print(json.dumps(result, indent=2, default=str))
     return result
@@ -542,7 +558,7 @@ class mixin_Rest:
 
 
 # region async application
-class AsyncApp(mixin_Stepper, App, mixin_EventLoopBridge):
+class AsyncApp(_App, mixin_EventLoopBridge):
   """Application base for long-lived asyncio services, on the YMRO steps.
 
   ``run()`` runs init (light loading, with the configuration ready), load (the heavy

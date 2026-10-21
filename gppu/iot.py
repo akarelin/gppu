@@ -284,16 +284,19 @@ class mixin_Mqtt:
 class MqttApp(mixin_Mqtt, AsyncApp):
   """AsyncApp with one reconnecting MQTT client; import from ``gppu``.
 
-  Supply the configured broker mapping in ``data['connection']`` at construction.
+  Its broker mapping is the configuration's ``connection``; set ``self.connection`` in an ``__init`` part to change it.
   Override async ``subscribe()`` to ``await self.mqtt_listen(callback,
   topic)``; callbacks take ``(topic, payload)`` and may be sync or async.
 
-  Run with ``asyncio.run(MyApp(data=config).run())`` and stop as for ``AsyncApp``; its
+  Run with ``asyncio.run(MyApp().run())`` and stop as for ``AsyncApp``; its
   ``__start`` subscribes and connects. Subscriptions register
   before connection; for work needing a connection, have ``_mqtt_tasks()``
   return fresh coroutines for each connection. Publish with
   ``await self.mqtt_publish(topic, payload)``; disconnected publishes are discarded.
   """
+
+  def __init(self) -> None:
+    self.connection = self.my('connection')
 
   async def subscribe(self) -> None: pass
 

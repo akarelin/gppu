@@ -18,11 +18,8 @@ Env.initialized = True
 
 
 class _FiniteApp(AsyncApp):
-  values: list[int]
-  connection: dict[str, Any]
-
   def __init(self) -> None:
-    self.seen = list(self.values)
+    self.seen = list(self.my('values'))
 
   async def __start(self) -> None:
     self._spawn(self._worker())
@@ -38,14 +35,16 @@ class _ExternalLoop(mixin_EventLoopBridge):
 
 
 class AsyncAppTests(unittest.IsolatedAsyncioTestCase):
-  async def test_setup_run_and_dc_generics(self) -> None:
-    app = _FiniteApp(name='finite', data={'values': [1, 2], 'connection': {'hostname': 'broker'}})
-    self.assertEqual(app.connection, {'hostname': 'broker'})
+  async def test_init_on_construction_then_load_and_start_in_run(self) -> None:
+    Env.from_dict({'values': [1, 2]})
+    app = _FiniteApp(name='finite')
+    self.assertEqual(app.seen, [1, 2])
     await app.run()
     self.assertEqual(app.seen, [1, 2, 3])
 
   async def test_spawn_requires_active_run(self) -> None:
-    app = _FiniteApp(name='finite', data={'values': []})
+    Env.from_dict({'values': []})
+    app = _FiniteApp(name='finite')
     coroutine = asyncio.sleep(0)
     with self.assertRaises(RuntimeError): app._spawn(coroutine)
     self.assertEqual(coroutine.cr_frame, None)

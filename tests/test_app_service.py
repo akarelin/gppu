@@ -140,7 +140,8 @@ def test_mqtt_config_reuses_running_app_connection_and_preserves_device_messages
       ready.set()
     AppService.on_change(changed, 'dc')
     AppService.on_change(other.append, 'ov')
-    app = AppService(name='consumer', data={'connection': source['connection']})
+    app = AppService(name='consumer')
+    app.connection = source['connection']
     task = asyncio.create_task(app.run())
     try:
       async with asyncio.timeout(2): await client.connected.wait()
@@ -170,7 +171,8 @@ def test_mqtt_config_reuses_running_app_connection_and_preserves_device_messages
 def test_constructing_a_service_does_not_start_a_connection(monkeypatch):
   async def run():
     client, source = mqtt_source(monkeypatch, {}, {'config/dc': 'dc'})
-    app = AppService(name='consumer', data={'connection': source['connection']})
+    app = AppService(name='consumer')
+    app.connection = source['connection']
     assert client.connections == 0
     assert app._mqtt_task is None
     assert Env.glob_dict('') == {'local': {'keep': True}, 'config_mqtt': {'topics': source['topics']}}
@@ -180,7 +182,8 @@ def test_constructing_a_service_does_not_start_a_connection(monkeypatch):
 def test_bad_config_on_existing_connection_fails_visibly(monkeypatch):
   async def run():
     client, source = mqtt_source(monkeypatch, {'config/dc': b'[1,2]'}, {'config/dc': 'dc'})
-    app = AppService(name='consumer', data={'connection': source['connection']})
+    app = AppService(name='consumer')
+    app.connection = source['connection']
     async with asyncio.timeout(2):
       with pytest.raises(ExceptionGroup): await app.run()
     assert Env.glob_dict('') == {'local': {'keep': True}, 'config_mqtt': {'topics': source['topics']}}

@@ -131,7 +131,8 @@ class _StartupConfig(AppService):
     if not isinstance(connection, dict) or not connection.get('hostname'):
       raise ValueError('MQTT configuration requires connection.hostname')
     if not Env.initialized: raise RuntimeError('load the MQTT bootstrap with Env.from_env() first')
-    super().__init__(name='config-mqtt', data={'connection': connection})
+    super().__init__(name='config-mqtt')
+    self.connection = connection
     self.topics = dict(topics)
     self.pending = set(topics)
 
