@@ -285,10 +285,6 @@ class y2path(y2list):
   """
     A slash-separated path held as a list. An element of the list can be called a segment,
     as in https://www.rfc-editor.org/rfc/rfc3986.html#section-3.3
-
-    Path methods and properties operate on the current segments: p.read_text(), p.parent.
-    Return values follow pathlib; supplied targets can remain y2path. Segment operators stay unchanged.
-    copy() copies the segments; copy(target, **kwargs) copies the filesystem entry.
   """
   def __init__(self, *args):
     data = []
@@ -297,7 +293,8 @@ class y2path(y2list):
     self._drive_root = False
 
     for i, a in enumerate(args):
-      if isinstance(a, os.PathLike): a = os.fspath(a)
+      if isinstance(a, y2path): a = str(a)
+      elif isinstance(a, os.PathLike): a = os.fspath(a)
       if isinstance(a, str):
         if os.sep != '/': a = a.replace(os.sep, '/')
         if i == 0:
@@ -310,25 +307,6 @@ class y2path(y2list):
     result = self._lead + super().__str__()
     if self._drive_root and len(self.data) == 1 and result.endswith(':'): result += '/'
     return result
-
-  def __fspath__(self) -> str: return str(self)
-
-  def __getattr__(self, name):
-    if name.startswith('__') or 'data' not in self.__dict__: raise AttributeError(name)
-    return getattr(pathlib.Path(self), name)
-
-  def copy(self, *args, **kwargs):
-    if not args and not kwargs: return super().copy()
-    return pathlib.Path(self).copy(*args, **kwargs)
-
-  @classmethod
-  def cwd(cls): return cls(pathlib.Path.cwd())
-
-  @classmethod
-  def home(cls): return cls(pathlib.Path.home())
-
-  @classmethod
-  def from_uri(cls, uri): return cls(pathlib.Path.from_uri(uri))
 
   def __truediv__(self, other: str | y2path) -> y2path:
     return y2path(self, other)
@@ -355,7 +333,6 @@ class Path(y2path, pathlib.Path):
   _raw_paths = property(lambda self: [str(self)])
   _str_normcase = property(lambda self: pathlib.PurePath(self)._str_normcase)
 
-  def __getattr__(self, name): raise AttributeError(name)
   def __truediv__(self, other: str | y2path) -> Path: return type(self)(self, other)
   def __eq__(self, other): return pathlib.Path(self) == other if isinstance(other, PurePath) and not isinstance(other, y2path) else y2path.__eq__(self, other)
   __hash__ = y2path.__hash__
@@ -500,8 +477,9 @@ class y2uri:
 deepdict: Callable[[], DefaultDict[Any, Any]] = lambda: defaultdict(deepdict)
 
 
-def deepget(path: str, d: dict, default=None):
+def deepget(path: str | y2path, d: dict, default=None):
   """The value at a slash path, falsy values included; default when any step is absent."""
+  path = str(path)
   if '/' in path and path not in d.keys():
     _ = d
     for pp in path.split('/'):
@@ -515,18 +493,18 @@ def deepget(path: str, d: dict, default=None):
   #   if not d: return default
   # return d  
   # return reduce(lambda x, k: x.get(k) if x else None, path.split('/'), dict(d)) or default  
-def deepget_int(path: str, d: dict, default: int = 0) -> int:
+def deepget_int(path: str | y2path, d: dict, default: int = 0) -> int:
   """ Returns int at path, or default if not found """
   _ = deepget(path, d, default)
   return _ if isinstance(_, int) else default
-def deepget_float(path: str, d: dict, default: float = float("NaN")) -> float:
+def deepget_float(path: str | y2path, d: dict, default: float = float("NaN")) -> float:
   """ Returns float at path, or default if not found """
   _ = deepget(path, d, default)
   return _ if isinstance(_, float) else default
-def deepget_list(path: str, d: dict, default: list = []) -> list:
+def deepget_list(path: str | y2path, d: dict, default: list = []) -> list:
   """ Returns list at path, or default if not found """
   return _ if isinstance(_ := deepget(path, d, default), list) else default
-def deepget_dict(path: str, d: dict, default: dict = {}) -> dict:
+def deepget_dict(path: str | y2path, d: dict, default: dict = {}) -> dict:
   """ Returns dict at path, or default if not found """
   return _ if isinstance(_ := deepget(path, d, default), dict) else default
 
@@ -943,7 +921,7 @@ class TemplateSet:
         if not any(name in self.table(path) for path in tables):
           raise KeyError(f'{label}: {field} names {name!r}, which is not in {" or ".join(tables)}')
 
-  def table(self, path: str) -> dict:
+  def table(self, path: str | y2path) -> dict:
     """The mapping at a slash path of the context."""
     table = deepget(path, self.environment.globals)
     if not isinstance(table, dict): raise KeyError(f'no table at {path!r}')
