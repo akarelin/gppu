@@ -27,7 +27,6 @@ import re
 import sqlite3
 from collections.abc import Iterator, Mapping
 from contextlib import closing
-from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, BinaryIO, Literal
@@ -52,6 +51,8 @@ LOG_BLOCK = 65536   # how much of a log's tail is read at a time
 LOG_TIMESTAMP = re.compile(
     r"^\s*[\[(]?(?P<timestamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)"
 )
+# What probe gives that counts as ignored, never counted in a folder's files, folders or bytes.
+IGNORED = ("ignored", "offline", "junction", "symlink")
 # What gppufs and FileIndexer's walk open as archives, by the end of the name.
 ARCHIVES = (".rar", ".tar.gz", ".zip")
 # What a name says of its time, the first that matches: a span of two YYMMDD dates, a date and time with its GMT offset,
@@ -80,7 +81,6 @@ Harness = Literal[
     "claude",
     "cc",
     "gemini",
-    "copilot",
     "agy",
     "hermes",
     "openclaw",
@@ -318,7 +318,7 @@ class FolderHandler(Handler):
     was added to it, so the span is its files' alone; what a folder holds is listed by the file system.
 
     Returns: an Activity, Handler's record with data.files, data.folders and data.bytes, the files, the folders and
-    the bytes of the files it directly holds, a link, a junction or an ignored one being neither; span from its files'
+    the bytes of the files it directly holds, what counts as ignored (IGNORED) being neither; span from its files'
     earliest updated time to their latest.
     """
 
@@ -328,7 +328,7 @@ class FolderHandler(Handler):
     def parse(cls, path: str | Path) -> Activity:
         record = Activity(**vars(super().parse(path)))
         held = [probe(member) for member in Path(path).absolute().iterdir()]
-        files = [member for member in held if "size" in member.meta]
+        files = [member for member in held if "size" in member.meta and member.subtype not in IGNORED]
         folders = [member for member in held if member.subtype in ("folder", "sessionfolder")]
         record.data.update(files=len(files), folders=len(folders), bytes=sum(member.meta["size"] for member in files))
         record.span = cls.spanning([time for member in files if (time := cls.valid_time(member.updated))])
@@ -488,9 +488,10 @@ class LogHandler(FileHandler):
 
     @staticmethod
     def _head(stream: BinaryIO) -> Iterator[bytes]:
-        """The lines from the start of the file."""
+        """The lines from the start of the file. They are read one by one, not with `yield from stream`, which hands the
+        generator's close on to the file and leaves the tail nothing to read."""
         stream.seek(0)
-        yield from stream
+        yield from iter(stream.readline, b"")
 
     @staticmethod
     def _tail(stream: BinaryIO) -> Iterator[bytes]:
@@ -566,7 +567,6 @@ class SessionHandler(FileHandler):
     file's name or folder:
 
     * Codex (cx): type is session_meta, turn_context, event_msg or response_item, with an object payload.
-    * Copilot: a VS Code append log opening with sessionId, requests and responderUsername GitHub Copilot.
     * Gemini CLI: a header with sessionId, projectHash and startTime.
     * Claude Code (cc): a type and a string sessionId, uuid or parentUuid, or type teleported-from.
     * OpenClaw: a string modelId.
@@ -591,15 +591,15 @@ class SessionHandler(FileHandler):
     type, subtype = "session", None
 
     RECOGNIZERS = (
-        ("cx", "_is_codex"), ("copilot", "_is_copilot"), ("gemini", "_is_gemini"), ("cc", "_is_claude_code"),
+        ("cx", "_is_codex"), ("gemini", "_is_gemini"), ("cc", "_is_claude_code"),
         ("openclaw", "_is_openclaw"), ("agy", "_is_agy"), ("hermes", "_is_hermes"),
     )
-    UID = {"cx": "_codex_uid", "copilot": "_copilot_uid", "gemini": "_gemini_uid", "cc": "_claude_code_uid",
+    UID = {"cx": "_codex_uid", "gemini": "_gemini_uid", "cc": "_claude_code_uid",
            "openclaw": "_openclaw_uid", "agy": "_agy_uid", "hermes": "_hermes_uid"}
     # What a file says of the conversation above it: Codex names a parent thread, Claude Code the session
     # that spawned the subagent. The other harnesses name none.
     PARENT = {"cx": "_parent", "cc": "_claude_code_parent"}
-    TURNS = {"cx": "_codex_turns", "copilot": "_copilot_turns", "gemini": "_gemini_turns",
+    TURNS = {"cx": "_codex_turns", "gemini": "_gemini_turns",
              "cc": "_claude_code_turns", "openclaw": "_openclaw_turns", "agy": "_agy_turns",
              "hermes": "_hermes_turns"}
 
@@ -613,9 +613,6 @@ class SessionHandler(FileHandler):
             raise ValueError(f"{path}: its messages name no harness")
         turns = getattr(cls, cls.TURNS[harness])(messages)
         times = tuple(cls._timestamps(messages))
-        if harness == "copilot":
-            created = cls.valid_time(cls._stamp(messages[0]["v"].get("creationDate")))
-            times = tuple(time for time in (created, *(turn.timestamp for turn in turns)) if time is not None)
         uid = getattr(cls, cls.UID[harness])(messages, path)
         parent = cls.PARENT.get(harness)
         parent_uid, subagent = getattr(cls, parent)(messages) if parent else (None, False)
@@ -628,7 +625,7 @@ class SessionHandler(FileHandler):
         if parent_uid:
             record.meta["parent_uid"] = parent_uid
         if harness in ("cc", "cx"):
-            session, _ = cls.parse_messages(harness, messages)
+            session, _ = cls.parse_messages(harness, messages, uid=uid)
             data = {"title": session["title"], "topic": session["topic"], "cwd": session["cwd"],
                     "models": sorted(session["models"]) or None}
             record.uid = session["uid"]
@@ -820,104 +817,6 @@ class SessionHandler(FileHandler):
             and isinstance(message.get("payload"), Mapping)
             for message in messages
         )
-
-    @staticmethod
-    def _is_copilot(messages: tuple[Mapping[str, Any], ...]) -> bool:
-        """Recognize the native VS Code Copilot append-log header."""
-        if not messages or messages[0].get("kind") != 0:
-            return False
-        body = messages[0].get("v")
-        return (isinstance(body, Mapping) and isinstance(body.get("sessionId"), str)
-                and isinstance(body.get("requests"), list)
-                and body.get("responderUsername") == "GitHub Copilot")
-
-    @staticmethod
-    def _copilot_state(messages: tuple[Mapping[str, Any], ...]) -> dict:
-        """Replay VS Code objectMutationLog entries without changing raw messages.
-
-        Kind 2 replaces the array tail at ``i`` and then appends ``v``. Request
-        and response patches belong to the same conversation; they are not turns.
-        """
-        if not SessionHandler._is_copilot(messages):
-            raise ValueError("Copilot append log has no initial session object")
-        body = deepcopy(messages[0]["v"])
-        uid = body["sessionId"]
-        for message in messages[1:]:
-            kind, path = message.get("kind"), message.get("k")
-            if type(kind) is not int or kind not in (1, 2, 3) or not isinstance(path, list) or not path:
-                raise ValueError("Copilot append log has an invalid mutation")
-            target = body
-            for key in path[:-1]:
-                if (isinstance(target, dict) and key in target
-                    or isinstance(target, list) and type(key) is int and 0 <= key < len(target)):
-                    target = target[key]
-                else:
-                    raise ValueError("Copilot append log mutation has no parent")
-            key = path[-1]
-            if not (isinstance(target, dict) and isinstance(key, str)
-                    or isinstance(target, list) and type(key) is int and 0 <= key < len(target)):
-                raise ValueError("Copilot append log mutation has an invalid target")
-            if kind == 1:
-                target[key] = deepcopy(message["v"])
-            elif kind == 3:
-                if not isinstance(target, dict):
-                    raise ValueError("Copilot deletion requires an object property")
-                target.pop(key, None)
-            else:
-                if isinstance(target, dict) and key not in target:
-                    target[key] = []  # Native Push initializes an absent array.
-                values = target[key]
-                if not isinstance(values, list):
-                    raise ValueError("Copilot Push target is not an array")
-                if "i" in message:
-                    index = message["i"]
-                    if type(index) is not int or not 0 <= index <= len(values):
-                        raise ValueError("Copilot Push index is outside its array")
-                    del values[index:]
-                if "v" in message:
-                    if not isinstance(message["v"], list):
-                        raise ValueError("Copilot Push values are not an array")
-                    values.extend(deepcopy(message["v"]))
-        if body["sessionId"] != uid or not isinstance(body["requests"], list):
-            raise ValueError("Copilot append log changed its session identity or requests type")
-        return body
-
-    @classmethod
-    def _copilot_uid(cls, messages: tuple[Mapping[str, Any], ...], path: Path) -> str:
-        """Return the sessionId recorded in the native initial object."""
-        return messages[0]["v"]["sessionId"]
-
-    @classmethod
-    def _copilot_turns(cls, messages: tuple[Mapping[str, Any], ...]) -> tuple[SessionTurn, ...]:
-        """Read final messages and their explicitly recorded response completion times."""
-        turns = []
-        for request in cls._copilot_state(messages)["requests"]:
-            if (not isinstance(request, Mapping) or not isinstance(request.get("message"), Mapping)
-                or not isinstance(request["message"].get("text"), str) or "timestamp" not in request):
-                raise ValueError("Copilot request requires its original message and timestamp")
-            if turn := cls._turn("user", request["message"]["text"], request["timestamp"]):
-                turns.append(turn)
-            response = request.get("response", [])
-            if not isinstance(response, list):
-                raise ValueError("Copilot response must be an array")
-            parts = []
-            for part in response:
-                if not isinstance(part, Mapping):
-                    continue
-                if isinstance(part.get("value"), str):
-                    parts.append(part["value"])
-                elif part.get("kind") == "inlineReference" and isinstance(part.get("name"), str):
-                    parts.append(part["name"])
-            text = "".join(parts)
-            state = request.get("modelState")
-            completed = state.get("completedAt") if isinstance(state, Mapping) else None
-            if completed is not None and (state.get("value") not in (1, 2, 3)
-                or type(completed) not in (int, float) or Handler.valid_time(cls._stamp(completed)) is None
-                or completed < request["timestamp"]):
-                raise ValueError("Copilot completion requires a terminal state and a valid recorded time")
-            if turn := cls._turn("assistant", text, completed):
-                turns.append(turn)
-        return tuple(turns)
 
     @staticmethod
     def _is_claude_code(messages: tuple[Mapping[str, Any], ...]) -> bool:
@@ -1513,13 +1412,13 @@ def probe(path: str | Path) -> Record:
     subtype; a link, a junction, an offline file and an ignored path are fs_node with that as subtype, and no handler
     reads them.
 
-    Returns: type and subtype; name the path's name; updated, and created where the stat has a birth time, in local
+    Returns: type and subtype; name the path's name; updated, and created where the stat has a birth time, each a time valid_time takes, in local
     time; meta.size a file's size; data.target a link's or a junction's target."""
     path = Path(path).absolute()
     probed = probe_path(path)
-    record = Record(name=path.name or str(path), updated=probed["modified"].astimezone())
+    record = Record(name=path.name or str(path), updated=Handler.valid_time(probed["modified"].astimezone()))
     if probed["created"]:
-        record.created = probed["created"].astimezone()
+        record.created = Handler.valid_time(probed["created"].astimezone())
     if probed["size"] is not None:
         record.meta["size"] = probed["size"]
     if probed["target"] is not None:

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from gppu.fs import SessionHandler
+from gppu.handlers import SessionHandler, probe
 
 STAMP = 1790390936747
 
@@ -21,10 +21,8 @@ def read(tmp_path, rows):
   path = tmp_path/'session.jsonl'
   raw = '\n'.join(json.dumps(row) for row in rows).encode('utf-8')
   path.write_bytes(raw)
-  handler = SessionHandler()
-  assert handler.identify_sync(path)
-  _, session = handler.call_sync(path)
-  assert session.records == tuple(rows)
+  assert probe(path).type == 'session'
+  session = SessionHandler.parse(path)
   assert path.read_bytes() == raw
   return session
 
@@ -39,12 +37,10 @@ def test_final_request_response_replays_tail_replacement_without_duplicate_turns
   before = deepcopy(rows)
   session = read(tmp_path, rows)
   assert rows == before
-  assert (session.harness, session.uid) == ('copilot', 'copilot-native')
-  assert [(turn.role, turn.text) for turn in session.turns] == [
-    ('user', 'Document'), ('assistant', 'Documented detect_os(). Complete.')]
-  assert session.span_start == datetime.fromtimestamp((STAMP - 1000) / 1000, timezone.utc)
-  assert session.span_end == datetime.fromtimestamp(STAMP / 1000, timezone.utc)
-  assert session.turns[1].timestamp is None, 'no explicit completion timestamp in this request'
+  assert (session.subtype, session.uid) == ('copilot', 'copilot-native')
+  assert (session.data['turns'], session.name) == (2, 'Document')
+  assert session.span.start == datetime.fromtimestamp((STAMP - 1000) / 1000, timezone.utc)
+  assert session.span.end == datetime.fromtimestamp(STAMP / 1000, timezone.utc), 'no explicit completion timestamp in this request'
 
 
 @pytest.mark.parametrize('state', [1, 2, 3])
@@ -53,9 +49,8 @@ def test_native_terminal_completion_is_response_and_session_end(tmp_path, state)
   rows = [initial(), {'kind': 1, 'k': ['requests', 0, 'modelState'],
     'v': {'value': state, 'completedAt': completed}}]
   session = read(tmp_path, rows)
-  assert session.turns[0].timestamp == datetime.fromtimestamp(STAMP / 1000, timezone.utc)
-  assert session.turns[1].timestamp == datetime.fromtimestamp(completed / 1000, timezone.utc)
-  assert session.span_end == session.turns[1].timestamp
+  assert session.data['turns'] == 2
+  assert session.span.end == datetime.fromtimestamp(completed / 1000, timezone.utc)
 
 
 @pytest.mark.parametrize('state,completed', [(0, STAMP+1000), (1, STAMP-1), (1, 'unknown'), (1, True)])
@@ -69,11 +64,12 @@ def test_running_request_without_response_and_later_append(tmp_path):
   rows = [initial(), {'kind': 2, 'k': ['requests'], 'v': [
     {'timestamp': STAMP+5000, 'message': {'text': 'Continue'}}]}]
   first = read(tmp_path, rows)
-  assert [turn.text for turn in first.turns] == ['Document', 'old response', 'Continue']
+  assert (first.data['turns'], first.name) == (3, 'Document')
+  assert first.span.end == datetime.fromtimestamp((STAMP + 5000) / 1000, timezone.utc)
   rows.append({'kind': 2, 'k': ['requests', 1, 'response'], 'v': [{'value': 'Done'}]})
   second = read(tmp_path, rows)
-  assert [turn.text for turn in second.turns] == ['Document', 'old response', 'Continue', 'Done']
-  assert first.records == second.records[:-1]
+  assert second.data['turns'] == 4
+  assert (second.uid, second.span.start) == (first.uid, first.span.start)
 
 
 @pytest.mark.parametrize('mutation', [
