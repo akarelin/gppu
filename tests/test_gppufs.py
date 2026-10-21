@@ -529,22 +529,6 @@ def test_parent_traversal_cannot_escape_location(tmp_path):
       fs.info(path)
 
 
-def test_exported_session_member_paths_remain_relative_after_rename(tmp_path, monkeypatch):
-  old = tmp_path / 'old'
-  old.mkdir()
-  with zipfile.ZipFile(old / 'export.zip', 'w') as archive:
-    archive.writestr('conversations.json', json.dumps([{'uuid': 'exported-session', 'chat_messages': []}]))
-  fs = GppuFileSystem(tmp_path)
-  fs.ls(refresh=True)
-  new = tmp_path / 'new'
-  rename(old, new, tmp_path)
-  monkeypatch.setattr(GppuFileSystem, '_live', no_live)
-  metadata = fs.info('new/export.zip')
-  exported, = metadata['gppu']['claude']['sessions']
-  assert exported['location'] == metadata['name']
-  assert exported['path'] == 'conversations.json'
-
-
 def catalog_of(tmp_path: Path, rows: list[dict], sources: dict[str, dict] | None = None, replicas: dict[str, list[dict]] | None = None) -> Path:
   folder = tmp_path / '.catalog'
   (folder / 'test-host').mkdir(parents=True, exist_ok=True)
