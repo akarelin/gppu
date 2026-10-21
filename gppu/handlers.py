@@ -3,21 +3,24 @@
 Handler(path) detects what kind of handler the path needs and returns it, holding the path's information:
 
     info = Handler('D:/Dev/gppu/README.md')    # a MarkdownHandler
-    info.title, info.tags, info.span, info.metadata
+    info.title, info.tags, info.span, info.data
+    info.record                                # the same as a Linked Data record
 
-Each kind of file or folder is one class. Its `handles(path)` says whether a path is its own, and its
-constructor reads it. A more specific kind is a subclass of a more general one and is asked only after the
-general one handles the path, so the answer is the most specific kind. A program adds a kind by subclassing:
+Each type and subtype of file or folder is one class. Its `handles(path)` says whether a path is its own, and
+its constructor reads it. A subtype is a subclass of its type and is asked only after the type handles the path,
+so the answer is the most specific subtype. A program adds a subtype by subclassing:
 
     class BillingCSVHandler(CSVHandler):
         time_keys = (*CSVHandler.time_keys, 'billed_at')
 
 A handler reads the path it is given and nothing else: no index, no location, no fsspec. A read that fails
-raises.
+raises. Its record is what Linked Data holds of the thing: type, subtype, name, span, data and meta; a session's
+messages are the session messages Linked Data holds under it.
 """
 from __future__ import annotations
 
 import csv
+import html
 import json
 import fnmatch
 import os
@@ -27,8 +30,10 @@ from collections.abc import Iterator, Mapping
 from contextlib import closing
 from copy import deepcopy
 from dataclasses import dataclass
+from functools import cached_property
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Literal
+from uuid import UUID, uuid5
 
 import yaml
 
@@ -117,6 +122,20 @@ HOMES: dict[Harness, tuple[str, ...]] = {
     "hermes": ("state.db",),
     "agy": ("antigravity_state.pbtxt", "jetski_state.pbtxt"),
 }
+# Linked Data's sessions (RAN Projects/ld/sessions.py): a name is the first line of a text, clipped; the lines of Claude
+# Code that name its session and the key each holds the name in; the Codex payloads that are messages and the roles of its
+# messages; how Codex opens the AGENTS.md it reads into a session; the namespace of a Codex message's id; and the tags a
+# prompt is wrapped in.
+NAME_LEN = 120
+TITLES = {"ai-title": "aiTitle", "agent-name": "agentName", "custom-title": "customTitle"}
+CODEX_MESSAGES = {"message", "function_call", "custom_tool_call", "function_call_output", "custom_tool_call_output", "agent_message"}
+CODEX_ROLES = {"user": "user", "assistant": "agent", "developer": "user"}
+CODEX_INSTRUCTIONS = "# AGENTS.md instructions"
+NAMESPACE = UUID("4936da84-fd80-59f2-90ef-1d5b9672ceb6")
+OPENING = re.compile(r"\s*<([\w:-]+)([^>]*)>")
+SUMMARY = re.compile(r'\bsummary="([^"]*)"')
+ELEMENT = re.compile(r"<([\w:-]+)[^>]*>.*?</\1>", re.S)
+TAGS = re.compile(r"</?[\w:-]+[^>]*>")
 SESSION_UID = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.I,
@@ -126,8 +145,8 @@ SESSION_UID = re.compile(
 class Handler:
     """A file or a folder and what is known about it: its size, when it was modified, the span it covers.
 
-    Handler(path) returns the most specific kind of handler for the path; a kind's own class, called with a
-    path that is not its kind, raises ValueError.
+    Handler(path) returns the most specific subtype's handler for the path; a type's or subtype's own class, called
+    with a path that is not of it, raises ValueError.
     """
 
     path: Path
@@ -163,14 +182,33 @@ class Handler:
         self.modified = self.valid_time(datetime.fromtimestamp(stat.st_mtime, timezone.utc))
 
     @property
-    def kind(self) -> str:
-        """The kind's name: markdown for MarkdownHandler."""
-        return type(self).__name__.removesuffix("Handler").casefold()
+    def type(self) -> str:
+        """What the path is: the class below Handler its handler descends from, file, folder or ignored."""
+        top = next(base for base in reversed(type(self).__mro__) if issubclass(base, Handler) and base is not Handler)
+        return top.__name__.removesuffix("Handler").casefold()
 
     @property
-    def metadata(self) -> dict[str, Any]:
-        """What this kind knows about the path."""
-        return {"kind": self.kind, "size": self.size, "modified": self.modified, "span": self.span}
+    def subtype(self) -> str | None:
+        """What refines its type: the handler's own class, markdown for MarkdownHandler; None for the type itself."""
+        name = type(self).__name__.removesuffix("Handler").casefold()
+        return None if name == self.type else name
+
+    @property
+    def name(self) -> str:
+        """The name used for display: the path's own name."""
+        return self.path.name or str(self.path)
+
+    @property
+    def data(self) -> dict[str, Any]:
+        """What the handler says about the thing."""
+        return {"size": self.size, "modified": self.modified}
+
+    @property
+    def record(self) -> dict[str, Any]:
+        """The thing as a Linked Data record: its type, subtype, name, span, data, and in meta the path it was read from."""
+        span = None if self.span is None else {"start": self.span.start, "end": self.span.end}
+        return {"type": self.type, "subtype": self.subtype, "name": self.name, "span": span, "data": self.data,
+                "meta": {"source": str(self.path)}}
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({str(self.path)!r})"
@@ -236,8 +274,8 @@ class IgnoredHandler(Handler):
         return next((pattern for pattern in patterns if fnmatch.fnmatchcase(name, pattern)), None)
 
     @property
-    def metadata(self) -> dict[str, Any]:
-        return {**super().metadata, "reason": self.reason(self.path)}
+    def data(self) -> dict[str, Any]:
+        return {**super().data, "reason": self.reason(self.path)}
 
 
 class FolderHandler(Handler):
@@ -271,8 +309,8 @@ class FolderHandler(Handler):
         self.span = self.spanning(times)
 
     @property
-    def metadata(self) -> dict[str, Any]:
-        return {**super().metadata, "files": self.files, "folders": self.folders, "bytes": self.bytes}
+    def data(self) -> dict[str, Any]:
+        return {**super().data, "files": self.files, "folders": self.folders, "bytes": self.bytes}
 
 
 class FileHandler(Handler):
@@ -308,8 +346,8 @@ class SqliteHandler(FileHandler):
                            for name in names}
 
     @property
-    def metadata(self) -> dict[str, Any]:
-        return {**super().metadata, "tables": {name: list(columns) for name, columns in self.tables.items()}}
+    def data(self) -> dict[str, Any]:
+        return {**super().data, "tables": {name: list(columns) for name, columns in self.tables.items()}}
 
 
 class MarkdownHandler(FileHandler):
@@ -378,8 +416,8 @@ class MarkdownHandler(FileHandler):
         return tuple(str(item) for item in values if item is not None)
 
     @property
-    def metadata(self) -> dict[str, Any]:
-        return {**super().metadata, **self.frontmatter}
+    def data(self) -> dict[str, Any]:
+        return {**super().data, "title": self.title, "tags": list(self.tags), "frontmatter": self.frontmatter}
 
     @classmethod
     def _time(cls, value: Any) -> datetime | None:
@@ -426,8 +464,8 @@ class CSVHandler(FileHandler):
                                    if index < len(row) and (time := self._time(row[index])) is not None])
 
     @property
-    def metadata(self) -> dict[str, Any]:
-        return {**super().metadata, "header": self.header, "rows": len(self.rows)}
+    def data(self) -> dict[str, Any]:
+        return {**super().data, "header": self.header, "rows": len(self.rows)}
 
     @classmethod
     def _time(cls, value: str) -> datetime | None:
@@ -475,8 +513,8 @@ class LogHandler(FileHandler):
         self.span = self.spanning([time for row in self.rows if (time := self._time(row)) is not None])
 
     @property
-    def metadata(self) -> dict[str, Any]:
-        return {**super().metadata, "rows": len(self.rows)}
+    def data(self) -> dict[str, Any]:
+        return {**super().data, "rows": len(self.rows)}
 
     @classmethod
     def _time(cls, row: str) -> datetime | None:
@@ -528,9 +566,9 @@ class EmailHandler(FileHandler):
             self.span = TimeSpan(start=self.timestamp, end=self.timestamp)
 
     @property
-    def metadata(self) -> dict[str, Any]:
+    def data(self) -> dict[str, Any]:
         named = {"timestamp": self.timestamp, "subject": self.subject, "party": self.party, "collision": self.collision}
-        return {**super().metadata, **{key: value for key, value in named.items() if value is not None}}
+        return {**super().data, **{key: value for key, value in named.items() if value is not None}}
 
 
 @dataclass(frozen=True)
@@ -610,11 +648,12 @@ class SessionHandler(FileHandler):
         self.topic = self._topic(self.turns)
 
     @property
-    def metadata(self) -> dict[str, Any]:
+    def data(self) -> dict[str, Any]:
         """The session's identity and description, without its text."""
-        return {**super().metadata, "harness": self.harness, "uid": self.uid, "parent_uid": self.parent_uid,
+        return {**super().data, "harness": self.harness, "uid": self.uid, "parent_uid": self.parent_uid,
                 "subagent": self.subagent, "sidechain_only": self.sidechain_only, "records": len(self.records),
-                "turns": len(self.turns), "models": self.models, "topic": self.topic, "name": self.name}
+                "turns": len(self.turns), "models": self.models, "topic": self.topic,
+                "normalized_name": self.normalized_name}
 
     @property
     def user_messages(self) -> tuple[str, ...]:
@@ -642,13 +681,153 @@ class SessionHandler(FileHandler):
         return f"{start}{len(self.turns)}{self.length}{topic}"
 
     @property
-    def name(self) -> str:
+    def normalized_name(self) -> str:
         """The file's name from its label, its uid and its suffix, within NAME_LIMIT."""
         tail = (f".{self.uid}" if self.uid else "") + self.path.suffix
         label = self.label
         if len(label) + len(tail) > NAME_LIMIT:
             label = label[: NAME_LIMIT - len(tail)].rstrip()
         return f"{label}{tail}"
+
+    @property
+    def type(self) -> str:
+        return "session"
+
+    @property
+    def subtype(self) -> str:
+        """Its harness."""
+        return self.harness
+
+    @property
+    def record(self) -> dict[str, Any]:
+        """The session as Linked Data makes it from its lines: its harness and uid, its name the title its harness gives it,
+        else its first prompt as a person reads it, else its uid; its span its messages' first to last time, else its
+        lines'; its title, topic, cwd and models; and the session that spawned it in meta.parent_uid."""
+        session, messages = self._linked
+        times = [message["ts"] for message in messages] or [
+            datetime.fromisoformat(record["timestamp"]) for record in self.records if record.get("timestamp")]
+        data = {"title": session["title"], "topic": session["topic"], "cwd": session["cwd"],
+                "models": sorted(session["models"]) or None}
+        meta = {"source": str(self.path)} | ({"parent_uid": session["parent_uid"]} if session["parent_uid"] else {})
+        return {"type": self.type, "subtype": self.subtype, "uid": session["uid"],
+                "name": self._first_line(session["title"] or "") or self._first_line(session["name"] or "") or session["uid"],
+                "span": {"start": min(times), "end": max(times)} if times else None,
+                "data": {key: value for key, value in data.items() if value is not None}, "meta": meta}
+
+    @property
+    def messages(self) -> list[dict[str, Any]]:
+        """Its session messages as Linked Data makes them from its lines: each one's id in its harness, its time, its
+        subtype (user, agent, thinking, tool_use, tool_result), its name the first line of its text, the line itself as
+        its data, and the line's place in the file, counted from 1."""
+        return self._linked[1]
+
+    @cached_property
+    def _linked(self) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        if self.harness == "cc":
+            return self._claude_lines()
+        if self.harness == "cx":
+            return self._codex_lines()
+        raise NotImplementedError(f"{self.path}: Linked Data reads the lines of cc and cx, not of {self.harness}")
+
+    @staticmethod
+    def _first_line(text: str) -> str:
+        return next((line.strip()[:NAME_LEN] for line in text.replace(chr(0), "").splitlines() if line.strip()), "")
+
+    @classmethod
+    def _text_of(cls, content: Any, keys: tuple[str, ...] = ("text", "thinking", "content", "output")) -> str:
+        """The text a line carries: a string, or the text of its blocks, each block's under the first of keys it has."""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, dict):
+            return cls._text_of(next((content[key] for key in keys if content.get(key)), ""), keys)
+        if isinstance(content, list):
+            return "\n".join(filter(None, (cls._text_of(item, keys) for item in content)))
+        return ""
+
+    @classmethod
+    def _readable(cls, text: str) -> str:
+        """A prompt as a person reads it: one opening with a tag reads as the tag's summary, else the text outside the
+        tags, else the text inside them."""
+        opening = OPENING.match(text)
+        if not opening:
+            return text
+        if (summary := SUMMARY.search(opening[2])) and summary[1].strip():
+            return html.unescape(summary[1])
+        return cls._first_line(TAGS.sub("", ELEMENT.sub("", text))) or TAGS.sub("", text)
+
+    @classmethod
+    def _prompted(cls, session: dict[str, Any], text: str) -> None:
+        """The first prompt a person typed is the session's topic, and its name as a person reads it; one opening with a
+        tag gives way to the first that does not."""
+        prompt = cls._first_line(text)
+        if prompt and (not session["topic"] or session["topic"].startswith("<") and not prompt.startswith("<")):
+            session["topic"], session["name"] = prompt, cls._first_line(cls._readable(text))
+
+    def _message(self, uid: str, line: Mapping[str, Any], n: int, subtype: str, text: str) -> dict[str, Any]:
+        return {"uid": uid, "ts": datetime.fromisoformat(line["timestamp"]), "subtype": subtype,
+                "name": self._first_line(text) or subtype, "data": line, "line": n}
+
+    def _claude_lines(self) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Each user or assistant line is a message, its id the line's uuid. A subagent run's lines name the run, agentId,
+        and the session that spawned it, sessionId. A line marked isMeta is not a prompt. An ai-title, agent-name or
+        custom-title line names the session."""
+        session = {"uid": None, "parent_uid": None, "title": None, "topic": None, "name": None, "cwd": None, "models": set()}
+        messages = []
+        for n, line in enumerate(self.records, 1):
+            kind = line.get("type")
+            if kind in TITLES:
+                session["title"] = line.get(TITLES[kind]) or session["title"]
+            if kind not in ("user", "assistant"):
+                continue
+            if line.get("agentId"):
+                session["uid"], session["parent_uid"] = line["agentId"], line.get("sessionId")
+            else:
+                session["uid"] = line.get("sessionId") or session["uid"]
+            session["cwd"] = line.get("cwd") or session["cwd"]
+            message = line.get("message") or {}
+            if message.get("model"):
+                session["models"].add(message["model"])
+            content = message.get("content")
+            blocks = content if isinstance(content, list) else [{"type": "text", "text": content or ""}]
+            types = {block.get("type") for block in blocks}
+            if kind == "user" and not line.get("isMeta") and "text" in types:
+                self._prompted(session, self._text_of(blocks, ("text",)))
+            subtype = ("tool_result" if "tool_result" in types else "user" if kind == "user"
+                       else "tool_use" if "tool_use" in types else "agent" if "text" in types else "thinking")
+            text = (" ".join(block.get("name", "") for block in blocks if block.get("type") == "tool_use")
+                    if subtype == "tool_use" else self._text_of(blocks))
+            messages.append(self._message(line["uuid"], line, n, subtype, text))
+        return session, messages
+
+    def _codex_lines(self) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """The first session_meta line names the session, its folder and the session that spawned it. A response_item of
+        a message, a tool call or a tool's output is a message, its id made from the session's uid and the line. The
+        AGENTS.md Codex reads into a session is not a prompt."""
+        session = {"uid": None, "parent_uid": None, "title": None, "topic": None, "name": None, "cwd": None, "models": set()}
+        messages, named = [], False
+        for n, line in enumerate(self.records, 1):
+            payload = line.get("payload") or {}
+            if line.get("type") == "session_meta" and not named:
+                named = True
+                source = payload.get("source")
+                session["uid"] = payload.get("id") or payload.get("session_id")
+                session["parent_uid"] = (((source.get("subagent") or {}).get("thread_spawn") or {}).get("parent_thread_id")
+                                         if isinstance(source, dict) else None)
+                session["cwd"] = payload.get("cwd")
+            if line.get("type") != "response_item" or payload.get("type") not in CODEX_MESSAGES:
+                continue
+            if payload["type"] == "message":
+                subtype, text = CODEX_ROLES[payload["role"]], self._text_of(payload.get("content"))
+                if payload["role"] == "user" and not text.startswith(CODEX_INSTRUCTIONS):
+                    self._prompted(session, self._text_of(payload.get("content"), ("text",)))
+            elif payload["type"].endswith("_output"):
+                subtype, text = "tool_result", self._text_of(payload.get("output"))
+            elif payload["type"] == "agent_message":
+                subtype, text = "agent", self._text_of(payload.get("content") or payload.get("text"))
+            else:
+                subtype, text = "tool_use", payload.get("name") or ""
+            messages.append(self._message(str(uuid5(NAMESPACE, f"{session['uid']}/{line.get('ordinal', n)}")), line, n, subtype, text))
+        return session, messages
 
     @classmethod
     def _harness(cls, records: tuple[Mapping[str, Any], ...]) -> Harness | None:
@@ -1367,5 +1546,5 @@ class SessionFolderHandler(FolderHandler):
         return values.pop() if len(values) == 1 else None
 
     @property
-    def metadata(self) -> dict[str, Any]:
-        return {**super().metadata, "harness": self.harness, "uid": self.uid, "sessions": len(self.sessions)}
+    def data(self) -> dict[str, Any]:
+        return {**super().data, "harness": self.harness, "uid": self.uid, "sessions": len(self.sessions)}
