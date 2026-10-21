@@ -1,12 +1,14 @@
 """The pages mkdocs-gen-files makes at build time out of gppu's code: a page per module, its reference, which mkdocstrings writes from
 the docstrings; on the home page, the version of gppu they document and what the package `gppu` exports, by its own import lines;
-graph.html, graphify's graph of every class and function of gppu, read from the code without a model and grouped by gppu's modules;
+graph.html, graphify's graph of every class and function of gppu and of what gppu's documentation says of them, grouped by gppu's
+modules;
 and under guides/, gppu's own documents, README first, as they are in the repository."""
 import ast
 import json
 import os
 import posixpath
 import re
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path, PurePath
@@ -74,17 +76,39 @@ def exports(name: str, source: Path) -> str:
     return '\n'.join(text)
 
 
+def committed(path: Path) -> bytes:
+    """A file as gppu's last commit has it."""
+    return subprocess.run(['git', 'show', f'HEAD:{path.relative_to(ROOT).as_posix()}'], cwd=ROOT, check=True,
+                          capture_output=True).stdout
+
+
+def corpus(folder: Path, read: bool = False, content=Path.read_bytes) -> Path:
+    """gppu as graphify reads it, laid out as in the repository: its modules and, with read, its documentation, the documents the
+    site carries and the descriptions Claude Code wrote; each file's content as `content` reads it, the checkout's by default."""
+    shutil.rmtree(folder, ignore_errors=True)
+    sources = [source for _, source in modules()]
+    if read:
+        sources += [ROOT / document for document in documents()] + sorted(WRITTEN.glob('*.md'))
+    for source in sources:
+        target = folder / source.relative_to(ROOT)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content(source))
+    return folder
+
+
 def graph() -> str:
-    """graphify's graph of gppu's code as one page: graphify reads the code (`update`, no model), each node goes into the group of
-    the gppu module it is in, a package's modules one group (gppu.tui), and graphify draws it (`export html`). Left out: the files
-    that are no module, and the names gppu only uses (Any, Path), which graphify makes nodes of with an id of their file's, fs_py_any."""
-    skipped = {s.name for s in PACKAGE.rglob('*.py') if s not in {f for _, f in modules()}}
+    """graphify's graph of gppu's code and of what its documentation says of it, as one page: graphify reads the code (`update`, no
+    model), and the nodes its model read in gppu's documentation, with their links (docs/written.py, docs/written/graph.json), join
+    it; each node goes into the group of the gppu module it is in, a package's modules one group (gppu.tui), a node of a module's
+    description into the module's and of a document into the documents', and graphify draws it (`export html`). Left out: the names
+    gppu only uses (Any, Path), which graphify makes nodes of with an id of their file's, gppu_fs_py_any."""
     with tempfile.TemporaryDirectory() as out:
         env = os.environ | {'GRAPHIFY_OUT': out, 'PYTHONIOENCODING': 'utf-8'}
-        subprocess.run(['graphify', 'update', str(PACKAGE)], env=env, check=True, capture_output=True)
+        subprocess.run(['graphify', 'update', str(corpus(Path(out, 'corpus')))], env=env, check=True, capture_output=True)
         drawn = json.loads(Path(out, 'graph.json').read_text(encoding='utf-8'))
-        kept = [n for n in drawn['nodes'] if '_py_' not in n['id'] and n.get('source_file', '').endswith('.py')
-                and PurePath(n['source_file']).name not in skipped]
+        read = json.loads((WRITTEN / 'graph.json').read_text(encoding='utf-8'))
+        kept = [n for n in drawn['nodes'] if '_py_' not in n['id'] and n.get('source_file', '').endswith('.py')] + read['nodes']
+        drawn['links'] += read['links']
         groups = sorted({group(n) for n in kept})
         for n in kept:
             n['community'] = str(groups.index(group(n)))
@@ -105,9 +129,15 @@ def version() -> str:
 
 
 def group(node: dict) -> str:
-    """The gppu module a node is in: gppu.<module>, or gppu.<package> for a module in a package; the package's own __init__.py is gppu."""
-    parts = PurePath(node['source_file']).with_suffix('').parts
-    return 'gppu' if parts == ('__init__',) else 'gppu.' + parts[0]
+    """The gppu module a node is in: gppu.<module>, or gppu.<package> for a module in a package, the package's own __init__.py being
+    gppu; a node of a module's description is in the module, and one of a document in the documents."""
+    source = PurePath(node['source_file'])
+    if source.suffix == '.md':
+        if source.parent != PurePath('docs/written'):
+            return 'documents'
+        source = PurePath(*source.stem.split('.')).with_suffix('.py')
+    parts = source.with_suffix('').parts[1:]
+    return 'gppu' if parts == ('__init__',) or not parts else 'gppu.' + parts[0]
 
 
 def page(name: str, source: Path) -> str:
