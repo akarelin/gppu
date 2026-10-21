@@ -287,8 +287,6 @@ def load_app_registry(app_dir: Path) -> dict[str, dict]:
 
     A value is either one manifest path, or a mapping of manifest paths whose key is the nav the launcher files them
     under: which submenu an item appears in is the launcher's business, so a manifest never has to know.
-
-    Call ``Env()`` + ``Env.load()`` before this.
     """
     apps: dict[str, dict] = {}
     for key, entry in Env.glob_dict('apps').items():
@@ -1313,7 +1311,7 @@ def launcher_main(
 ) -> None:
     """Parse CLI args and run the TUI loop.
 
-    Call after ``Env.load()`` and ``load_app_registry()``.
+    Call after ``load_app_registry()``.
     """
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument(
