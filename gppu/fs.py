@@ -938,10 +938,6 @@ def _probe_name(name: str, directory: bool) -> handlers.Record:
     return handlers.probe(stand_in)
 
 
-# What probe gives that counts as ignored in a folder's totals: an ignored path, an offline file, a junction and a symlink.
-IGNORED = ('ignored', 'offline', 'junction', 'symlink')
-
-
 class GppuFileSystem(AbstractFileSystem):
   """fsspec listings enriched by handlers and stored beside their location.
 
@@ -1646,7 +1642,7 @@ class GppuFileSystem(AbstractFileSystem):
     nothing says more."""
     modified = gppu['modified_at'] and datetime.fromisoformat(str(gppu['modified_at']))
     spans = [span for span in (self._own_span(gppu),) if span]
-    if gppu['record']['subtype'] in IGNORED:
+    if gppu['record']['subtype'] in handlers.IGNORED:
       return {'files': 0, 'folders': 0, 'bytes': 0, 'span': None}   # counted as ignored: never counted
     if children is None:
       totals = {'files': 1, 'folders': 0, 'bytes': gppu['size']}
