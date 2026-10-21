@@ -89,14 +89,16 @@ def here(catalog: GppuCatalog, uri: str) -> Path | None:
 
 
 def reached(catalog: GppuCatalog) -> dict[str, dict[str, str]]:
-    """The folders on this host the catalog's locations are, as GppuFileSystem's locations map takes them: what addresses its entries."""
+    """The folders on this host the catalog's locations are, as GppuFileSystem's locations map takes them: what addresses its entries.
+    Each is looked for once, a share that does not answer included, so a caller reads it once and gives it to filesystem()."""
     return {full_path(path).as_posix(): {'location': uid, 'canonical': row['canonical']}
             for uid, row in catalog.locations.items() if (path := here(catalog, row['canonical'])) and path.is_dir()}
 
 
-def filesystem(catalog: GppuCatalog, uid: str) -> GppuFileSystem:
+def filesystem(catalog: GppuCatalog, uid: str, folders: dict[str, dict[str, str]]) -> GppuFileSystem:
     """The GppuFileSystem of a location this host reaches, its index beside it, `.<location-name>.gppufs.sqlite`: a listing reads the
-    folder and keeps what gppufs's handlers read, a lookup answers from the index; each address its entries carry is the location's."""
+    folder and keeps what gppufs's handlers read, a lookup answers from the index; each address its entries carry is the location's,
+    from folders, what reached() found."""
     if (root := here(catalog, catalog.locations[uid]['canonical'])) is None:
         raise ValueError(f"{catalog.locations[uid]['canonical']}: {uid} is not on this host")
-    return GppuFileSystem(str(root), locations=reached(catalog))
+    return GppuFileSystem(str(root), locations=folders)
