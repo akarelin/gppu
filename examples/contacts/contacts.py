@@ -19,7 +19,7 @@ from pathlib import Path
 
 import yaml
 
-from gppu import App, Environment, Info, State
+from gppu import App, Env, Info, State
 from gppu.gppu import _DC
 
 GENERATED = 'contacts/0.1.0'
@@ -88,9 +88,9 @@ class Document:
 
 class Contacts(App):
   def main(self) -> None:
-    self.rules = Environment.entities
+    self.rules = Env.entities
     self.kinds = {kind.scheme: kind for kind in State.entities.values()}
-    self.lake = Path(Environment.locations.local_of('lake://'))
+    self.lake = Path(Env.locations.local_of('lake://'))
     self.read_documents()
     self.photos = {self.rules.slug_of(path.stem): address
                    for source in self.sources('photos') for path, address in self.records(source)}

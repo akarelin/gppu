@@ -45,9 +45,9 @@ class TestDeepget:
         assert deepget("rest/name/below", d, default="x") == "x"   # a step that is no mapping
 
     def test_environment_reads_a_nested_false(self):
-        from gppu import Env, Environment
+        from gppu import Env
         Env.from_dict({"rest": {"enabled": False}})
-        assert Environment.glob("rest/enabled") is False
+        assert Env.glob("rest/enabled") is False
 
 
 class TestDeepgetTyped:

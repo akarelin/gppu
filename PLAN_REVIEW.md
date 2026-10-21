@@ -9,7 +9,7 @@ generated: { by: claude-code/opus-5-5, at: 2026-10-19T10:55 }
 
 Goal: gppu does what it is meant to. gppufs and Linked Data are native to gppu, built on gppu's own configuration, logging, apps and primitives; each thing has one implementation; the documentation is generated from gppu's code alone. Nothing that works is dropped; backwards compatibility is not a constraint.
 
-Alex's requirements (2026-10-18, deciding where Linked Data lives): Linked Data is a submodule of gppu, its base API for records in gppu; the locations API gppu already has serves it; it uses the primitives gppu already has, such as spans and paths; gppu's Postgres and ORM are improved, its unused ORM replaced by the one Linked Data uses; an API app is a type of gppu app. (2026-10-19): gppu is not rewritten and what works is kept; documentation is generated correctly; functionality spread over several files is put right; gppufs and Linked Data are native to gppu, not side modules that do not use it. (2026-10-20): `app.py` is the environment and all app logic.
+Alex's requirements (2026-10-18, deciding where Linked Data lives): Linked Data is a submodule of gppu, its base API for records in gppu; the locations API gppu already has serves it; it uses the primitives gppu already has, such as spans and paths; gppu's Postgres and ORM are improved, its unused ORM replaced by the one Linked Data uses; an API app is a type of gppu app. (2026-10-19): gppu is not rewritten and what works is kept; documentation is generated correctly; functionality spread over several files is put right; gppufs and Linked Data are native to gppu, not side modules that do not use it. (2026-10-20): `app.py` is the environment and all app logic; there is one environment, `Env`, and no second class doing the same.
 
 ## Plan
 1. Documentation from gppu's code: done. kb.karel.in/gppu/v3/: every module's reference, also what has no docstring; the package's exports on the home page; graph.html, graphify's graph grouped by gppu's modules, read without a model. Every gppu build publishes the documentation of the version it builds, before releasing it, and the home page names that version; it shows gppu 3.6.23. It is public at kb.karelin.ai/gppu/, published with every static site by RAN `Systems/static_sites/deploy.sh`; inside the network kb.karel.in's home page links it, and kb.karel.in/gppu leads to it (RAN `trix_kb.conf`).
@@ -22,6 +22,7 @@ Alex's requirements (2026-10-18, deciding where Linked Data lives): Linked Data 
 8. No hard code in gppu: surveyed; what was against the specification is gone, and where the ignore rules live is Alex's decision (below).
 9. Every name `gppu.ld` introduces: why it exists, and why it is not named as gppu or the specification names the same thing: in progress, Alex reviewing `gppu/ld/__init__.py` against the specification (below).
 10. `app.py` is the environment and all app logic: done. `Environment`, `State` and `is_table_key` (was `gppu/environment.py`) and CliApp's parameters (was `gppu/params.py`) are in `gppu/app.py`; `is_table_key` is exported as `gppu.is_table_key`, and CRAP's admin_ui and lake read it from `gppu.app`. `Env`, `glob`, `mixin_Config`, `_Config` and `_Base` are in `gppu/app.py` too; `gppu/gppu.py` keeps the logging, which needs no `Env`: `enable_file_logging` takes the `log_file` `Env` reads. CRAP's file_indexer and `gppu.ld.gppufs` read `Env` and `glob` from `gppu.app`.
+11. One environment class: done. `Environment` is gone: `Env` holds `platform` and `host` beside `os`, `user` and `home`, and answers `Env.<table>.<rule>(...)`, the configuration's macros. `State` is constructed when it is first read after the configuration loads, and an `App` constructs it at start, so a bad table fails the app at start; y2, which loads its configuration through `Env` and keeps its own `Environment`, never builds gppu's `State`. `Environment.glob`'s strict lookups went with it: `Env.glob` answers `None` for a missing key. Macros name `Env.host` and `Env.platform`. CRAP's admin_ui and lake, gppu's examples, tests and docs use `Env`.
 
 ## 9. gppu.ld's names
 - Decided by Alex: the base class of `gppu.ld`'s table classes is `_Record`, as gppu names its bases (`_Base`, `_PGBase`). `_Record` defines no table and does all the work; a type's class only defines its table. The `Fields` classes are the data models on `_Record`.
@@ -68,7 +69,7 @@ Configuration and environment:
 - `Env` (`gppu/app.py`): class-level configuration, `from_env`, `glob`, `glob_dict`.
 - `mixin_Config`, `_Config` (`gppu/app.py`): an object's own section, `my()`.
 - `Vault` and `VaultProvider*` (`gppu/gppu.py`): secrets from the environment or Azure Key Vault.
-- `_Environment`, `_Rules`, `_State` (`gppu/app.py`): platform and host, tables, macros and rows built from the configuration, over `Env.from_env`.
+- `_Rules`, `_State` (`gppu/app.py`): a table's macros, and the tables and rows built from the configuration.
 - Parameters (`gppu/app.py`): `main`'s parameters from the command line, then the configuration, then the signature.
 - `GppuCatalog` (`gppu/fs.py`): reads its own YAML (`locations.yaml`, sources, replicas) beside `Env`.
 - `_MqttConfig` (`gppu/iot.py`): MQTT's configuration as an app.
@@ -89,5 +90,4 @@ Linked Data and its parts:
 - Something in the RAN checkout commits staged changes on its own, with generic messages (b656547eb, bcb6abc3a); the gppu checkout too (4f2caa6), and a clone under `C:\.cache` once its files were open in VS Code. On 2026-10-19 at 13:44 it merged two such clones into the D:\Dev checkouts' master and pushed gppu and RAN to GitHub.
 - CRAP's admin_ui runs its own HTTP server rather than an `APIApp`.
 - RAN `Projects/ld/work.py:152` builds a `Span` from a value that is not one.
-- `Env.glob` answers a default for a missing key and `Environment.glob` raises; both read `Env.data` with `deepget`.
 - A gppufs index writes a time in its host's zone (`_metadata_text`) and `TimeSpan` reads it into `MY_TZ`, so on a host in UTC, such as a container, the catalog's summary and a folder's row give one span in two zones, and `test_catalog_lists_locations_and_serves_each_through_its_own_index` fails there.

@@ -16,7 +16,7 @@ from .app import (
     APIApp,
     mixin_Rest,
 
-    # Env, its configuration mixins, and Environment and State
+    # Env, its configuration mixins, and State
     Env,
     glob,
     glob_int,
@@ -25,7 +25,6 @@ from .app import (
     mixin_Config,
     _Config,
     _Base,
-    Environment,
     State,
     is_table_key,
 
@@ -210,7 +209,7 @@ __all__ = [
     'format_size', 'format_duration', 'format_since',
 
     # Env
-    'Env', 'Environment', 'State', 'is_table_key',
+    'Env', 'State', 'is_table_key',
 
     # Config access
     'glob', 'glob_int', 'glob_list', 'glob_dict',

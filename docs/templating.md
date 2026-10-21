@@ -57,7 +57,7 @@ templates:
     kind: Location
     refs: {'smb/*': connections, 'local/*': [platforms, hosts]}
     uris: "{{ uris(uid) }}"
-    local: "{{ place(uid, Environment.host, Environment.platform) or none }}"
+    local: "{{ place(uid, Env.host, Env.platform) or none }}"
   synced:
     tags: [synced]
 
@@ -84,4 +84,4 @@ of paths. A reference nothing answers fails the resolution naming row, field and
 
 `Env.template_set(path)` builds one from a table of the loaded configuration, with the
 root's macros and the rest of the configuration offered to every generator. `State`
-([Environment and State](environment.md)) resolves every table this way at startup.
+([Env and State](environment.md)) resolves every table this way.

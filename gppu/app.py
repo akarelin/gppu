@@ -13,23 +13,23 @@ the lifecycle by overriding ``POSSIBLE_STEPS``. These are stepper hooks;
 synchronous ``setup()`` hook, and ``run()`` opens one ``TaskGroup`` before
 calling ``start()``. Long-lived work is added with ``_spawn()``.
 
-Environment and State: what an app knows at startup, the Y2 way.
+Env and State: what an app knows at startup, the Y2 way.
 
-Environment is the basic level, with no configuration file: platform, host, user, home,
-os and the trace rules. Once `Environment.from_env` has loaded the app's configuration —
+Env is the basic level, with no configuration file: platform, host, user, home,
+os and the trace rules. Once `Env.from_env` has loaded the app's configuration —
 and through its `!include` of the shared one, everything the fleet knows — lookups into
 it are strict, and the questions a utility used to answer for itself are rules of the
-configuration — its macros — reached as `Environment.<table>.<rule>(...)`: where a
+configuration — its macros — reached as `Env.<table>.<rule>(...)`: where a
 location is on a host, what its address is on a connection, which path an address means
 here, how a command runs on a host. gppu knows no rule by name.
 
-State holds what the configuration constructs. Both are single instances, as in Y2. Every key of the configuration carrying
+State holds what the configuration constructs, a single instance, as in Y2. Every key of the configuration carrying
 `templates` is a table; every other mapping under it is a row keyed by its uid. A row
 resolves through the table's TemplateSet — the template builds the default dict from the uid, the row
 updates it with what differs — is checked against the tables it references, and is
 built by the class its `kind` names — the app that cares registers it, any other app
 gets a plain _DC carrying the kind. A row marked `service` registers in
-State.services. Construction runs once, at startup.
+State.services. Construction runs when State is first read after the configuration loads.
 
 CliApp's parameters: what an app's ``main`` asks for, read from its signature, as Windmill reads a script's ``main``.
 
@@ -94,7 +94,13 @@ def _config_changes(before: dict, after: dict, prefix: str = '') -> frozenset[st
   return frozenset(changed)
 
 
-class Env:
+class _Tables(type):
+  def __getattr__(cls, table: str):   # Env.<table>.<rule>(...) is a macro of that table
+    if table in State.templates: return _Rules(table, State.templates[table])
+    raise AttributeError(f'no table named {table!r}')
+
+
+class Env(metaclass=_Tables):
   data: dict[str, Any] = {}
   initialized: bool = False
   changed_paths: frozenset[str] = frozenset()
@@ -106,6 +112,8 @@ class Env:
   home: Path = Path.home()
   user: str = getpass.getuser()
   os: OSType = detect_os()
+  platform: str = {OSType.W11: 'windows', OSType.WSL: 'wsl', OSType.LINUX: 'debian', OSType.MACOS: 'macos'}[os]   # the shared configuration's words
+  host: str = socket.gethostname().split('.')[0].lower()
 
   _logger: logging.Logger
 
@@ -132,6 +140,7 @@ class Env:
       TRACE_RULES.clear()
       TRACE_RULES.update(rules)
     if 'log_file' in Env.data: enable_file_logging(log_file=Env.data['log_file'])
+    State.stale = True   # what the configuration constructs, built when first read
     Env.changed_paths = changed
     for path, callback in tuple(Env._listeners):
       relevant = frozenset(key for key in changed if not path or key == path
@@ -332,60 +341,9 @@ class _Base(_Logger, _Config): pass
 # endregion
 
 
-# region Environment and State
+# region State
 def is_table_key(name: str) -> bool:   # what a table holds beside its rows: its macros, its generators, its templates and
   return name in ('macros', 'generators', 'templates') or name.endswith('_templates')   # its named templates
-
-
-def platform_name() -> str:
-  """The platform vocabulary of the shared configuration, for gppu's `detect_os`: windows, wsl, debian, macos."""
-  return {OSType.W11: 'windows', OSType.WSL: 'wsl', OSType.LINUX: 'debian', OSType.MACOS: 'macos'}[Env.os]
-
-
-class _Environment:
-  """The global environment and configuration registry.
-
-  Provides system attributes (os, platform, host, user, home), strict data lookups
-  via `glob`, `glob_list`, and `glob_dict`, and dynamic access to table rules and macros.
-  Initialized once at startup via `from_env` or `from_dict`.
-  """
-  os = Env.os   # Env's, which detects them once
-  platform: str = platform_name()
-  host: str = socket.gethostname().split('.')[0].lower()
-  user: str = Env.user
-  home: Path = Env.home
-
-  # -- loading: gppu Env underneath, State constructed on top --------------------------
-  def from_env(self, name: str | None = None, app_path: Path | None = None) -> None:
-    Env.from_env(name=name, app_path=app_path)
-    State.load()
-
-  def from_dict(self, d: dict) -> None:
-    Env.from_dict(d)
-    State.load()
-
-  def trace(self) -> dict: return TRACE_RULES
-
-  # -- lookups: strict, as in Y2 — a missing key raises, nothing has a default -------------
-  def glob(self, path: str) -> Any:
-    result = deepget(path, Env.data, default=_MISSING)
-    if result is _MISSING: raise KeyError(path)
-    return result
-
-  def glob_list(self, path: str) -> list:
-    result = self.glob(path)
-    if not isinstance(result, list): raise TypeError(f'{path} is not a list')
-    return result
-
-  def glob_dict(self, path: str) -> dict:
-    result = self.glob(path)
-    if not isinstance(result, dict): raise TypeError(f'{path} is not a mapping')
-    return result
-
-  # -- rules: Environment.<table>.<rule>(...) is a macro of that table ---------------------
-  def __getattr__(self, table: str):
-    if table in State.templates: return _Rules(table, State.templates[table])
-    raise AttributeError(f'no table named {table!r}')
 
 
 class _Rules:
@@ -400,18 +358,35 @@ class _Rules:
 
 class _State:
   def __init__(self) -> None:
-    self.tables: dict[str, dict[str, Any]] = {}
-    self.templates: dict[str, TemplateSet] = {}
-    self.services: dict[str, Any] = {}
+    self._tables: dict[str, dict[str, Any]] = {}
+    self._templates: dict[str, TemplateSet] = {}
+    self._services: dict[str, Any] = {}
     self.kinds: dict[str, type] = {}
+    self.stale = True
 
   def register(self, **kinds: type) -> None:
     """The classes a template's `kind` may name."""
     self.kinds.update(kinds)
+    self.stale = True
 
   def reset(self) -> None:
-    for table in self.tables: delattr(self, table)
-    self.tables, self.templates, self.services = {}, {}, {}
+    self._tables, self._templates, self._services = {}, {}, {}
+    self.stale = True
+
+  @property
+  def tables(self) -> dict[str, dict[str, Any]]: return self._fresh()._tables
+  @property
+  def templates(self) -> dict[str, TemplateSet]: return self._fresh()._templates
+  @property
+  def services(self) -> dict[str, Any]: return self._fresh()._services
+
+  def __getattr__(self, table: str):   # State.<table> is its rows
+    if table[0] != '_' and table in self._fresh()._tables: return self._tables[table]
+    raise AttributeError(f'no table named {table!r}')
+
+  def _fresh(self) -> _State:
+    if self.stale: self.load()
+    return self
 
   def rows(self, table: str) -> dict[str, dict]:
     """The rows of a table: every mapping under its key that is not macros, generators or templates."""
@@ -420,23 +395,22 @@ class _State:
   def load(self) -> None:
     """Construct every table of the loaded configuration."""
     self.reset()
+    self.stale = False
     names = [name for name, content in Env.data.items() if isinstance(content, dict) and 'templates' in content]
     rows = {name: self.rows(name) for name in names}   # what a macro sees under a table's name: its rows, resolved
     for name in names:                                  # once the table is, so a table resolved later sees what an
-      if hasattr(self, name): raise ValueError(f'{name}: a table cannot be named after a State member')   # earlier one computed
-      templates = Env.template_set(name, Environment=Environment, State=self, **rows)
+      if hasattr(_State, name) or name in vars(self): raise ValueError(f'{name}: a table cannot be named after a State member')   # earlier one computed
+      templates = Env.template_set(name, Env=Env, State=self, **rows)
       resolved = {uid: templates.resolve({'uid': uid, **row}) for uid, row in rows[name].items()}
       rows[name].clear(); rows[name].update(resolved)
       table = {}
       for uid, data in resolved.items():
         obj = self.kinds.get(data.get('kind'), _DC)(data=data)   # the app that cares registers the class
         table[uid] = obj
-        if data.get('service'): self.services[uid] = obj
-      self.tables[name], self.templates[name] = table, templates
-      setattr(self, name, table)
+        if data.get('service'): self._services[uid] = obj
+      self._tables[name], self._templates[name] = table, templates
 
 
-Environment = _Environment()
 State = _State()
 # endregion
 
@@ -700,18 +674,16 @@ class _App(_Base):
     app_file = Path(inspect.getfile(type(self))).resolve()
     self.name = name or app_file.stem
     if not Env.initialized:
-      Environment.from_env(name=self.name, app_path=app_file.parent)   # the config, and what it constructs
+      Env.from_env(name=self.name, app_path=app_file.parent)   # the config, and what it constructs:
+      State.load()                                              # an app fails at start on a bad table
     super().__init__(name=self.name, **kw)
 
 
 class App(_App, _DC):
   """Synchronous utility: define an entry method and call it after construction.
 
-  Read settings with ``self.my(...)``. Construction loads Environment and State
+  Read settings with ``self.my(...)``. Construction loads Env, and State with it,
   beside the subclass when Env is uninitialized; an already loaded Env is reused.
-  If loading configuration explicitly and needing State, use
-  ``Environment.from_env(...)``; ``Env.from_env()`` and ``Env.from_dict()``
-  only load Env.
 
   Usage::
 

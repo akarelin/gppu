@@ -19,7 +19,7 @@
 # and path are here; its mirrors are here. The template builds the default object from the
 # uid — its addresses on every scheme, its canonical one, its mirrors, its path on this host —
 # and every rule is a macro below, so a utility asks and never computes:
-# Environment.locations.place(uid), Environment.locations.local_of(address).
+# Env.locations.place(uid), Env.locations.local_of(address).
 
 # ~~ The rules. Each is a Jinja macro; the templates and the utilities call them by name.
 macros: |
@@ -29,7 +29,7 @@ macros: |
      that one's place, translated — WSL sees the Windows drives under /mnt; a share the host
      syncs, under its sync root; a share the host mounts, from a box it is connected to,
      at its mount point. #}
-  {% macro place(uid, host=Environment.host, platform=Environment.platform) %}
+  {% macro place(uid, host=Env.host, platform=Env.platform) %}
   {%- set p = platforms[platform] -%}
   {%- set h = hosts[host] -%}
   {%- set location = locations[uid] -%}
@@ -53,7 +53,7 @@ macros: |
   {% endmacro %}
 
   {# A named folder inside a location, where the location is on a host. #}
-  {% macro folder(uid, inside, host=Environment.host, platform=Environment.platform) %}{{ place(uid, host, platform) }}/{{ locations[uid].folders[inside].path }}{% endmacro %}
+  {% macro folder(uid, inside, host=Env.host, platform=Env.platform) %}{{ place(uid, host, platform) }}/{{ locations[uid].folders[inside].path }}{% endmacro %}
 
   {# What a location is served as on one scheme, and by which box. A service served at its
      root — a mailbox's contacts — has a place and no share, so presence is its own question. #}
@@ -139,7 +139,7 @@ macros: |
 
   {# The path on a host of an address: the place of the location it is inside of, then
      what lies below it. Empty when the host does not reach it. #}
-  {% macro local_of(address, host=Environment.host, platform=Environment.platform) %}
+  {% macro local_of(address, host=Env.host, platform=Env.platform) %}
   {%- set uid = location_of(address) -%}
   {%- if uid and place(uid, host, platform) -%}
   {%- set base = base_of(uid, address) -%}
@@ -185,7 +185,7 @@ templates:
   # A folder that exists on a machine only; its canonical place is where it is here.
   folder:
     service: file
-    canonical: "{{ 'file://' ~ Environment.host ~ '/' ~ local if local else none }}"
+    canonical: "{{ 'file://' ~ Env.host ~ '/' ~ local if local else none }}"
 
   # The lake of text: a namespace of its own, addressed as lake://, wherever it is. A host
   # says where it has it and nothing else — no sync map, no mount, no box.

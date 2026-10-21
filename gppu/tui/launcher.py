@@ -563,8 +563,8 @@ class TUIApp(mixin_Config, TextualApp):
   """Textual application base, imported from ``gppu.tui``.
 
   Subclass and define ``compose()`` for widgets and ``on_mount()`` for startup
-  work; Textual owns the event loop. Load configuration with ``Env.from_env()``
-  before ``MyApp.main()`` when needed, or ``Environment.from_env()`` for State.
+  work; Textual owns the event loop. Load configuration, and State with it, with
+  ``Env.from_env()`` before ``MyApp.main()`` when needed.
   Read it through ``Env.glob(...)``. To use ``self.my(...)``, first copy config
   with ``self._config_from_env()`` or ``self._config_from_dict(mapping)``.
 

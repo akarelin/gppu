@@ -1,9 +1,9 @@
-"""Environment and State: the shared configuration constructed at startup."""
+"""Env and State: the shared configuration constructed at startup."""
 from pathlib import Path
 
 import pytest
 
-from gppu import Env, Environment, State, TemplateSet
+from gppu import Env, State, TemplateSet
 from gppu.gppu import _DC
 
 EXAMPLE = Path(__file__).resolve().parents[1] / 'examples' / 'config'
@@ -21,9 +21,9 @@ def environment():
 @pytest.fixture
 def on(monkeypatch):
   def here(host: str, platform: str) -> None:
-    monkeypatch.setattr(Environment, 'host', host)
-    monkeypatch.setattr(Environment, 'platform', platform)
-    Environment.from_env(name='locations', app_path=EXAMPLE)
+    monkeypatch.setattr(Env, 'host', host)
+    monkeypatch.setattr(Env, 'platform', platform)
+    Env.from_env(name='locations', app_path=EXAMPLE)
   return here
 
 
@@ -122,25 +122,25 @@ def test_a_location_knows_its_addresses_and_its_place_here(on):
 def test_places_follow_the_rules_per_platform(on):
   on('seven', 'debian')
   assert State.locations['sd-lake']['local'] == '/mnt/S1/SD.Lake'
-  assert State.locations['public']['local'] == '/mnt/Public' and Environment.locations.place('public', 'alex-mac', 'macos') == '/Volumes/Public'
+  assert State.locations['public']['local'] == '/mnt/Public' and Env.locations.place('public', 'alex-mac', 'macos') == '/Volumes/Public'
   assert 'local' not in State.locations['yellow-config']              # seven is not connected to yellow
   assert 'local' not in State.locations['obsidian']
-  assert Environment.locations.place('sd-lake', 'alex-pc', 'wsl') == '/mnt/d/SD.Lake'
-  assert Environment.locations.place('sd-agents', 'trix', 'debian') == '/home/alex/SD.agents'   # the row's own place for one host
-  assert Environment.locations.place('sd-agents', 'seven', 'debian') == '/mnt/S1/SD.agents'
-  assert Environment.locations.place('yellow-config', 'seven', 'debian') is None       # seven is not connected to yellow
-  assert Environment.locations.place('yellow-config', 'iot', 'debian') == '/mnt/yellow/config'
-  assert list(Environment.locations.on_host('alex-pc')) == ['profile', 'dev', 'sd', 'sd-lake', 'sd-agents', 'onedrive', 'ran',
+  assert Env.locations.place('sd-lake', 'alex-pc', 'wsl') == '/mnt/d/SD.Lake'
+  assert Env.locations.place('sd-agents', 'trix', 'debian') == '/home/alex/SD.agents'   # the row's own place for one host
+  assert Env.locations.place('sd-agents', 'seven', 'debian') == '/mnt/S1/SD.agents'
+  assert Env.locations.place('yellow-config', 'seven', 'debian') is None       # seven is not connected to yellow
+  assert Env.locations.place('yellow-config', 'iot', 'debian') == '/mnt/yellow/config'
+  assert list(Env.locations.on_host('alex-pc')) == ['profile', 'dev', 'sd', 'sd-lake', 'sd-agents', 'onedrive', 'ran',
                                                             'obsidian', 'lake', 'karelin-contacts', 'karelin-contact-photos']
 
 
 def test_an_address_resolves_to_a_path_on_this_host(on):
   on('alex-laptop', 'windows')
-  assert Environment.locations.local_of('sd://SD.Lake/inbox') == 'D:/SD.Lake/inbox'
-  assert Environment.locations.local_of('smb://s1.karel.in/Public/x') is None
-  assert Environment.locations.folder('sd-lake', 'inbox') == 'D:/SD.Lake/inbox'
-  assert Environment.locations.local_of('smb://s1.karel.in/Public/x', 'seven', 'debian') == '/mnt/Public/x'
-  assert Environment.locations.uri('sd-lake', 'sd') == 'sd://SD.Lake' and Environment.locations.uri('public', 'sd') is None
+  assert Env.locations.local_of('sd://SD.Lake/inbox') == 'D:/SD.Lake/inbox'
+  assert Env.locations.local_of('smb://s1.karel.in/Public/x') is None
+  assert Env.locations.folder('sd-lake', 'inbox') == 'D:/SD.Lake/inbox'
+  assert Env.locations.local_of('smb://s1.karel.in/Public/x', 'seven', 'debian') == '/mnt/Public/x'
+  assert Env.locations.uri('sd-lake', 'sd') == 'sd://SD.Lake' and Env.locations.uri('public', 'sd') is None
 
 
 def test_a_namespace_is_its_own_scheme_and_what_is_in_it_follows(on):
@@ -154,10 +154,10 @@ def test_a_namespace_is_its_own_scheme_and_what_is_in_it_follows(on):
 def test_a_location_inside_another_is_where_that_one_is(on):
   on('alex-laptop', 'windows')
   assert State.locations['karelin-contacts']['inside'] == 'lake'
-  assert Environment.locations.place('karelin-contacts') == 'D:/TextLake/M365/karelin/users/alex@karelin.com/contacts'
-  assert Environment.locations.place('karelin-contacts', 'trix', 'debian') == \
+  assert Env.locations.place('karelin-contacts') == 'D:/TextLake/M365/karelin/users/alex@karelin.com/contacts'
+  assert Env.locations.place('karelin-contacts', 'trix', 'debian') == \
          '/mnt/S1/Lake/text/M365/karelin/users/alex@karelin.com/contacts'
-  assert Environment.locations.place('karelin-contact-photos', 'trix', 'debian') is None    # trix has no OneDrive client
+  assert Env.locations.place('karelin-contact-photos', 'trix', 'debian') is None    # trix has no OneDrive client
 
 
 def test_the_same_address_is_a_path_on_the_workstation_and_on_the_server(on):
@@ -167,13 +167,13 @@ def test_the_same_address_is_a_path_on_the_workstation_and_on_the_server(on):
     ('m365://karelin/alex/contacts/default/x.json',
      'D:/TextLake/M365/karelin/users/alex@karelin.com/contacts/default/x.json',
      '/mnt/S1/Lake/text/M365/karelin/users/alex@karelin.com/contacts/default/x.json')):
-    assert Environment.locations.local_of(address) == laptop
-    assert Environment.locations.local_of(address, 'trix', 'debian') == trix
+    assert Env.locations.local_of(address) == laptop
+    assert Env.locations.local_of(address, 'trix', 'debian') == trix
 
 
 def test_an_entity_kind_names_the_grammars_of_its_permalink_and_document(on):
   on('alex-laptop', 'windows')
-  rules, person = Environment.entities, State.entities['person'].data
+  rules, person = Env.entities, State.entities['person'].data
   assert rules.render_template(person['permalink'], **person, slug='aaron-mendes') == 'person://aaron-mendes'
   assert rules.render_template(person['document'], **person, slug='aaron-mendes') == 'lake://Person/aaron-mendes.md'
   assert rules.kind_of({'companyName': 'A&Z', 'displayName': 'A&Z'}) == 'company'
@@ -192,15 +192,14 @@ def test_a_source_is_a_location_and_what_is_in_it(on):
 
 def test_a_command_runs_on_a_host_as_its_platform_says(on):
   on('alex-laptop', 'windows')
-  assert Environment.hosts.ssh('seven', 'debian') == ['ssh', '-p', '22', 'alex@7.c.karel.in', 'bash', '-s']
-  assert Environment.hosts.ssh('alex-pc', 'windows')[:4] == ['ssh', '-p', '22222', 'administrator@alex-pc.c.karel.in']
+  assert Env.hosts.ssh('seven', 'debian') == ['ssh', '-p', '22', 'alex@7.c.karel.in', 'bash', '-s']
+  assert Env.hosts.ssh('alex-pc', 'windows')[:4] == ['ssh', '-p', '22222', 'administrator@alex-pc.c.karel.in']
 
 
-def test_lookups_are_strict():
-  Environment.from_dict({'a': {'b': 1}})
-  assert Environment.glob('a/b') == 1
-  with pytest.raises(KeyError): Environment.glob('a/c')
-  with pytest.raises(AttributeError): Environment.locations
+def test_a_configuration_without_tables_has_no_rules():
+  Env.from_dict({'a': {'b': 1}})
+  assert Env.glob('a/b') == 1
+  with pytest.raises(AttributeError): Env.locations
 
 
 def test_a_dangling_reference_fails_the_load(tmp_path):
@@ -208,13 +207,14 @@ def test_a_dangling_reference_fails_the_load(tmp_path):
     "connections:\n  templates: {box: {}}\n  s1: {template: box}\n"
     "locations:\n  templates:\n    location: {refs: {'smb/*': connections}}\n"
     "  lake: {template: location, smb/s3: Lake}\n", encoding='utf-8')
+  Env.from_env(name='app', app_path=tmp_path)
   with pytest.raises(KeyError, match="lake: smb/\\* names 's3', which is not in connections"):
-    Environment.from_env(name='app', app_path=tmp_path)
+    State.tables
 
 
 def test_a_service_registers(tmp_path):
   (tmp_path / 'config.yaml').write_text(
     "boxes:\n  templates: {nas: {service: true}}\n  s1: {template: nas}\n  s9: {}\n", encoding='utf-8')
-  Environment.from_env(name='app', app_path=tmp_path)
+  Env.from_env(name='app', app_path=tmp_path)
   assert list(State.services) == ['s1'] and State.services['s1'] is State.boxes['s1']
 # endregion
