@@ -35,6 +35,7 @@ from typing import Iterable
 
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal
+from textual.css.query import NoMatches
 from textual.widgets import Static
 
 from .icons import STATE_GLYPHS, glyph_rich
@@ -163,8 +164,8 @@ class WorkerPool(Vertical):
         try:
             row = self.query_one(f'#worker-{_slug(key)}', WorkerRow)
             row.refresh_row()
-        except Exception:
-            pass
+        except NoMatches:
+            pass   # the row is not mounted yet
         self._refresh_footer()
 
     def get(self, key: str) -> WorkerState | None:
@@ -177,8 +178,8 @@ class WorkerPool(Vertical):
         try:
             footer = self.query_one('#pool-footer', Static)
             footer.update(self._footer_text())
-        except Exception:
-            pass
+        except NoMatches:
+            pass   # the footer is not mounted yet
 
     def _footer_text(self) -> str:
         if not self._states:

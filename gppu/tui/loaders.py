@@ -32,7 +32,7 @@ This module reduces the five-lines-per-table to one call:
                 status_done=lambda rows: f'✓ {len(rows)} loaded',
             )
 
-Errors during fetch are emitted via ``gppu.Debug(...)`` (Python logging)
+Errors during fetch and in ``on_done`` are logged via ``gppu.Error(...)``
 and surfaced to the user via ``status_id`` as ``Error: <e>``.
 
 No decorator magic — uses Textual's ``self.run_worker(fn, thread=True)``
@@ -44,7 +44,9 @@ from __future__ import annotations
 
 from typing import Callable, Iterable, Sequence
 
-from gppu import Debug
+from textual.css.query import NoMatches
+
+from gppu import Debug, Error
 
 
 class LoaderMixin:
@@ -85,13 +87,13 @@ class LoaderMixin:
                 return
             try:
                 self.query_one(status_id, Static).update(msg)
-            except Exception:
-                pass
+            except NoMatches:
+                pass   # the status line is no longer on screen
 
         def _populate(rows: list) -> None:
             try:
                 table = self.query_one(table_id, DataTable)
-            except Exception as e:
+            except NoMatches as e:
                 Debug('loader[%s]: table %s missing — %s', name, table_id, e)
                 return
             if clear_first:
@@ -113,14 +115,14 @@ class LoaderMixin:
                 try:
                     on_done(rows)
                 except Exception as e:
-                    Debug('loader[%s] on_done: %s', name, e)
+                    Error('loader[%s] on_done: %s', name, e)
 
         def _bg() -> None:
             self.call_from_thread(_set, status_busy)
             try:
                 rows = list(fetch())
             except Exception as e:
-                Debug('loader[%s] fetch failed: %s', name, e)
+                Error('loader[%s] fetch failed: %s', name, e)
                 self.call_from_thread(_set, f'Error: {e}')
                 return
             self.call_from_thread(_populate, rows)
@@ -150,14 +152,14 @@ class LoaderMixin:
                 return
             try:
                 self.query_one(status_id, Static).update(msg)
-            except Exception:
-                pass
+            except NoMatches:
+                pass   # the status line is no longer on screen
 
         def _handle(result: object) -> None:
             try:
                 on_done(result)
             except Exception as e:
-                Debug('loader[%s] on_done: %s', name, e)
+                Error('loader[%s] on_done: %s', name, e)
                 _set(f'Error: {e}')
                 return
             if status_done:
@@ -168,7 +170,7 @@ class LoaderMixin:
             try:
                 result = fetch()
             except Exception as e:
-                Debug('loader[%s] fetch failed: %s', name, e)
+                Error('loader[%s] fetch failed: %s', name, e)
                 self.call_from_thread(_set, f'Error: {e}')
                 return
             self.call_from_thread(_handle, result)

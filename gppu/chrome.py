@@ -36,8 +36,9 @@ def _pgrep(pattern: str) -> List[str]:
   try:
     out = subprocess.check_output(["pgrep", "-af", pattern], text=True)
     return out.splitlines()
-  except subprocess.CalledProcessError:
-    return []
+  except subprocess.CalledProcessError as e:
+    if e.returncode == 1: return []   # pgrep matched no process
+    raise
 
 
 def _chrome_pids(profile: str) -> List[int]:
@@ -50,10 +51,7 @@ def _remove_stale_locks(user_data_dir: str) -> None:
   for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
     lock = os.path.join(user_data_dir, name)
     if os.path.exists(lock) or os.path.islink(lock):
-      try:
-        os.remove(lock)
-      except OSError:
-        pass
+      os.remove(lock)
 
 
 def _clear_crash_state(user_data_dir: str, profile_directory: Optional[str] = None) -> None:
@@ -62,21 +60,18 @@ def _clear_crash_state(user_data_dir: str, profile_directory: Optional[str] = No
   prefs_path = os.path.join(user_data_dir, profile_dir, "Preferences")
   if not os.path.exists(prefs_path): return
 
-  try:
-    with open(prefs_path) as f:
-      prefs = json.load(f)
-    changed = False
-    if prefs.get("profile", {}).get("exit_type") != "Normal":
-      prefs.setdefault("profile", {})["exit_type"] = "Normal"
-      changed = True
-    if not prefs.get("profile", {}).get("exited_cleanly"):
-      prefs.setdefault("profile", {})["exited_cleanly"] = True
-      changed = True
-    if changed:
-      with open(prefs_path, "w") as f:
-        json.dump(prefs, f)
-  except (json.JSONDecodeError, OSError):
-    pass
+  with open(prefs_path) as f:
+    prefs = json.load(f)
+  changed = False
+  if prefs.get("profile", {}).get("exit_type") != "Normal":
+    prefs.setdefault("profile", {})["exit_type"] = "Normal"
+    changed = True
+  if not prefs.get("profile", {}).get("exited_cleanly"):
+    prefs.setdefault("profile", {})["exited_cleanly"] = True
+    changed = True
+  if changed:
+    with open(prefs_path, "w") as f:
+      json.dump(prefs, f)
 
 
 def _ensure_profile_unlocked(profile: str, timeout: float = 5.0, interactive: bool = True) -> None:
@@ -145,8 +140,7 @@ def prepare_driver(
   # Remove stale DevToolsActivePort
   devtools_port = os.path.join(user_data_dir, "DevToolsActivePort")
   if os.path.exists(devtools_port):
-    try: os.remove(devtools_port)
-    except OSError: pass
+    os.remove(devtools_port)
 
   service = Service()
   driver = webdriver.Chrome(service=service, options=options)
