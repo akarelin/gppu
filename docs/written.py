@@ -1,7 +1,8 @@
 """The parts of gppu's documentation a language model writes, by Claude Code on Alex's subscription, into docs/written/: each
 module's description, from docs/prompts/module.md and the module's source, which docs_pages.py puts at the top of the module's page,
 and what graphify's model reads in gppu's documentation, which docs_pages.py joins to the graph of gppu's code. It runs on a PC
-where Claude Code is signed in, not in the documentation build, and reads gppu as its last commit has it, not edits in progress. A
+where Claude Code is signed in, not in the documentation build, and reads gppu as its last commit has it, not edits in progress, and
+its own descriptions as it has just written them. A
 module's description is written again only when the module or the template has changed since it was written: the description's first
 line names the git blob of each. graphify keeps what its model
 read under CACHE and reads a document again only when it has changed.
@@ -44,7 +45,7 @@ def write(name: str, source: Path) -> Path:
                             input=prompt, cwd=ROOT, check=True, capture_output=True, text=True, encoding='utf-8')
     target = WRITTEN / f'{name}.md'
     target.parent.mkdir(exist_ok=True)
-    target.write_text(f'{heading(name, source)}\n{answer.stdout.strip()}\n', encoding='utf-8')
+    target.write_text(f'{heading(name, source)}\n{answer.stdout.strip()}\n', encoding='utf-8', newline='\n')
     return target
 
 
@@ -66,7 +67,7 @@ def graph() -> Path:
     out = GRAPH / 'graphify-out'
     for previous in ('graph.json', 'manifest.json'):   # the graph is what the documents say now: graphify holds a changed
         (out / previous).unlink(missing_ok=True)       # document's new reading against its old one; its cache keeps the rest
-    documentation = corpus(GRAPH / 'corpus', read=True, content=committed)
+    documentation = corpus(GRAPH / 'corpus', read=True, content=lambda path: path.read_bytes() if path.parent == WRITTEN else committed(path))
     subprocess.run(['uvx', '--python', '3.14', '--from', 'graphifyy', 'graphify', 'extract', str(documentation),
                     '--backend', 'claude-cli', '--out', str(GRAPH)], env=env, check=True)
     drawn = json.loads((out / 'graph.json').read_text(encoding='utf-8'))
@@ -84,7 +85,7 @@ def graph() -> Path:
     links = [e | {'source': same.get(e['source'], e['source']), 'target': same.get(e['target'], e['target'])} for e in drawn['links']]
     links = [e for e in links if (e['source'] in ids or e['target'] in ids) and e['source'] != e['target']]
     target = WRITTEN / 'graph.json'
-    target.write_text(json.dumps({'nodes': nodes, 'links': links}, indent=1, ensure_ascii=False) + '\n', encoding='utf-8')
+    target.write_text(json.dumps({'nodes': nodes, 'links': links}, indent=1, ensure_ascii=False) + '\n', encoding='utf-8', newline='\n')
     return target
 
 
