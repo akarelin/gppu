@@ -115,6 +115,7 @@ def probe_path(path: str | Path) -> dict:
       ".md": "MarkdownHandler", ".csv": "CSVHandler", ".log": "LogHandler",
       ".eml": "EmailHandler", ".msg": "EmailHandler", ".jsonl": "SessionHandler",
     },
+    "named_handlers": {"conversations.json": "ExportHandler", "conversations-*.json": "ExportHandler"},
   }
 
   path = pathlib.Path(path)
@@ -162,7 +163,8 @@ def probe_path(path: str | Path) -> dict:
       )
     elif result["file"]:
       handler = (
-        _CONFIG["suffix_handlers"].get(path.suffix.casefold(), "FileHandler")
+        next((h for name, h in _CONFIG["named_handlers"].items() if path.match(name)),
+             _CONFIG["suffix_handlers"].get(path.suffix.casefold(), "FileHandler"))
         if stat.st_size else "FileHandler"
       )
 

@@ -920,3 +920,86 @@ def test_parse_messages_numbers_messages_after_an_offset() -> None:
 def test_parse_messages_reads_only_claude_code_and_codex() -> None:
   with pytest.raises(NotImplementedError):
     SessionHandler.parse_messages('hermes', HERMES)
+
+
+def _chatgpt(uid: str, question: str = 'Question') -> dict:
+  return {
+    'id': uid, 'title': question, 'create_time': 1785585600, 'update_time': 1785585720,
+    'current_node': 'answer', 'default_model_slug': 'gpt-5.6',
+    'mapping': {
+      'root': {'id': 'root', 'parent': None, 'message': None},
+      'question': {'id': 'question', 'parent': 'root', 'message': {
+        'author': {'role': 'user'}, 'create_time': 1785585660, 'content': {'content_type': 'text', 'parts': [question]}}},
+      'answer': {'id': 'answer', 'parent': 'question', 'message': {
+        'author': {'role': 'assistant'}, 'create_time': 1785585720, 'content': {'content_type': 'text', 'parts': ['Answer']},
+        'metadata': {'model_slug': 'gpt-5.6'}}},
+      'branch': {'id': 'branch', 'parent': 'question', 'message': {
+        'author': {'role': 'assistant'}, 'create_time': 1785585700, 'content': {'content_type': 'text', 'parts': ['Not on the chain']}}},
+    },
+  }
+
+
+def _claude(uid: str) -> dict:
+  return {
+    'uuid': uid, 'name': 'Question', 'created_at': '2026-08-01T12:00:00Z', 'updated_at': '2026-08-01T12:02:00Z',
+    'chat_messages': [
+      {'sender': 'human', 'created_at': '2026-08-01T12:01:00Z',
+       'content': [{'type': 'text', 'text': 'Question'}, {'type': 'tool_use', 'name': 'ignored'}]},
+      {'sender': 'assistant', 'created_at': '2026-08-01T12:02:00Z', 'content': [{'type': 'text', 'text': 'Answer'}]},
+    ],
+  }
+
+
+def test_probe_tells_an_export_by_its_name(tmp_path: Path) -> None:
+  for name in ('conversations.json', 'conversations-000.json', 'other.json'):
+    (tmp_path / name).write_text('[]', encoding='utf-8')
+  assert [probe(tmp_path / name).subtype for name in ('conversations.json', 'conversations-000.json', 'other.json')] == \
+    ['export', 'export', 'file']
+  assert HANDLERS['fs_node', 'export'] is handlers_module.ExportHandler
+
+
+def test_a_chatgpt_export_is_its_conversations_along_their_chains(tmp_path: Path) -> None:
+  path = tmp_path / 'conversations-000.json'
+  path.write_text(json.dumps([_chatgpt('one'), _chatgpt('two', 'Second')]), encoding='utf-8')
+
+  record = handlers_module.ExportHandler.parse(path)
+  first, second = handlers_module.ExportHandler.sessions(path)
+
+  assert (record.type, record.subtype, record.data['harness'], record.data['sessions']) == ('fs_node', 'export', 'chatgpt', 2)
+  assert (record.span.start, record.span.end) == (datetime.fromtimestamp(1785585600).astimezone(), datetime.fromtimestamp(1785585720).astimezone())
+  assert isinstance(first, Session) and (first.type, first.subtype, first.uid, first.name) == ('session', 'chatgpt', 'one', 'Question')
+  assert (first.data['turns'], first.data['topic'], first.data['models']) == (2, 'Question', ['gpt-5.6'])
+  assert first.created == datetime.fromtimestamp(1785585600).astimezone()
+  assert first.data['normalized_name'].endswith(' 2~2m - Question.one.json')
+  assert second.name == 'Second'
+
+
+def test_an_anthropic_export_is_read_by_its_conversations_not_by_what_is_beside_it(tmp_path: Path) -> None:
+  (tmp_path / 'chat.html').write_text('<html></html>', encoding='utf-8')
+  path = tmp_path / 'conversations.json'
+  path.write_text(json.dumps([_claude('c-one')]), encoding='utf-8')
+
+  session, = handlers_module.ExportHandler.sessions(path)
+
+  assert handlers_module.ExportHandler.parse(path).data == {'harness': 'claude', 'sessions': 1}
+  assert (session.subtype, session.uid, session.name, session.data['turns']) == ('claude', 'c-one', 'Question', 2)
+  assert (session.span.start, session.span.end) == (datetime(2026, 8, 1, 12, tzinfo=timezone.utc), datetime(2026, 8, 1, 12, 2, tzinfo=timezone.utc))
+
+
+def test_an_export_of_anything_else_raises(tmp_path: Path) -> None:
+  path = tmp_path / 'conversations.json'
+  for body in ([{'id': 'x'}], [_chatgpt('one'), _claude('two')], {'conversations': []}, []):
+    path.write_text(json.dumps(body), encoding='utf-8')
+    with pytest.raises(ValueError):
+      handlers_module.ExportHandler.parse(path)
+
+
+def test_gppufs_reads_an_export_inside_a_zip(tmp_path: Path) -> None:
+  import zipfile
+  from gppu.fs import GppuFileSystem
+  with zipfile.ZipFile(tmp_path / 'chatgpt.zip', 'w') as archive:
+    archive.writestr('conversations.json', json.dumps([_chatgpt('one')]))
+    archive.writestr('chat.html', '<html></html>')
+  fs = GppuFileSystem(tmp_path)
+  assert fs.info('chatgpt.zip/conversations.json')['gppu']['handlers'] == ['export']
+  assert fs.info('chatgpt.zip/conversations.json', refresh=True)['gppu']['record']['data'] == {'harness': 'chatgpt', 'sessions': 1}

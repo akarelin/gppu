@@ -9,7 +9,7 @@ type and subtype say which handler reads it:
     record = handler.parse('D:/Dev/gppu/README.md')
 
 Probing is gppu's probe_path, from the path's stat and its name, and nothing is read: it names a folder's handler by
-its path and a file's by its suffix. A link, a junction, an ignored path and an offline file are what probe gives; no
+its path and a file's by its name or its suffix. A link, a junction, an ignored path and an offline file are what probe gives; no
 handler reads them. A handler is a class of class methods, and `parse(path)` reads the path into a Record, what Linked
 Data holds of the thing, or a type of Linked Data's built on it, an Activity with a span or a Session; each handler says
 what it returns. A subtype is a subclass of its type, and its parse adds to its type's. probe and parse are plain
@@ -1362,6 +1362,92 @@ class SessionHandler(FileHandler):
 
 
 
+class ExportHandler(FileHandler):
+    """A ChatGPT or Anthropic export's conversations, which probe tells by the file's name: conversations.json, or a
+    ChatGPT export's conversations-000.json and on. The file is a list of conversations, each a session, and the harness
+    is told by them, never by the file's name or what is beside it: ChatGPT's (chatgpt) have a mapping and a
+    current_node, and are read along the chain from current_node through each node's parent, of the messages whose
+    content is text or multimodal_text; Anthropic's (claude) have a uuid and chat_messages, and are read in order. A
+    list of anything else, or of both, raises.
+
+    sessions(path) gives each conversation as a Session: subtype the harness; uid its id; name its title, else its
+    topic, else its uid; created and updated its own times; span from the first of its times and its messages' to the
+    last; data.title, data.topic, data.turns, data.models and data.normalized_name, as SessionHandler names a session.
+
+    Returns: an Activity, Handler's record with subtype export; data.harness and data.sessions, how many
+    conversations; span from the first of its sessions to the last.
+    """
+
+    type, subtype = "fs_node", "export"
+
+    # harness -> what its conversations have, the keys of a conversation's id and its own times
+    SHAPES = {"chatgpt": (("mapping", Mapping), ("current_node", str)), "claude": (("chat_messages", list), ("uuid", str))}
+    IDS = {"chatgpt": ("id", "conversation_id"), "claude": ("uuid", "id")}
+    TIMES = {"chatgpt": ("create_time", "update_time"), "claude": ("created_at", "updated_at")}
+
+    @classmethod
+    def parse(cls, path: str | Path) -> Activity:
+        record = Activity(**vars(super().parse(path)))
+        sessions = list(cls.sessions(path))
+        record.data.update(harness=sessions[0].subtype, sessions=len(sessions))
+        record.span = cls.spanning([time for session in sessions if session.span for time in (session.span.start, session.span.end)])
+        return record
+
+    @classmethod
+    def sessions(cls, path: str | Path) -> Iterator[Session]:
+        path = Path(path).absolute()
+        with path.open("r", encoding="utf-8") as stream:
+            conversations = json.load(stream, strict=False)
+        if not isinstance(conversations, list) or not conversations:
+            raise ValueError(f"{path}: an export is a list of conversations")
+        harnesses = {cls._harness_of(conversation) for conversation in conversations}
+        if len(harnesses) != 1 or None in harnesses:
+            raise ValueError(f"{path}: the conversations are not all ChatGPT's or all Anthropic's")
+        harness = harnesses.pop()
+        for conversation in conversations:
+            uid = next((value.strip() for key in cls.IDS[harness] if isinstance(value := conversation.get(key), str) and value.strip()), None)
+            if uid is None:
+                raise ValueError(f"{path}: a conversation has no id")
+            turns = tuple(turn for role, content, time in cls._messages_of(harness, conversation)
+                          if (turn := SessionHandler._turn(role, content, time)) is not None)
+            created, updated = (SessionHandler._stamp(conversation.get(key)) for key in cls.TIMES[harness])
+            span = cls.spanning([time for time in (created, updated, *(turn.timestamp for turn in turns)) if time is not None])
+            title = SessionHandler.first_line(str(conversation.get("title") or conversation.get("name") or ""))
+            topic = SessionHandler._topic(turns)
+            data = {"title": title or None, "topic": topic or None, "turns": len(turns),
+                    "models": list(SessionHandler._models((conversation,))) or None,
+                    "normalized_name": SessionHandler.normalized_name(path, uid, turns, span)}
+            yield Session(type=SessionHandler.type, subtype=harness, uid=uid, name=title or topic or uid, span=span,
+                          created=created, updated=updated, data={key: value for key, value in data.items() if value is not None})
+
+    @classmethod
+    def _harness_of(cls, conversation: Any) -> Harness | None:
+        """The harness whose shape a conversation has, or None."""
+        return next((harness for harness, keys in cls.SHAPES.items()
+                     if isinstance(conversation, Mapping) and all(isinstance(conversation.get(key), kind) for key, kind in keys)), None)
+
+    @staticmethod
+    def _messages_of(harness: str, conversation: Mapping[str, Any]) -> Iterator[tuple[Any, Any, Any]]:
+        """A conversation's messages as (role, content, time) in reading order."""
+        if harness == "claude":
+            for message in conversation["chat_messages"]:
+                if isinstance(message, Mapping):
+                    yield message.get("sender"), message.get("content") or message.get("text"), message.get("created_at")
+            return
+        mapping, current, chain = conversation["mapping"], conversation["current_node"], []
+        while current is not None:
+            if not isinstance(current, str) or current not in mapping or current in chain or not isinstance(mapping[current], Mapping):
+                raise ValueError("a ChatGPT conversation's chain from current_node is broken")
+            chain.append(current)
+            current = mapping[current].get("parent")
+        for node in reversed(chain):
+            message = mapping[node].get("message")
+            if (isinstance(message, Mapping) and isinstance(author := message.get("author"), Mapping)
+                    and isinstance(content := message.get("content"), Mapping)
+                    and content.get("content_type") in ("text", "multimodal_text")):
+                yield author.get("role"), content.get("parts"), message.get("create_time")
+
+
 class SessionFolderHandler(FolderHandler):
     """A harness's session folder, which probe tells by its path: a Hermes home, .hermes; an Agy home,
     .gemini/antigravity or .gemini/antigravity-cli, with antigravity_state.pbtxt or jetski_state.pbtxt; or an Agy
@@ -1403,7 +1489,7 @@ class SessionFolderHandler(FolderHandler):
 HANDLERS: dict[tuple[str, str | None], type[Handler]] = {
     (handler.type, handler.subtype): handler
     for handler in (FolderHandler, FileHandler, SqliteHandler, MarkdownHandler, CSVHandler, LogHandler, EmailHandler,
-                    SessionHandler, SessionFolderHandler)
+                    SessionHandler, ExportHandler, SessionFolderHandler)
 }
 
 
