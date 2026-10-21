@@ -5924,10 +5924,13 @@ class _MetadataHandlers(
 
 
 class _RarFileSystem(AbstractArchiveFileSystem):
-  """Expose the existing RAR handler through fsspec's archive interface."""
+  """A RAR archive through fsspec's archive interface, read by the installed RARLAB rar or unrar: listed from its
+  technical listing, and extracted whole, in one command, the first time a member is opened, since a RAR is stored
+  solid. A password-protected or unreadable archive raises."""
 
   protocol = 'gppu-rar'
   cachable = False
+  timeout = 1800   # one RAR gets half an hour of the command; a longer one is an error, not a partial extraction
 
   def __init__(self, fo: str, target_protocol=None, target_options=None, **kwargs):
     super().__init__(**kwargs)
@@ -5936,13 +5939,54 @@ class _RarFileSystem(AbstractArchiveFileSystem):
     options = {} if target_options is None else target_options
     with open_uri(fo, protocol=target_protocol, **options) as source, self._archive.open('wb') as target:
       shutil.copyfileobj(source, target)
-    self._handler = ArchiveHandler(strict=True)
-    _, records = self._handler.call_sync(self._archive)
-    self.dir_cache = {record.path.as_posix(): {
-      'name': record.path.as_posix(), 'type': 'directory' if record.is_folder else 'file',
-      'size': record.size, 'mtime': record.modified_at,
-    } for record in records}
-    self._contents = None
+    self.dir_cache = self._listing()
+    self._members: Path | None = None
+
+  @staticmethod
+  def executable() -> Path:
+    """The RARLAB command: rar or unrar on PATH, else, on Windows, WinRAR's own folder, which its installer does not
+    put on PATH. Its absence raises."""
+    for command in ('rar', 'unrar'):
+      if found := shutil.which(command):
+        return full_path(found)
+    if detect_os() == OSType.W11:
+      for name in ('Rar.exe', 'UnRAR.exe'):
+        for root in ('ProgramFiles', 'ProgramFiles(x86)'):
+          if root in os.environ and (candidate := Path(os.environ[root]) / 'WinRAR' / name).is_file():
+            return full_path(candidate)
+    raise FileNotFoundError('RARLAB rar or unrar is required to read RAR archives')
+
+  def _listing(self) -> dict[str, dict]:
+    """Every member, and every folder above one the listing does not name, as fsspec's archive entries."""
+    completed = subprocess.run([str(self.executable()), 'lt', '-c-', '-p-', '-scf', '-y', str(self._archive)],
+                               stdin=subprocess.DEVNULL, capture_output=True, check=False)
+    output = completed.stdout.decode('utf-8')
+    if completed.returncode:
+      raise ValueError(f'RAR command exited with {completed.returncode}: '
+                       f"{completed.stderr.decode('utf-8').strip() or output.strip()}")
+    entries: list[dict[str, str]] = []
+    for line in output.splitlines():
+      if (field := re.match(r'^\s*([^:]+):\s?(.*)$', line)) is None:
+        continue
+      key, value = (part.strip() for part in field.groups())
+      if key == 'Name':
+        entries.append({})
+      if entries:
+        entries[-1][key] = value
+    listing: dict[str, dict] = {}
+    for entry in entries:
+      name = PurePosixPath(entry['Name'].lstrip('/').replace('\\', '/'))
+      if name.is_absolute() or '..' in name.parts or (name.parts and name.parts[0].endswith(':')):
+        raise ValueError(f"unsafe path inside archive: {entry['Name']}")
+      folder = entry['Type'] == 'Directory'
+      modified = next((value for key, value in entry.items() if key.casefold() in ('modified', 'mtime')), None)
+      listing[name.as_posix()] = {'name': name.as_posix(), 'type': 'directory' if folder else 'file',
+                                  'size': 0 if folder else int(entry['Size']),
+                                  'mtime': modified and handlers.Handler.valid_time(datetime.fromisoformat(modified).astimezone())}
+      for parent in name.parents:
+        if parent != PurePosixPath('.'):
+          listing.setdefault(parent.as_posix(), {'name': parent.as_posix(), 'type': 'directory', 'size': 0, 'mtime': None})
+    return listing
 
   def _get_dirs(self):
     return self.dir_cache
@@ -5950,11 +5994,12 @@ class _RarFileSystem(AbstractArchiveFileSystem):
   def _open(self, path, mode='rb', **kwargs):
     if mode != 'rb':
       raise NotImplementedError('RAR listings are read-only')
-    if self._contents is None:
-      self._contents = self._handler.extract_sync(self._archive, Path(self._scratch.name) / 'members')
-      if self._contents.errors:
-        raise OSError('; '.join(error.message for error in self._contents.errors))
-    return self._contents.files[PurePosixPath(path)].open('rb')
+    if self._members is None:
+      members = Path(self._scratch.name) / 'members'
+      subprocess.run([str(self.executable()), 'x', '-y', '-inul', '-p-', str(self._archive), str(members) + os.sep],
+                     stdin=subprocess.DEVNULL, capture_output=True, check=True, timeout=self.timeout)
+      self._members = members
+    return (self._members / PurePosixPath(path)).open('rb')
 
   def close(self):
     self._scratch.cleanup()

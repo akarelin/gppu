@@ -14,7 +14,7 @@ import pytest
 import yaml
 from fsspec.implementations.memory import MemoryFileSystem
 
-from gppu.fs import ArchiveHandler, GppuCatalog, GppuFileSystem
+from gppu.fs import GppuCatalog, GppuFileSystem, _RarFileSystem
 
 
 def index(folder: Path) -> Path:
@@ -389,7 +389,7 @@ def test_nested_archives_retain_addresses_after_folder_rename(tmp_path, monkeypa
 
 def test_rar_members_use_existing_handler(tmp_path, monkeypatch):
   try:
-    executable = ArchiveHandler.rar_executable()
+    executable = _RarFileSystem.executable()
   except FileNotFoundError as error:
     pytest.skip(str(error))
   folder = tmp_path / 'inside'
