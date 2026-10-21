@@ -55,7 +55,7 @@ LOG_TIMESTAMP = re.compile(
 # What gppufs and FileIndexer's walk open as archives, by the end of the name.
 ARCHIVES = (".rar", ".tar.gz", ".zip")
 # What a name says of its time, the first that matches: a span of two YYMMDD dates, a date and time with its GMT offset,
-# a date and time without a zone, which is local, Unix seconds; else an ISO date or a YYMMDD date, which is the whole day.
+# a date and time without a zone, which is local, Unix seconds or milliseconds; else an ISO date or a YYMMDD date, which is the whole day.
 NAMED_SPAN = re.compile(r"(?<![A-Za-z0-9])(\d{6})-(\d{6})(?![A-Za-z0-9])")
 NAMED_GMT = re.compile(r"(?<![A-Za-z0-9])(\d{2}-\d{2}-\d{4},\s*\d{2}\.\d{2}\.\d{2})\s*GMT([+-]\d{1,2})(?!\d)", re.I)
 NAMED_TIMES = (
@@ -66,7 +66,7 @@ NAMED_TIMES = (
     (re.compile(r"(?<![A-Za-z0-9])(\d{6}\.\d{6})(?![A-Za-z0-9])"), "%y%m%d.%H%M%S"),
     (re.compile(r"(?<![A-Za-z0-9])(\d{6}-\d{4})(?![A-Za-z0-9])"), "%y%m%d-%H%M"),
 )
-NAMED_EPOCH = re.compile(r"(?<![A-Za-z0-9])([1-9]\d{9})(?![A-Za-z0-9])")
+NAMED_EPOCH = re.compile(r"(?<![A-Za-z0-9])([1-9]\d{9}(?:\d{3})?)(?![A-Za-z0-9])")
 NAMED_DATES = (
     (re.compile(r"(?<![A-Za-z0-9])(\d{4}-\d{2}-\d{2})(?![A-Za-z0-9])"), "%Y-%m-%d"),
     (re.compile(r"(?<![A-Za-z0-9])(\d{6})(?![A-Za-z0-9])"), "%y%m%d"),

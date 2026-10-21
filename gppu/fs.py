@@ -51,7 +51,6 @@ it never fetches or contacts an upstream.
 """
 from __future__ import annotations
 
-import asyncio
 import filecmp
 import importlib
 import io
@@ -1771,12 +1770,11 @@ class GppuFileSystem(AbstractFileSystem):
   async def info(self, path: str | Path | None = None, refresh: bool = False, **kwargs) -> dict:
     """Return one native entry with its handler metadata.
 
-    Awaited inside an event loop, called plainly outside one; the reading runs
-    in a worker thread either way. A physical entry the index has not seen is
-    identified by probe, nothing read; ``refresh=True`` parses it. A folder's
-    totals come from the last refresh of that folder.
+    Awaited inside an event loop, called plainly outside one, as gppu's sync makes it.
+    A physical entry the index has not seen is identified by probe, nothing read;
+    ``refresh=True`` parses it. A folder's totals come from the last refresh of that folder.
     """
-    return await asyncio.to_thread(self.info_sync, path, refresh)
+    return self.info_sync(path, refresh)
 
   def stored(self, path: str | Path | None = None) -> tuple[dict, list[dict] | None] | None:
     """What the index holds of path, its metadata and the listing of what is in it, touching no filesystem; None when it holds
@@ -1813,13 +1811,13 @@ class GppuFileSystem(AbstractFileSystem):
                recurse: bool = False, refresh: bool = False, live: bool = True, **kwargs) -> list:
     """List entries, optionally descending, from the live folder and the colocated SQLite index.
 
-    Awaited inside an event loop, called plainly outside one; the listing runs
-    in a worker thread either way. Every entry the listing finds is identified.
+    Awaited inside an event loop, called plainly outside one, as gppu's sync makes it.
+    Every entry the listing finds is identified.
     Entries already indexed keep their indexed metadata. ``refresh=True``
     probes the folder and everything below it. Entering an archive lists its
     members identified, like a folder; refreshing the archive probes them.
     """
-    return await asyncio.to_thread(self.ls_sync, path, detail, recurse, refresh, live)
+    return self.ls_sync(path, detail, recurse, refresh, live)
 
   def ls_sync(self, path: str | Path | None = None, detail: bool = True,
               recurse: bool = False, refresh: bool = False, live: bool = True) -> list:
@@ -2738,7 +2736,7 @@ class GppuCatalog(AbstractFileSystem):
   @sync
   async def info(self, path: str | Path | None = None, refresh: bool = False, **kwargs) -> dict:
     """The catalog itself, or one entry served by its Location; awaited in a loop, called plainly outside one."""
-    return await asyncio.to_thread(self.info_sync, path, refresh)
+    return self.info_sync(path, refresh)
 
   def info_sync(self, path: str | Path | None = None, refresh: bool = False) -> dict:
     """``info`` on the calling thread."""
@@ -2764,7 +2762,7 @@ class GppuCatalog(AbstractFileSystem):
     at the root rereads ``locations.yaml``. Recursion from the root descends
     the Locations that have no parent Location; their subtrees hold the rest.
     """
-    return await asyncio.to_thread(self.ls_sync, path, detail, recurse, refresh)
+    return self.ls_sync(path, detail, recurse, refresh)
 
   def ls_sync(self, path: str | Path | None = None, detail: bool = True,
               recurse: bool = False, refresh: bool = False) -> list:

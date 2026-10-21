@@ -6,6 +6,7 @@ import zipfile
 
 import yaml
 from textual.widgets import DataTable, Static, TextArea
+from textual.worker import WorkerState
 
 from examples.handler_browser import HandlerBrowser
 from gppu.fs import GppuCatalog, GppuFileSystem
@@ -13,10 +14,13 @@ from gppu.tui import TreeTable
 
 
 async def settled(app, pilot):
-  await app.workers.wait_for_complete()
-  await pilot.pause()
-  await app.workers.wait_for_complete()
-  await pilot.pause()
+  """Wait until no worker runs. A worker of an exclusive group that a newer one replaced is cancelled, as the browser
+  means it to be; a worker that ended in an error fails the test."""
+  for _ in range(2):
+    await pilot.pause()
+    while any(worker.state in (WorkerState.PENDING, WorkerState.RUNNING) for worker in app.workers):
+      await pilot.pause()
+  assert not [worker.error for worker in app.workers if worker.state == WorkerState.ERROR]
 
 
 def labels(app) -> list[str]:

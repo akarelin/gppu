@@ -1491,7 +1491,11 @@ class mixin_Logger(_mixin):
     for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'): setattr(cls, name, staticmethod(partial(getattr(Logger, name), logger=cls._logger)))
 
 
-Debug, Info, Warn, Error, Dump = Logger.Debug, Logger.Info, Logger.Warn, Logger.Error, Logger.Dump
+Debug = Logger.Debug
+Info = Logger.Info
+Warn = Logger.Warn
+Error = Logger.Error
+Dump = Logger.Dump
 
 
 # endregion
