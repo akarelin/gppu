@@ -607,7 +607,7 @@ class mixin_Rest:
   it — a base may define it too — and the private names and the lifecycle steps
   are the only exclusion.
 
-  AsyncApp includes this mixin; a host with its own lifecycle can compose it
+  APIApp includes this mixin; a host with its own lifecycle can compose it
   before its application base, as Y2 does. Override ``rest_registries()`` with
   ``{registry: {key: object}}``; by default it contains the app itself. The HTTP
   host serves ``rest_manifest`` and binds ``rest_objects``, ``rest_read`` and
@@ -693,7 +693,7 @@ class mixin_Rest:
 
 
 # region async application
-class AsyncApp(mixin_Rest, App, EventLoopBridge):
+class AsyncApp(App, EventLoopBridge):
   """Application base for long-lived asyncio services.
 
   Override ``setup()`` for synchronous setup during construction with config ready,
@@ -705,7 +705,7 @@ class AsyncApp(mixin_Rest, App, EventLoopBridge):
   Put resource cleanup in the owning coroutine's ``finally`` or async context;
   ``run()`` does not call ``stop()`` automatically.
   The app is an ``EventLoopBridge`` onto its own running loop, so off-loop threads
-  ``schedule``/``submit``/``call`` work onto it. See ``mixin_Rest`` for HTTP hosting.
+  ``schedule``/``submit``/``call`` work onto it.
   """
 
   _task_group: asyncio.TaskGroup | None
@@ -761,7 +761,7 @@ class AsyncApp(mixin_Rest, App, EventLoopBridge):
 
 
 # region API application
-class APIApp(AsyncApp):
+class APIApp(mixin_Rest, AsyncApp):
     """An AsyncApp that serves HTTP, the transport ``mixin_Rest`` leaves to its host: on uvicorn, at the ``host`` and ``port`` of its
     configuration, its own objects at ``/rest`` and each ASGI app ``apis()`` gives at its path.
 

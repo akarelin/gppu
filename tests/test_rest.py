@@ -5,7 +5,7 @@ import asyncio
 import unittest
 from pathlib import Path
 
-from gppu import AsyncApp, Env, mixin_Rest
+from gppu import APIApp, AsyncApp, Env, mixin_Rest
 from gppu.gppu import _DC
 
 
@@ -89,9 +89,9 @@ class RestSurfaceTests(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(body['objects'], {'lamp/desk': '_Lamp', 'app/host': '_Host'})
     self.assertEqual(self.host.rest_objects(kind='_Lamp', full=True)[0]['objects']['lamp/desk']['class'], '_Lamp')
 
-  def test_an_async_app_carries_the_surface(self) -> None:
-    self.assertTrue(issubclass(AsyncApp, mixin_Rest))
-    self.assertEqual(AsyncApp.rest_registries.__qualname__, 'mixin_Rest.rest_registries')
+  def test_the_api_app_carries_the_surface_and_an_async_app_does_not(self) -> None:
+    self.assertTrue(issubclass(APIApp, mixin_Rest))
+    self.assertFalse(issubclass(AsyncApp, mixin_Rest))
 
 
 if __name__ == '__main__':
