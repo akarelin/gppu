@@ -620,37 +620,14 @@ def dict_to_yml(filename: str | pathlib.Path, data=None, sort_keys=False):
       with open(str(filename) + '_error.txt', 'w+', encoding='utf-8') as ferr: ferr.write(error)
 
 
-YML_BARE_INCLUDE = re.compile(r"^!include\s+\S.*$", re.MULTILINE)
-YML_BARE_KEY = '__include_'
-
-
-def dict_from_yml(filename: str | pathlib.Path, /, **context) -> dict:
+def dict_from_yml(filename: str | pathlib.Path) -> dict:
   filename = full_path(filename)
   dir_stack: list[pathlib.Path] = [filename.parent]
-  bare_seq = iter(range(1 << 30))
 
   class YmlLoader(FullLoader): pass
     # def __init__(self, stream: Any) -> None:
     #   super().__init__(stream)
 
-
-  def yml_keyed(text: str) -> str:                                                         # `!include` alone on a line has no
-    def key(m): return f'{YML_BARE_KEY}{next(bare_seq)}: {m.group()}'                      # key, which YAML rejects next to
-    return YML_BARE_INCLUDE.sub(key, text)                                                 # other keys; give it a private one
-
-  def yml_merged(data: Any) -> Any:                                                        # ... and merge what it loaded into
-    if not isinstance(data, dict): return data                                             # the document that included it
-    merged: dict = {}
-    for k, v in data.items():
-      if isinstance(k, str) and k.startswith(YML_BARE_KEY): merged.update(v)
-      else: merged[k] = v
-    return merged
-
-  def yml_load(text: str) -> Any: return yml_merged(yaml.load(yml_keyed(text), Loader=YmlLoader))
-
-  def yml_text(fn: pathlib.Path) -> str:                                                   # a `.j2` document is rendered
-    if fn.suffix.lower() == '.j2': return jinja_document(fn, **context)                    # before YAML reads it, so its
-    with open(fn, encoding='utf-8') as f: return f.read()                                  # macros write the document
 
   def yml_include(loader: FullLoader, node: Node) -> Any:
     fn = full_path(loader.construct_scalar(node), dir_stack[-1])
@@ -658,9 +635,9 @@ def dict_from_yml(filename: str | pathlib.Path, /, **context) -> dict:
     dir_stack.append(fn.parent)
 
     try:
-      if fn.suffix.lower().endswith('.json'):                                              # JSON (tabs/escapes YAML rejects)
-        with open(fn, "r", encoding='utf-8') as f: return json.load(f)
-      return yml_load(yml_text(fn))
+      with open(fn, "r", encoding='utf-8') as f:
+        if fn.suffix.lower().endswith('.json'): return json.load(f)                        # JSON (tabs/escapes YAML rejects)
+        return yaml.load(f, Loader=YmlLoader)
     finally: dir_stack.pop()
 
   def yml_secret(loader: FullLoader, node: Node) -> Any: return Vault.get(loader.construct_scalar(node))
@@ -668,7 +645,7 @@ def dict_from_yml(filename: str | pathlib.Path, /, **context) -> dict:
   YmlLoader.add_constructor("!include", yml_include)
   YmlLoader.add_constructor("!secret", yml_secret)
 
-  data = yml_load(yml_text(filename))
+  with open(filename, encoding='utf-8') as f: data = yaml.load(f, Loader=YmlLoader)
 
   return dict(data or {})
 

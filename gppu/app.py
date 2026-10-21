@@ -148,11 +148,9 @@ class Env:
   @staticmethod
   def _config_file() -> Path:
     """``<name>.yaml`` then ``config.yaml``, searched from ``app_path`` upward —
-    so a service in a subdir (e.g. /app/brultech) finds the suite's /app/config.yaml.
-    Each is matched as a Jinja document too, so a templated configuration is found
-    with no change at the call site."""
+    so a service in a subdir (e.g. /app/brultech) finds the suite's /app/config.yaml."""
     stem = Path(Env.name).with_suffix('.yaml').name
-    names = (stem, f'{stem}.j2', 'config.yaml', 'config.yaml.j2')
+    names = (stem, 'config.yaml')
     for parent in (Env.app_path, *Env.app_path.parents):
       for name in names:
         candidate = parent / name
