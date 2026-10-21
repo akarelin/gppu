@@ -11,8 +11,6 @@ database session.
 
 Needs the `ld` extra, and fastapi-querybuilder installed with `--no-deps`: its metadata lists poetry, uvicorn and aiosqlite as runtime
 dependencies."""
-import json
-import re
 from datetime import UTC, datetime, timedelta
 from enum import IntEnum
 from collections.abc import Sequence
@@ -32,12 +30,12 @@ from psycopg.errors import UndefinedFunction
 from pydantic import ConfigDict, GetCoreSchemaHandler, GetJsonSchemaHandler, TypeAdapter, ValidationError, field_validator
 from pydantic_core import core_schema
 from sqlakeyset import custom_bookmark_type
-from sqlalchemy import DateTime, FetchedValue, SmallInteger, String, TypeDecorator, bindparam
+from sqlalchemy import DateTime, FetchedValue, SmallInteger, String, TypeDecorator
 from sqlalchemy.dialects.postgresql import JSONB, TSTZRANGE, Range
 from sqlalchemy.exc import DataError, IntegrityError, NoResultFound, StatementError
 from sqlalchemy.sql.elements import UnaryExpression
 from sqlalchemy.sql.visitors import iterate
-from sqlmodel import Column, Field, SQLModel, delete, func, not_, or_, select
+from sqlmodel import Column, Field, SQLModel, delete, func, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..data import _SQABase
@@ -160,44 +158,6 @@ class SpanColumn(TypeDecorator):
 custom_bookmark_type(Span, 'span', deserializer=SPAN.validate_json, serializer=lambda s: SPAN.dump_json(s).decode())   # a page sorted by span carries one in its cursor
 
 
-# ++     Conditions querybuilder does not read: a key inside `data` or `meta`, and a span overlapping another
-
-INSIDE = re.compile(r'(data|meta)\.(\w[\w.-]*)')   # `data.kind`, `meta.generated.by`: a key inside a record's data or meta, by its path
-
-
-def inside(model, key: str):
-    """The text a record's `data` or `meta` holds at a key's path (`data.planned.end`), or None when it holds none."""
-    column, path = INSIDE.fullmatch(key).groups()
-    return func.jsonb_extract_path_text(getattr(model, column), *path.split('.'))
-
-
-def as_text(v: Any) -> str:
-    """A value as Postgres gives a JSON value's text: a string as it is, anything else as JSON writes it (`true`, `3`)."""
-    return v if isinstance(v, str) else json.dumps(v)
-
-
-def clauses(expr, condition: Any) -> list:
-    """The clauses of one condition on a key inside data or meta: `{"$eq": "Feature"}`, or a value alone, which is `$eq`; the operators
-    of record search but `$isempty` and `$isnotempty`, which read whether the key holds anything."""
-    ops = condition if isinstance(condition, dict) else {'$eq': condition}
-    clauses = []
-    for op, v in ops.items():
-        match op:
-            case '$eq': clauses.append(expr == as_text(v))
-            case '$ne': clauses.append(or_(expr.is_(None), expr != as_text(v)))
-            case '$gt': clauses.append(expr > as_text(v))
-            case '$gte': clauses.append(expr >= as_text(v))
-            case '$lt': clauses.append(expr < as_text(v))
-            case '$lte': clauses.append(expr <= as_text(v))
-            case '$in': clauses.append(expr.in_([as_text(x) for x in v]))
-            case '$contains': clauses.append(expr.ilike(f'%{v}%'))
-            case '$startswith': clauses.append(expr.ilike(f'{v}%'))
-            case '$isempty': clauses.append(or_(expr.is_(None), expr == ''))
-            case '$isnotempty': clauses.append(not_(or_(expr.is_(None), expr == '')))
-            case _: raise HTTPException(422, f'a key inside data or meta takes $eq $ne $gt $gte $lt $lte $in $contains $startswith $isempty $isnotempty, not {op}')
-    return clauses
-
-
 # ++     _Record: every record's columns and its operations; a type's class only defines its table
 
 class _Record(SQLModel):
@@ -292,10 +252,10 @@ class _Record(SQLModel):
 
     @classmethod
     async def search(cls, db: AsyncSession, params, *where, conditions: QueryParams | None = None, only: bool = False):
-        """A page of a search (# Universals, Operations): the records of its table the query `conditions` build (`build_query`) and
+        """A page of a search (# Universals, Operations): the records of its table fastapi-querybuilder's query of `conditions` and
         `where` select, `limit` of them after the last one of the page before (sqlakeyset), so the order ends with the id, which no two
         rows share; every match when no limit is given. `only` keeps to its own table's records, not those of the types made from it."""
-        query = (cls.build_query(conditions) if conditions else select(cls)).where(*where)
+        query = (build_query(cls, conditions) if conditions else select(cls)).where(*where)
         if only:
             query = query.with_hint(cls.__table__, 'ONLY', 'postgresql')
 
@@ -309,31 +269,6 @@ class _Record(SQLModel):
             rows = (await db.scalars(query)).all()   # querybuilder's select is SQLAlchemy's: rows of one record each
             return create_page(rows, params=params, total=len(rows))
         return await apaginate(db, query, params=params)
-
-    @classmethod
-    def build_query(cls, conditions: QueryParams):
-        """The query a search's conditions build, not run: querybuilder's (fastapi-querybuilder's own `build_query`), of the conditions
-        it reads, and of the two it does not, each at the top of `filters`:
-        a key inside `data` or `meta`, `{"data.kind": {"$eq": "Feature"}}`, and a span overlapping a span, `{"span": {"$overlaps":
-        {"start": "…", "end": "…"}}}`, in any of a span's forms, an end left out an open one."""
-        try:
-            sent = json.loads(conditions.filters) if conditions.filters else {}
-        except json.JSONDecodeError as e:
-            raise HTTPException(422, f'filters is not JSON: {e}')
-        if not isinstance(sent, dict):
-            raise HTTPException(422, 'filters is a JSON object of conditions')
-        ours = {k: v for k, v in sent.items() if INSIDE.fullmatch(k) or (k == 'span' and isinstance(v, dict) and '$overlaps' in v)}
-        rest = {k: v for k, v in sent.items() if k not in ours}
-        query = build_query(cls, QueryParams(json.dumps(rest) if rest else None, conditions.sort, conditions.search, conditions.search_fields, conditions.case_sensitive))
-        for key, condition in ours.items():
-            if key == 'span':
-                if not hasattr(cls, 'span'):
-                    raise HTTPException(422, f'a {cls.__tablename__} has no span')
-                span = SPAN.validate_python(condition['$overlaps'])
-                query = query.where(cls.span.op('&&')(bindparam(None, span, type_=SpanColumn())))
-            else:
-                query = query.where(*clauses(inside(cls, key), condition))
-        return query
 
 
 # ++     The data models: what a type adds to a record, and the abstract types
