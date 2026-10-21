@@ -94,7 +94,7 @@ from fsspec.spec import AbstractFileSystem
 from fsspec.utils import stringify_path
 
 from .gppu import MY_TZ, TimeSpan, OSType, TemplateSet, detect_os, full_path, sync, y2path, y2uri
-from .gppu import Env, _Base
+from .gppu import Env, Warn, _Base
 from . import handlers
 
 
@@ -6001,6 +6001,10 @@ class GppuIndex(Protocol):
     """
 
 
+# What probe gives that counts as ignored in a folder's totals: an ignored path, an offline file, a junction and a symlink.
+IGNORED = ('ignored', 'offline', 'junction', 'symlink')
+
+
 class GppuFileSystem(AbstractFileSystem):
   """fsspec listings enriched by handlers and stored beside their location.
 
@@ -6375,7 +6379,6 @@ class GppuFileSystem(AbstractFileSystem):
         if field in metadata['git']:
           metadata['git'][field] = convert(metadata['git'][field])
 
-  @staticmethod
   def _record_from_metadata(metadata: dict) -> Record:
     """Rehydrate statistics for the existing folder aggregation functions."""
     value = metadata['gppu']
@@ -6415,11 +6418,8 @@ class GppuFileSystem(AbstractFileSystem):
         metadata, members = cached
         children = list(dict.fromkeys([*(item['path'] for item in members), child]))
         children.sort(key=lambda item: (metadata_for(item)['type'] != 'directory', item.casefold()))
-        child_records = [self._record_from_metadata(metadata_for(item)) for item in children]
-        stats = FileHandler._folder_stats(self._record_from_metadata(metadata), child_records)
-        if any(item.stats is None for item in child_records):
-          stats = FileStats(None, None, None, None)  # A child listed but not probed leaves the total unknown.
-        metadata['gppu'].update(json.loads(json.dumps(vars(stats), default=_metadata_text)))
+        metadata['gppu'].update(json.loads(json.dumps(
+          self._totals(metadata['gppu'], [metadata_for(item) for item in children]), default=_metadata_text)))
         del metadata['gppu']['name'], metadata['gppu']['parent']
         self._metadata_paths(metadata['gppu'], lambda item:
           self._key(item) if item == self.location or
@@ -6549,13 +6549,11 @@ class GppuFileSystem(AbstractFileSystem):
       fs.invalidate_cache()
       native = self._inventory(fs, source)
       if isinstance(fs, LocalFileSystem):
-        self._handlers.invalidate_sync(Path(source))
-        self._parse(key, Path(source), native, source, self._handlers)
+        self._parse(key, Path(source), native, source)
       else:
         with tempfile.TemporaryDirectory(prefix='gppufs-') as scratch:
           base = self._extract(uri, fs, source, native, Path(scratch))
-          self._parse(key, base, native, source, _MetadataHandlers({"locations": self._locations}),
-                      in_archive=fs is not self.fs, archive_metadata=archive_metadata)
+          self._parse(key, base, native, source, in_archive=fs is not self.fs, archive_metadata=archive_metadata)
 
   def _extract(self, uri: str, fs: AbstractFileSystem, source: str, native: dict[str, dict], scratch: Path) -> Path:
     """Write the inventoried entries below ``source`` under ``scratch`` and return their base folder.
@@ -6587,12 +6585,7 @@ class GppuFileSystem(AbstractFileSystem):
     return str(PurePosixPath(key) / relative)
 
   def _identify_members(self, key: str) -> None:
-    """Index an archive's members as a listing sees them: identified, none probed.
-
-    The archive is read once and its members are written to a scratch folder so
-    the handlers can recognize them. Every folder inside the archive keeps its
-    child listing, so entering one later reads the index.
-    """
+    """Identify an archive's members by probe, from their copies in a scratch folder, nothing parsed."""
     uri = self._uri(key)
     metadata = self._stored(key)[0]
     with self._filesystem(key, container=True) as (fs, source):
@@ -6601,78 +6594,68 @@ class GppuFileSystem(AbstractFileSystem):
         base = full_path(self._extract(uri, fs, source, native, Path(scratch)))
         rows: dict[str, tuple[dict, list | None]] = {key: (metadata, [])}
         members: dict[str, list[dict]] = {key: []}
-        for record in _MetadataHandlers().identify_sync(base):
-          relative = Path(record.path).relative_to(base).as_posix()
-          if relative == '.':
-            continue
-          path = str(PurePosixPath(source) / relative)
-          if path not in native or self._index_name.fullmatch(record.name):
-            continue
-          address = self._member_address(key, relative)
-          rows[address] = self._identified_row(address, native[path], record), [] if record.is_folder else None
-          if relative != '.':
+
+        def identify(folder: Path) -> None:
+          for path in sorted(folder.iterdir(), key=_display_order):
+            relative = path.relative_to(base).as_posix()
+            name = str(PurePosixPath(source) / relative)
+            if name not in native or self._index_name.fullmatch(path.name):
+              continue
+            address = self._member_address(key, relative)
+            record = handlers.probe(path)
+            rows[address] = self._row(address, native[name], record, path), [] if self._folder(record) else None
             parent = self._member_address(key, PurePosixPath(relative).parent.as_posix())
-            members.setdefault(parent, []).append({'path': address, 'type': native[path]['type'], 'ino': None})
+            members.setdefault(parent, []).append({'path': address, 'type': native[name]['type'], 'ino': None})
+            if self._folder(record):
+              identify(path)
+        identify(base)
         for address, listing in members.items():
           listing.sort(key=lambda entry: (entry['type'] != 'directory', entry['path'].casefold()))
           rows[address] = rows[address][0], listing
         self._store(key, rows, members[key])
 
-  def _parse(self, key: str, local: Path, native: dict[str, dict], source: str,
-             handlers: FileHandler, *, in_archive: bool = False, archive_metadata: dict | None = None) -> None:
-    # Reuse the existing parsers; the fsspec inventory supplies native attributes.
+  def _parse(self, key: str, local: Path, native: dict[str, dict], source: str, *,
+             in_archive: bool = False, archive_metadata: dict | None = None) -> None:
+    """Parse every entry at and below local through gppu's handlers, its native attributes from the fsspec
+    inventory: each its handler's record, and a folder the totals of what is below it. A read that fails is
+    the entry's `unread`, and the walk goes on."""
     local = full_path(local)
-    identified = handlers.probe_sync(local)
-    records: dict[Path, Record] = {}
-    addresses: dict[Path, str] = {}
-    attributes: dict[Path, dict] = {}
-    for record in identified:
-      relative = Path(record.path).relative_to(local)
-      path = str(PurePosixPath(source) / PurePosixPath(relative.as_posix()))
-      if path == '.' and source == '':
-        path = ''
-      if path not in native or self._index_name.fullmatch(record.name):
-        continue
-      item = native[path]
-      address = self._member_address(key, relative.as_posix())
-      records[Path(record.path)] = replace(record,
-        modified_at=self._modified(item),
-        size=0 if record.is_folder else record.size)
-      addresses[Path(record.path)] = address
-      attributes[Path(record.path)] = item
-    children: dict[Path, list[Path]] = {path: [] for path in records}
-    for path in records:
-      if path != local:
-        children[path.parent].append(path)
-    rows = {}
-    def reference(value):
-      candidate = Path(value)
-      if not candidate.is_absolute():
-        return value  # Exported session members are relative to their location.
-      if candidate.is_relative_to(local):
-        return self._member_address(key, candidate.relative_to(local).as_posix())
-      if isinstance(self.fs, LocalFileSystem) and candidate.is_relative_to(full_path(self.root)):
-        return candidate.relative_to(full_path(self.root)).as_posix()
-      return candidate.as_uri()
+    rows: dict[str, tuple[dict, list[str] | None]] = {}
+    now = datetime.now().astimezone()
 
-    for path in sorted(records, key=lambda item: len(item.parts), reverse=True):
-      record = records[path]
-      stats = FileHandler._folder_stats(record, [records[child] for child in children[path]]) if record.is_folder else FileHandler._file_stats(record)
-      record = records[path] = replace(record, stats=stats)
-      extra = record.metadata
-      extra['stats'] = {probe.handler: vars(probe.stats)
-        for probe in record.probes if probe.stats is not None}
-      extra = json.loads(json.dumps(extra, default=_metadata_text))
-      self._metadata_paths(extra, reference)
-      address = addresses[path]
-      extra['is_container'] = (record.is_folder or 'archive' in record.handlers) and 'ignored' not in record.handlers
-      extra['probed'] = True
-      extra['probed_at'] = datetime.now().astimezone()
-      metadata = {**attributes[path], 'name': self._uri(address), 'gppu': extra}
-      members = [addresses[child] for child in children[path]] if record.is_folder else None
+    def read(path: Path) -> tuple[str, dict] | None:
+      relative = path.relative_to(local).as_posix()
+      name = str(PurePosixPath(source) / relative)
+      name = '' if name == '.' else name
+      if name not in native or self._index_name.fullmatch(path.name):
+        return None
+      item = native[name]
+      address = self._member_address(key, relative)
+      record, unread = handlers.probe(path), None
+      handler = handlers.HANDLERS.get((record.type, record.subtype))
+      if handler is not None and handler is not handlers.FolderHandler:
+        try:
+          record = handler.parse(path)
+        except Exception as error:   # the walk records what it could not read and goes on
+          unread = f'{handler.__name__}: {type(error).__name__}: {error}'
+          Warn(f'{path}: {unread}')
+      folder = self._folder(record)
+      children: list[tuple[str, dict]] = []
+      if folder:
+        try:
+          members = sorted(path.iterdir(), key=_display_order)
+        except OSError as error:
+          unread, members = f'listing: {type(error).__name__}: {error}', []
+          Warn(f'{path}: {unread}')
+        children = [child for member in members if (child := read(member)) is not None]
+      row = self._row(address, item, record, path, probed_at=now, unread=unread,
+                      children=[child for _, child in children] if folder else None)
       if path == local and archive_metadata is not None:
-        metadata = archive_metadata
-      rows[address] = metadata, members
+        row = archive_metadata
+      rows[address] = row, [child_address for child_address, _ in children] if folder else None
+      return address, row
+
+    read(local)
     self._save(rows, key, in_archive=in_archive)
 
   def _archive_key(self, key: str) -> str:
@@ -6726,51 +6709,79 @@ class GppuFileSystem(AbstractFileSystem):
     if item['type'] == 'directory':
       target.mkdir(exist_ok=True)
     elif not target.exists():
-      target.touch()
+      target.write_bytes(b'\0' if item.get('size') else b'')   # probe names a file's handler only when it holds something
     return target
 
-  def _listed_record(self, key: str, item: dict) -> Record:
-    """One entry of a store that lists enough, identified from that listing."""
-    record = self._handlers.record(self._stand_in(key, item))
-    return replace(record, path=PurePosixPath(self._path(key)),
-                   size=0 if record.is_folder else int(item.get('size') or 0))
+  def _listed(self, key: str, item: dict) -> handlers.Record:
+    """One entry of a store that lists enough, identified by probe from its stand-in, its size as the store lists it."""
+    record = handlers.probe(self._stand_in(key, item))
+    if item['type'] != 'directory':
+      record.meta['size'] = int(item.get('size') or 0)
+    return record
 
-  def _identified_row(self, key: str, item: dict, record: Record) -> dict:
-    """One entry as a listing sees it: native attributes and the handlers that matched, nothing probed.
+  @staticmethod
+  def _folder(record: handlers.Record) -> bool:
+    return record.subtype in (handlers.FolderHandler.subtype, handlers.SessionFolderHandler.subtype)
 
-    A file's count, bytes and name span are known from the listing. A folder's totals
-    are unknown until it is probed, so they are null and ``probed`` is false; ``probed_at``
-    is null too, where a probed row carries the local time of its last probe.
-    """
-    record = replace(record, modified_at=self._modified(item), size=0 if record.is_folder else record.size)
-    extra = json.loads(json.dumps(record.metadata, default=_metadata_text))
-    if record.is_folder:
-      extra.update(files=None, folders=None, bytes=None, span=None)
+  @staticmethod
+  def _span(value: Any) -> TimeSpan | None:
+    """A span as a row holds it, [start, end], or as a record holds it."""
+    if isinstance(value, TimeSpan) or value is None:
+      return value
+    return TimeSpan(datetime.fromisoformat(value[0]), datetime.fromisoformat(value[1]))
+
+  def _own_span(self, gppu: dict) -> TimeSpan | None:
+    """What a row's own record says of its time: its handler's span, else its name's."""
+    return self._span(gppu['record'].get('span')) or handlers.Handler.named(gppu['record']['name'])
+
+  def _totals(self, gppu: dict, children: list[dict] | None) -> dict:
+    """A row's files, folders, bytes and span: a file is one file of its size; a folder the sum of what is below it,
+    unknown while a child's is, its span its own and its children's together. Either spans its modified time when
+    nothing says more."""
+    modified = gppu['modified_at'] and datetime.fromisoformat(str(gppu['modified_at']))
+    spans = [span for span in (self._own_span(gppu),) if span]
+    if gppu['record']['subtype'] in IGNORED:
+      return {'files': 0, 'folders': 0, 'bytes': 0, 'span': None}   # counted as ignored: never counted
+    if children is None:
+      totals = {'files': 1, 'folders': 0, 'bytes': gppu['size']}
+    elif any(child['gppu']['files'] is None for child in children):
+      return {'files': None, 'folders': None, 'bytes': None, 'span': None}
     else:
-      extra.update(json.loads(json.dumps(vars(FileHandler._file_stats(record)), default=_metadata_text)))
-    extra['stats'] = {}
-    extra['is_container'] = (record.is_folder or 'archive' in record.handlers) and 'ignored' not in record.handlers
-    extra['probed'] = False
-    extra['probed_at'] = None
-    return {**item, 'name': self._uri(key), 'gppu': extra}
+      totals = {'files': sum(child['gppu']['files'] for child in children),
+                'folders': sum(child['gppu']['folders'] + (child['gppu']['type'] == 'folder') for child in children),
+                'bytes': sum(child['gppu']['bytes'] for child in children)}
+      spans += [span for child in children if (span := self._span(child['gppu']['span']))]
+    span = TimeSpan(min(s.start for s in spans), max(s.end for s in spans)) if spans else (
+      TimeSpan(modified, modified) if modified else None)
+    return {**totals, 'span': span}
 
-  def _probed(self, key: str) -> Record:
-    """One entry of this host's file system identified by probe, nothing read: the handlers that read it are the
-    one probe names, an archive's and a configured location's."""
-    path = Path(self._path(key))
-    probed = handlers.probe(path)
-    folder = probed.subtype in (handlers.FolderHandler.subtype, handlers.SessionFolderHandler.subtype)
-    names = (probed.subtype or probed.type,)
+  def _row(self, key: str, item: dict, record: handlers.Record, path: Path, *, probed_at: datetime | None = None,
+           unread: str | None = None, children: list[dict] | None = None) -> dict:
+    """One entry as gppufs holds it: its native attributes, and under `gppu` the handlers that read it, its handler's
+    record and its totals. An entry only identified, not parsed, is `probed` false, and a folder's totals are then
+    unknown."""
+    folder = self._folder(record)
+    names = [record.subtype or record.type]
     if path.name.casefold().endswith(ArchiveHandler.extensions):
-      names += ('archive',)
-    located = self._handlers.located(path)
+      names.append('archive')
+    located = self._handlers.located(path) if isinstance(self.fs, LocalFileSystem) else None
     if located is not None:
-      names += ('location',)
-    return Record(path=path, is_folder=folder, size=0 if folder else probed.meta.get('size', 0),
-                  modified_at=probed.updated, handlers=names,
-                  probes=() if located is None else (
-                    Probe(handler='location', stats=None, obj=located, metadata=located.metadata),),
-                  target=Path(probed.data['target']) if 'target' in probed.data else None)
+      names.append('location')
+    gppu = {'path': str(path), 'type': 'folder' if folder else 'file',
+            'size': 0 if folder else int(record.meta.get('size', 0)), 'modified_at': self._modified(item),
+            'handlers': names, 'record': vars(record)}
+    if located is not None:
+      gppu['location'] = located.metadata
+    if unread is not None:
+      gppu['unread'] = unread
+    gppu = json.loads(json.dumps(gppu, default=_metadata_text))
+    if folder and probed_at is None:
+      gppu.update(files=None, folders=None, bytes=None, span=None)
+    else:
+      gppu.update(json.loads(json.dumps(self._totals(gppu, children), default=_metadata_text)))
+    gppu.update(is_container=folder or 'archive' in names, probed=probed_at is not None,
+                probed_at=probed_at and str(probed_at))
+    return {**item, 'name': self._uri(key), 'gppu': gppu}
 
   def _store(self, key: str, rows: dict[str, tuple[dict, list | None]], listing: list[dict] | None) -> None:
     """Add identified rows the index does not hold yet and record the folder's live child listing.
@@ -6811,8 +6822,8 @@ class GppuFileSystem(AbstractFileSystem):
     """Index one entry from its native attributes and matching handlers, without probing."""
     path = self._path(key)
     item = self.fs.info(path)
-    record = self._probed(key) if isinstance(self.fs, LocalFileSystem) else self._listed_record(key, item)
-    self._store(key, {key: (self._identified_row(key, item, record), None)}, None)
+    record = handlers.probe(Path(path)) if isinstance(self.fs, LocalFileSystem) else self._listed(key, item)
+    self._store(key, {key: (self._row(key, item, record, Path(path)), None)}, None)
 
   def _unlocated(self, key: str) -> bool:
     """Whether the index holds this entry from before a configured location covered it.
@@ -6850,11 +6861,11 @@ class GppuFileSystem(AbstractFileSystem):
         self._forget(child_key)   # the stored row predates the location; an insert alone would keep it
       if local:
         item = self.fs.info(name)  # A directory scan reports no inode on Windows; rename recovery needs it.
-        record = self._probed(child_key)
+        record = handlers.probe(Path(self._path(child_key)))
       else:
         item = entry            # a store that lists enough said it all once; asking again is a call per entry
-        record = self._listed_record(child_key, item)
-      rows[child_key] = self._identified_row(child_key, item, record), None
+        record = self._listed(child_key, item)
+      rows[child_key] = self._row(child_key, item, record, Path(self._path(child_key))), None
       listing.append({'path': child_key, 'type': item['type'], 'ino': item.get('ino')})
     listing.sort(key=lambda entry: (entry['type'] != 'directory', entry['path'].casefold()))
     if rows or listing != children:

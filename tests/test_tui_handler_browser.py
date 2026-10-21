@@ -67,7 +67,7 @@ def test_tui_tree_expands_folders_and_archives_shows_metadata_and_refreshes(tmp_
       assert labels(app) == [tmp_path.name, '.git', 'child', 'note.md', 'bundle.zip']
       await select(app, pilot, 'note.md')
       detail = json.loads(app.query_one(TextArea).text)
-      assert detail['gppu']['markdown']['title'] == 'Metadata in the TUI'
+      assert detail['gppu']['record']['data']['title'] == 'Metadata in the TUI'
       (child / 'added.txt').write_text('added')
       await select(app, pilot, 'child')
       await pilot.press('r')
@@ -131,7 +131,7 @@ def test_tui_shows_the_catalog_as_a_tree_of_locations(tmp_path):
       assert labels(app) == ['.catalog', 'outer', 'inner', 'b.md', 'a.txt']
       assert (inner / '.inner.gppufs.sqlite').is_file()
       await select(app, pilot, 'b.md')
-      assert json.loads(app.query_one(TextArea).text)['gppu']['markdown']['title'] == 'B'
+      assert json.loads(app.query_one(TextArea).text)['gppu']['record']['data']['title'] == 'B'
       assert cell(app, 'outer', 'files') == ''
       await select(app, pilot, 'outer')
       await pilot.press('r')
