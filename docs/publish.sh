@@ -1,6 +1,5 @@
 # gppu's documentation (docs/mkdocs.yaml), built from the code checked out with its tags, into the folder nginx serves at
-# kb.karel.in/gppu/v3/ on trix (RAN trix_kb.conf), copied there over ssh: gppu.yml's release runs it for the version it builds,
-# before that version is released, and gppu-docs.yaml runs it on its own
+# kb.karel.in/gppu/v3/ on trix (RAN trix_kb.conf), copied there over ssh by gppu-docs.yaml, independently of releases
 set -e
 site="$RUNNER_TEMP/site"
 uvx --python 3.14 --with mkdocs-material --with "mkdocstrings[python]" --with mkdocs-gen-files --with graphifyy mkdocs build --strict -f docs/mkdocs.yaml -d "$site"

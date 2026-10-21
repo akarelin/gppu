@@ -2,6 +2,8 @@
 
 Releases are driven by the [`gppu`](../.github/workflows/gppu.yml) workflow via **Actions → gppu → Run workflow**. Tagging happens inside the workflow; do not create `gppu/v*` tags by hand.
 
+Documentation publishing belongs in the separate [`gppu docs`](../.github/workflows/gppu-docs.yaml) action. The release action keeps its established tests, build and release process.
+
 ## Tag scheme
 
 - Stable: `gppu/vX.Y.Z`

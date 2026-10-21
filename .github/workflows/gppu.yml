@@ -210,9 +210,6 @@ jobs:
           uv pip install build setuptools-scm
           "$HOME/.venv/bin/python" -m build
 
-      - name: Documentation
-        run: sh docs/publish.sh   # the documentation of the version being built, at kb.karel.in/gppu/v3/, before it is released
-
       - name: Compute release name
         run: |
           VERSION="${TAG#gppu/v}"
