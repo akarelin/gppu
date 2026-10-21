@@ -55,10 +55,22 @@ class GppuIndexedFileSystem(AbstractFileSystem):
             if not set(json.loads(handlers or '[]')) & set(IGNORED)]
         paths = [path for path in paths if not path.endswith(('.gppufs.sqlite', '.gppufs.sqlite-wal', '.gppufs.sqlite-shm'))]
         parts = {path: self._parts(path) for path in paths}
-        names = Counter(each[-1].casefold() for each in parts.values())
+        # a file is named by the fewest folders nearest it that tell it apart from every other, ignoring case as Windows does
+        named, pending, depth = {}, paths, 1
+        while pending:
+            tails = Counter(tuple(part.casefold() for part in parts[path][-depth:]) for path in pending)
+            rest = []
+            for path in pending:
+                if depth >= len(parts[path]) or tails[tuple(part.casefold() for part in parts[path][-depth:])] == 1:
+                    named[path] = ' › '.join(parts[path][-depth:])
+                else:
+                    rest.append(path)
+            pending, depth = rest, depth + 1
         aliases = {}
         for path in paths:
-            name = parts[path][-1] if names[parts[path][-1].casefold()] == 1 else ' › '.join(parts[path])
+            name = named[path]
+            if len(name) > 255:   # a Windows name holds 255 characters: the end nearest the file is kept
+                name = '…' + name[-254:]
             if name.casefold() in aliases:
                 raise ValueError(f'{self.index}: indexed names collide on Windows: {name}')
             aliases[name.casefold()] = (name, path)

@@ -87,9 +87,9 @@ def test_index_view_reads_deep_entries_without_listing_source(tmp_path, monkeypa
     view = '/Indexed/Data › source'
     monkeypatch.setattr(GppuFileSystem, 'ls_sync', lambda *a, **k: pytest.fail('indexed listing touched source hierarchy'))
     names = fs.ls(view, detail=False)
-    assert view + '/account › year › month › day › note.txt' in names
+    assert view + '/day › note.txt' in names   # named by the fewest folders that tell the two notes apart
     assert view + '/other › note.txt' in names
-    assert fs.cat_file(view + '/account › year › month › day › note.txt') == b'deep indexed content'
+    assert fs.cat_file(view + '/day › note.txt') == b'deep indexed content'
     assert fs.cat_file(view + '/other › note.txt') == b'another note'
 
 
@@ -150,6 +150,22 @@ def test_a_time_an_index_holds_as_text_reaches_windows_in_seconds(tmp_path):
     view = next(name for name in fs.ls('/Indexed', detail=False) if name.endswith('original'))
     assert fs.info(view + '/member.txt')['mtime'] == datetime.fromisoformat('2026-08-05 16:08:05-07:00').timestamp()
     assert isinstance(fs.info(view + '/note.txt')['mtime'], float)
+
+
+def test_a_name_longer_than_windows_holds_keeps_the_end_nearest_the_file(tmp_path):
+    root = tmp_path / 'original'
+    root.mkdir()
+    (root / 'note.txt').write_text('a note')
+    GppuFileSystem(root).ls_sync()
+    index = root / '.original.gppufs.sqlite'
+    with sqlite3.connect(index) as db:   # two notes told apart only by folders whose names together pass 255 characters
+        metadata = db.execute("SELECT metadata FROM gppufs_entries WHERE path='note.txt'").fetchone()[0]
+        db.executemany('INSERT INTO gppufs_entries VALUES (?, ?, NULL)', [
+            (f'{"a" * 200}/{"b" * 100}/note.txt', metadata), (f'{"c" * 200}/{"b" * 100}/note.txt', metadata)])
+    names = [name.lstrip('/') for name in GppuIndexedFileSystem(index).ls(detail=False)]
+    long = [name for name in names if name.startswith('…')]
+    assert len(long) == 2 and all(len(name) == 255 and name.endswith('b' * 100 + ' › note.txt') for name in long)
+    assert 'note.txt' in names and len(set(names)) == 3   # the note at the top has no folder to be told apart by
 
 
 def test_a_drive_root_is_a_source(tmp_path):
