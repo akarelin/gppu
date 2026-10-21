@@ -180,7 +180,7 @@ class Env(metaclass=_Tables):
       return
     updated = deepcopy(Env.data)
     node = updated
-    *parents, key = str(path).split('/')
+    *parents, key = y2path(path)
     for parent in parents:
       if parent not in node: node[parent] = {}
       node = node[parent]

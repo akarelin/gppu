@@ -479,14 +479,12 @@ deepdict: Callable[[], DefaultDict[Any, Any]] = lambda: defaultdict(deepdict)
 
 def deepget(path: str | y2path, d: dict, default=None):
   """The value at a slash path, falsy values included; default when any step is absent."""
-  path = str(path)
-  if '/' in path and path not in d.keys():
-    _ = d
-    for pp in path.split('/'):
-      if not isinstance(_, Mapping) or pp not in _: return default
-      _ = _[pp]
-    return _
-  return d.get(path, default)
+  if path in d.keys(): return d[path]   # a key that holds a slash itself
+  _ = d
+  for pp in y2path(path):
+    if not isinstance(_, Mapping) or pp not in _: return default
+    _ = _[pp]
+  return _
   # if '/' not in path or path in d: return d.get(path, default)
   # for p in path.split('/'):
   #   d = d.get(p)
@@ -1585,10 +1583,7 @@ class mixin_Logger(protocol_Logger, _mixin):
   def __init__(self, *a, **kw):
     super(mixin_Logger, self).__init__(*a, **kw)
     for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'): setattr(self, name, getattr(self.__class__, name))
-# endregion
 
-
-# region Foundation
 class _Logger(mixin_Logger): pass
 # endregion
 
