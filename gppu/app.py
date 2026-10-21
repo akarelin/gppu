@@ -63,6 +63,7 @@ from .gppu import (TRACE_RULES, Debug, Dump, Error, Info, Logger, OSType, Warn, 
                    enable_file_logging, sync, y2path)
 
 _MISSING = object()
+_trace_mro = False
 
 
 # region Env: the configuration
@@ -350,18 +351,14 @@ def schema(fn: Callable) -> dict:
 
 # region YMRO lifecycle
 class _YMRO:
-  """Base mixin class implementing Y2 Method Resolution Order (YMRO) lifecycle management.
-
-  Provides stepped initialization, loading, starting, and stopping mechanisms across
-  class hierarchies by discovering and invoking methods matching convention names
-  for each lifecycle step. A step method may be a coroutine function; then the step
-  returns a coroutine to await (``await app.start()``), otherwise it runs at once.
-  """
   POSSIBLE_STEPS = ['init', 'load', 'start', 'stop']
 
   @property
   def _trace_mro(self) -> bool:
-    return bool(getattr(self, 'args', {}).get('trace_mro', False))
+    result = getattr(self, 'args', {}).get('trace_mro', False)
+    global _trace_mro
+    _trace_mro = result
+    return result
 
 
   def print_ymro(self):
@@ -393,33 +390,30 @@ class _YMRO:
 
   def _ymro(self, method: str) -> list: return self._ymros().get(method, [])
 
-  def _callall(self, method, **done):
-    """Every class's method of the step, then the step's flags set to done; a coroutine when a method is one."""
-    if any(inspect.iscoroutinefunction(callback) for callback in self._ymro(method)):
-      async def awaited():
-        for callback in self._ymro(method):
-          if inspect.iscoroutinefunction(callback): await callback()
-          else: callback()
-        for flag, value in done.items(): setattr(self, flag, value)
-      return awaited()
-    for callback in self._ymro(method): callback()
-    for flag, value in done.items(): setattr(self, flag, value)
+  def _callall(self, method, *a, **kw): [m(*a, **kw) for m in self._ymro(method)]
+
+  async def _acallall(self, method: str, *a, **kw) -> None:
+    for m in self._ymro(method):
+      result = m(*a, **kw)
+      if asyncio.iscoroutine(result): await result
+
+  def _async(self, method: str) -> bool: return any(inspect.iscoroutinefunction(m) for m in self._ymro(method))
 
 
-class _YInit(_YMRO):
-  """Mixin class providing initialization lifecycle management for YMRO components.
-
-  Requires subclasses to implement an abstract `__init` method and provides
-  an idempotent `init()` method that invokes registered lifecycle callbacks
-  and tracks initialization status via the `initialized` property.
-  """
+class YInit(_YMRO):
   @abstractmethod
   def __init(self): pass
 
   @final
   def init(self):
     if self.initialized: return
-    return self._callall('init', initialized=True)
+    if self._async('init'): return self._ainit()
+    self._callall('init')
+    self.initialized = True
+
+  async def _ainit(self):
+    await self._acallall('init')
+    self.initialized = True
 
   @property
   def initialized(self) -> bool: return getattr(self, '_initialized', False)
@@ -427,13 +421,7 @@ class _YInit(_YMRO):
   def initialized(self, value: bool): self._initialized = value
 
 
-class _YLoad(_YInit):
-  """Mixin class providing loading lifecycle management for YMRO components.
-
-  Requires subclasses to implement an abstract `__load` method and provides
-  an idempotent `load()` method that asserts initialization, invokes registered
-  lifecycle callbacks, and tracks loading status via the `loaded` property.
-  """
+class YLoad(YInit):
   @abstractmethod
   def __load(self): pass
 
@@ -441,7 +429,13 @@ class _YLoad(_YInit):
   def load(self):
     if self.loaded: return
     assert self.initialized
-    return self._callall('load', loaded=True)
+    if self._async('load'): return self._aload()
+    self._callall('load')
+    self.loaded = True
+
+  async def _aload(self):
+    await self._acallall('load')
+    self.loaded = True
 
   @property
   def loaded(self) -> bool: return getattr(self, '_loaded', False)
@@ -449,20 +443,20 @@ class _YLoad(_YInit):
   def loaded(self, value: bool): self._loaded = value
 
 
-class _YStart(_YLoad):
-  """Mixin class providing start and stop lifecycle management for YMRO components.
-
-  Requires subclasses to implement an abstract `__start` method and provides
-  idempotent `start()` and `stop()` methods that invoke registered lifecycle
-  callbacks and track status via the `started` and `stopped` properties.
-  """
+class YStart(YLoad):
   @abstractmethod
   def __start(self): pass
 
   @final
   def start(self):
     if self.started: return
-    return self._callall('start', started=True)
+    if self._async('start'): return self._astart()
+    self._callall('start')
+    self.started = True
+
+  async def _astart(self):
+    await self._acallall('start')
+    self.started = True
 
   @property
   def started(self) -> bool: return getattr(self, '_started', False)
@@ -473,7 +467,17 @@ class _YStart(_YLoad):
   @final
   def stop(self):
     if self.stopped: return
-    return self._callall('stop', started=False, stopped=True, loaded=False)
+    if self._async('stop'): return self._astop()
+    self._callall('stop')
+    self.started = False
+    self.stopped = True
+    self.loaded = False
+
+  async def _astop(self):
+    await self._acallall('stop')
+    self.started = False
+    self.stopped = True
+    self.loaded = False
 
 
   @property
@@ -482,24 +486,20 @@ class _YStart(_YLoad):
   def stopped(self, value: bool): self._stopped = value
 
 
-YStepper = _YStart
+YStepper = YStart
 class mixin_Stepper(YStepper, _mixin): pass
 # endregion
 
 
-# region YMRO old: before asynchronous steps, kept to compare
+# region YMRO old: your YMRO and aYMRO_old (IoT/archive/ads/gppu-storm/gppu_users/gppu/app.py), kept to compare
 class _YMRO_old:
-  """Base mixin class implementing Y2 Method Resolution Order (YMRO) lifecycle management.
-
-  Provides stepped initialization, loading, starting, and stopping mechanisms across
-  class hierarchies by discovering and invoking methods matching convention names
-  for each lifecycle step.
-  """
   POSSIBLE_STEPS = ['init', 'load', 'start', 'stop']
 
   @property
   def _trace_mro(self) -> bool:
-    return bool(getattr(self, 'args', {}).get('trace_mro', False))
+    result = getattr(self, 'args', {}).get('trace_mro', False)
+    result = result
+    return result
 
 
   def print_ymro(self):
@@ -531,17 +531,10 @@ class _YMRO_old:
 
   def _ymro(self, method: str) -> list: return self._ymros().get(method, [])
 
-  def _callall(self, method, *a, **kw):
-    for callback in self._ymro(method): callback(*a, **kw)
+  def _callall(self, method, *a, **kw): [m(*a, **kw) for m in self._ymro(method)]
 
 
-class _YInit_old(_YMRO_old):
-  """Mixin class providing initialization lifecycle management for YMRO components.
-
-  Requires subclasses to implement an abstract `__init` method and provides
-  an idempotent `init()` method that invokes registered lifecycle callbacks
-  and tracks initialization status via the `initialized` property.
-  """
+class YInit_old(_YMRO_old):
   @abstractmethod
   def __init(self): pass
 
@@ -557,13 +550,7 @@ class _YInit_old(_YMRO_old):
   def initialized(self, value: bool): self._initialized = value
 
 
-class _YLoad_old(_YInit_old):
-  """Mixin class providing loading lifecycle management for YMRO components.
-
-  Requires subclasses to implement an abstract `__load` method and provides
-  an idempotent `load()` method that asserts initialization, invokes registered
-  lifecycle callbacks, and tracks loading status via the `loaded` property.
-  """
+class YLoad_old(YInit_old):
   @abstractmethod
   def __load(self): pass
 
@@ -580,13 +567,7 @@ class _YLoad_old(_YInit_old):
   def loaded(self, value: bool): self._loaded = value
 
 
-class _YStart_old(_YLoad_old):
-  """Mixin class providing start and stop lifecycle management for YMRO components.
-
-  Requires subclasses to implement an abstract `__start` method and provides
-  idempotent `start()` and `stop()` methods that invoke registered lifecycle
-  callbacks and track status via the `started` and `stopped` properties.
-  """
+class YStart_old(YLoad_old):
   @abstractmethod
   def __start(self): pass
 
@@ -616,6 +597,117 @@ class _YStart_old(_YLoad_old):
   @stopped.setter
   def stopped(self, value: bool): self._stopped = value
 
+
+YStepper_old = YStart_old
+class mixin_Stepper_old(YStepper_old, _mixin): pass
+
+
+class aYMRO_old:
+  """Async parallel of _YMRO_old. ``init``/``load``/``start`` are coroutines that
+  await each ancestor's ``__init``/``__load``/``__start`` step in MRO order; a
+  step may be sync or ``async def``. The async mixin also owns the loop: ``_spawn``
+  registers a background coroutine that ``start``'s TaskGroup keeps alive. The sync
+  _YMRO_old / mixin_Stepper_old are left untouched for AppDaemon/Y2."""
+  POSSIBLE_STEPS = ['init', 'load', 'start', 'stop']
+
+  def _aymros(self) -> dict:
+    result = {}
+    siblings = [c for c in reversed(type(self).__mro__) if c is not aYMRO_old and c is not object]
+    for step in self.POSSIBLE_STEPS:
+      result[step] = []
+      for sibling in siblings:
+        qname = f"{sibling.__qualname__}__{step}"
+        if qname[0] != '_': qname = '_' + qname
+        method = getattr(self, qname, None)
+        if method: result[step].append(method)
+    return result
+
+  def _aymro(self, method: str) -> list: return self._aymros().get(method, [])
+
+  async def _acallall(self, method: str, *a, **kw) -> None:
+    for m in self._aymro(method):
+      result = m(*a, **kw)
+      if asyncio.iscoroutine(result): await result
+
+  # the loop's callback mechanism mixin_Timers / mixin_Mqtt / mixin_Http build on;
+  # internal — capability mixins call it, app code does not.
+  _tg: asyncio.TaskGroup
+
+  def _spawn(self, coro) -> asyncio.Task:
+    """Schedule a background coroutine in the app's TaskGroup (opened by
+    ``start``); returns its Task. A long-lived one (the mqtt loop, a
+    ``run_every``) is what keeps the app alive. Per the asyncio docs,
+    ``create_task`` is allowed from within a running task while the group is
+    active, so a callback may spawn further work (e.g. ``run_later``)."""
+    return self._tg.create_task(coro)
+
+
+class aYInit_old(aYMRO_old):
+  async def __init(self): pass        # no-op default; a step is optional, override as needed
+
+  async def init(self):
+    if self.initialized: return
+    await self._acallall('init')
+    self.initialized = True
+
+  @property
+  def initialized(self) -> bool: return getattr(self, '_initialized', False)
+  @initialized.setter
+  def initialized(self, value: bool): self._initialized = value
+
+
+class aYLoad_old(aYInit_old):
+  async def __load(self): pass
+
+  async def load(self):
+    if self.loaded: return
+    assert self.initialized
+    await self._acallall('load')
+    self.loaded = True
+
+  @property
+  def loaded(self) -> bool: return getattr(self, '_loaded', False)
+  @loaded.setter
+  def loaded(self, value: bool): self._loaded = value
+
+
+class aYStart_old(aYLoad_old):
+  async def __start(self): pass
+
+  async def initialize(self):
+    """Entry point: run the async lifecycle. ``start`` opens the main loop, so
+    this runs until the app is stopped — ``asyncio.run(app.initialize())``."""
+    await self.init(); await self.load(); await self.start()
+
+  async def start(self):
+    """Start the main loop. Opens the TaskGroup, runs the __start steps (where
+    mixins spawn their loops/timers), then keeps the app alive on those tasks —
+    propagating the first non-cancel failure as an ExceptionGroup."""
+    if self.started: return
+    async with asyncio.TaskGroup() as tg:
+      self._tg = tg
+      await self._acallall('start')
+      self.started = True
+
+  async def stop(self):
+    if self.stopped: return
+    await self._acallall('stop')
+    self.started = False
+    self.stopped = True
+    self.loaded = False
+
+  @property
+  def started(self) -> bool: return getattr(self, '_started', False)
+  @started.setter
+  def started(self, value: bool): self._started = value
+  @property
+  def stopped(self) -> bool: return getattr(self, '_stopped', False)
+  @stopped.setter
+  def stopped(self, value: bool): self._stopped = value
+  
+
+aYStepper_old = aYStart_old
+class mixin_aStepper_old(aYStepper_old, _mixin): pass
 # endregion
 
 
