@@ -120,6 +120,7 @@ from .gppu import (
 
     # Mixins
     _mixin,
+    Logger,
     mixin_Logger,
 
     # Foundation classes
@@ -187,7 +188,7 @@ __all__ = [
 
     # Mixins
     '_mixin', 'mixin_Config',
-    'mixin_Logger',
+    'Logger', 'mixin_Logger',
 
     # Vault / Secrets
     'Vault', 'VaultProvider',

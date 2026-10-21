@@ -20,7 +20,7 @@ async def test_tui_preserves_file_and_trace_rules_without_writing_to_terminal(tm
   path = tmp_path / 'tui.log'
   Env.from_dict({'log_file': str(path), 'trace_rules': {'all': False}})
   console = io.StringIO()
-  original = core._Env._console.setStream(console)
+  original = core.Logger._console.setStream(console)
   app = TUIApp()
   try:
     async with app.run_test():
@@ -39,7 +39,7 @@ async def test_tui_preserves_file_and_trace_rules_without_writing_to_terminal(tm
     assert 'terminal restored' in console.getvalue()
     assert app._log_handler not in logging.getLogger().handlers
   finally:
-    core._Env._console.setStream(original)
+    core.Logger._console.setStream(original)
     Env.reset()
     TRACE_RULES.clear()
     TRACE_RULES.update(previous_rules)

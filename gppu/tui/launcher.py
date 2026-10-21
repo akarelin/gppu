@@ -32,7 +32,7 @@ import webbrowser
 from pathlib import Path
 
 from gppu import Env, App, mixin_Config, dict_from_yml
-from gppu.gppu import _Env, _EmptyMessageFilter, _LogColorizer
+from gppu.gppu import Logger, _EmptyMessageFilter, _LogColorizer
 from gppu.gppu import OSType
 from textual.app import App as TextualApp, ComposeResult
 from textual.binding import Binding
@@ -604,13 +604,13 @@ class TUIApp(mixin_Config, TextualApp):
 
   async def _process_messages(self, *args, **kwargs):
     # The debug panel is the console while Textual owns the terminal.
-    console_attached = _Env._console in _Env._root.handlers
-    if console_attached: _Env._root.removeHandler(_Env._console)
+    console_attached = Logger._console in Logger._root.handlers
+    if console_attached: Logger._root.removeHandler(Logger._console)
     try:
       return await super()._process_messages(*args, **kwargs)
     finally:
       logging.getLogger().removeHandler(self._log_handler)
-      if console_attached: _Env._root.addHandler(_Env._console)
+      if console_attached: Logger._root.addHandler(Logger._console)
 
   def debug(self, msg: str) -> None:
     """Append a line to the debug buffer (visible via Ctrl-O)."""

@@ -5,7 +5,7 @@ import io
 
 import pytest
 from gppu import TRACE_RULES
-from gppu import Env, mixin_Logger
+from gppu import Env, Logger, mixin_Logger
 
 
 @pytest.fixture
@@ -13,15 +13,15 @@ def output(monkeypatch, tmp_path):
     core = importlib.import_module('gppu.gppu')
     previous_rules = dict(TRACE_RULES)
     console = io.StringIO()
-    original = core._Env._console.setStream(console)
-    Env.init_logger('logging-verification', trace_rules={'all': True})
-    path = Env.enable_file_logging('verification', log_dir=tmp_path)
+    original = core.Logger._console.setStream(console)
+    Logger.init_logger('logging-verification', trace_rules={'all': True})
+    path = Logger.enable_file_logging('verification', log_dir=tmp_path)
     yield core, console, path
-    core._Env._console.setStream(original)
-    for handler in tuple(core._Env._file_handlers.values()):
-        core._Env._root.removeHandler(handler)
+    core.Logger._console.setStream(original)
+    for handler in tuple(core.Logger._file_handlers.values()):
+        core.Logger._root.removeHandler(handler)
         handler.close()
-    core._Env._file_handlers.clear()
+    core.Logger._file_handlers.clear()
     TRACE_RULES.clear()
     TRACE_RULES.update(previous_rules)
 
@@ -39,12 +39,12 @@ def test_standard_handlers_accept_gppu_multiple_arguments(output):
     core, _, _ = output
     text = io.StringIO()
     handler = logging.StreamHandler(text)
-    core._Env._logger.addHandler(handler)
+    core.Logger._logger.addHandler(handler)
     try:
         core.Info('WBLUE', 'message', 'NONE', 'value')
-        core._Env._logger.info('ordinary %s', 'message')
+        core.Logger._logger.info('ordinary %s', 'message')
     finally:
-        core._Env._logger.removeHandler(handler)
+        core.Logger._logger.removeHandler(handler)
     assert text.getvalue().splitlines() == ['message value', 'ordinary message']
 
 
@@ -54,7 +54,7 @@ def test_mixin_created_before_init_keeps_both_outputs(output):
     class Component(mixin_Logger):
         def publish(self): self.Info('mixin message')
 
-    Env.init_logger('renamed-application')
+    Logger.init_logger('renamed-application')
     Component().publish()
     assert console.getvalue().count('mixin message') == 1
     assert path.read_text().count('mixin message') == 1
@@ -92,7 +92,7 @@ def test_rich_trace_exclusions_are_preserved(output, excluded):
 
 def test_file_only_messages_do_not_write_to_console(output):
     core, console, path = output
-    Env.file_log('WBLUE', 'panel line')
+    Logger.file_log('WBLUE', 'panel line')
     assert console.getvalue() == ''
     assert path.read_text().strip() == 'panel line'
 
@@ -108,13 +108,13 @@ class TestEnvLogging:
 
 class TestInitLogger:
     def test_init_sets_name(self):
-        Env.init_logger("test_app")
+        Logger.init_logger("test_app")
         # Should not raise
 
     def test_init_with_trace_rules(self):
         rules = {"debug": True, "MyClass": False}
-        Env.init_logger("test_app", trace_rules=rules)
-        assert Env.trace_rules == rules
+        Logger.init_logger("test_app", trace_rules=rules)
+        assert Logger.trace_rules == rules
 
     def test_the_log_calls_are_not_promoted(self):
         import gppu
@@ -154,10 +154,10 @@ def configured_output():
   Env.reset()
   TRACE_RULES.clear()
   console = io.StringIO()
-  original = core._Env._console.setStream(console)
+  original = core.Logger._console.setStream(console)
   yield core, console
   Env.reset()
-  core._Env._console.setStream(original)
+  core.Logger._console.setStream(original)
   TRACE_RULES.clear()
   TRACE_RULES.update(previous_rules)
 
@@ -172,7 +172,7 @@ def test_env_defaults_to_console_without_legacy_environment_paths(configured_out
   core.Debug('hidden trace')
   assert 'console message' in console.getvalue()
   assert 'hidden trace' not in console.getvalue()
-  assert not core._Env._file_handlers
+  assert not core.Logger._file_handlers
   assert not (tmp_path / 'invented').exists()
 
 
@@ -184,7 +184,7 @@ def test_one_line_yaml_enables_console_and_file(configured_output, tmp_path):
   core.Info('both destinations')
   assert 'both destinations' in console.getvalue()
   assert path.read_text().strip() == 'both destinations'
-  assert Env.enable_file_logging(log_file=str(path)) == path
+  assert Logger.enable_file_logging(log_file=str(path)) == path
   core.Info('once')
   assert path.read_text().count('once') == 1
 
@@ -201,9 +201,9 @@ def test_one_line_trace_yaml_keeps_the_mapping(configured_output, tmp_path):
   core.Debug('included trace')
   assert 'excluded trace' not in console.getvalue()
   assert 'included trace' in console.getvalue()
-  assert Env.trace_rules == {'all': True, 'Component': False}
-  Env.init_logger(trace_rules=Env.trace_rules)
-  assert Env.trace_rules == {'all': True, 'Component': False}
+  assert Logger.trace_rules == {'all': True, 'Component': False}
+  Logger.init_logger(trace_rules=Logger.trace_rules)
+  assert Logger.trace_rules == {'all': True, 'Component': False}
 
 
 def test_reloading_env_closes_previous_file(configured_output, tmp_path):
@@ -217,7 +217,7 @@ def test_reloading_env_closes_previous_file(configured_output, tmp_path):
   core.Info('console only')
   assert first.read_text().strip() == 'first message'
   assert second.read_text().strip() == 'second message'
-  assert not core._Env._file_handlers
+  assert not core.Logger._file_handlers
 
 
 @pytest.mark.parametrize('value', [None, '', True])

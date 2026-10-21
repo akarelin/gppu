@@ -50,7 +50,7 @@ VER_GPPU_BUILD = _ver_parts[3] if len(_ver_parts) > 3 else '0'
 VER_GPPU = _ver_full
 
 
-# region Bootstrap log: the console, plain, from gppu's first line; _Env adds colours, trace rules and the file mirror
+# region Bootstrap log: the console, plain, from gppu's first line; Logger adds colours, trace rules and the file mirror
 _log_root = logging.getLogger('gppu'); _log_root.setLevel(logging.DEBUG)
 _sh = logging.StreamHandler(sys.stderr); _log_root.addHandler(_sh)
 # endregion
@@ -1288,16 +1288,17 @@ class _EmptyMessageFilter(logging.Filter):
 TRACE_RULES: dict = {}
 
 
-class _Env:
-  """The basic environment every program has, with no configuration: the operating system and host, and the log the
-  bootstrap started, now with colours, trace rules and the file mirror. Its methods are promoted to module names, so
-  code calls ``Info(...)`` and never sees this class. ``Env`` in gppu.app builds the app's level on it; a class with
-  its own log is a ``mixin_Logger``."""
-  home: Path = Path.home()
-  user: str = getpass.getuser()
-  os: OSType = detect_os()
-  platform: str = {OSType.W11: 'windows', OSType.WSL: 'wsl', OSType.LINUX: 'debian', OSType.MACOS: 'macos'}[os]   # the shared configuration's words
-  host: str = socket.gethostname().split('.')[0].lower()
+# endregion
+
+
+# region Mixins
+class _mixin: pass
+
+
+class Logger:
+  """The program's log: the console the bootstrap started, with colours and trace rules, and the file mirror. Its
+  calls reconfigure it: ``Logger.init_logger(name, trace_rules)``, ``Logger.enable_file_logging(log_file=...)``.
+  A class logs with it through ``mixin_Logger``."""
 
   trace_folder: str = '.'
   trace_rules: dict = TRACE_RULES
@@ -1315,7 +1316,7 @@ class _Env:
       trace_rules = dict(trace_rules)
       TRACE_RULES.clear()
       TRACE_RULES.update(trace_rules)
-    _Env._logger = _Env._root if name == 'gppu' else _Env._root.getChild(name)
+    Logger._logger = Logger._root if name == 'gppu' else Logger._root.getChild(name)
 
   @staticmethod
   def enable_file_logging(name: str | None = None, log_dir: str | Path | None = None,
@@ -1335,15 +1336,15 @@ class _Env:
       path = full_path(value)
     path.parent.mkdir(parents=True, exist_ok=True)
     key = str(path)
-    if key in _Env._file_handlers:
+    if key in Logger._file_handlers:
       return path
     from logging.handlers import RotatingFileHandler
     fh = RotatingFileHandler(path, maxBytes=4_000_000, backupCount=5, encoding='utf-8')
     fh.setLevel(level)
     fh.setFormatter(_PlainFormatter())
     fh.addFilter(_EmptyMessageFilter())
-    _Env._root.addHandler(fh)
-    _Env._file_handlers[key] = fh
+    Logger._root.addHandler(fh)
+    Logger._file_handlers[key] = fh
     return path
 
   @staticmethod
@@ -1354,18 +1355,18 @@ class _Env:
     mirrors panel lines into the log file without writing to stderr (which would
     corrupt the live TUI). No-op when file logging isn't enabled.
     """
-    if not _Env._file_handlers:
+    if not Logger._file_handlers:
       return
-    record = _Env._logger.makeRecord(_Env._logger.name, level, '(app)', 0,
+    record = Logger._logger.makeRecord(Logger._logger.name, level, '(app)', 0,
                                        _LogColorizer.ANSI.sub('', pcp(msg, *args)), (), None,
                                        func='file_log', extra={'gppu_args': (msg, *args)})
-    for h in _Env._file_handlers.values():
+    for h in Logger._file_handlers.values():
       if record.levelno >= h.level:
         h.handle(record)
 
   @staticmethod
   def _log(level: int, args: tuple, logger, options: dict) -> None:
-    target = _Env._logger if logger is None else logger
+    target = Logger._logger if logger is None else logger
     if not target.isEnabledFor(level): return
     frame = inspect.currentframe().f_back.f_back
     extra = dict(options.pop('extra')) if 'extra' in options else {}
@@ -1376,46 +1377,40 @@ class _Env:
     target.log(level, _LogColorizer.ANSI.sub('', pcp(*args)), extra=extra, stacklevel=stacklevel + 2, **options)
 
   @staticmethod
-  def Debug(*a, logger=None, **kw): _Env._log(logging.DEBUG, a, logger, kw)
+  def Debug(*a, logger=None, **kw): Logger._log(logging.DEBUG, a, logger, kw)
   @staticmethod
-  def Info(*a, logger=None, **kw): _Env._log(logging.INFO, a, logger, kw)
+  def Info(*a, logger=None, **kw): Logger._log(logging.INFO, a, logger, kw)
   @staticmethod
-  def Warn(*a, logger=None, **kw): _Env._log(logging.WARNING, a, logger, kw)
+  def Warn(*a, logger=None, **kw): Logger._log(logging.WARNING, a, logger, kw)
   @staticmethod
-  def Error(*a, logger=None, **kw): _Env._log(logging.ERROR, a, logger, kw)
+  def Error(*a, logger=None, **kw): Logger._log(logging.ERROR, a, logger, kw)
   @staticmethod
   @sync
   async def Dump(filename: str, data={}, **kw) -> None:
     """ Saves data object to yml file in trace folder """
     if '.' not in filename or not filename.endswith('.yml'): filename += '.yml'
-    if _Env.trace_folder:
-      filename = f"{_Env.trace_folder}/{filename}"
+    if Logger.trace_folder:
+      filename = f"{Logger.trace_folder}/{filename}"
     dict_to_yml(filename=filename, data=data)
 
 
-Debug, Info, Warn, Error, Dump = _Env.Debug, _Env.Info, _Env.Warn, _Env.Error, _Env.Dump
-# endregion
-
-
-# region Mixins
-class _mixin: pass
-
-
 class mixin_Logger(_mixin):
-  """A class with its own logger, a child of the global one: ``self.Info(...)`` names the class."""
-  _logger: logging.Logger
-  Debug: Callable[..., Any]
-  Info : Callable[..., Any]
-  Warn : Callable[..., Any]
-  Error: Callable[..., Any]
-  Dump : Callable[..., Any]
+  """A class that has it logs with ``self.Info(...)`` under its own name, a child of the program's log; Env, whose
+  ``_global_log`` is set, logs as the program."""
+  _global_log = False
 
   @classmethod
   def __init_subclass__(cls, **kw):
     super().__init_subclass__(**kw)
-    if issubclass(cls, _Env): return   # the environment logs with the global log, under the program's name
-    cls._logger = _Env._logger.getChild(cls.__name__)
-    for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'): setattr(cls, name, staticmethod(partial(getattr(_Env, name), logger=cls._logger)))
+    if cls.__dict__.get('_global_log'):
+      for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'): setattr(cls, name, Logger.__dict__[name])
+      return
+    cls._logger = Logger._logger.getChild(cls.__name__)
+    for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'): setattr(cls, name, staticmethod(partial(getattr(Logger, name), logger=cls._logger)))
+
+
+Debug, Info, Warn, Error, Dump = Logger.Debug, Logger.Info, Logger.Warn, Logger.Error, Logger.Dump
+
 
 class _Logger(mixin_Logger): pass
 # endregion
@@ -1526,8 +1521,15 @@ class _Base(_Logger, _Config): pass
 
 
 # region Env: the configuration
-class Env(_Env, _Base):
+class Env(_Base):
   """The program's environment: the special app, static and global, one per program; an app object copies it."""
+  home: Path = Path.home()
+  user: str = getpass.getuser()
+  os: OSType = detect_os()
+  platform: str = {OSType.W11: 'windows', OSType.WSL: 'wsl', OSType.LINUX: 'debian', OSType.MACOS: 'macos'}[os]   # the shared configuration's words
+  host: str = socket.gethostname().split('.')[0].lower()
+
+  _global_log = True
   data: dict[str, Any] = {}
   initialized: bool = False
 
@@ -1552,14 +1554,14 @@ class Env(_Env, _Base):
       if not isinstance(rules, dict): raise TypeError('trace_rules must be a mapping')
       TRACE_RULES.clear()
       TRACE_RULES.update(rules)
-    if 'log_file' in Env.data: Env.enable_file_logging(log_file=Env.data['log_file'])
+    if 'log_file' in Env.data: Logger.enable_file_logging(log_file=Env.data['log_file'])
 
   @staticmethod
   def reset() -> None:
-    for handler in tuple(Env._file_handlers.values()):
-      Env._root.removeHandler(handler)
+    for handler in tuple(Logger._file_handlers.values()):
+      Logger._root.removeHandler(handler)
       handler.close()
-    Env._file_handlers.clear()
+    Logger._file_handlers.clear()
     Env.data = {}
     Env.initialized = False
 
@@ -1610,7 +1612,7 @@ class Env(_Env, _Base):
     Env.app_path = Env._resolve_app_path(app_path)
     Env.config_file = Env._config_file()
 
-    Env.init_logger(Env.name)
+    Logger.init_logger(Env.name)
 
     config_data = dict_from_yml(Env.config_file) if Env.config_file else {}
     Env.from_dict(config_data)   # resolves a `topology:` key if the config has one
