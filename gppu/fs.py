@@ -8179,6 +8179,8 @@ def _json(value: Any) -> Any:
             'removed': value.removed, 'content': content}
   if isinstance(value, TimeSpan):
     return {'start': _json(value.start), 'end': _json(value.end)}
+  if isinstance(value, handlers.Record):
+    return vars(value)
   if isinstance(value, datetime):
     return (value.astimezone() if value.tzinfo is not None else value).isoformat()
   if isinstance(value, date):

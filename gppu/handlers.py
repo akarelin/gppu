@@ -5,14 +5,13 @@ whose type is not known in advance, gives what info gives of it, its record from
 type and subtype say which handler reads it:
 
     record = probe('D:/Dev/gppu/README.md')                  # await probe(...) in an event loop
-    handler = HANDLERS[record['type'], record['subtype']]    # MarkdownHandler
+    handler = HANDLERS[record.type, record.subtype]          # MarkdownHandler
     record = handler.parse('D:/Dev/gppu/README.md')          # await handler.parse(...) in an event loop
 
-Nothing is read in probing: the stat is the one info or a folder's listing has already taken, and a file's handler
-is its suffix's in SUFFIXES. A link, a junction, an ignored path and an offline file are what probe gives; no handler
-reads them. A handler is a class of class methods, and `parse(path)` reads the path into a record, what Linked Data
-holds of the thing: its type, subtype, name, span, data and, in meta, the path it was read from; each handler says
-what it returns. A subtype is a subclass of its type, and its parse adds to its type's. probe and parse are
+Probing starts from the path's stat, and nothing is read: a file's handler is its suffix's in SUFFIXES. A link, a junction, an ignored path and an offline file are what probe gives; no handler
+reads them. A handler is a class of class methods, and `parse(path)` reads the path into a Record, what Linked Data
+holds of the thing: its type, subtype, name, created, updated, span, data, meta, and the records it holds;
+each handler says what it returns. A subtype is a subclass of its type, and its parse adds to its type's. probe and parse are
 asynchronous, awaited inside an event loop and returned directly outside one. A program adds a handler by
 subclassing and adding its suffix:
 
@@ -36,14 +35,14 @@ import stat as stat_module
 from collections.abc import Iterator, Mapping
 from contextlib import closing
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Literal
+from typing import Any, BinaryIO, Literal
 from uuid import UUID, uuid5
 
 import yaml
 
-from .gppu import MY_TZ, Path, sync
+from .gppu import Path, TimeSpan, sync
 
 # Times tools write in place of a time: Windows FILETIME zero, Unix epoch zero, DOS zero, and the constant
 # Android build tools stamp on every APK member. Anything at or before DOS zero is not a time either.
@@ -56,6 +55,7 @@ PLACEHOLDER_TIMES = (
 FUTURE_TOLERANCE = timedelta(days=1)
 # The record-level time keys of the harnesses and exporters; a Gemini CLI chat's startTime and lastUpdated among them.
 TIME_KEYS = ("timestamp", "ts", "started_at", "session_start", "time", "created_at", "startTime", "lastUpdated")
+LOG_BLOCK = 65536   # how much of a log's tail is read at a time
 LOG_TIMESTAMP = re.compile(
     r"^\s*[\[(]?(?P<timestamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)"
 )
@@ -153,6 +153,28 @@ SESSION_UID = re.compile(
 )
 
 
+@dataclass
+class Record:
+    """A record as Linked Data holds it: gppu.ld's _Record without what Postgres fills, its id, created, updated and the
+    code of its type, kept to that one shape on purpose; handlers import neither Postgres nor gppu.ld. A file's
+    `created` and `updated` are its own, as stat gives them. `type` is the
+    handler's type and `subtype` its own; `uid` is a session's own id in its harness, as Linked Data's sessions hold it;
+    `ts` is when a message happened and `span` when a thing went on; `contents` are the records it holds, a folder's
+    and a session's, which Linked Data gives a parent_id instead."""
+
+    type: str | None = None
+    subtype: str | None = None
+    name: str | None = None
+    created: datetime | None = None
+    updated: datetime | None = None
+    uid: str | None = None
+    ts: datetime | None = None
+    span: TimeSpan | None = None
+    data: dict[str, Any] = field(default_factory=dict)
+    meta: dict[str, Any] = field(default_factory=dict)
+    contents: list[Record] = field(default_factory=list)
+
+
 class Handler:
     """The base of every handler: a handler reads a file or a folder, and its parse is what it reads.
 
@@ -178,15 +200,14 @@ class Handler:
 
     @classmethod
     @sync
-    async def parse(cls, path: str | Path) -> dict[str, Any]:
+    async def parse(cls, path: str | Path) -> Record:
         """The record of the path: what probe gives, with the handler's type and subtype, and what the handler
         reads. A handler's parse adds to its type's; Handler makes every handler's parse gppu's sync, awaited inside
         an event loop and returned directly outside one.
 
-        Returns: type, subtype, name the path's name, span None, data.size and data.modified as stat gives them,
-        meta.source the path."""
+        Returns: type, subtype, name the path's name, created and updated as stat gives them, meta.size its size."""
         record = await probe(path)
-        record["type"], record["subtype"] = cls.type, cls.subtype
+        record.type, record.subtype = cls.type, cls.subtype
         return record
 
     @staticmethod
@@ -201,46 +222,62 @@ class Handler:
         now = datetime.now(timezone.utc) if value.tzinfo is not None else datetime.now()
         return None if value > now + FUTURE_TOLERANCE else value
 
-    @staticmethod
-    def local(value: datetime) -> datetime:
-        """A time without an offset is in gppu's MY_TZ."""
-        return value if value.tzinfo is not None else value.replace(tzinfo=MY_TZ)
+    @classmethod
+    def time(cls, value: Any) -> datetime | None:
+        """A recorded time from what a file writes: a datetime, a date, which starts at midnight, an ISO string, or Unix
+        seconds above 1,000,000,000 or milliseconds above 10,000,000,000. A time without an offset is local. None for
+        anything else, and for what valid_time refuses."""
+        if isinstance(value, str):
+            value = value.strip()
+            try:
+                value = float(value) if value[:1].isdigit() and value.replace(".", "", 1).isdigit() else value
+            except ValueError:
+                pass
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if value <= 1_000_000_000:
+                return None
+            try:
+                value = datetime.fromtimestamp(value / 1000 if value > 10_000_000_000 else value)
+            except (OSError, OverflowError, ValueError):
+                return None
+        elif isinstance(value, str):
+            try:
+                value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        elif isinstance(value, date) and not isinstance(value, datetime):
+            value = datetime(value.year, value.month, value.day)
+        elif not isinstance(value, datetime):
+            return None
+        return cls.valid_time(value.astimezone())
 
     @staticmethod
-    def spanning(times: list[datetime] | tuple[datetime, ...]) -> dict[str, datetime] | None:
+    def spanning(times: list[datetime] | tuple[datetime, ...]) -> TimeSpan | None:
         """The span from the earliest to the latest of times, or None when there are none."""
-        return {"start": min(times), "end": max(times)} if times else None
+        return TimeSpan(min(times), max(times)) if times else None
 
 
 class FolderHandler(Handler):
-    """A folder: a loop over its members. Each member is probed with the stat the folder's listing gives it, and one
-    a handler reads is parsed by it, so a member folder loops over its own; an ignored member, a link, a junction or
-    an offline file is what probe gives. A subfolder's modified time is when something was added to it, so the span
-    is its files' alone.
+    """A folder: a loop over what it holds. Each is probed, and one a handler reads is parsed by it, so a folder in it
+    loops over its own; an ignored one, a link, a junction or an offline file is what probe gives. A subfolder's
+    modified time is when something was added to it, so the span is its files' alone.
 
     Returns: Handler's record, with data.files, data.folders and data.bytes, what the folder directly holds; span from
-    its files' earliest modified time to their latest; members, each member's record.
+    its files' earliest updated time to their latest; contents, the record of each thing it holds.
     """
 
     @classmethod
-    async def parse(cls, path: str | Path) -> dict[str, Any]:
+    async def parse(cls, path: str | Path) -> Record:
         record = await super().parse(path)
-        members, files, folders = [], [], 0
         path = Path(path).absolute()
-        with os.scandir(path) as entries:
-            listing = [(path / entry.name, entry.stat(follow_symlinks=False)) for entry in entries]
-        for member, stat in listing:
-            found = await probe(member, stat)
-            handler = HANDLERS.get((found["type"], found["subtype"]))
-            members.append(found if handler is None else await handler.parse(member))
-            if stat_module.S_ISDIR(stat.st_mode):
-                folders += 1
-            else:
-                files.append(stat)
-        record["data"].update(files=len(files), folders=folders, bytes=sum(stat.st_size for stat in files))
-        record["span"] = cls.spanning([time for stat in files
-                                       if (time := cls.valid_time(datetime.fromtimestamp(stat.st_mtime, timezone.utc)))])
-        record["members"] = members
+        for member in sorted(path.iterdir()):
+            found = await probe(member)
+            handler = HANDLERS.get((found.type, found.subtype))
+            record.contents.append(found if handler is None else await handler.parse(member))
+        files = [member for member in record.contents if "folder" not in (member.type, member.subtype)]
+        record.data.update(files=len(files), folders=len(record.contents) - len(files),
+                           bytes=sum(member.meta["size"] for member in files))
+        record.span = cls.spanning([time for member in files if (time := cls.valid_time(member.updated))])
         return record
 
 
@@ -262,12 +299,12 @@ class SqliteHandler(FileHandler):
     """
 
     @classmethod
-    async def parse(cls, path: str | Path) -> dict[str, Any]:
+    async def parse(cls, path: str | Path) -> Record:
         record = await super().parse(path)
         with closing(sqlite3.connect(Path(path).absolute().as_uri() + "?mode=ro&immutable=1", uri=True)) as database:
             names = [name for (name,) in database.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
-            record["data"]["tables"] = {name: [row[1] for row in database.execute(f'PRAGMA table_info("{name}")')]
+            record.data["tables"] = {name: [row[1] for row in database.execute(f'PRAGMA table_info("{name}")')]
                                         for name in names}
         return record
 
@@ -279,7 +316,7 @@ class MarkdownHandler(FileHandler):
     document or a mapping, and its timestamps stay as written. The body is not read. The record's name is the
     frontmatter's name, then its title, then the file's stem; data.title is its title, then its name, then the
     stem. data.tags is a list or one value. The span is created to updated, both required; a date starts at
-    midnight, a time without an offset is in MY_TZ.
+    midnight, a time without an offset is local.
 
     Returns: Handler's record, with name; data.title, data.tags, a list of strings, and data.frontmatter, the whole
     mapping, {} when there is none; span from created to updated, or None.
@@ -294,19 +331,19 @@ class MarkdownHandler(FileHandler):
     }
 
     @classmethod
-    async def parse(cls, path: str | Path) -> dict[str, Any]:
+    async def parse(cls, path: str | Path) -> Record:
         record = await super().parse(path)
         path = Path(path).absolute()
         frontmatter = cls._frontmatter(path)
         name, title = frontmatter.get("name", frontmatter.get("title")), frontmatter.get("title", frontmatter.get("name"))
         tags = frontmatter.get("tags")
         tags = [] if tags is None else tags if isinstance(tags, list) else [tags]
-        record["name"] = path.stem if name is None else str(name)
-        record["data"].update(title=path.stem if title is None else str(title),
+        record.name = path.stem if name is None else str(name)
+        record.data.update(title=path.stem if title is None else str(title),
                               tags=[str(tag) for tag in tags if tag is not None], frontmatter=frontmatter)
-        created, updated = cls._time(frontmatter.get("created")), cls._time(frontmatter.get("updated"))
+        created, updated = cls.time(frontmatter.get("created")), cls.time(frontmatter.get("updated"))
         if created is not None and updated is not None:
-            record["span"] = cls.spanning([created, updated])
+            record.span = cls.spanning([created, updated])
         return record
 
     @classmethod
@@ -328,18 +365,6 @@ class MarkdownHandler(FileHandler):
             raise ValueError(f"{path}: YAML frontmatter must be a mapping")
         return frontmatter
 
-    @classmethod
-    def _time(cls, value: Any) -> datetime | None:
-        if isinstance(value, datetime):
-            return cls.local(value)
-        if isinstance(value, date):
-            return cls.local(datetime(value.year, value.month, value.day))
-        if isinstance(value, str):
-            try:
-                return cls.local(datetime.fromisoformat(value.strip()))
-            except ValueError:
-                return None
-        return None
 
 
 class CSVHandler(FileHandler):
@@ -348,7 +373,7 @@ class CSVHandler(FileHandler):
     The table is read strictly in the excel dialect. A time column is one whose header, stripped and in any
     case, is one of time_keys; its values are ISO dates or times, Unix seconds above 1,000,000,000 or
     milliseconds above 10,000,000,000, or one of a subclass's time_formats for strptime. A time without an
-    offset is in MY_TZ; placeholders and future times do not count.
+    offset is local; placeholders and future times do not count.
 
     Returns: Handler's record, with data.header, the first row's names, and data.rows, how many rows follow it; span
     from the earliest time in the time columns to the latest, or None.
@@ -358,77 +383,82 @@ class CSVHandler(FileHandler):
     time_formats: tuple[str, ...] = ()
 
     @classmethod
-    async def parse(cls, path: str | Path) -> dict[str, Any]:
+    async def parse(cls, path: str | Path) -> Record:
         record = await super().parse(path)
         with Path(path).absolute().open(encoding="utf-8-sig", newline="") as stream:
             rows = [tuple(row) for row in csv.reader(stream, strict=True)]
         header, rows = (rows[0], rows[1:]) if rows else ((), [])
         keys = {key.casefold() for key in cls.time_keys}
         columns = [index for index, name in enumerate(header) if name.strip().casefold() in keys]
-        record["data"].update(header=list(header), rows=len(rows))
-        record["span"] = cls.spanning([time for row in rows for index in columns
+        record.data.update(header=list(header), rows=len(rows))
+        record.span = cls.spanning([time for row in rows for index in columns
                                        if index < len(row) and (time := cls._time(row[index])) is not None])
         return record
 
     @classmethod
     def _time(cls, value: str) -> datetime | None:
-        value = value.strip()
-        if not value:
-            return None
-        try:
-            number = float(value)
-        except ValueError:
-            number = 0
-        if number > 1_000_000_000:
-            try:
-                return cls.valid_time(datetime.fromtimestamp(number / 1000 if number > 10_000_000_000 else number, timezone.utc))
-            except (OSError, OverflowError, ValueError):
-                return None
-        try:
-            return cls.valid_time(cls.local(datetime.fromisoformat(value.replace("Z", "+00:00"))))
-        except ValueError:
-            pass
+        """Handler.time, else one of time_formats."""
+        if (time := cls.time(value)) is not None:
+            return time
         for time_format in cls.time_formats:
             try:
-                return cls.valid_time(cls.local(datetime.strptime(value, time_format)))
+                return cls.valid_time(datetime.strptime(value.strip(), time_format).astimezone())
             except ValueError:
                 continue
         return None
 
 
 class LogHandler(FileHandler):
-    """A .log file: how many rows it has, and the span of the times that begin them.
+    """A .log file: when it starts and when it ends, from the times that begin its lines.
 
-    A row's time comes after optional whitespace and one optional [ or (, as YYYY-MM-DD, T or a space,
-    HH:MM:SS, an optional fraction after a dot or a comma, and an optional Z or offset. A time without an
-    offset is in MY_TZ; placeholders and future times do not count.
+    A line's time comes after optional whitespace and one optional [ or (, as YYYY-MM-DD, T or a space, HH:MM:SS, an
+    optional fraction after a dot or a comma, and an optional Z or offset. A time without an offset is local;
+    placeholders and future times do not count. A log is written in order, so its start is the first line from its
+    head that has a time and its end the first from its tail: it is read from both ends until each is found, LOG_BLOCK
+    bytes at a time, and never whole unless no line has a time.
 
-    Returns: Handler's record, with data.rows, how many lines it has; span from the earliest time that begins a line
-    to the latest, or None.
+    Returns: Handler's record, with span from the time of the first line that has one to the time of the last, or None.
     """
 
     @classmethod
-    async def parse(cls, path: str | Path) -> dict[str, Any]:
+    async def parse(cls, path: str | Path) -> Record:
         record = await super().parse(path)
-        rows = Path(path).absolute().read_text(encoding="utf-8-sig").splitlines()
-        record["data"]["rows"] = len(rows)
-        record["span"] = cls.spanning([time for row in rows if (time := cls._time(row)) is not None])
+        with Path(path).absolute().open("rb") as stream:
+            start = next((time for line in cls._head(stream) if (time := cls._line_time(line)) is not None), None)
+            end = next((time for line in cls._tail(stream) if (time := cls._line_time(line)) is not None), None)
+        if start is not None and end is not None:
+            record.span = TimeSpan(start, max(start, end))
         return record
 
+    @staticmethod
+    def _head(stream: BinaryIO) -> Iterator[bytes]:
+        """The lines from the start of the file."""
+        stream.seek(0)
+        yield from stream
+
+    @staticmethod
+    def _tail(stream: BinaryIO) -> Iterator[bytes]:
+        """The lines from the end of the file, last first, read LOG_BLOCK bytes at a time."""
+        position, rest = stream.seek(0, os.SEEK_END), b""
+        while position > 0:
+            size = min(LOG_BLOCK, position)
+            position -= size
+            stream.seek(position)
+            lines = (stream.read(size) + rest).split(b"\n")
+            rest = lines.pop(0)
+            yield from reversed(lines)
+        yield rest
+
     @classmethod
-    def _time(cls, row: str) -> datetime | None:
-        if (match := LOG_TIMESTAMP.match(row)) is None:
-            return None
-        try:
-            return cls.valid_time(cls.local(datetime.fromisoformat(match.group("timestamp"))))
-        except ValueError:
-            return None
+    def _line_time(cls, line: bytes) -> datetime | None:
+        match = LOG_TIMESTAMP.match(line.decode("utf-8-sig", errors="replace"))
+        return None if match is None else cls.time(match.group("timestamp").replace(",", "."))
 
 
 class EmailHandler(FileHandler):
     """A .msg or .eml file and what its name says: YYMMDD.HHMMSS - subject - party[ - collision].
 
-    The message itself is not read. The time is in MY_TZ; splitting from the right lets the subject hold
+    The message itself is not read. The time is local; splitting from the right lets the subject hold
     the separator. A name outside the convention says nothing, and the record has no timestamp, subject,
     party or collision.
 
@@ -437,7 +467,7 @@ class EmailHandler(FileHandler):
     """
 
     @classmethod
-    async def parse(cls, path: str | Path) -> dict[str, Any]:
+    async def parse(cls, path: str | Path) -> Record:
         record = await super().parse(path)
         stamp, separator, rest = Path(path).absolute().stem.partition(" - ")
         content, separator2, party = rest.rpartition(" - ")
@@ -452,13 +482,13 @@ class EmailHandler(FileHandler):
         if not content.strip() or not party.strip():
             return record
         try:
-            timestamp = cls.valid_time(datetime.strptime(stamp, "%y%m%d.%H%M%S").replace(tzinfo=MY_TZ))
+            timestamp = cls.valid_time(datetime.strptime(stamp, "%y%m%d.%H%M%S").astimezone())
         except ValueError:
             return record
         named = {"timestamp": timestamp, "subject": content.strip(), "party": party.strip(), "collision": collision}
-        record["data"].update({key: value for key, value in named.items() if value is not None})
+        record.data.update({key: value for key, value in named.items() if value is not None})
         if timestamp is not None:
-            record["span"] = cls.spanning([timestamp])
+            record.span = cls.spanning([timestamp])
         return record
 
 
@@ -488,8 +518,8 @@ class SessionHandler(FileHandler):
     * Hermes: role session_meta with a string session_id.
 
     Its record is a session, its subtype the harness; a .jsonl whose messages name no harness raises. Its messages
-    are every message of the file, in order, as session messages; a blank, truncated or non-object line of the file
-    is skipped. A session message's subtype is user, agent, thinking, tool_use or tool_result as Linked Data reads
+    are every message of the file, in order, as session messages in its contents; a blank, truncated or non-object line
+    of the file is skipped. A session message's subtype is user, agent, thinking, tool_use or tool_result as Linked Data reads
     the messages of cc and cx (parse_messages), else the type its harness gives it. For cc and cx the record has the
     uid, the name, the span from the first session message of Linked Data's subtypes to the last, data.title, topic,
     cwd and models, and meta.parent_uid, as Linked Data reads them. For the other harnesses it has the uid its
@@ -499,7 +529,7 @@ class SessionHandler(FileHandler):
 
     Returns: Handler's record, with subtype the harness; uid; name; span; data.subagent, data.sidechain_only,
     data.turns, data.normalized_name and data.models, and for cc and cx data.title, data.topic and data.cwd where the
-    session gives them; meta.parent_uid where it names one; messages, every message as a session message record:
+    session gives them; meta.parent_uid where it names one; contents, every message as a session message record:
     type session_message, subtype, ts, name, data the message as the harness wrote it, meta.uid and meta.line.
     """
 
@@ -519,7 +549,7 @@ class SessionHandler(FileHandler):
              "hermes": "_hermes_turns"}
 
     @classmethod
-    async def parse(cls, path: str | Path) -> dict[str, Any]:
+    async def parse(cls, path: str | Path) -> Record:
         record = await super().parse(path)
         path = Path(path).absolute()
         messages = cls._messages(path)
@@ -537,27 +567,27 @@ class SessionHandler(FileHandler):
         mainline = any(message.get("isSidechain") is False for message in messages)
         sidechain = any(message.get("isSidechain") is True for message in messages)
         span = cls.spanning(times)
-        record["subtype"], record["uid"], record["name"], record["span"] = harness, uid, cls._topic(turns) or uid, span
-        record["data"].update(subagent=subagent, sidechain_only=sidechain and not mainline, turns=len(turns),
+        record.subtype, record.uid, record.name, record.span = harness, uid, cls._topic(turns) or uid, span
+        record.data.update(subagent=subagent, sidechain_only=sidechain and not mainline, turns=len(turns),
                               normalized_name=cls.normalized_name(path, uid, turns, span))
         if parent_uid:
-            record["meta"]["parent_uid"] = parent_uid
+            record.meta["parent_uid"] = parent_uid
         if harness in ("cc", "cx"):
             session, session_messages = cls.parse_messages(harness, messages)
             data = {"title": session["title"], "topic": session["topic"], "cwd": session["cwd"],
                     "models": sorted(session["models"]) or None}
-            record["uid"] = session["uid"]
-            record["name"] = (cls.first_line(session["title"] or "") or cls.first_line(session["name"] or "")
+            record.uid = session["uid"]
+            record.name = (cls.first_line(session["title"] or "") or cls.first_line(session["name"] or "")
                               or session["uid"])
-            record["span"] = cls.spanning(session["times"])
-            record["data"].update({key: value for key, value in data.items() if value is not None})
-            record["meta"].pop("parent_uid", None)
+            record.span = cls.spanning(session["times"])
+            record.data.update({key: value for key, value in data.items() if value is not None})
+            record.meta.pop("parent_uid", None)
             if session["parent_uid"]:
-                record["meta"]["parent_uid"] = session["parent_uid"]
+                record.meta["parent_uid"] = session["parent_uid"]
         else:
-            record["data"]["models"] = list(cls._models(messages))
+            record.data["models"] = list(cls._models(messages))
             session_messages = [cls._session_message(None, message, n, cls._own_type(message), "") for n, message in enumerate(messages, 1)]
-        record["messages"] = session_messages
+        record.contents = session_messages
         return record
 
     @classmethod
@@ -569,15 +599,15 @@ class SessionHandler(FileHandler):
 
     @classmethod
     def normalized_name(cls, path: Path, uid: str | None, turns: tuple[SessionTurn, ...],
-                        span: dict[str, datetime] | None) -> str:
+                        span: TimeSpan | None) -> str:
         """The file's name from its start, turn count, duration and topic, its uid and its suffix, within
         NAME_LIMIT: 261020-1412 42~3h - the topic.<uid>.jsonl."""
         length = ""
-        if span is not None and (seconds := round((span["end"] - span["start"]).total_seconds())):
+        if span is not None and (seconds := round((span.end - span.start).total_seconds())):
             unit, size = next(pair for pair in UNITS if seconds >= pair[1])
             length = f"~{round(seconds / size)}{unit}"
         topic = cls._topic(turns)
-        label = (f"{span['start'].astimezone():%y%m%d-%H%M} " if span else "") + f"{len(turns)}{length}" + (f" - {topic}" if topic else "")
+        label = (f"{span.start.astimezone():%y%m%d-%H%M} " if span else "") + f"{len(turns)}{length}" + (f" - {topic}" if topic else "")
         tail = (f".{uid}" if uid else "") + path.suffix
         if len(label) + len(tail) > NAME_LIMIT:
             label = label[: NAME_LIMIT - len(tail)].rstrip()
@@ -585,7 +615,7 @@ class SessionHandler(FileHandler):
 
     @classmethod
     def parse_messages(cls, harness: str, messages: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...],
-                       offset: int = 0, uid: str | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+                       offset: int = 0, uid: str | None = None) -> tuple[dict[str, Any], list[Record]]:
         """The session and its session messages from the messages a harness wrote: the whole file, or the messages
         after the offset ones read before, each numbered by its place in the file, counted from 1. Every message is a
         session message: user, agent, thinking, tool_use or tool_result as Linked Data reads them, else the type its
@@ -599,7 +629,7 @@ class SessionHandler(FileHandler):
             session, session_messages = cls._codex_messages(messages, offset, uid)
         else:
             raise NotImplementedError(f"the messages of cc and cx are read into session messages, not those of {harness}")
-        times = [message["ts"] for message in session_messages if message["subtype"] in MESSAGE_SUBTYPES] or [
+        times = [message.ts for message in session_messages if message.subtype in MESSAGE_SUBTYPES] or [
             datetime.fromisoformat(message["timestamp"]) for message in messages if message.get("timestamp")]
         session["times"] = [min(times), max(times)] if times else []
         return session, session_messages
@@ -647,15 +677,15 @@ class SessionHandler(FileHandler):
 
     @classmethod
     def _session_message(cls, uid: str | None, message: Mapping[str, Any], n: int, subtype: str | None,
-                         text: str) -> dict[str, Any]:
+                         text: str) -> Record:
         """A session message as Linked Data holds it: its subtype, its time, its name the first line of its text, the
         message as its data, and in meta its id in its harness and its place in the file."""
-        return {"type": "session_message", "subtype": subtype,
-                "ts": datetime.fromisoformat(message["timestamp"]) if message.get("timestamp") else None,
-                "name": cls.first_line(text) or subtype, "data": message, "meta": {"uid": uid, "line": n}}
+        return Record(type="session_message", subtype=subtype,
+                      ts=datetime.fromisoformat(message["timestamp"]) if message.get("timestamp") else None,
+                      name=cls.first_line(text) or subtype, data=dict(message), meta={"uid": uid, "line": n})
 
     @classmethod
-    def _claude_messages(cls, messages, offset: int, uid: str | None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    def _claude_messages(cls, messages, offset: int, uid: str | None) -> tuple[dict[str, Any], list[Record]]:
         """A user or an assistant message has a subtype, its id its uuid. A subagent run's messages name the run,
         agentId, and the session that spawned it, sessionId. A message marked isMeta is not a prompt. An ai-title,
         agent-name or custom-title message names the session."""
@@ -689,7 +719,7 @@ class SessionHandler(FileHandler):
         return session, session_messages
 
     @classmethod
-    def _codex_messages(cls, messages, offset: int, uid: str | None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    def _codex_messages(cls, messages, offset: int, uid: str | None) -> tuple[dict[str, Any], list[Record]]:
         """The first session_meta message names the session, its folder and the session that spawned it. A
         response_item of a message, a tool call or a tool's output has a subtype. Codex gives a message no id, so its
         id is made from the session's uid and its place. The AGENTS.md Codex reads into a session is not a prompt."""
@@ -1188,29 +1218,16 @@ class SessionHandler(FileHandler):
 
     @staticmethod
     def _stamp(value: Any) -> datetime | None:
-        """Parse an ISO string or second/millisecond Unix timestamp."""
-
+        """A harness's time, as Handler.time reads it, but for an ISO string without an offset, which a harness writes
+        in UTC."""
         if isinstance(value, str):
             try:
                 parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
             except ValueError:
                 return None
-            return (
-                parsed
-                if parsed.tzinfo is not None
-                else parsed.replace(tzinfo=timezone.utc)
-            )
-        if (
-            isinstance(value, (int, float))
-            and not isinstance(value, bool)
-            and value > 1_000_000_000
-        ):
-            seconds = value / 1000 if value > 10_000_000_000 else value
-            try:
-                return datetime.fromtimestamp(seconds, timezone.utc)
-            except (OSError, OverflowError, ValueError):
-                return None
-        return None
+            if parsed.tzinfo is None:
+                return Handler.valid_time(parsed.replace(tzinfo=timezone.utc).astimezone())
+        return Handler.time(value)
 
     @classmethod
     def _timestamps(cls, messages: tuple[Mapping[str, Any], ...]) -> Iterator[datetime]:
@@ -1404,27 +1421,28 @@ class SessionFolderHandler(FolderHandler):
     """
 
     @classmethod
-    async def parse(cls, path: str | Path) -> dict[str, Any]:
+    async def parse(cls, path: str | Path) -> Record:
         record = await super().parse(path)
         path = Path(path).absolute()
         sessions = list(cls._sessions(record))
-        harnesses = SessionHandler._uniq([session["subtype"] for session in sessions] + [SessionHandler._home_harness(path)])
+        harnesses = SessionHandler._uniq([session.subtype for session in sessions] + [SessionHandler._home_harness(path)])
         if len(harnesses) != 1:
             raise ValueError(f"{path}: a session folder holds one harness, not {harnesses}")
-        uids = {session["uid"] for session in sessions if session["uid"]}
-        record["data"].update(harness=harnesses[0], sessions=len(sessions))
+        uids = {session.uid for session in sessions if session.uid}
+        record.data.update(harness=harnesses[0], sessions=len(sessions))
         if len(uids) == 1:
-            record["data"]["uid"] = uids.pop()
-        record["span"] = cls.spanning([time for session in sessions if session["span"] for time in session["span"].values()])
+            record.data["uid"] = uids.pop()
+        record.span = cls.spanning([time for session in sessions if session.span for time in (session.span.start, session.span.end)])
         return record
 
     @classmethod
-    def _sessions(cls, record: dict[str, Any]) -> Iterator[dict[str, Any]]:
-        """The session records among a folder's members, at any depth."""
-        for member in record.get("members", ()):
-            if member["type"] == "session":
+    def _sessions(cls, record: Record) -> Iterator[Record]:
+        """The session records among what a folder holds, at any depth; a session's own contents are its messages."""
+        for member in record.contents:
+            if member.type == "session":
                 yield member
-            yield from cls._sessions(member)
+            elif member.type == "folder":
+                yield from cls._sessions(member)
 
 
 # A file's handler by its suffix; a program adds a handler by adding its suffix.
@@ -1439,66 +1457,52 @@ HANDLERS: dict[tuple[str, str | None], type[Handler]] = {
 }
 
 
-def ignored(path: Path, stat: os.stat_result) -> str | None:
-    """The ignore rule that names a file or a folder, or None: its name, its suffix or its prefix, a folder's name, or a
-    Windows folder's system attribute. The rules are FileIndexer's global ones; a folder is not ignored for starting
-    with a dot or for being hidden. A filesystem root, which has no name, is never ignored."""
-    name, folder = path.name, stat_module.S_ISDIR(stat.st_mode)
-    if not name:
-        return None
-    if name in IGNORED_NAMES:
-        return f"name:{name}"
-    if path.suffix in IGNORED_SUFFIXES:
-        return f"name:*{path.suffix}"
-    if name.startswith(IGNORED_PREFIX):
-        return f"name:{IGNORED_PREFIX}*"
-    if folder and name in IGNORED_FOLDERS:
-        return f"folder:{name}"
-    if folder and getattr(stat, "st_file_attributes", 0) & WINDOWS_SYSTEM:
-        return "folder:FILE_ATTRIBUTE_SYSTEM"
-    return None
-
-
 @sync
-async def probe(path: str | Path, stat: os.stat_result | None = None) -> dict[str, Any]:
-    """What info gives of a path, a file's or a folder's, from its stat and its name, nothing read: its record, the
+async def probe(path: str | Path) -> Record:
+    """What info gives of a path, a file's or a folder's: its record from its stat and its name, nothing read, its
     type and subtype telling which handler reads it.
 
-    The stat says a link, a junction, an offline file, and a folder or a file; the name says what is ignored, a
-    harness's session folder, and a file's handler by its suffix. A .jsonl with nothing in it yet, one a harness has
-    only just made, is a file. A folder's listing gives each member's stat, as info gives its own; a path probed alone
-    is stat'ed once. The path is taken as given, a link as the link. Awaited inside an event loop, returned directly
-    outside one.
+    The stat says a link, a junction, an offline file, and a folder or a file. The name says what is ignored, by
+    FileIndexer's global rules: a name, a suffix or a prefix, a folder's name, or a Windows folder's system attribute;
+    a folder is not ignored for starting with a dot or for being hidden, and a filesystem root, which has no name,
+    never is. It says a harness's session folder, and a file's handler by its suffix; a .jsonl with nothing in it yet,
+    one a harness has only just made, is a file. The path is taken as given, a link as the link. Awaited inside an
+    event loop, returned directly outside one.
 
-    Returns: type and subtype: symlink or junction, with data.target, the path it points to; ignored, with
-    data.reason, the rule; file and offline, a file whose bytes are not on this host; else a handler's, folder, its
-    session folder, file or a file's by its suffix. name the path's name, span None, data.size and data.modified as
-    stat gives them, meta.source the path."""
+    Returns: type and subtype: symlink or junction, with data.target, the path it points to; ignored, folder or
+    file, with data.reason, the rule; file and offline, a file whose bytes are not on this host; else a handler's,
+    folder, its session folder, file or a file's by its suffix. name the path's name; created and updated as stat
+    gives them; meta.size its size as stat gives it."""
     path = Path(path).absolute()
-    if stat is None:
-        stat = path.stat(follow_symlinks=False)
-    record = {"type": None, "subtype": None, "name": path.name or str(path), "span": None,
-              "data": {"size": stat.st_size, "modified": datetime.fromtimestamp(stat.st_mtime, timezone.utc)},
-              "meta": {"source": str(path)}}
-    folder = stat_module.S_ISDIR(stat.st_mode)
+    stat = path.stat(follow_symlinks=False)
+    name, folder = path.name, stat_module.S_ISDIR(stat.st_mode)
+    attributes = getattr(stat, "st_file_attributes", 0)
+    record = Record(name=name or str(path), meta={"size": stat.st_size},
+                    created=datetime.fromtimestamp(getattr(stat, "st_birthtime", stat.st_ctime)).astimezone(),
+                    updated=datetime.fromtimestamp(stat.st_mtime).astimezone())
     if stat_module.S_ISLNK(stat.st_mode):
-        record["type"], record["data"]["target"] = "symlink", os.readlink(path)
+        record.type, record.data["target"] = "symlink", os.readlink(path)
     elif getattr(stat, "st_reparse_tag", 0) == getattr(stat_module, "IO_REPARSE_TAG_MOUNT_POINT", None):
-        record["type"], record["data"]["target"] = "junction", os.readlink(path)
+        record.type, record.data["target"] = "junction", os.readlink(path)
     elif not folder and not stat_module.S_ISREG(stat.st_mode):
         raise ValueError(f"{path}: neither a folder nor a file")
-    elif getattr(stat, "st_file_attributes", 0) & OFFLINE:
-        record["type"], record["subtype"] = "file", "offline"
-    elif reason := ignored(path, stat):
-        record["type"], record["data"]["reason"] = "ignored", reason
+    elif attributes & OFFLINE:
+        record.type, record.subtype = "file", "offline"
+    elif name and (reason := (f"name:{name}" if name in IGNORED_NAMES
+                              else f"name:*{path.suffix}" if path.suffix in IGNORED_SUFFIXES
+                              else f"name:{IGNORED_PREFIX}*" if name.startswith(IGNORED_PREFIX)
+                              else f"folder:{name}" if folder and name in IGNORED_FOLDERS
+                              else "folder:FILE_ATTRIBUTE_SYSTEM" if folder and attributes & WINDOWS_SYSTEM
+                              else None)):
+        record.type, record.subtype, record.data["reason"] = "ignored", "folder" if folder else "file", reason
     elif folder:
         parent = path.parent
-        harness = (path.name == ".hermes" or parent.name == ".gemini" and path.name in ("antigravity", "antigravity-cli")
+        harness = (name == ".hermes" or parent.name == ".gemini" and name in ("antigravity", "antigravity-cli")
                    or parent.name == "brain" and parent.parent.name == "antigravity-cli")
         handler = SessionFolderHandler if harness else FolderHandler
-        record["type"], record["subtype"] = handler.type, handler.subtype
+        record.type, record.subtype = handler.type, handler.subtype
     else:
         handler = SUFFIXES.get(path.suffix.casefold(), FileHandler)
         handler = FileHandler if handler is SessionHandler and not stat.st_size else handler
-        record["type"], record["subtype"] = handler.type, handler.subtype
+        record.type, record.subtype = handler.type, handler.subtype
     return record
