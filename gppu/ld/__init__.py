@@ -32,7 +32,7 @@ from pydantic_core import core_schema
 from sqlakeyset import custom_bookmark_type
 from sqlalchemy import DateTime, FetchedValue, SmallInteger, String, TypeDecorator
 from sqlalchemy.dialects.postgresql import JSONB, TSTZRANGE, Range
-from sqlalchemy.exc import DataError, IntegrityError, NoResultFound, StatementError
+from sqlalchemy.exc import DataError, IntegrityError, StatementError
 from sqlalchemy.sql.elements import UnaryExpression
 from sqlalchemy.sql.visitors import iterate
 from sqlmodel import Column, Field, SQLModel, delete, func, or_, select
@@ -203,8 +203,10 @@ class _Record(SQLModel):
 
     @classmethod
     async def read(cls, id: UUID) -> Self:
-        """404 when there is none (`missing`)."""
-        return await cls.db().get_one(cls, id)
+        """404 when there is none."""
+        if not (row := await cls.db().get(cls, id)):
+            raise HTTPException(404, f'no {cls.__tablename__} {id}')
+        return row
 
     @classmethod
     async def update(cls, id: UUID | None, sent: '_Record') -> Self:
@@ -455,19 +457,6 @@ async def refused(request: Request, e: StatementError):
     raise e
 
 
-async def missing(request: Request, e: NoResultFound):
-    """A record read that is not there: 404."""
-    return JSONResponse({'detail': 'Not Found'}, status_code=404)
-
-
-def handled(api: FastAPI) -> FastAPI:
-    """An API answering as the core does: what a table refuses 422, a record not there 404, its searches paged."""
-    api.add_exception_handler(StatementError, refused)
-    api.add_exception_handler(NoResultFound, missing)
-    add_pagination(api)
-    return api
-
-
 app = FastAPI(
     title='Linked Data',
     version='1',   # the major version its path carries, /ld/v1 (Alex 10-16 09:48: versions in the URL)
@@ -478,7 +467,6 @@ app = FastAPI(
         {'name': 'link', 'description': 'The links between nodes.'}],
 )
 app.include_router(router)
-handled(app)
 
 
 def api_at(path: str, name: str, summary: str, *routers: APIRouter) -> FastAPI:
@@ -486,7 +474,7 @@ def api_at(path: str, name: str, summary: str, *routers: APIRouter) -> FastAPI:
     built = FastAPI(title=f'Linked Data: {name}', version='1', summary=summary, docs_url=f'{path}/docs', openapi_url=f'{path}/openapi.json')
     for routes in routers:
         built.include_router(routes)
-    return handled(built)
+    return built
 
 
 def served(apis: dict[str, FastAPI], store: _SQABase) -> FastAPI:
@@ -496,9 +484,11 @@ def served(apis: dict[str, FastAPI], store: _SQABase) -> FastAPI:
     tags = {t: a.summary for a in apis.values() for ops in a.openapi()['paths'].values() for op in ops.values() for t in op.get('tags', ())}   # each API's tags, described by its summary
     one = FastAPI(title=app.title, version=app.version, summary='Records and the links between them, and the APIs built on them: '
                   + ', '.join(p.strip('/') for p in apis) + '.',
-                  openapi_tags=app.openapi_tags + [{'name': t, 'description': s} for t, s in tags.items()], dependencies=[Depends(transaction)])
+                  openapi_tags=app.openapi_tags + [{'name': t, 'description': s} for t, s in tags.items()],
+                  dependencies=[Depends(transaction)], exception_handlers={StatementError: refused})
     one.include_router(router)
     for api in apis.values():
         one.include_router(api.router)
     _Record.db = store.scoped_session
-    return handled(one)
+    add_pagination(one)
+    return one
