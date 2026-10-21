@@ -120,8 +120,23 @@ class Env(_Env):
 
     Env.init_logger(Env.name)
 
-    config_data = dict_from_yml(Env.config_file)
+    config_data = dict_from_yml(Env.config_file) if Env.config_file else {}
     Env.from_dict(config_data)   # resolves a `topology:` key if the config has one
+    Env.from_argv(sys.argv[1:])
+
+  @staticmethod
+  def from_argv(argv: list[str]) -> None:
+    """The command line over the configuration: each ``--key value`` pair sets that key, a slash path for a nested
+    one, as a string. Other arguments are the program's own."""
+    args = iter(argv)
+    for arg in args:
+      if not arg.startswith('--') or len(arg) == 2: continue
+      value = next(args, None)
+      if value is None or value.startswith('--'): raise SystemExit(f'{arg} needs a value: --key value')
+      node = Env.data
+      *parents, key = y2path(arg[2:])
+      for parent in parents: node = node.setdefault(parent, {})
+      node[key] = value
 
   @staticmethod
   def _resolve_app_path(app_path: Optional[Path] = None) -> Path:
@@ -136,16 +151,17 @@ class Env(_Env):
     return Env._main_dir / app_path
 
   @staticmethod
-  def _config_file() -> Path:
+  def _config_file() -> Path | None:
     """``<name>.yaml`` then ``config.yaml``, searched from ``app_path`` upward —
-    so a service in a subdir (e.g. /app/brultech) finds the suite's /app/config.yaml."""
+    so a service in a subdir (e.g. /app/brultech) finds the suite's /app/config.yaml.
+    A program with none runs on the command line alone."""
     stem = Path(Env.name).with_suffix('.yaml').name
     names = (stem, 'config.yaml')
     for parent in (Env.app_path, *Env.app_path.parents):
       for name in names:
         candidate = parent / name
         if candidate.exists(): return candidate
-    raise FileNotFoundError(f"Config ({' or '.join(names)}) not found walking up from '{Env.app_path}'")
+    return None
 
 # Global aliases for Env.glob* methods
 glob = Env.glob
@@ -330,8 +346,8 @@ class App(_App, _DC):
 
 
 class CliApp(_App):
-  """Runs ``main`` once. Its ``_my`` is the configuration with the command line over it, ``--since 3d --dry-run true``,
-  each value a string. ``main`` is the action; what it returns is printed as JSON on stdout, logs go to stderr.
+  """Runs ``main`` once. The command line is already over the configuration, as for every program, ``--since 3d``;
+  ``main`` is the action; what it returns is printed as JSON on stdout, logs go to stderr.
 
   Usage::
 
@@ -342,22 +358,15 @@ class CliApp(_App):
       if __name__ == '__main__': Archive.cli()
   """
 
-  _argv: list[str] = []
-
-  def __init__(self, name: str = '', **kw) -> None:
-    super().__init__(name=name, **kw)
-    args = self._argv
-    if len(args) % 2 or any(not key.startswith('--') for key in args[::2]):
-      raise SystemExit(f'{self.name}: arguments are --key value pairs')
-    for key, value in zip(args[::2], args[1::2]): self._my[key[2:]] = value
-
   def main(self) -> Any: raise NotImplementedError(f'{type(self).__name__} defines no main')
 
   @classmethod
   def cli(cls, argv: list[str] | None = None) -> Any:
-    """Start from the command line: build the app, then ``main``."""
-    cls._argv = sys.argv[1:] if argv is None else argv
+    """Start from the command line: build the app, then ``main``. ``argv`` stands in for the program's own."""
     app = cls()
+    if argv is not None:
+      Env.from_argv(argv)
+      app._config_from_env()
     result = app.main()
     if result is not None: print(json.dumps(result, indent=2, default=str))
     return result
