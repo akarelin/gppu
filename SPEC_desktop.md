@@ -9,3 +9,5 @@ Use the integration most adjacent to fsspec. Directory Opus can use the filesyst
 Browse indexed folders based on the index, with access to deeper contents without browsing through very deep folders.
 
 The virtual filesystem coexists with the filesystem, including SMB shares and synced folders.
+
+What is local is shown from the local indexes, through gppufs. The rest comes through Linked Data and the Lake's API, which serve the server's index; it holds more, and a local index can hold what the server's does not. The local region and the API region are one view, each entry once.
