@@ -50,8 +50,9 @@ STORE = ('id', 'created', 'updated', 'type')   # the columns Postgres fills: a c
 
 async def transaction():
     """Each request is one transaction, a FastAPI dependency with yield of the API `served()` serves: the request's database
-    session, the store's scoped session for the task serving it, committed when the call ends, rolled back on an error and
-    removed. The store's zone is UTC, so a filter's time without a zone is compared as UTC."""
+    session, the store's scoped session for the task serving it, committed when the call ends and before its answer is sent
+    (scope='function'; FastAPI's default runs it after, so a caller's next read could miss what it wrote), rolled back on an
+    error and removed. The store's zone is UTC, so a filter's time without a zone is compared as UTC."""
     try:
         yield
         await _Record.db().commit()
@@ -485,7 +486,7 @@ def served(apis: dict[str, FastAPI], store: _SQABase) -> FastAPI:
     one = FastAPI(title=app.title, version=app.version, summary='Records and the links between them, and the APIs built on them: '
                   + ', '.join(p.strip('/') for p in apis) + '.',
                   openapi_tags=app.openapi_tags + [{'name': t, 'description': s} for t, s in tags.items()],
-                  dependencies=[Depends(transaction)], exception_handlers={StatementError: refused})
+                  dependencies=[Depends(transaction, scope='function')], exception_handlers={StatementError: refused})
     one.include_router(router)
     for api in apis.values():
         one.include_router(api.router)
