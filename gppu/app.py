@@ -438,8 +438,9 @@ class mixin_Rest:
   it — a base may define it too — and the private names and the lifecycle steps
   are the only exclusion.
 
-  APIApp includes this mixin; a host with its own lifecycle can compose it
-  before its application base, as Y2 does. Override ``rest_registries()`` with
+  The universal REST API to any object. It is not the default: no gppu app
+  includes it; an application that wants it composes it before its application
+  base, as Y2 does. Override ``rest_registries()`` with
   ``{registry: {key: object}}``; by default it contains the app itself. The HTTP
   host serves ``rest_manifest`` and binds ``rest_objects``, ``rest_read`` and
   awaited ``rest_call``, which return ``(payload, status)``. The host supplies
@@ -598,13 +599,10 @@ class AsyncApp(App, EventLoopBridge):
 
 
 # region API application
-class APIApp(mixin_Rest, AsyncApp):
-    """An AsyncApp that serves HTTP, the transport ``mixin_Rest`` leaves to its host: on uvicorn, at the ``host`` and ``port`` of its
-    configuration, its own objects at ``/rest`` and each ASGI app ``apis()`` gives at its path.
-
-    ``GET /rest`` lists the objects, ``GET /rest/{registry}/{key}`` reads one and ``GET /rest/{registry}/{key}/{name}`` one of its
-    values, ``POST /rest/{registry}/{key}/{name}`` calls a method with the JSON body as its arguments. Override ``apis()``; override
-    ``start()`` for work before serving and end it with ``await super().start()``. FastAPI and uvicorn come with the ``ld`` extra::
+class APIApp(AsyncApp):
+    """An AsyncApp that serves HTTP: on uvicorn, at the ``host`` and ``port`` of its configuration, each ASGI app
+    ``apis()`` gives at its path. Override ``apis()``; override ``start()`` for work before serving and end it with
+    ``await super().start()``. FastAPI and uvicorn come with the ``ld`` extra::
 
         class LDAPI(APIApp, _SQABase):   # its store: the configuration's `db`, the engine and each request's session
             def apis(self): return {'/ld/v1': ld.served({'/work': work.app}, self)}
@@ -615,27 +613,10 @@ class APIApp(mixin_Rest, AsyncApp):
         return {}
 
     def asgi(self):
-        """The app uvicorn serves: ``/rest``, and the apps of ``apis()`` at their paths."""
-        from fastapi import Body, FastAPI, Response
-
-        def answer(reply: tuple[Any, int]) -> Response:   # a value gppu holds (a time, a uri) is sent as its text
-            return Response(json.dumps(reply[0], default=str, ensure_ascii=False), status_code=reply[1], media_type='application/json')
+        """The app uvicorn serves: the apps of ``apis()`` at their paths."""
+        from fastapi import FastAPI
 
         root = FastAPI(title=self.name)
-
-        @root.get('/rest')
-        def objects(kind: str | None = None): return answer(self.rest_objects(kind, full=True))
-
-        @root.get('/rest/{registry}/{key}')
-        def read(registry: str, key: str): return answer(self.rest_read(registry, key))
-
-        @root.get('/rest/{registry}/{key}/{name}')
-        def value(registry: str, key: str, name: str): return answer(self.rest_read(registry, key, name))
-
-        @root.post('/rest/{registry}/{key}/{name}')
-        async def call(registry: str, key: str, name: str, body: dict = Body(default_factory=dict)):
-            return answer(await self.rest_call(registry, key, name, body))
-
         for path, app in self.apis().items(): root.mount(path, app)
         return root
 

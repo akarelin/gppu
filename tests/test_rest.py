@@ -89,8 +89,8 @@ class RestSurfaceTests(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(body['objects'], {'lamp/desk': '_Lamp', 'app/host': '_Host'})
     self.assertEqual(self.host.rest_objects(kind='_Lamp', full=True)[0]['objects']['lamp/desk']['class'], '_Lamp')
 
-  def test_the_api_app_carries_the_surface_and_an_async_app_does_not(self) -> None:
-    self.assertTrue(issubclass(APIApp, mixin_Rest))
+  def test_no_gppu_app_carries_the_surface(self) -> None:
+    self.assertFalse(issubclass(APIApp, mixin_Rest))
     self.assertFalse(issubclass(AsyncApp, mixin_Rest))
 
 
