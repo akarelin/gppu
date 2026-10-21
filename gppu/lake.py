@@ -3,18 +3,21 @@ its uri; an object is retrieved by its uri. Linked Data is Linked Data and the L
 /lake.
 
 The Lake is configured in two places. Its locations are Linked Data's, a catalog made by gppu.ld.gppufs.catalog(). What the Lake
-itself is configured with is the app's, in Env: the uri of the folder saved objects are stored in, and the naming templates
-that place each object in it (Container.path_of).
+itself is configured with is the app's, in Env: the uri of the Lake saved objects are stored in, and the templates of its layout
+(CRAP Systems/lake/docs/layout.md), one per type of record gppu's handlers read, `source` for any other.
 
   Lake(catalog, store, templates)   the Lake over catalog's locations, saving below store by templates
   api(lake)                         the Lake as a FastAPI app, which an APIApp serves at /lake among its apis()"""
 import json
+import tempfile
 from datetime import date, datetime
+from pathlib import Path
 from typing import Any, BinaryIO, Mapping
+from urllib.parse import unquote, urlsplit
 
 from . import handlers
-from .fs import Container, DataObject, GppuCatalog, Location
-from .gppu import TimeSpan, y2uri
+from .fs import CACHE, Container, DataObject, GppuCatalog, Location
+from .gppu import TemplateSet, TimeSpan, y2uri
 
 
 class Lake:
@@ -23,15 +26,50 @@ class Lake:
     def __init__(self, catalog: GppuCatalog, store: y2uri | str, templates: Mapping[str, str]) -> None:
         self.catalog = catalog
         location, path = catalog.location_of(store)
-        self.store = Container(location.provider, location.provider.join(location.uri, path), templates=templates)
+        self.store = Container(location.provider, location.provider.join(location.uri, path))
+        self.templates = TemplateSet(named={'lake': dict(templates)})
 
     def _at(self, uri: y2uri | str) -> tuple[Container, str]:
         location, path = self.catalog.location_of(uri)
         return location.container(), str(path)
 
+    @staticmethod
+    def read(obj: DataObject) -> handlers.Record:
+        """What gppu's handlers read of obj: its content as a file under its own name, read by the handler its name and content
+        call for, and by none when none does."""
+        with tempfile.TemporaryDirectory(prefix='lake-', dir=CACHE) as folder:
+            path = Path(folder) / obj.name
+            content = obj.content.read() if hasattr(obj.content, 'read') else obj.content
+            path.write_bytes(content if isinstance(content, bytes) else content.encode('utf-8') if isinstance(content, str)
+                             else json.dumps(content, ensure_ascii=False).encode('utf-8'))
+            found = handlers.probe(path)
+            handler = handlers.HANDLERS.get((found.type, found.subtype))
+            if handler is None:
+                return found
+            try:
+                return handler.parse(path)
+            except Exception as error:   # what a handler cannot read has no place in the Lake: the save is refused with its reason
+                raise ValueError(f'{obj.name}: {handler.__name__} cannot read it: {type(error).__name__}: {error}') from error
+
+    def place(self, obj: DataObject, record: handlers.Record) -> str:
+        """Where obj goes in the Lake, by the template of its record's type, `source` for a type the Lake has none for: rendered
+        with the record, the object's name, the date it is of (its span's start, else the date its name says) and the system,
+        account and path of the uri it came from."""
+        span = getattr(record, 'span', None) or handlers.Handler.named(obj.name)
+        source = urlsplit(str(obj.uri))
+        path = self.templates.render_template(record.type if record.type in self.templates.named else 'source',
+            record=record, name=obj.name, start=span.start if span else None, system=source.scheme, account=source.netloc,
+            path=unquote(source.path).strip('/'))
+        path = str(path or '').strip()
+        if not path:
+            raise ValueError(f'{obj.name}: the Lake has no place for a {record.type} {record.subtype or ""} from {obj.uri}'.replace('  ', ' '))
+        return str(Location.relative(path))
+
     def save(self, obj: DataObject) -> y2uri:
-        """Store obj where the Lake's naming templates place it, and the uri it is stored at."""
-        path = self.store.path_of(obj)
+        """Store obj where the Lake's layout places it, by what gppu's handlers read of it, and the uri it is stored at."""
+        content = obj.content.read() if hasattr(obj.content, 'read') else obj.content
+        obj = DataObject(obj.uri, content, obj.identity, obj.kind, obj.name)
+        path = self.place(obj, self.read(obj))
         self.store.write(path, obj)
         return self.store.provider.join(self.store.uri, Location.relative(path))
 
@@ -85,15 +123,15 @@ def _json(value: Any) -> Any:
 def api(lake: Lake):
     """lake as REST resources, a FastAPI app an APIApp serves at /lake. Needs FastAPI (the `ld` extra).
 
-    POST   /                 save the object in the body, content, name, kind, identity and the uri it came from, source; the
-                             answer is the uri the Lake stored it at
+    POST   /                 save the file sent, and the uri it came from, source, where there is one; the answer is the uri
+                             the Lake stored it at
     GET    /{uri}            what the handlers found at uri; ?ls what is inside it, ?walk&level=&recursive= everything below it,
                              ?retrieve the object with its content, ?content its bytes
     DELETE /{uri}            remove the object at uri
 
     A uri no location holds answers 404, a save to a place another object holds 409 and a value the Lake refuses 400, each with
     its error."""
-    from fastapi import Body, FastAPI, Response
+    from fastapi import FastAPI, File, Form, Response, UploadFile
 
     def reply(payload: Any, status: int = 200, content_type: str = 'application/json; charset=utf-8') -> Response:
         data = payload if isinstance(payload, bytes) else json.dumps(payload, default=_json, ensure_ascii=False).encode('utf-8')
@@ -106,8 +144,8 @@ def api(lake: Lake):
         app.add_exception_handler(refused, lambda request, error: reply({'error': str(error)}, 400))
 
     @app.post('/')
-    def save(body: dict = Body(...)):
-        obj = DataObject(body.get('source', ''), body['content'], body.get('identity'), body.get('kind', 'object'), body.get('name', ''))
+    def save(file: UploadFile = File(...), source: str = Form('')):
+        obj = DataObject(source, file.file.read(), None, 'file', file.filename)
         return reply({'uri': str(lake.save(obj))}, 201)
 
     @app.get('/{uri:path}')
