@@ -1,11 +1,11 @@
-"""Tests for Logger, init_logger, mixin_Logger."""
+"""Tests for the environment's log and mixin_Logger."""
 import logging
 import importlib
 import io
 
 import pytest
 from gppu import TRACE_RULES
-from gppu import Env, init_logger, mixin_Logger
+from gppu import Env, mixin_Logger
 
 
 @pytest.fixture
@@ -14,8 +14,8 @@ def output(monkeypatch, tmp_path):
     previous_rules = dict(TRACE_RULES)
     console = io.StringIO()
     original = core._Env._console.setStream(console)
-    init_logger('logging-verification', trace_rules={'all': True})
-    path = core.enable_file_logging('verification', log_dir=tmp_path)
+    Env.init_logger('logging-verification', trace_rules={'all': True})
+    path = Env.enable_file_logging('verification', log_dir=tmp_path)
     yield core, console, path
     core._Env._console.setStream(original)
     for handler in tuple(core._Env._file_handlers.values()):
@@ -54,7 +54,7 @@ def test_mixin_created_before_init_keeps_both_outputs(output):
     class Component(mixin_Logger):
         def publish(self): self.Info('mixin message')
 
-    init_logger('renamed-application')
+    Env.init_logger('renamed-application')
     Component().publish()
     assert console.getvalue().count('mixin message') == 1
     assert path.read_text().count('mixin message') == 1
@@ -92,7 +92,7 @@ def test_rich_trace_exclusions_are_preserved(output, excluded):
 
 def test_file_only_messages_do_not_write_to_console(output):
     core, console, path = output
-    core.file_log('WBLUE', 'panel line')
+    Env.file_log('WBLUE', 'panel line')
     assert console.getvalue() == ''
     assert path.read_text().strip() == 'panel line'
 
@@ -108,21 +108,17 @@ class TestEnvLogging:
 
 class TestInitLogger:
     def test_init_sets_name(self):
-        init_logger("test_app")
+        Env.init_logger("test_app")
         # Should not raise
 
     def test_init_with_trace_rules(self):
         rules = {"debug": True, "MyClass": False}
-        init_logger("test_app", trace_rules=rules)
+        Env.init_logger("test_app", trace_rules=rules)
         assert Env.trace_rules == rules
 
-    def test_init_logger_importable_from_gppu(self):
-        from gppu import init_logger as top_init_logger
-        assert top_init_logger is init_logger
-
-    def test_init_logger_in_all(self):
+    def test_the_log_calls_are_not_promoted(self):
         import gppu
-        assert 'init_logger' in gppu.__all__
+        assert not {'init_logger', 'enable_file_logging', 'file_log'} & set(gppu.__all__)
 
 
 class TestMixinLogger:
@@ -188,7 +184,7 @@ def test_one_line_yaml_enables_console_and_file(configured_output, tmp_path):
   core.Info('both destinations')
   assert 'both destinations' in console.getvalue()
   assert path.read_text().strip() == 'both destinations'
-  assert core.enable_file_logging(log_file=str(path)) == path
+  assert Env.enable_file_logging(log_file=str(path)) == path
   core.Info('once')
   assert path.read_text().count('once') == 1
 
@@ -206,7 +202,7 @@ def test_one_line_trace_yaml_keeps_the_mapping(configured_output, tmp_path):
   assert 'excluded trace' not in console.getvalue()
   assert 'included trace' in console.getvalue()
   assert Env.trace_rules == {'all': True, 'Component': False}
-  init_logger(trace_rules=Env.trace_rules)
+  Env.init_logger(trace_rules=Env.trace_rules)
   assert Env.trace_rules == {'all': True, 'Component': False}
 
 

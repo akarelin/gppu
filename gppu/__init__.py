@@ -57,9 +57,6 @@ from .gppu import (
     detect_os,
 
     # Logger setup
-    init_logger,
-    enable_file_logging,
-    file_log,
 
     # Async helpers
     sync,
@@ -157,9 +154,6 @@ __all__ = [
     'OSType', 'detect_os',
 
     # Logger setup
-    'init_logger',
-    'enable_file_logging',
-    'file_log',
 
     # Async helpers
     'sync',

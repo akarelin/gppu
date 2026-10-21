@@ -1394,7 +1394,6 @@ class _Env:
 
 
 Debug, Info, Warn, Error, Dump = _Env.Debug, _Env.Info, _Env.Warn, _Env.Error, _Env.Dump
-init_logger, enable_file_logging, file_log = _Env.init_logger, _Env.enable_file_logging, _Env.file_log
 # endregion
 
 
@@ -1553,7 +1552,7 @@ class Env(_Env, _Base):
       if not isinstance(rules, dict): raise TypeError('trace_rules must be a mapping')
       TRACE_RULES.clear()
       TRACE_RULES.update(rules)
-    if 'log_file' in Env.data: enable_file_logging(log_file=Env.data['log_file'])
+    if 'log_file' in Env.data: Env.enable_file_logging(log_file=Env.data['log_file'])
 
   @staticmethod
   def reset() -> None:
