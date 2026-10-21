@@ -116,7 +116,7 @@ In YAML: `password: !secret db-pass` resolves at load time via `Vault.get`. Requ
 
 ## How Apps Work
 
-Command-line utilities subclass `CliApp`, define a typed `main`, and call `MyApp.cli()`. Construction loads the shared configuration and logging; gppu provides argument parsing, `--help`, `--schema`, configuration binding and JSON output. Do not build that setup in each utility. Use `App` for an object called directly and `AsyncApp` for asyncio work.
+Command-line utilities subclass `CliApp`, define `main`, and call `MyApp.cli()`. Construction loads the shared configuration and logging; the command line overrides keys of the configuration, and gppu prints what `main` returns as JSON. Do not build that setup in each utility. Use `App` for an object called directly and `AsyncApp` for asyncio work.
 
 ### 1. Use the project's shared configuration
 
@@ -128,14 +128,15 @@ When the script folder needs a configuration entry point, `config.yaml` includes
 
 ### 2. Define the command's work
 
-This example takes `logs`, `level` and `days` from the shared configuration. Command-line options override those values. A missing required value raises an error.
+This example takes `logs`, `level` and `days` from the configuration: the app's own section, named after the app, over the shared one. The command line overrides those keys.
 
 ```python
 from gppu import CliApp
 
 class MyApp(CliApp):
-    def main(self, logs: list[str], level: str, days: int) -> dict:
+    def main(self) -> dict:
         """Read the configured logs."""
+        logs, level, days = self.my('logs'), self.my('level'), self.my('days')
         self.Info('Reading logs', level, days)
         return {'logs': logs, 'level': level, 'days': days}
 
@@ -143,7 +144,7 @@ if __name__ == '__main__':
     MyApp.cli()
 ```
 
-No arguments runs `main` with configuration values. `--days 7` overrides `days`; `--help` and `--schema` describe the same method without running it. Returned data goes to stdout as JSON and logs go to stderr. See [`gppu.app.CliApp`](gppu/app.py) and its parameters in the same module.
+No arguments runs `main` with configuration values. `--days 7` overrides `days`; every value is read as YAML, so `--dry-run true` is a boolean. Returned data goes to stdout as JSON and logs go to stderr. See [`gppu.app.CliApp`](gppu/app.py).
 
 ### 3. For TUI apps — subclass `TUIApp` and use `Env` the same way:
 

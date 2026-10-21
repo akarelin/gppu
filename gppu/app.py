@@ -18,51 +18,33 @@ through its `!include` of the shared one, everything the fleet knows; with it th
 needs no file: platform, host, user, home, os and the trace rules. Every object built on `_Config`
 copies the configuration into its `_my` and reads it with `self.my(...)`.
 
-CliApp's parameters: what an app's ``main`` asks for, read from its signature, as Windmill reads a script's ``main``.
-
-    def main(self, since: str = '7d', dry_run: bool = False) -> dict:
-      \"\"\"Archive what changed.
-
-      Args:
-        since: How far back to look.
-      \"\"\"
-
-Each parameter is a command-line option, ``--since 3d``, ``--dry-run``; a positional-only one is a positional
-argument. A value comes from, in order: the command line, the app's configuration under the parameter's name, the
-signature's default. Anything still missing is an error.
-
-The same description serves the command line, ``schema`` (JSON Schema, for a form or a REST manifest) and a call
-from another app. The first docstring line is the description; ``Args:`` lines are the help.
+CliApp: the command line overrides keys of the configuration (``--since 3d --dry-run true``).
 """
 from __future__ import annotations
 
-import argparse
 import asyncio
 import getpass
 import inspect
 import json
 import logging
-import re
 import socket
 import sys
-import types
-import typing
 from abc import abstractmethod
 from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
 from copy import deepcopy
-from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from string import Template
-from typing import Any, Literal, Optional, final
+from typing import Any, Optional, final
+
+import yaml
 
 from . import gppu as _core   # _core._logger is rebound by init_logger
 from .gppu import (TRACE_RULES, Debug, Dump, Error, Info, Logger, OSType, Warn, _DC, _Logger, _file_handlers,
                    _log_root, _mixin, deepget, deepget_dict, deepget_float, deepget_int, deepget_list, detect_os, dict_from_yml,
                    enable_file_logging, sync, y2path)
 
-_MISSING = object()
 _trace_mro = False
 
 
@@ -235,120 +217,6 @@ def is_table_key(name: str) -> bool:   # what a table holds beside its rows: its
 # endregion
 
 
-# region Parameters
-_JSON_TYPES = {str: 'string', int: 'integer', float: 'number', bool: 'boolean', Path: 'string', dict: 'object', list: 'array'}
-_ARG_LINE = re.compile(r'^\s+(\w+)(?:\s*\([^)]*\))?:\s*(.+)$')
-
-
-@dataclass
-class Param:
-  name: str
-  type: Any
-  default: Any
-  help: str
-  positional: bool = False
-
-  @property
-  def required(self) -> bool: return self.default is _MISSING
-
-  @property
-  def option(self) -> str: return '--' + self.name.replace('_', '-')
-
-
-def _unwrap(annotation: Any) -> Any:
-  """``X | None`` is X: None is a default, not a type."""
-  if isinstance(annotation, types.UnionType) or typing.get_origin(annotation) is typing.Union:
-    args = [a for a in typing.get_args(annotation) if a is not type(None)]
-    if len(args) == 1: return args[0]
-  return annotation
-
-
-def _help(fn: Callable) -> tuple[str, dict[str, str]]:
-  doc = inspect.getdoc(fn) or ''
-  lines = doc.splitlines()
-  helps, inside = {}, False
-  for line in lines:
-    if line.strip() in ('Args:', 'Arguments:', 'Parameters:'): inside = True; continue
-    if inside and (m := _ARG_LINE.match(line)): helps[m.group(1)] = m.group(2)
-    elif inside and line and not line[0].isspace(): inside = False
-  return (lines[0] if lines else ''), helps
-
-
-def parameters(fn: Callable) -> list[Param]:
-  hints = typing.get_type_hints(fn)
-  _, helps = _help(fn)
-  return [Param(name, _unwrap(hints.get(name, str)), _MISSING if p.default is p.empty else p.default, helps.get(name, ''),
-                p.kind is p.POSITIONAL_ONLY)
-          for name, p in inspect.signature(fn).parameters.items()
-          if name not in ('self', 'cls') and p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)]
-
-
-def convert(param: Param, value: Any) -> Any:
-  """value as the parameter's type. A command line gives strings; configuration gives YAML types."""
-  kind, origin = param.type, typing.get_origin(param.type)
-  if value is None: return None
-  if origin is Literal:
-    if value not in typing.get_args(kind): raise ValueError(f'{param.name}: {value!r} is not one of {typing.get_args(kind)}')
-    return value
-  if origin is list or kind is list:
-    items = value if isinstance(value, list) else [value]
-    inner = (typing.get_args(kind) or (str,))[0]
-    return [inner(v) for v in items]
-  if kind is dict or origin is dict: return json.loads(value) if isinstance(value, str) else dict(value)
-  if kind is bool and isinstance(value, str): return value.lower() in ('1', 'true', 'yes', 'on')
-  return kind(value) if isinstance(kind, type) and not isinstance(value, kind) else value
-
-
-def parser(fn: Callable, prog: str) -> argparse.ArgumentParser:
-  description, _ = _help(fn)
-  cli = argparse.ArgumentParser(prog=prog, description=description, argument_default=argparse.SUPPRESS)
-  cli.add_argument('--schema', action='store_true', help='print the parameters as JSON Schema and exit')
-  for p in parameters(fn):
-    if p.positional:
-      choices = typing.get_args(p.type) if typing.get_origin(p.type) is Literal else None
-      cli.add_argument(p.name, nargs=None if p.required else '?', choices=choices, help=p.help)
-    elif p.type is bool: cli.add_argument(p.option, dest=p.name, action=argparse.BooleanOptionalAction, help=p.help)
-    elif typing.get_origin(p.type) is list or p.type is list: cli.add_argument(p.option, dest=p.name, nargs='*', help=p.help)
-    elif typing.get_origin(p.type) is Literal: cli.add_argument(p.option, dest=p.name, choices=typing.get_args(p.type), help=p.help)
-    else: cli.add_argument(p.option, dest=p.name, help=p.help)
-  return cli
-
-
-def resolve(fn: Callable, given: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
-  """The keyword arguments for fn: given, else config under the parameter's name, else the default. Missing raises."""
-  unknown = set(given) - {p.name for p in parameters(fn)}
-  if unknown: raise TypeError(f'{fn.__qualname__}: no parameter {sorted(unknown)}')
-  kwargs = {}
-  for p in parameters(fn):
-    if p.name in given: value = given[p.name]
-    elif (found := deepget(p.name, dict(config), _MISSING)) is not _MISSING: value = found
-    elif not p.required: value = p.default
-    else: raise LookupError(f'{p.name}: required; pass {p.option} or set {p.name} in configuration')
-    kwargs[p.name] = convert(p, value)
-  return kwargs
-
-
-def call(fn: Callable, kwargs: Mapping[str, Any]) -> Any:
-  """fn with resolved arguments: the positional-only ones by position, the rest by name."""
-  names = [p.name for p in parameters(fn) if p.positional]
-  return fn(*(kwargs[name] for name in names), **{k: v for k, v in kwargs.items() if k not in names})
-
-
-def schema(fn: Callable) -> dict:
-  """The parameters as JSON Schema."""
-  description, _ = _help(fn)
-  props, required = {}, []
-  for p in parameters(fn):
-    if typing.get_origin(p.type) is Literal: prop = {'enum': list(typing.get_args(p.type))}
-    else: prop = {'type': _JSON_TYPES.get(typing.get_origin(p.type) or p.type, 'string')}
-    if p.help: prop['description'] = p.help
-    if not p.required: prop['default'] = str(p.default) if isinstance(p.default, Path) else p.default
-    else: required.append(p.name)
-    props[p.name] = prop
-  return {'type': 'object', 'description': description, 'properties': props, 'required': required}
-# endregion
-
-
 # region YMRO lifecycle
 class _YMRO:
   POSSIBLE_STEPS = ['init', 'load', 'start', 'stop']
@@ -494,35 +362,31 @@ class App(_App, _DC):
 
 
 class CliApp(App):
-  """Runs ``main`` once; the command line gives its parameters (Parameters, above). What it returns is printed as JSON on
-  stdout; logs go to stderr. A parameter the command line does not give comes from the app's table in the
-  configuration, named after the app, or from the whole configuration when there is no such table.
+  """Runs ``main`` once. Its ``_my`` is the configuration with the app's own section, named after the app, over it;
+  the command line overrides keys of ``_my``, ``--since 3d --dry-run true``, each value read as YAML. What ``main``
+  returns is printed as JSON on stdout; logs go to stderr.
 
   Usage::
 
       from gppu import CliApp
       class Archive(CliApp):
-        def main(self, since: str = '7d', dry_run: bool = False) -> dict:
-          '''Archive what changed.'''
+        def main(self) -> dict:
+          since = self.my('since')
       if __name__ == '__main__': Archive.cli()
   """
 
-  def main(self, *a, **kw) -> Any: raise NotImplementedError(f'{type(self).__name__} defines no main')
-
-  def params(self, **given: Any) -> dict[str, Any]:
-    """main's keyword arguments: given, then configuration, then defaults."""
-    table = Env.data.get(self.name)
-    return resolve(self.main, given, table if isinstance(table, dict) else Env.data)
-
-  def invoke(self, **given: Any) -> Any: return call(self.main, self.params(**given))
+  def main(self) -> Any: raise NotImplementedError(f'{type(self).__name__} defines no main')
 
   @classmethod
   def cli(cls, argv: list[str] | None = None) -> Any:
-    """Start from the command line; ``--schema`` prints the parameters instead."""
+    """Start from the command line: the configuration, its keys overridden by ``--key value``, then ``main``."""
     app = cls()
-    given = vars(parser(app.main, app.name).parse_args(argv))
-    if given.pop('schema', False): return print(json.dumps(schema(app.main), indent=2))
-    result = app.invoke(**given)
+    app._config_from_key(app.name)
+    args = sys.argv[1:] if argv is None else argv
+    if len(args) % 2 or any(not key.startswith('--') for key in args[::2]):
+      raise SystemExit(f'{app.name}: arguments are --key value pairs')
+    for key, value in zip(args[::2], args[1::2]): app._my[key[2:]] = yaml.safe_load(value)
+    result = app.main()
     if result is not None: print(json.dumps(result, indent=2, default=str))
     return result
 # endregion
