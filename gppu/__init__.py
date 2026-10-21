@@ -39,11 +39,6 @@ from .gppu import (
     y2path,
     y2uri,
     y2topic,
-    # Vault / Secrets
-    Vault,
-    VaultProvider,
-    VaultProviderOSEnviron,
-    VaultProviderAzure,
 
     # Version info
     VER_GPPU,
@@ -229,3 +224,11 @@ __all__ = [
     # lifecycle: sync YMRO (AppDaemon/Y2)
     'YStepper', 'mixin_Stepper',
 ]
+
+
+def __getattr__(name: str):
+  """The Vault names import gppu.vault on first use, which gives dict_from_yml ``!secret``."""
+  if name in ('Vault', 'VaultProvider', 'VaultProviderOSEnviron', 'VaultProviderAzure'):
+    from . import vault
+    return getattr(vault, name)
+  raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
