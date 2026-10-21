@@ -1,18 +1,18 @@
 """Handlers: a universal way to get information about a file or a folder.
 
 There is a handler for every type of data, and probe, which knows every handler there is (HANDLERS) and, given a
-path whose type is not known in advance, which handler to call:
+folder, which handler to call for each thing it holds, whose type is not known in advance:
 
-    handler = probe('D:/Dev/gppu/README.md')            # MarkdownHandler; await probe(...) in an event loop
-    record = handler.parse('D:/Dev/gppu/README.md')     # await handler.parse(...) in an event loop
+    for member, stat, handler in probe('D:/Dev/gppu'):  # await probe(...) in an event loop
+        record = handler.parse(member)                  # await handler.parse(...) in an event loop
 
 A handler is a class of class methods. `identify(path, stat)` says whether the path is of its type: a file's name
-matches one of its `patterns`, and a folder, a symlink or a junction is told by the stat probe has already taken.
-Probing a path is that one stat and nothing more. probe and parse are asynchronous, awaited inside an event loop and returned directly outside one.
+matches one of its `patterns`, and a folder, a symlink or a junction is told by the stat the folder's listing gives.
+Probing a folder is that listing and nothing more. probe and parse are asynchronous, awaited inside an event loop and returned directly outside one.
 `parse(path)` reads the path into a record, what
 Linked Data holds of the thing: its type, subtype, name, span, data and, in meta, the path it was read from; a
 session's record also has its messages. A subtype is a subclass of its type: it identifies a path only where its
-type does, and its parse adds to its type's. probe returns the most specific handler that identifies the path. A
+type does, and its parse adds to its type's. probe gives each member the most specific handler that identifies it. A
 program adds a handler by subclassing and appending it to HANDLERS:
 
     class BillingCSVHandler(CSVHandler):
@@ -287,8 +287,7 @@ class JunctionHandler(Handler):
 
 
 class FolderHandler(Handler):
-    """A folder: a loop over its members. Each member is probed with the stat the folder's listing gives it and parsed
-    by its handler, so a member folder loops over its own. Its members' records are its members; its data counts the
+    """A folder: a loop over its members. probe lists them and gives each its handler, which parses it, so a member folder loops over its own. Its members' records are its members; its data counts the
     files, folders and bytes it directly holds, and its span is its files'. A subfolder's modified time is when
     something was added to it, so the span is its files' alone.
     """
@@ -301,11 +300,7 @@ class FolderHandler(Handler):
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
         members, files, folders = [], [], 0
-        path = full_path(path)
-        with os.scandir(path) as entries:
-            listing = [(path / entry.name, entry.stat(follow_symlinks=False)) for entry in entries]
-        for member, stat in listing:
-            handler = await probe(member, stat)
+        for member, stat, handler in await probe(path):
             members.append(await handler.parse(member))
             if stat_module.S_ISDIR(stat.st_mode):
                 folders += 1
@@ -1507,16 +1502,19 @@ HANDLERS: list[type[Handler]] = [
 
 
 @sync
-async def probe(path: str | Path, stat: os.stat_result | None = None) -> type[Handler]:
-    """The handler to call for a path whose type is not known: the most specific of HANDLERS that identifies it, one
-    no other identifying handler is a subtype of; of two alike, the first. A folder probes each member with the stat
-    its listing gives it; a path probed alone is stat'ed once. The rest is the name matched against the handlers' patterns. Awaited inside an event loop, returned
-    directly outside one. The path is taken as given, a link as the link."""
-    path = Path(path)
-    if stat is None:
-        stat = path.stat(follow_symlinks=False)
-    found = [handler for handler in HANDLERS if handler.identify(path, stat)]
-    specific = [handler for handler in found if not any(other is not handler and issubclass(other, handler) for other in found)]
-    if not specific:
-        raise ValueError(f"{path}: no handler identifies it")
-    return specific[0]
+async def probe(folder: str | Path) -> list[tuple[Path, os.stat_result, type[Handler]]]:
+    """What a folder holds and the handler to call for each: every member, the stat the folder's listing gives it, and
+    the most specific of HANDLERS that identifies it, one no other identifying handler is a subtype of; of two alike,
+    the first. Probing is the listing and each name matched against the handlers' patterns; nothing is read. A member
+    is taken as given, a link as the link. Awaited inside an event loop, returned directly outside one."""
+    folder = full_path(folder)
+    with os.scandir(folder) as entries:
+        listing = [(folder / entry.name, entry.stat(follow_symlinks=False)) for entry in entries]
+    members = []
+    for member, stat in listing:
+        found = [handler for handler in HANDLERS if handler.identify(member, stat)]
+        specific = [handler for handler in found if not any(other is not handler and issubclass(other, handler) for other in found)]
+        if not specific:
+            raise ValueError(f"{member}: no handler identifies it")
+        members.append((member, stat, specific[0]))
+    return members
