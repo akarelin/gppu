@@ -29,7 +29,7 @@ from fastapi_pagination.customization import (CustomizedPage, UseExcludedFields,
 from fastapi_pagination.ext.sqlalchemy import apaginate   # querybuilder builds SQLAlchemy selects
 from fastapi_querybuilder import QueryParams, build_query
 from psycopg.errors import UndefinedFunction
-from pydantic import ConfigDict, GetCoreSchemaHandler, GetJsonSchemaHandler, TypeAdapter, ValidationError, field_validator, model_validator
+from pydantic import ConfigDict, GetCoreSchemaHandler, GetJsonSchemaHandler, TypeAdapter, ValidationError, field_validator
 from pydantic_core import core_schema
 from sqlakeyset import custom_bookmark_type
 from sqlalchemy import DateTime, FetchedValue, SmallInteger, String, TypeDecorator, bindparam
@@ -99,17 +99,6 @@ class Type(IntEnum):
 
 
 LINKS = range(0xA0, 0xB0)   # a link's ids
-
-
-def nul_free(v: Any) -> Any:
-    """Postgres' text and jsonb cannot hold U+0000, so it is dropped wherever it is sent; it reaches a session's messages in UTF-16 output read as bytes."""
-    if isinstance(v, str):
-        return v.replace('\x00', '')
-    if isinstance(v, dict):
-        return {nul_free(k): nul_free(x) for k, x in v.items()}
-    if isinstance(v, list):
-        return [nul_free(x) for x in v]
-    return v
 
 
 def utc(t: Any) -> datetime | None:
@@ -232,11 +221,6 @@ class _Record(SQLModel):
     meta: dict = Field(default_factory=dict, sa_type=JSONB, description='How the record came to be: who made it, from what, when it was seen. `meta.tags`: always a list of strings. Merged on update as `data` is.')
     parent_id: UUID | None = Field(None, description='The container the record belongs to.')
     PARENTS: ClassVar[tuple[Type, ...]] = ()   # the types its parent is, where the spec names them
-
-    @model_validator(mode='before')
-    @classmethod
-    def storable(cls, v: Any) -> Any:
-        return nul_free(v)
 
     @field_validator('meta')
     @classmethod
