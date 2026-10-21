@@ -582,11 +582,11 @@ class SessionHandler(FileHandler):
     * Agy: USER_INPUT from USER_EXPLICIT or PLANNER_RESPONSE from MODEL, with a string created_at.
     * Hermes: role session_meta with a string session_id.
 
-    Its record is a session, its subtype the harness. Every object of the file is read; a blank, truncated or
-    non-object line is skipped. The lines of cc and cx are read as Linked Data reads them (parse_lines): the
+    Its record is a session, its subtype the harness, and its lines every object of the file, in order; a blank,
+    truncated or non-object line is skipped. The lines of cc and cx are read as Linked Data reads them (parse_lines): the
     uid, the name, the span from the first message to the last, data.title, topic, cwd and models, meta.parent_uid,
     and the record's messages. For the other harnesses the record has the uid its harness gives, the span from
-    the first record time to the last, and no messages. data.normalized_name is the file's name from its start,
+    the first record time to the last, the models named anywhere in its lines, and no messages. data.normalized_name is the file's name from its start,
     turns, duration and the first line a person typed.
     """
 
@@ -629,9 +629,9 @@ class SessionHandler(FileHandler):
         sidechain = any(line.get("isSidechain") is True for line in records)
         span = cls.spanning(times)
         record["subtype"], record["uid"], record["name"], record["span"] = harness, uid, cls._topic(turns) or uid, span
-        record["data"].update(subagent=subagent, sidechain_only=sidechain and not mainline, lines=len(records),
-                              turns=len(turns), models=list(cls._models(records)),
+        record["data"].update(subagent=subagent, sidechain_only=sidechain and not mainline, turns=len(turns),
                               normalized_name=cls.normalized_name(path, uid, turns, span))
+        record["lines"] = list(records)
         if parent_uid:
             record["meta"]["parent_uid"] = parent_uid
         if harness in ("cc", "cx"):
@@ -647,6 +647,8 @@ class SessionHandler(FileHandler):
             if session["parent_uid"]:
                 record["meta"]["parent_uid"] = session["parent_uid"]
             record["messages"] = messages
+        else:
+            record["data"]["models"] = list(cls._models(records))
         return record
 
     @classmethod
