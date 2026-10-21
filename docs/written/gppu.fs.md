@@ -1,22 +1,30 @@
-<!-- written by Claude Code (haiku) from docs/prompts/module.md 41eee7c201042b801b3c26aaf28b2d27d9f39fac and gppu/fs.py 7300ea3361d9ed9286e6922ee7eee30839f1abac -->
-`gppu.fs` (gppufs) reads objects from the places where they are kept, and it indexes the files among them. An object is content with the uri it came from. A file system for a folder tree keeps what it learned of each entry in a SQLite index beside that folder. The public methods are the API. The Lake, which saves objects and retrieves them by uri, is in `gppu.lake`.
+<!-- written by Claude Code (haiku) from docs/prompts/module.md 41eee7c201042b801b3c26aaf28b2d27d9f39fac and gppu/fs.py 0863a0e39d1539a1a5dd876b4344762be65a53a4 -->
+`gppu.fs` (gppufs) gives programs one way to read and write objects in the places they are kept: files on this host, files on a share, a Postgres database, or a SharePoint or OneDrive drive. A caller names an object by its uri or by a path relative to a place, and the module handles the connection, identity and what is remembered about each object.
 
-A Location is one place in the configured hierarchy, known by its uid. Each Location has a Provider, which reaches objects by uri over one connection. An instance of a Provider is that connection. `FileSystem` is the Provider for files on this host or on a share it reaches. A Provider that cannot write raises `PermissionError` from `write` and `delete`. `PostgresFileSystem` and `SharePointFileSystem` are read-only fsspec file systems for a Postgres database and a SharePoint or OneDrive drive. A Container, obtained with `Location.container(path)`, holds alike objects and takes paths relative to itself. It adds naming templates, which decide where a `DataObject` is stored, and `.merge.yaml` rules, which decide what a write may replace. A `DataObject` carries the uri, content, identity, kind and name of one object, and a `removed` flag that a refresh sets when the source reports the object gone.
+## How the parts fit
 
-`GppuCatalog` loads the configured connections and Locations. `location(uid)` returns a Location with the Provider of its connection, and `location_of(uri)` finds the nearest configured Location at or above a uri. Given a folder of exported host catalogs, it answers every address with the `GppuFileSystem` of the deepest Location that contains it.
+A Location is one place in the configured hierarchy, known by its uid. It holds the Provider that reaches its objects, and `Location.container(path)` returns a Container at a path below it. `GppuCatalog` loads the configured Locations, returns one by uid with `location(uid)`, and finds the Location holding a uri with `location_of(uri)`.
 
-`GppuFileSystem` is the fsspec file system of one location, given as an absolute path or a URL. `ls` and `info` identify each entry from its listing by probe and read nothing. With `refresh=True` they parse the entry with its handler, and the row carries that handler's record under `gppu.record`. A `GppuIndex` passed to the file system is asked first, so an entry it already holds is not parsed again. An archive is opened only when it is listed itself. Writes through the fsspec surface change the file and leave the index as it was, until the folder is read with `refresh=True`.
+A Provider reaches objects by uri over one connection. It implements `ls`, `info`, `open`, `read`, `write`, `delete` and `refresh` for its scheme. A base method left unimplemented raises `NotImplementedError`, and a write or delete the Provider does not allow raises `PermissionError`. `FileSystem` is the Provider of files: its `read` returns a JSON file's parsed value and any other file's byte stream.
 
-`walk_files` walks a folder on this host, and `walk_container` walks any Container. Each yields every folder with the rows it holds, read to a level from `refresh` to `archives`.
+A Container holds alike objects under one uri and takes only relative paths, so its callers never handle uris. Its `write` obeys the `.merge.yaml` rules in each folder, which decide whether a changed file may be replaced or a removed object deleted. Naming templates place a `DataObject` through `path_of`, and an identity template refuses to overwrite one object with another.
 
-Public I/O calls on `GppuFileSystem` and `GppuCatalog` return directly outside an event loop and are awaitable inside one. Their `*_sync` methods run on the calling thread.
+A `DataObject` is a frozen value holding content, the uri it came from, an identity, a kind and a name.
+
+`GppuFileSystem` is an fsspec file system over one location. It keeps a SQLite index beside each folder it lists, or in an object implementing `GppuIndex` when the caller supplies one. `ls` and `info` identify an entry from its listing without reading it. `refresh=True` parses the entry with its handler from `gppu.handlers`. Archives (zip, tar.gz and rar) are opened only when they are listed themselves. Ignored files are neither indexed nor listed. `PostgresFileSystem` and `SharePointFileSystem` are read-only file systems for their stores; `PostgresFileSystem` registers as `pg://`.
+
+Public I/O methods decorated with `sync` return directly outside an event loop and are awaitable inside one. Their `*_sync` methods run on the calling thread. The Lake, which saves and retrieves objects by uri, is in `gppu.lake`, not in this module.
 
 ## Using it
+
+The example is the one from the module's `PostgresFileSystem` docstring:
 
 ```python
 from gppu.fs import GppuFileSystem
 
-fs = GppuFileSystem('D:/Dev')                          # the location: an absolute path or a URL
-names = fs.ls('', detail=False)                        # identified from the listing, nothing read
-row = fs.info('README.md', refresh=True)               # parsed by its handler; row['gppu']['record'] holds the record
+fs = GppuFileSystem('pg://pg.karel.in/files', dsn='postgresql://…')
+for entry in fs.ls('', detail=True):
+    print(entry['name'])
 ```
+
+The `dsn` is the caller's connection string, because which databases exist and how to reach them is configuration rather than part of this module.

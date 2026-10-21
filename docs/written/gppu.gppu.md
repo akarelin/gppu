@@ -1,28 +1,26 @@
-<!-- written by Claude Code (haiku) from docs/prompts/module.md 41eee7c201042b801b3c26aaf28b2d27d9f39fac and gppu/gppu.py 6f150a4367300647ff070a40600ebd2305cea965 -->
-`gppu.gppu` is the core of gppu. It holds the program's configuration and logging, plus the helpers the other gppu modules build on: paths, URIs, nested dictionaries, YAML and JSON files, Jinja templates, time and size formatting, and colored console output.
+<!-- written by Claude Code (haiku) from docs/prompts/module.md 41eee7c201042b801b3c26aaf28b2d27d9f39fac and gppu/gppu.py c04882f239173b5f80535c0f71fe1565d9216034 -->
+`gppu.gppu` is the core of gppu. It provides the program's configuration, its logging, and the path, URI, template, and conversion helpers that the other gppu modules use. Importing it starts a console log at once, so a program logs from its first line.
 
-## How the pieces work together
+## How the parts work together
 
-`Env` is the program's configuration, one per program, static and global. `Env.init()` builds it from `APP`, a dict the program sets at its start. `APP` names the program, names its configuration file (found by that name when not set), and says whether a topology file and the command line are used. `Env.from_argv` lets the command line set keys over the configuration with `--key value`. `glob`, `glob_int`, `glob_list` and `glob_dict` read it with slash paths.
+`Env` holds the program's configuration. It is one per program and global. `Env.from_env` loads a YAML file named after the program, or one you name, optionally merged over a topology file. `Env.init` loads the same configuration from `APP`, and command-line arguments of the form `--key value` override it. `Env.glob` reads a value at a slash path. Objects built on `_Base`, including `App`, copy that configuration and read it with `my`, `my_int`, `my_list`, and `my_dict`.
 
-`_Base` gives an object a log and a configuration: a copy of `Env`, read with `self.my(...)`. `App` is a data class built on `_Base` and `_DC`. Its constructor arguments become its data.
+`Logger` writes the program's log. Its functions `Info`, `Debug`, `Warn`, and `Error` print coloured lines and apply trace rules. `Logger.enable_file_logging` mirrors the same lines to a rotating file. A class that mixes in `mixin_Logger` logs under its own name.
 
-`Logger` holds the program's log. `Info`, `Warn`, `Error`, `Debug` and `Dump` write through it. Output is colored and filtered by `TRACE_RULES`, which come from the configuration's `trace_rules`. `Logger.enable_file_logging` mirrors lines to a rotating file, and the configuration's `log_file` does the same. `mixin_Logger` gives a class its own child logger.
+`Path` is a file system path that is also a `pathlib.Path`, and `full_path` resolves a user-supplied path, including mapping `/mnt/d/...` to `D:\...` on Windows. `probe_path` reports a file's attributes and the handler that should read it, without reading the file. `y2uri` holds a URI as a scheme, a path, a query, and a fragment.
 
-`TemplateSet` compiles a configuration's Jinja macros, generators and templates once. A row names its template and carries only what differs. Startup resolution builds each row's data, and `render_template` renders named templates later, when code asks for them. `jinja_template` and `jinja_document` render Jinja for one value or for a whole text file.
+`TemplateSet` compiles a configuration's Jinja. Startup templates generate the rows of a table and check that their references exist. Runtime templates are rendered later with `render_template`. `jinja_template` and `jinja_document` render Jinja directly, and `JinjaDocument` renders text documents without evaluating their quotes.
 
-`full_path` resolves a user-supplied path. `Path` is a file system path with segment operators. `y2uri` parses URIs. `probe_path` reports file attributes without reading contents. `deepget` and its typed variants read a slash path from a nested dict. `dict_from_yml` loads YAML and follows `!include`. The JSON and YAML writers and readers cover the other formats.
+Data moves in and out through `dict_from_yml`, which follows `!include`, `dict_to_yml`, `dict_to_json`, and `dict_from_json`. `deepget` reads nested values by slash path. The formatters `format_size`, `format_duration`, `format_since`, and `pfy` produce readable text, and `sync` lets synchronous code call an async function.
 
-The rest are small helpers: `safe_int`, `safe_float`, `safe_list` and `safe_datetime` coerce values; `TimeSpan` models a time interval; `format_size`, `format_duration` and `format_since` format numbers for display; `pcp` and `dpcp` print colored text; `sync` calls an async function from synchronous code.
+## Using the module
 
-## Using it
-
-A program sets its keys in `APP` before its first read of configuration. The first read loads the configuration from them:
+A program names itself and its application folder, then reads its settings and writes to its log:
 
 ```python
-from gppu.gppu import APP, Info, glob
+from pathlib import Path
+from gppu.gppu import Env, Info, glob
 
-APP['name'] = 'mytool'           # the configuration is found by this name
-port = glob('server/port')       # a slash path into the configuration
-Info('Listening on', port)
+Env.from_env(name='my-tool', app_path=Path(__file__).parent)
+Info('Broker', glob('mqtt/host'))
 ```
