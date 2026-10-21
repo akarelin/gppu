@@ -6,11 +6,9 @@ path whose type is not known in advance, which handler to call:
     handler = probe('D:/Dev/gppu/README.md')            # MarkdownHandler; await probe(...) in an event loop
     record = handler.parse('D:/Dev/gppu/README.md')     # await handler.parse(...) in an event loop
 
-A handler is a class of class methods. `identify(path, stat, head)` says whether the path is of its type from what
-probe gives it: the path, its stat, and `head(n)`, the file's first n bytes. A handler does no I/O of its own there,
-so probing a path takes one stat and at most one read of the most bytes a handler asks for: a suffix needs none, a
-SQLite file's header 16 once its suffix says SQLite, a session's first lines up to SESSION_HEAD once its suffix
-says .jsonl. probe and parse are asynchronous, awaited inside an event loop and returned directly outside one.
+A handler is a class of class methods. `identify(path, stat)` says whether the path is of its type: a file's name
+matches one of its `patterns`, and a folder, a symlink or a junction is told by the stat probe has already taken.
+Probing a path is that one stat and nothing more. probe and parse are asynchronous, awaited inside an event loop and returned directly outside one.
 `parse(path)` reads the path into a record, what
 Linked Data holds of the thing: its type, subtype, name, span, data and, in meta, the path it was read from; a
 session's record also has its messages. A subtype is a subclass of its type: it identifies a path only where its
@@ -130,7 +128,7 @@ HOMES: dict[Harness, tuple[str, ...]] = {
     "hermes": ("state.db",),
     "agy": ("antigravity_state.pbtxt", "jetski_state.pbtxt"),
 }
-# Linked Data's sessions (RAN Projects/ld/sessions.py): a name is the first line of a text, clipped; the lines of Claude
+# Linked Data's sessions (RAN Projects/ld/sessions.py): a name is the first line of a text, clipped; the messages of Claude
 # Code that name its session and the key each holds the name in; the Codex payloads that are messages and the roles of its
 # messages; how Codex opens the AGENTS.md it reads into a session; the namespace of a Codex message's id; and the tags a
 # prompt is wrapped in.
@@ -144,27 +142,11 @@ OPENING = re.compile(r"\s*<([\w:-]+)([^>]*)>")
 SUMMARY = re.compile(r'\bsummary="([^"]*)"')
 ELEMENT = re.compile(r"<([\w:-]+)[^>]*>.*?</\1>", re.S)
 TAGS = re.compile(r"</?[\w:-]+[^>]*>")
-# The most a session's identification reads: the first SNIFF objects of 5,385 real sessions identified their harness
-# within 434 KB, half of them within 4 KB.
-SESSION_HEAD = 512 * 1024
+MESSAGE_SUBTYPES = ("user", "agent", "thinking", "tool_use", "tool_result")
 SESSION_UID = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.I,
 )
-
-
-class Head:
-    """A file's first bytes, read once for probing: head(n) is the first n, read again only when a handler asks for
-    more than it holds. A folder has none."""
-
-    def __init__(self, path: Path, stat: os.stat_result) -> None:
-        self.path, self.file, self.data = path, stat_module.S_ISREG(stat.st_mode), b""
-
-    def __call__(self, n: int) -> bytes:
-        if self.file and n > len(self.data):
-            with self.path.open("rb") as stream:
-                self.data = stream.read(n)
-        return self.data[:n]
 
 
 class Handler:
@@ -176,6 +158,7 @@ class Handler:
 
     type: str
     subtype: str | None = None
+    patterns: tuple[str, ...] = ()
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -187,9 +170,10 @@ class Handler:
             cls.subtype = None if cls is top else name
 
     @classmethod
-    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
-        """Whether the path is of this handler's type: anything that is there is."""
-        return True
+    def identify(cls, path: Path, stat: os.stat_result) -> bool:
+        """Whether the path is of this handler's type: its name matches one of the handler's patterns, ignoring case;
+        a handler with none takes anything that is there."""
+        return not cls.patterns or any(fnmatch.fnmatch(path.name.casefold(), pattern) for pattern in cls.patterns)
 
     @classmethod
     @sync
@@ -238,7 +222,7 @@ class IgnoredHandler(Handler):
     folder_patterns = IGNORED_FOLDER_PATTERNS
 
     @classmethod
-    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
+    def identify(cls, path: Path, stat: os.stat_result) -> bool:
         return cls.reason(path, stat) is not None
 
     @classmethod
@@ -277,7 +261,7 @@ class SymlinkHandler(Handler):
     the target."""
 
     @classmethod
-    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
+    def identify(cls, path: Path, stat: os.stat_result) -> bool:
         return stat_module.S_ISLNK(stat.st_mode)
 
     @classmethod
@@ -293,7 +277,7 @@ class JunctionHandler(Handler):
     at the target."""
 
     @classmethod
-    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
+    def identify(cls, path: Path, stat: os.stat_result) -> bool:
         return getattr(stat, "st_reparse_tag", 0) == getattr(stat_module, "IO_REPARSE_TAG_MOUNT_POINT", None)
 
     @classmethod
@@ -305,56 +289,57 @@ class JunctionHandler(Handler):
 
 
 class FolderHandler(Handler):
-    """A folder and what it directly holds: its files, folders and bytes, and the span of its files.
-
-    A subfolder's modified time is when something was added to it, so the span is its files' alone.
+    """A folder: a loop over its members. Each member is probed with the stat the folder's listing gives it and parsed
+    by its handler, so a member folder loops over its own. Its members' records are its members; its data counts the
+    files, folders and bytes it directly holds, and its span is its files'. A subfolder's modified time is when
+    something was added to it, so the span is its files' alone.
     """
 
     @classmethod
-    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
+    def identify(cls, path: Path, stat: os.stat_result) -> bool:
         return stat_module.S_ISDIR(stat.st_mode)
 
     @classmethod
     @sync
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
-        entries = await asyncio.to_thread(cls._entries, full_path(path))
-        files = [stat for folder, stat in entries if not folder]
-        times = [time for stat in files if (time := cls.valid_time(datetime.fromtimestamp(stat.st_mtime, timezone.utc)))]
-        record["data"].update(files=len(files), folders=len(entries) - len(files), bytes=sum(stat.st_size for stat in files))
-        record["span"] = cls.spanning(times)
+        members, files, folders = [], [], 0
+        for member, stat in await asyncio.to_thread(cls._listing, full_path(path)):
+            handler = await probe(member, stat)
+            members.append(await handler.parse(member))
+            if stat_module.S_ISDIR(stat.st_mode):
+                folders += 1
+            else:
+                files.append(stat)
+        record["data"].update(files=len(files), folders=folders, bytes=sum(stat.st_size for stat in files))
+        record["span"] = cls.spanning([time for stat in files
+                                       if (time := cls.valid_time(datetime.fromtimestamp(stat.st_mtime, timezone.utc)))])
+        record["members"] = members
         return record
 
     @staticmethod
-    def _entries(path: Path) -> list[tuple[bool, os.stat_result | None]]:
-        """Each entry the folder directly holds: whether it is a folder, and a file's stat."""
+    def _listing(path: Path) -> list[tuple[Path, os.stat_result]]:
+        """What the folder holds: each member's path and the stat the listing gives it."""
         with os.scandir(path) as entries:
-            return [(True, None) if entry.is_dir(follow_symlinks=False) else (False, entry.stat(follow_symlinks=False))
-                    for entry in entries]
+            return [(path / entry.name, entry.stat(follow_symlinks=False)) for entry in entries]
 
 
 class FileHandler(Handler):
     """A file of a type no more specific handler identifies: its size and modified time."""
 
     @classmethod
-    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
-        return stat_module.S_ISREG(stat.st_mode)
+    def identify(cls, path: Path, stat: os.stat_result) -> bool:
+        return stat_module.S_ISREG(stat.st_mode) and super().identify(path, stat)
 
 
 class SqliteHandler(FileHandler):
-    """A SQLite file, known by its extension and its header, and its tables with their columns.
+    """A SQLite file and its tables with their columns.
 
     It is opened immutable, so SQLite writes no -wal or -shm beside it, and no row is read: what is in the
     tables is the file's content, not what the file is.
     """
 
-    MAGIC = b"SQLite format 3\x00"
-    extensions = (".sqlite", ".sqlite3", ".db")
-
-    @classmethod
-    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
-        return (super().identify(path, stat, head) and path.suffix.casefold() in cls.extensions
-                and head(len(cls.MAGIC)) == cls.MAGIC)
+    patterns = ("*.sqlite", "*.sqlite3", "*.db")
 
     @classmethod
     @sync
@@ -389,9 +374,7 @@ class MarkdownHandler(FileHandler):
         for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
     }
 
-    @classmethod
-    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
-        return super().identify(path, stat, head) and path.suffix.casefold() == ".md"
+    patterns = ("*.md",)
 
     @classmethod
     @sync
@@ -455,9 +438,7 @@ class CSVHandler(FileHandler):
     time_keys = TIME_KEYS
     time_formats: tuple[str, ...] = ()
 
-    @classmethod
-    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
-        return super().identify(path, stat, head) and path.suffix.casefold() == ".csv"
+    patterns = ("*.csv",)
 
     @classmethod
     @sync
@@ -511,9 +492,7 @@ class LogHandler(FileHandler):
     offset is in MY_TZ; placeholders and future times do not count.
     """
 
-    @classmethod
-    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
-        return super().identify(path, stat, head) and path.suffix.casefold() == ".log"
+    patterns = ("*.log",)
 
     @classmethod
     @sync
@@ -542,9 +521,7 @@ class EmailHandler(FileHandler):
     party or collision.
     """
 
-    @classmethod
-    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
-        return super().identify(path, stat, head) and path.suffix.casefold() in (".eml", ".msg")
+    patterns = ("*.eml", "*.msg")
 
     @classmethod
     @sync
@@ -585,9 +562,10 @@ class SessionTurn:
 
 
 class SessionHandler(FileHandler):
-    """A native session: a non-empty .jsonl whose first eight objects say which harness wrote it.
+    """A native session: a .jsonl a harness wrote, its first eight messages saying which harness.
 
-    The harness is told by its records, never by the file's name or folder:
+    Probing takes a .jsonl that is not empty; the harness is told by its messages when it is parsed, never by the
+    file's name or folder:
 
     * Codex (cx): type is session_meta, turn_context, event_msg or response_item, with an object payload.
     * Copilot: a VS Code append log opening with sessionId, requests and responderUsername GitHub Copilot.
@@ -597,12 +575,15 @@ class SessionHandler(FileHandler):
     * Agy: USER_INPUT from USER_EXPLICIT or PLANNER_RESPONSE from MODEL, with a string created_at.
     * Hermes: role session_meta with a string session_id.
 
-    Its record is a session, its subtype the harness. Every object of the file is read; a blank, truncated or
-    non-object line is skipped. The lines of cc and cx are read as Linked Data reads them (parse_lines): the
-    uid, the name, the span from the first message to the last, data.title, topic, cwd and models, meta.parent_uid,
-    and the record's messages. For the other harnesses the record has the uid its harness gives, the span from
-    the first record time to the last, the models named anywhere in its lines, and no messages. data.normalized_name is the file's name from its start,
-    turns, duration and the first line a person typed.
+    Its record is a session, its subtype the harness; a .jsonl whose messages name no harness raises. Its messages
+    are every message of the file, in order, as session messages; a blank, truncated or non-object line of the file
+    is skipped. A session message's subtype is user, agent, thinking, tool_use or tool_result as Linked Data reads
+    the messages of cc and cx (parse_messages), else the type its harness gives it. For cc and cx the record has the
+    uid, the name, the span from the first session message of Linked Data's subtypes to the last, data.title, topic,
+    cwd and models, and meta.parent_uid, as Linked Data reads them. For the other harnesses it has the uid its
+    harness gives, the span from the first time in its messages to the last, and the models named anywhere in them.
+    data.turns counts its turns, and data.normalized_name is the file's name from its start, turns, duration and the
+    first line a person typed.
     """
 
     type = "session"
@@ -620,28 +601,32 @@ class SessionHandler(FileHandler):
              "cc": "_claude_code_turns", "openclaw": "_openclaw_turns", "agy": "_agy_turns",
              "hermes": "_hermes_turns"}
 
+    patterns = ("*.jsonl",)
+
     @classmethod
-    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
-        return (super().identify(path, stat, head) and path.suffix.casefold() == ".jsonl" and stat.st_size > 0
-                and cls._harness(cls._head(head(SESSION_HEAD), stat.st_size)) is not None)
+    def identify(cls, path: Path, stat: os.stat_result) -> bool:
+        """A .jsonl that is not empty; a harness that has only just made its file has written nothing yet."""
+        return super().identify(path, stat) and stat.st_size > 0
 
     @classmethod
     @sync
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
         path = full_path(path)
-        records = await asyncio.to_thread(cls._records, path)
-        harness = cls._harness(records[:SNIFF])
-        turns = getattr(cls, cls.TURNS[harness])(records)
-        times = tuple(cls._timestamps(records))
+        messages = await asyncio.to_thread(cls._messages, path)
+        harness = cls._harness(messages[:SNIFF])
+        if harness is None:
+            raise ValueError(f"{path}: its messages name no harness")
+        turns = getattr(cls, cls.TURNS[harness])(messages)
+        times = tuple(cls._timestamps(messages))
         if harness == "copilot":
-            created = cls.valid_time(cls._stamp(records[0]["v"].get("creationDate")))
+            created = cls.valid_time(cls._stamp(messages[0]["v"].get("creationDate")))
             times = tuple(time for time in (created, *(turn.timestamp for turn in turns)) if time is not None)
-        uid = getattr(cls, cls.UID[harness])(records, path)
+        uid = getattr(cls, cls.UID[harness])(messages, path)
         parent = cls.PARENT.get(harness)
-        parent_uid, subagent = getattr(cls, parent)(records) if parent else (None, False)
-        mainline = any(line.get("isSidechain") is False for line in records)
-        sidechain = any(line.get("isSidechain") is True for line in records)
+        parent_uid, subagent = getattr(cls, parent)(messages) if parent else (None, False)
+        mainline = any(message.get("isSidechain") is False for message in messages)
+        sidechain = any(message.get("isSidechain") is True for message in messages)
         span = cls.spanning(times)
         record["subtype"], record["uid"], record["name"], record["span"] = harness, uid, cls._topic(turns) or uid, span
         record["data"].update(subagent=subagent, sidechain_only=sidechain and not mainline, turns=len(turns),
@@ -649,7 +634,7 @@ class SessionHandler(FileHandler):
         if parent_uid:
             record["meta"]["parent_uid"] = parent_uid
         if harness in ("cc", "cx"):
-            session, messages = cls.parse_lines(harness, records)
+            session, session_messages = cls.parse_messages(harness, messages)
             data = {"title": session["title"], "topic": session["topic"], "cwd": session["cwd"],
                     "models": sorted(session["models"]) or None}
             record["uid"] = session["uid"]
@@ -660,9 +645,10 @@ class SessionHandler(FileHandler):
             record["meta"].pop("parent_uid", None)
             if session["parent_uid"]:
                 record["meta"]["parent_uid"] = session["parent_uid"]
-            record["messages"] = messages
         else:
-            record["data"]["models"] = list(cls._models(records))
+            record["data"]["models"] = list(cls._models(messages))
+            session_messages = [cls._session_message(None, message, n, cls._own_type(message), "") for n, message in enumerate(messages, 1)]
+        record["messages"] = session_messages
         return record
 
     @classmethod
@@ -689,23 +675,25 @@ class SessionHandler(FileHandler):
         return f"{label}{tail}"
 
     @classmethod
-    def parse_lines(cls, harness: str, lines: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...], offset: int = 0,
-              uid: str | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        """The session and the messages a harness's lines say: the whole file, or the lines after the offset lines read
-        before, each numbered by its place in the file, counted from 1. A Codex delta names no session, so its uid is
-        given. The session's times are its messages' first and last (a resumed session's copied lines are out of time
-        order); with none, its lines', a moment when they are one (a Codex session opened and left). Linked Data's
-        sessions API reads what a session hook sends through this, as SessionHandler.parse reads its file."""
+    def parse_messages(cls, harness: str, messages: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...],
+                       offset: int = 0, uid: str | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """The session and its session messages from the messages a harness wrote: the whole file, or the messages
+        after the offset ones read before, each numbered by its place in the file, counted from 1. Every message is a
+        session message: user, agent, thinking, tool_use or tool_result as Linked Data reads them, else the type its
+        harness gives it, such as system, attachment or ai-title. A Codex delta names no session, so its uid is given. The session's times are the first and last of its
+        session messages of Linked Data's subtypes (a resumed session's copied messages are out of time order); with none, its
+        messages', a moment when they are one (a Codex session opened and left). Linked Data's sessions API reads
+        what a session hook sends through this, as SessionHandler.parse reads its file."""
         if harness == "cc":
-            session, messages = cls._claude_lines(lines, offset, uid)
+            session, session_messages = cls._claude_messages(messages, offset, uid)
         elif harness == "cx":
-            session, messages = cls._codex_lines(lines, offset, uid)
+            session, session_messages = cls._codex_messages(messages, offset, uid)
         else:
-            raise NotImplementedError(f"the lines of cc and cx are read into messages, not those of {harness}")
-        times = [message["ts"] for message in messages] or [
-            datetime.fromisoformat(line["timestamp"]) for line in lines if line.get("timestamp")]
+            raise NotImplementedError(f"the messages of cc and cx are read into session messages, not those of {harness}")
+        times = [message["ts"] for message in session_messages if message["subtype"] in MESSAGE_SUBTYPES] or [
+            datetime.fromisoformat(message["timestamp"]) for message in messages if message.get("timestamp")]
         session["times"] = [min(times), max(times)] if times else []
-        return session, messages
+        return session, session_messages
 
     @staticmethod
     def first_line(text: str) -> str:
@@ -714,7 +702,7 @@ class SessionHandler(FileHandler):
 
     @classmethod
     def _text_of(cls, content: Any, keys: tuple[str, ...] = ("text", "thinking", "content", "output")) -> str:
-        """The text a line carries: a string, or the text of its blocks, each block's under the first of keys it has."""
+        """The text a message carries: a string, or the text of its blocks, each block's under the first of keys it has."""
         if isinstance(content, str):
             return content
         if isinstance(content, dict):
@@ -742,61 +730,75 @@ class SessionHandler(FileHandler):
         if prompt and (not session["topic"] or session["topic"].startswith("<") and not prompt.startswith("<")):
             session["topic"], session["name"] = prompt, cls.first_line(cls._readable(text))
 
-    @classmethod
-    def _message(cls, uid: str, line: Mapping[str, Any], n: int, subtype: str, text: str) -> dict[str, Any]:
-        return {"uid": uid, "ts": datetime.fromisoformat(line["timestamp"]), "subtype": subtype,
-                "name": cls.first_line(text) or subtype, "data": line, "line": n}
+    @staticmethod
+    def _own_type(message: Mapping[str, Any]) -> str | None:
+        """The type a harness gives its message, or its role; None only where it gives neither."""
+        value = message.get("type") or message.get("role")
+        return value if isinstance(value, str) else None
 
     @classmethod
-    def _claude_lines(cls, lines, offset: int, uid: str | None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        """Each user or assistant line is a message, its id the line's uuid. A subagent run's lines name the run, agentId,
-        and the session that spawned it, sessionId. A line marked isMeta is not a prompt. An ai-title, agent-name or
-        custom-title line names the session."""
+    def _session_message(cls, uid: str | None, message: Mapping[str, Any], n: int, subtype: str | None,
+                         text: str) -> dict[str, Any]:
+        """A session message as Linked Data holds it: its subtype, its time, its name the first line of its text, the
+        message as its data, and in meta its id in its harness and its place in the file."""
+        return {"type": "session_message", "subtype": subtype,
+                "ts": datetime.fromisoformat(message["timestamp"]) if message.get("timestamp") else None,
+                "name": cls.first_line(text) or subtype, "data": message, "meta": {"uid": uid, "line": n}}
+
+    @classmethod
+    def _claude_messages(cls, messages, offset: int, uid: str | None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """A user or an assistant message has a subtype, its id its uuid. A subagent run's messages name the run,
+        agentId, and the session that spawned it, sessionId. A message marked isMeta is not a prompt. An ai-title,
+        agent-name or custom-title message names the session."""
         session = {"uid": uid, "parent_uid": None, "title": None, "topic": None, "name": None, "cwd": None, "models": set()}
-        messages = []
-        for n, line in enumerate(lines, offset + 1):
-            kind = line.get("type")
+        session_messages = []
+        for n, message in enumerate(messages, offset + 1):
+            kind = message.get("type")
             if kind in TITLES:
-                session["title"] = line.get(TITLES[kind]) or session["title"]
+                session["title"] = message.get(TITLES[kind]) or session["title"]
             if kind not in ("user", "assistant"):
+                session_messages.append(cls._session_message(message.get("uuid"), message, n, kind, ""))
                 continue
-            if line.get("agentId"):
-                session["uid"], session["parent_uid"] = line["agentId"], line.get("sessionId")
+            if message.get("agentId"):
+                session["uid"], session["parent_uid"] = message["agentId"], message.get("sessionId")
             else:
-                session["uid"] = line.get("sessionId") or session["uid"]
-            session["cwd"] = line.get("cwd") or session["cwd"]
-            message = line.get("message") or {}
-            if message.get("model"):
-                session["models"].add(message["model"])
-            content = message.get("content")
+                session["uid"] = message.get("sessionId") or session["uid"]
+            session["cwd"] = message.get("cwd") or session["cwd"]
+            body = message.get("message") or {}
+            if body.get("model"):
+                session["models"].add(body["model"])
+            content = body.get("content")
             blocks = content if isinstance(content, list) else [{"type": "text", "text": content or ""}]
             types = {block.get("type") for block in blocks}
-            if kind == "user" and not line.get("isMeta") and "text" in types:
+            if kind == "user" and not message.get("isMeta") and "text" in types:
                 cls._prompted(session, cls._text_of(blocks, ("text",)))
             subtype = ("tool_result" if "tool_result" in types else "user" if kind == "user"
                        else "tool_use" if "tool_use" in types else "agent" if "text" in types else "thinking")
             text = (" ".join(block.get("name", "") for block in blocks if block.get("type") == "tool_use")
                     if subtype == "tool_use" else cls._text_of(blocks))
-            messages.append(cls._message(line["uuid"], line, n, subtype, text))
-        return session, messages
+            session_messages.append(cls._session_message(message["uuid"], message, n, subtype, text))
+        return session, session_messages
 
     @classmethod
-    def _codex_lines(cls, lines, offset: int, uid: str | None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        """The first session_meta line names the session, its folder and the session that spawned it. A response_item of
-        a message, a tool call or a tool's output is a message, its id made from the session's uid and the line. The
-        AGENTS.md Codex reads into a session is not a prompt."""
+    def _codex_messages(cls, messages, offset: int, uid: str | None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """The first session_meta message names the session, its folder and the session that spawned it. A
+        response_item of a message, a tool call or a tool's output has a subtype. Codex gives a message no id, so its
+        id is made from the session's uid and its place. The AGENTS.md Codex reads into a session is not a prompt."""
         session = {"uid": uid, "parent_uid": None, "title": None, "topic": None, "name": None, "cwd": None, "models": set()}
-        messages, named = [], False
-        for n, line in enumerate(lines, offset + 1):
-            payload = line.get("payload") or {}
-            if line.get("type") == "session_meta" and not named:
+        session_messages, named = [], False
+        for n, message in enumerate(messages, offset + 1):
+            payload = message.get("payload") or {}
+            if message.get("type") == "session_meta" and not named:
                 named = True
                 source = payload.get("source")
                 session["uid"] = session["uid"] or payload.get("id") or payload.get("session_id")
                 session["parent_uid"] = (((source.get("subagent") or {}).get("thread_spawn") or {}).get("parent_thread_id")
                                          if isinstance(source, dict) else None)
                 session["cwd"] = payload.get("cwd")
-            if line.get("type") != "response_item" or payload.get("type") not in CODEX_MESSAGES:
+            message_uid = str(uuid5(NAMESPACE, f"{session['uid']}/{message.get('ordinal', n)}"))
+            if message.get("type") != "response_item" or payload.get("type") not in CODEX_MESSAGES:
+                own = payload.get("type") if message.get("type") == "response_item" else message.get("type")
+                session_messages.append(cls._session_message(message_uid, message, n, own, ""))
                 continue
             if payload["type"] == "message":
                 subtype, text = CODEX_ROLES[payload["role"]], cls._text_of(payload.get("content"))
@@ -808,47 +810,47 @@ class SessionHandler(FileHandler):
                 subtype, text = "agent", cls._text_of(payload.get("content") or payload.get("text"))
             else:
                 subtype, text = "tool_use", payload.get("name") or ""
-            messages.append(cls._message(str(uuid5(NAMESPACE, f"{session['uid']}/{line.get('ordinal', n)}")), line, n, subtype, text))
-        return session, messages
+            session_messages.append(cls._session_message(message_uid, message, n, subtype, text))
+        return session, session_messages
 
     @classmethod
-    def _harness(cls, records: tuple[Mapping[str, Any], ...]) -> Harness | None:
-        return next((harness for harness, recognize in cls.RECOGNIZERS if getattr(cls, recognize)(records)), None)
+    def _harness(cls, messages: tuple[Mapping[str, Any], ...]) -> Harness | None:
+        return next((harness for harness, recognize in cls.RECOGNIZERS if getattr(cls, recognize)(messages)), None)
 
     @staticmethod
-    def _is_codex(records: tuple[Mapping[str, Any], ...]) -> bool:
-        """Recognize Codex lifecycle and response records."""
+    def _is_codex(messages: tuple[Mapping[str, Any], ...]) -> bool:
+        """Recognize Codex lifecycle and response messages."""
 
         return any(
-            record.get("type")
+            message.get("type")
             in ("session_meta", "turn_context", "event_msg", "response_item")
-            and isinstance(record.get("payload"), Mapping)
-            for record in records
+            and isinstance(message.get("payload"), Mapping)
+            for message in messages
         )
 
     @staticmethod
-    def _is_copilot(records: tuple[Mapping[str, Any], ...]) -> bool:
+    def _is_copilot(messages: tuple[Mapping[str, Any], ...]) -> bool:
         """Recognize the native VS Code Copilot append-log header."""
-        if not records or records[0].get("kind") != 0:
+        if not messages or messages[0].get("kind") != 0:
             return False
-        body = records[0].get("v")
+        body = messages[0].get("v")
         return (isinstance(body, Mapping) and isinstance(body.get("sessionId"), str)
                 and isinstance(body.get("requests"), list)
                 and body.get("responderUsername") == "GitHub Copilot")
 
     @staticmethod
-    def _copilot_state(records: tuple[Mapping[str, Any], ...]) -> dict:
-        """Replay VS Code objectMutationLog entries without changing raw records.
+    def _copilot_state(messages: tuple[Mapping[str, Any], ...]) -> dict:
+        """Replay VS Code objectMutationLog entries without changing raw messages.
 
         Kind 2 replaces the array tail at ``i`` and then appends ``v``. Request
         and response patches belong to the same conversation; they are not turns.
         """
-        if not SessionHandler._is_copilot(records):
+        if not SessionHandler._is_copilot(messages):
             raise ValueError("Copilot append log has no initial session object")
-        body = deepcopy(records[0]["v"])
+        body = deepcopy(messages[0]["v"])
         uid = body["sessionId"]
-        for record in records[1:]:
-            kind, path = record.get("kind"), record.get("k")
+        for message in messages[1:]:
+            kind, path = message.get("kind"), message.get("k")
             if type(kind) is not int or kind not in (1, 2, 3) or not isinstance(path, list) or not path:
                 raise ValueError("Copilot append log has an invalid mutation")
             target = body
@@ -863,7 +865,7 @@ class SessionHandler(FileHandler):
                     or isinstance(target, list) and type(key) is int and 0 <= key < len(target)):
                 raise ValueError("Copilot append log mutation has an invalid target")
             if kind == 1:
-                target[key] = deepcopy(record["v"])
+                target[key] = deepcopy(message["v"])
             elif kind == 3:
                 if not isinstance(target, dict):
                     raise ValueError("Copilot deletion requires an object property")
@@ -874,29 +876,29 @@ class SessionHandler(FileHandler):
                 values = target[key]
                 if not isinstance(values, list):
                     raise ValueError("Copilot Push target is not an array")
-                if "i" in record:
-                    index = record["i"]
+                if "i" in message:
+                    index = message["i"]
                     if type(index) is not int or not 0 <= index <= len(values):
                         raise ValueError("Copilot Push index is outside its array")
                     del values[index:]
-                if "v" in record:
-                    if not isinstance(record["v"], list):
+                if "v" in message:
+                    if not isinstance(message["v"], list):
                         raise ValueError("Copilot Push values are not an array")
-                    values.extend(deepcopy(record["v"]))
+                    values.extend(deepcopy(message["v"]))
         if body["sessionId"] != uid or not isinstance(body["requests"], list):
             raise ValueError("Copilot append log changed its session identity or requests type")
         return body
 
     @classmethod
-    def _copilot_uid(cls, records: tuple[Mapping[str, Any], ...], path: Path) -> str:
+    def _copilot_uid(cls, messages: tuple[Mapping[str, Any], ...], path: Path) -> str:
         """Return the sessionId recorded in the native initial object."""
-        return records[0]["v"]["sessionId"]
+        return messages[0]["v"]["sessionId"]
 
     @classmethod
-    def _copilot_turns(cls, records: tuple[Mapping[str, Any], ...]) -> tuple[SessionTurn, ...]:
+    def _copilot_turns(cls, messages: tuple[Mapping[str, Any], ...]) -> tuple[SessionTurn, ...]:
         """Read final messages and their explicitly recorded response completion times."""
         turns = []
-        for request in cls._copilot_state(records)["requests"]:
+        for request in cls._copilot_state(messages)["requests"]:
             if (not isinstance(request, Mapping) or not isinstance(request.get("message"), Mapping)
                 or not isinstance(request["message"].get("text"), str) or "timestamp" not in request):
                 raise ValueError("Copilot request requires its original message and timestamp")
@@ -925,22 +927,22 @@ class SessionHandler(FileHandler):
         return tuple(turns)
 
     @staticmethod
-    def _is_claude_code(records: tuple[Mapping[str, Any], ...]) -> bool:
-        """Recognize Claude Code session identifiers and record types."""
+    def _is_claude_code(messages: tuple[Mapping[str, Any], ...]) -> bool:
+        """Recognize Claude Code session identifiers and message types."""
 
         return any(
-            isinstance(record.get("sessionId"), str)
-            or record.get("type") == "teleported-from"
-            or isinstance(record.get("uuid"), str)
-            or isinstance(record.get("parentUuid"), str)
-            for record in records
+            isinstance(message.get("sessionId"), str)
+            or message.get("type") == "teleported-from"
+            or isinstance(message.get("uuid"), str)
+            or isinstance(message.get("parentUuid"), str)
+            for message in messages
         )
 
     @staticmethod
-    def _is_gemini(records: tuple[Mapping[str, Any], ...]) -> bool:
+    def _is_gemini(messages: tuple[Mapping[str, Any], ...]) -> bool:
         """Recognize a Gemini CLI chat log by the header it opens with.
 
-        Its first record is the chat's own header — a session id, the hash of the project it was
+        Its first message is the chat's own header — a session id, the hash of the project it was
         opened in, when it started and what kind it is — and its turns arrive as one ``$set`` of
         messages. Claude Code is recognized by a ``sessionId`` alone, so without this the Gemini CLI
         is read as Claude Code, its turns are not found and every chat of one service shares that
@@ -948,46 +950,46 @@ class SessionHandler(FileHandler):
         """
 
         return any(
-            isinstance(record.get("sessionId"), str)
-            and isinstance(record.get("projectHash"), str)
-            and isinstance(record.get("startTime"), str)
-            for record in records
+            isinstance(message.get("sessionId"), str)
+            and isinstance(message.get("projectHash"), str)
+            and isinstance(message.get("startTime"), str)
+            for message in messages
         )
 
     @staticmethod
-    def _is_openclaw(records: tuple[Mapping[str, Any], ...]) -> bool:
-        """Recognize OpenClaw records from their model identifier."""
+    def _is_openclaw(messages: tuple[Mapping[str, Any], ...]) -> bool:
+        """Recognize OpenClaw messages from their model identifier."""
 
-        return any(isinstance(record.get("modelId"), str) for record in records)
+        return any(isinstance(message.get("modelId"), str) for message in messages)
 
     @staticmethod
-    def _is_agy(records: tuple[Mapping[str, Any], ...]) -> bool:
-        """Recognize Agy user and planner transcript records."""
+    def _is_agy(messages: tuple[Mapping[str, Any], ...]) -> bool:
+        """Recognize Agy user and planner transcript messages."""
 
         return any(
-            record.get("type") in ("USER_INPUT", "PLANNER_RESPONSE")
-            and record.get("source") in ("USER_EXPLICIT", "MODEL")
-            and isinstance(record.get("created_at"), str)
-            for record in records
+            message.get("type") in ("USER_INPUT", "PLANNER_RESPONSE")
+            and message.get("source") in ("USER_EXPLICIT", "MODEL")
+            and isinstance(message.get("created_at"), str)
+            for message in messages
         )
 
     @staticmethod
-    def _is_hermes(records: tuple[Mapping[str, Any], ...]) -> bool:
-        """Recognize a Hermes session metadata record."""
+    def _is_hermes(messages: tuple[Mapping[str, Any], ...]) -> bool:
+        """Recognize a Hermes session metadata message."""
 
         return any(
-            record.get("role") == "session_meta"
-            and isinstance(record.get("session_id"), str)
-            for record in records
+            message.get("role") == "session_meta"
+            and isinstance(message.get("session_id"), str)
+            for message in messages
         )
 
     @staticmethod
-    def _codex_uid(records: tuple[Mapping[str, Any], ...], path: Path) -> str | None:
+    def _codex_uid(messages: tuple[Mapping[str, Any], ...], path: Path) -> str | None:
         """Return the immutable id from Codex session metadata."""
 
-        for record in records:
-            if record.get("type") != "session_meta" or not isinstance(
-                payload := record.get("payload"), Mapping
+        for message in messages:
+            if message.get("type") != "session_meta" or not isinstance(
+                payload := message.get("payload"), Mapping
             ):
                 continue
             value = payload.get("id") or payload.get("session_id")
@@ -995,7 +997,7 @@ class SessionHandler(FileHandler):
         return None
 
     @staticmethod
-    def _agy_uid(records: tuple[Mapping[str, Any], ...], path: Path) -> str | None:
+    def _agy_uid(messages: tuple[Mapping[str, Any], ...], path: Path) -> str | None:
         """Return the UUID-named Agy session folder beneath ``brain``."""
 
         return next(
@@ -1009,20 +1011,20 @@ class SessionHandler(FileHandler):
 
     @classmethod
     def _claude_code_uid(
-        cls, records: tuple[Mapping[str, Any], ...], path: Path
+        cls, messages: tuple[Mapping[str, Any], ...], path: Path
     ) -> str | None:
         """Return the identifier of the conversation this file holds.
 
-        A subagent transcript carries its parent's ``sessionId`` on every record and its own
+        A subagent transcript carries its parent's ``sessionId`` on every message and its own
         ``agentId``, which is also what the file is named after. The agent id identifies the
         conversation in the file; the session id identifies its parent.
         """
 
-        return cls._record_uid(records, ("agentId",)) or cls._record_uid(records, ID_KEYS)
+        return cls._message_uid(messages, ("agentId",)) or cls._message_uid(messages, ID_KEYS)
 
     @classmethod
     def _gemini_uid(
-        cls, records: tuple[Mapping[str, Any], ...], path: Path
+        cls, messages: tuple[Mapping[str, Any], ...], path: Path
     ) -> str | None:
         """Return the identifier of the chat this file holds: its session id and when it started.
 
@@ -1033,20 +1035,20 @@ class SessionHandler(FileHandler):
 
         header = next(
             (
-                record
-                for record in records
-                if isinstance(record.get("sessionId"), str)
-                and isinstance(record.get("startTime"), str)
+                message
+                for message in messages
+                if isinstance(message.get("sessionId"), str)
+                and isinstance(message.get("startTime"), str)
             ),
             None,
         )
         if header is None:
-            return cls._record_uid(records, ID_KEYS)
+            return cls._message_uid(messages, ID_KEYS)
         return f"{header['sessionId']}/{header['startTime']}"
 
     @classmethod
     def _gemini_turns(
-        cls, records: tuple[Mapping[str, Any], ...]
+        cls, messages: tuple[Mapping[str, Any], ...]
     ) -> tuple[SessionTurn, ...]:
         """Read the messages a Gemini CLI chat sets, in the order it sets them.
 
@@ -1056,16 +1058,16 @@ class SessionHandler(FileHandler):
 
         return tuple(
             item
-            for record in records
-            for changed in [record.get("$set")]
+            for message in messages
+            for changed in [message.get("$set")]
             if isinstance(changed, Mapping)
-            for message in changed.get("messages") or ()
-            if isinstance(message, Mapping)
+            for body in changed.get("messages") or ()
+            if isinstance(body, Mapping)
             for item in [
                 cls._turn(
-                    message.get("type"),
-                    cls._gemini_text(message.get("content")),
-                    message.get("timestamp"),
+                    body.get("type"),
+                    cls._gemini_text(body.get("content")),
+                    body.get("timestamp"),
                 )
             ]
             if item is not None
@@ -1089,32 +1091,32 @@ class SessionHandler(FileHandler):
 
     @classmethod
     def _openclaw_uid(
-        cls, records: tuple[Mapping[str, Any], ...], path: Path
+        cls, messages: tuple[Mapping[str, Any], ...], path: Path
     ) -> str | None:
         """Return the first OpenClaw session identifier."""
 
-        return cls._record_uid(records, ("id", "session_id"))
+        return cls._message_uid(messages, ("id", "session_id"))
 
     @classmethod
     def _hermes_uid(
-        cls, records: tuple[Mapping[str, Any], ...], path: Path
+        cls, messages: tuple[Mapping[str, Any], ...], path: Path
     ) -> str | None:
         """Return the first Hermes session identifier."""
 
-        return cls._record_uid(records, ID_KEYS)
+        return cls._message_uid(messages, ID_KEYS)
 
     @staticmethod
-    def _record_uid(
-        records: tuple[Mapping[str, Any], ...], keys: tuple[str]
+    def _message_uid(
+        messages: tuple[Mapping[str, Any], ...], keys: tuple[str]
     ) -> str | None:
-        """Find the first non-empty identifier in supported record scopes."""
+        """Find the first non-empty identifier in supported message scopes."""
 
-        for record in records:
-            scopes = [record]
+        for message in messages:
+            scopes = [message]
             scopes += [
                 value
                 for key in ("payload", "message", "data")
-                if isinstance(value := record.get(key), Mapping)
+                if isinstance(value := message.get(key), Mapping)
             ]
             for key in keys:
                 for scope in scopes:
@@ -1125,19 +1127,19 @@ class SessionHandler(FileHandler):
 
     @classmethod
     def _codex_turns(
-        cls, records: tuple[Mapping[str, Any], ...]
+        cls, messages: tuple[Mapping[str, Any], ...]
     ) -> tuple[SessionTurn, ...]:
         """Extract Codex response messages, or legacy event messages when absent."""
 
         response = tuple(
             item
-            for record in records
-            if record.get("type") == "response_item"
-            and isinstance(payload := record.get("payload"), Mapping)
+            for message in messages
+            if message.get("type") == "response_item"
+            and isinstance(payload := message.get("payload"), Mapping)
             and payload.get("type") == "message"
             for item in [
                 cls._turn(
-                    payload.get("role"), payload.get("content"), record.get("timestamp")
+                    payload.get("role"), payload.get("content"), message.get("timestamp")
                 )
             ]
             if item is not None
@@ -1147,14 +1149,14 @@ class SessionHandler(FileHandler):
         roles = {"user_message": "user", "agent_message": "assistant"}
         return tuple(
             item
-            for record in records
-            if record.get("type") == "event_msg"
-            and isinstance(payload := record.get("payload"), Mapping)
+            for message in messages
+            if message.get("type") == "event_msg"
+            and isinstance(payload := message.get("payload"), Mapping)
             for item in [
                 cls._turn(
                     roles.get(payload.get("type")),
                     payload.get("message"),
-                    record.get("timestamp"),
+                    message.get("timestamp"),
                 )
             ]
             if item is not None
@@ -1162,22 +1164,22 @@ class SessionHandler(FileHandler):
 
     @classmethod
     def _claude_code_turns(
-        cls, records: tuple[Mapping[str, Any], ...]
+        cls, messages: tuple[Mapping[str, Any], ...]
     ) -> tuple[SessionTurn, ...]:
-        """Extract Claude Code user and assistant turns with record flags."""
+        """Extract Claude Code user and assistant turns with message flags."""
 
         return tuple(
             item
-            for record in records
-            if record.get("type") in ROLES
-            and isinstance(message := record.get("message"), Mapping)
+            for message in messages
+            if message.get("type") in ROLES
+            and isinstance(body := message.get("message"), Mapping)
             for item in [
                 cls._turn(
-                    message.get("role", record.get("type")),
-                    message.get("content"),
-                    record.get("timestamp"),
-                    record.get("isMeta") is True,
-                    record.get("isSidechain") is True,
+                    body.get("role", message.get("type")),
+                    body.get("content"),
+                    message.get("timestamp"),
+                    message.get("isMeta") is True,
+                    message.get("isSidechain") is True,
                 )
             ]
             if item is not None
@@ -1185,19 +1187,19 @@ class SessionHandler(FileHandler):
 
     @classmethod
     def _openclaw_turns(
-        cls, records: tuple[Mapping[str, Any], ...]
+        cls, messages: tuple[Mapping[str, Any], ...]
     ) -> tuple[SessionTurn, ...]:
-        """Extract OpenClaw turns from nested message records."""
+        """Extract OpenClaw turns from nested message messages."""
 
         return tuple(
             item
-            for record in records
-            if isinstance(message := record.get("message"), Mapping)
+            for message in messages
+            if isinstance(body := message.get("message"), Mapping)
             for item in [
                 cls._turn(
-                    message.get("role"),
-                    message.get("content"),
-                    record.get("timestamp", record.get("ts")),
+                    body.get("role"),
+                    body.get("content"),
+                    message.get("timestamp", message.get("ts")),
                 )
             ]
             if item is not None
@@ -1205,19 +1207,19 @@ class SessionHandler(FileHandler):
 
     @classmethod
     def _agy_turns(
-        cls, records: tuple[Mapping[str, Any], ...]
+        cls, messages: tuple[Mapping[str, Any], ...]
     ) -> tuple[SessionTurn, ...]:
         """Map Agy user input and planner responses to canonical turns."""
 
         roles = {"USER_INPUT": "user", "PLANNER_RESPONSE": "assistant"}
         return tuple(
             item
-            for record in records
+            for message in messages
             for item in [
                 cls._turn(
-                    roles.get(record.get("type")),
-                    record.get("content"),
-                    record.get("created_at"),
+                    roles.get(message.get("type")),
+                    message.get("content"),
+                    message.get("created_at"),
                 )
             ]
             if item is not None
@@ -1225,28 +1227,28 @@ class SessionHandler(FileHandler):
 
     @classmethod
     def _hermes_turns(
-        cls, records: tuple[Mapping[str, Any], ...]
+        cls, messages: tuple[Mapping[str, Any], ...]
     ) -> tuple[SessionTurn, ...]:
-        """Extract Hermes turns from flat role and content records."""
+        """Extract Hermes turns from flat role and content messages."""
 
         return tuple(
             item
-            for record in records
+            for message in messages
             for item in [
                 cls._turn(
-                    record.get("role"), record.get("content"), record.get("timestamp")
+                    message.get("role"), message.get("content"), message.get("timestamp")
                 )
             ]
             if item is not None
         )
 
     @staticmethod
-    def _records(path: Path) -> tuple[Mapping[str, Any], ...]:
+    def _messages(path: Path) -> tuple[Mapping[str, Any], ...]:
         """Read valid JSON objects from a JSONL session file."""
 
-        # a writer crash or interrupted flush can leave one line truncated mid-record;
-        # skip that line rather than losing every record in the file over it.
-        records: list[Mapping[str, Any]] = []
+        # a writer crash or interrupted flush can leave one line truncated mid-message;
+        # skip that line rather than losing every message in the file over it.
+        messages: list[Mapping[str, Any]] = []
         with path.open("r", encoding="utf-8") as stream:
             for line in stream:
                 if not line.strip():
@@ -1256,32 +1258,10 @@ class SessionHandler(FileHandler):
                 except json.JSONDecodeError:
                     continue
                 if isinstance(value, dict):
-                    records.append(value)
-        if not records:
+                    messages.append(value)
+        if not messages:
             raise ValueError(f"{path}: session file is empty")
-        return tuple(records)
-
-    @staticmethod
-    def _head(data: bytes, size: int) -> tuple[Mapping[str, Any], ...]:
-        """Up to SNIFF leading JSONL objects of a file's first bytes, its last line left out when the bytes end
-        inside it; none when a line is not an object."""
-
-        if len(data) < size:
-            data = data[: data.rfind(b"\n") + 1]
-        found: list[Mapping[str, Any]] = []
-        try:
-            for line in data.decode("utf-8").splitlines():
-                if not line.strip():
-                    continue
-                value = json.loads(line)
-                if not isinstance(value, dict):
-                    return ()
-                found.append(value)
-                if len(found) >= SNIFF:
-                    break
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            return ()
-        return tuple(found)
+        return tuple(messages)
 
     @classmethod
     def _walk_values(cls, value: Any) -> Iterator[tuple[str, Any]]:
@@ -1322,11 +1302,11 @@ class SessionHandler(FileHandler):
         return None
 
     @classmethod
-    def _timestamps(cls, records: tuple[Mapping[str, Any], ...]) -> Iterator[datetime]:
-        """Record times only: the record, its payload, or its message. Values quoted deeper inside content are not the session's time."""
+    def _timestamps(cls, messages: tuple[Mapping[str, Any], ...]) -> Iterator[datetime]:
+        """Record times only: the message, its payload, or its message. Values quoted deeper inside content are not the session's time."""
 
-        for record in records:
-            for scope in (record, record.get("payload"), record.get("message")):
+        for message in messages:
+            for scope in (message, message.get("payload"), message.get("message")):
                 if not isinstance(scope, Mapping):
                     continue
                 for key in TIME_KEYS:
@@ -1334,38 +1314,38 @@ class SessionHandler(FileHandler):
                         yield stamp
 
     @classmethod
-    def _models(cls, records: tuple[Mapping[str, Any], ...]) -> tuple[str, ...]:
-        """Return unique model names found anywhere in the records."""
+    def _models(cls, messages: tuple[Mapping[str, Any], ...]) -> tuple[str, ...]:
+        """Return unique model names found anywhere in the messages."""
 
         return cls._uniq(
             value
-            for record in records
-            for key, value in cls._walk_values(record)
+            for message in messages
+            for key, value in cls._walk_values(message)
             if key in MODEL_KEYS
         )
 
     @classmethod
     def _claude_code_parent(
-        cls, records: tuple[Mapping[str, Any], ...]
+        cls, messages: tuple[Mapping[str, Any], ...]
     ) -> tuple[str | None, bool]:
         """Return a Claude Code parent session id and whether the file is a subagent's.
 
         A file carrying an ``agentId`` is a subagent's transcript, and the ``sessionId`` every
-        record carries is the session that spawned it.
+        message carries is the session that spawned it.
         """
 
-        if cls._record_uid(records, ("agentId",)) is None:
+        if cls._message_uid(messages, ("agentId",)) is None:
             return None, False
-        return cls._record_uid(records, ID_KEYS), True
+        return cls._message_uid(messages, ID_KEYS), True
 
     @staticmethod
-    def _parent(records: tuple[Mapping[str, Any], ...]) -> tuple[str | None, bool]:
+    def _parent(messages: tuple[Mapping[str, Any], ...]) -> tuple[str | None, bool]:
         """Return a Codex parent session id and whether the session is a subagent."""
 
-        for record in records:
-            if record.get("type") != "session_meta":
+        for message in messages:
+            if message.get("type") != "session_meta":
                 continue
-            payload = record.get("payload")
+            payload = message.get("payload")
             if not isinstance(payload, Mapping):
                 return None, False
             source = payload.get("source")
@@ -1435,12 +1415,12 @@ class SessionHandler(FileHandler):
         )
 
     @staticmethod
-    def _topic(messages: tuple[SessionTurn]) -> str:
+    def _topic(turns: tuple[SessionTurn, ...]) -> str:
         """The first line a person typed."""
-        for message in messages:
-            if message.role != "user" or message.meta or message.sidechain:
+        for turn in turns:
+            if turn.role != "user" or turn.meta or turn.sidechain:
                 continue
-            if text := SessionHandler.typed(message.text):
+            if text := SessionHandler.typed(turn.text):
                 return " ".join(
                     "".join(
                         " " if char in UNSAFE else char for char in text.splitlines()[0]
@@ -1504,13 +1484,14 @@ class SessionHandler(FileHandler):
 class SessionFolderHandler(FolderHandler):
     """A harness's session folder: a Hermes home (state.db), an Agy home (antigravity_state.pbtxt or
     jetski_state.pbtxt), or an Agy session folder named by its UUID with a transcript under
-    .system_generated/logs. Its sessions are every session file below it, all of one harness: their harness, their
-    uid when they agree on one, how many there are and their span are its data.
+    .system_generated/logs. It is a folder, so its members are parsed as any folder's; its sessions are the session
+    records among them at any depth, all of one harness: their harness, their uid when they agree on one, how many
+    there are and their span are its data.
     """
 
     @classmethod
-    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
-        return super().identify(path, stat, head) and (SessionHandler._home_harness(path) is not None
+    def identify(cls, path: Path, stat: os.stat_result) -> bool:
+        return super().identify(path, stat) and (SessionHandler._home_harness(path) is not None
                                                        or SessionHandler._agy_session_folder(path))
 
     @classmethod
@@ -1518,10 +1499,7 @@ class SessionFolderHandler(FolderHandler):
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
         path = full_path(path)
-        files = await asyncio.to_thread(lambda: sorted(path.rglob("*.jsonl"), key=lambda item: str(item).casefold()))
-        files = [file for file, handler in zip(files, await asyncio.gather(*(probe(file) for file in files)))
-                 if handler is SessionHandler]
-        sessions = list(await asyncio.gather(*(SessionHandler.parse(file) for file in files)))
+        sessions = list(cls._sessions(record))
         harnesses = SessionHandler._uniq([session["subtype"] for session in sessions] + [SessionHandler._home_harness(path)])
         if len(harnesses) != 1:
             raise ValueError(f"{path}: a session folder holds one harness, not {harnesses}")
@@ -1532,6 +1510,14 @@ class SessionFolderHandler(FolderHandler):
         record["span"] = cls.spanning([time for session in sessions if session["span"] for time in session["span"].values()])
         return record
 
+    @classmethod
+    def _sessions(cls, record: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        """The session records among a folder's members, at any depth."""
+        for member in record.get("members", ()):
+            if member["type"] == "session":
+                yield member
+            yield from cls._sessions(member)
+
 
 # The handlers probe knows, every type and subtype there is; a program adds its own by appending it.
 HANDLERS: list[type[Handler]] = [
@@ -1541,21 +1527,17 @@ HANDLERS: list[type[Handler]] = [
 
 
 @sync
-async def probe(path: str | Path) -> type[Handler]:
+async def probe(path: str | Path, stat: os.stat_result | None = None) -> type[Handler]:
     """The handler to call for a path whose type is not known: the most specific of HANDLERS that identifies it, one
-    no other identifying handler is a subtype of; of two alike, the first. Probing does no more than that takes: the
-    path is stat'ed once and its first bytes are read at most once, as many as the handler asking for most asks, in a
-    thread, since on a file share a stat alone can take seconds. Awaited inside an event loop, returned directly
-    outside one. The path is taken as given, a link as the link."""
-
-    def which() -> type[Handler]:
-        given = Path(path)
-        stat = given.stat(follow_symlinks=False)
-        head = Head(given, stat)
-        found = [handler for handler in HANDLERS if handler.identify(given, stat, head)]
-        specific = [handler for handler in found if not any(other is not handler and issubclass(other, handler) for other in found)]
-        if not specific:
-            raise ValueError(f"{given}: no handler identifies it")
-        return specific[0]
-
-    return await asyncio.to_thread(which)
+    no other identifying handler is a subtype of; of two alike, the first. A folder probes each member with the stat
+    its listing gives it; a path probed alone is stat'ed once, in a thread, since on a file share a stat alone can
+    take seconds. The rest is the name matched against the handlers' patterns. Awaited inside an event loop, returned
+    directly outside one. The path is taken as given, a link as the link."""
+    path = Path(path)
+    if stat is None:
+        stat = await asyncio.to_thread(path.stat, follow_symlinks=False)
+    found = [handler for handler in HANDLERS if handler.identify(path, stat)]
+    specific = [handler for handler in found if not any(other is not handler and issubclass(other, handler) for other in found)]
+    if not specific:
+        raise ValueError(f"{path}: no handler identifies it")
+    return specific[0]
