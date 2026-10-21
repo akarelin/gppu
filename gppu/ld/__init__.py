@@ -235,7 +235,7 @@ class _Record(SQLModel):
     type: Type | int | None = Field(None, sa_type=TypeCode, sa_column_kwargs={'server_default': FetchedValue()}, description='What the record is: the first byte of its `id`. Read only.')
     # String, not SQLModel's own AutoString: search looks for its text only in String columns
     subtype: str | None = Field(None, sa_type=String, description='Plain text refining the `type`, from a short list per type that Postgres does not enforce.')
-    status: str | None = Field(None, sa_type=String, description='Slug: ' + ', '.join(f'`{s}`' for s in STATUSES) + ' on any record, or one its type adds; any other is refused.')
+    status: str | None = Field(None, sa_type=String, description='Slug: ' + ', '.join(f'`{s}`' for s in STATUSES) + ' on any record, or one its type adds; stored as it is sent.')
     name: str | None = Field(None, sa_type=String, description='Name used for display.')
     data: dict = Field(default_factory=dict, sa_type=JSONB, description='What the record says about the thing. On update, merged into what is there; a null removes a key.')
     meta: dict = Field(default_factory=dict, sa_type=JSONB, description='How the record came to be: who made it, from what, when it was seen. `meta.tags`: always a list of strings. Merged on update as `data` is.')
@@ -280,12 +280,11 @@ class _Record(SQLModel):
         """Merged into the record of that id when it is there, `data` and `meta` merged and a null removing a key; created with that id
         when it is not: an insert is an upsert. Stored at the commit. Written by its class's rules: a task's own at its own path, a
         record's through `/records`. The columns Postgres fills, a field its table has not (an event's `ts` sent to a node), an id of
-        another type, a status it has not and a parent that is not a container it may be in are refused."""
+        another type and a parent that is not a container it may be in are refused."""
         if filled := sent.model_fields_set & set(STORE):
             raise HTTPException(422, f'{", ".join(sorted(filled))}: the store fills them')
         if extra := sent.model_fields_set - cls.model_fields.keys():
             raise HTTPException(422, f'a {cls.__tablename__} has no {", ".join(sorted(extra))}')
-        cls.check_status(sent)
         if id and (row := await db.get(cls, id)):
             change = {k: getattr(sent, k) for k in sent.model_fields_set}   # what was sent, a span still a Span
             for key in ('data', 'meta'):
@@ -330,10 +329,10 @@ class _Record(SQLModel):
 
     @classmethod
     async def search(cls, db: AsyncSession, params, *where, conditions: QueryParams | None = None, only: bool = False):
-        """A page of a search (# Universals, Operations): the records of its table `conditions` find (`find`) and `where` selects,
-        `limit` of them after the last one of the page before (sqlakeyset), so the order ends with the id, which no two rows share;
-        every match when no limit is given. `only` keeps to its own table's records, not those of the types made from it."""
-        query = (cls.find(conditions) if conditions else select(cls)).where(*where)
+        """A page of a search (# Universals, Operations): the records of its table the query `conditions` build (`build_query`) and
+        `where` select, `limit` of them after the last one of the page before (sqlakeyset), so the order ends with the id, which no two
+        rows share; every match when no limit is given. `only` keeps to its own table's records, not those of the types made from it."""
+        query = (cls.build_query(conditions) if conditions else select(cls)).where(*where)
         if only:
             query = query.with_hint(cls.__table__, 'ONLY', 'postgresql')
 
@@ -349,8 +348,9 @@ class _Record(SQLModel):
         return await apaginate(db, query, params=params)
 
     @classmethod
-    def find(cls, conditions: QueryParams):
-        """The select of a search: querybuilder's, of the conditions it reads, and of the two it does not, each at the top of `filters`:
+    def build_query(cls, conditions: QueryParams):
+        """The query a search's conditions build, not run: querybuilder's (fastapi-querybuilder's own `build_query`), of the conditions
+        it reads, and of the two it does not, each at the top of `filters`:
         a key inside `data` or `meta`, `{"data.kind": {"$eq": "Feature"}}`, and a span overlapping a span, `{"span": {"$overlaps":
         {"start": "…", "end": "…"}}}`, in any of a span's forms, an end left out an open one."""
         try:
@@ -371,12 +371,6 @@ class _Record(SQLModel):
             else:
                 query = query.where(*clauses(inside(cls, key), condition))
         return query
-
-    @classmethod
-    def check_status(cls, sent: '_Record'):
-        """A status is every record's (`STATUSES`) or one its type adds; any other is refused."""
-        if sent.status not in (None, *STATUSES, *cls.STATUSES):
-            raise HTTPException(422, f"a {cls.__tablename__}'s status is {', '.join(STATUSES + cls.STATUSES)}, not {sent.status}")
 
     @classmethod
     async def check_parent(cls, db: AsyncSession, row: '_Record'):
@@ -583,7 +577,7 @@ async def values(db: Db, field: str, type: Type | None = None, conditions: Query
     records hold it, most first: what a dropdown, a selector or a filter offers. `field` is a column, `type`, `subtype`, `status`,
     `name` or `parent_id`, or a key inside data or meta by its path, `data.kind`. A `list`: more values than a list sends are refused."""
     model = (await read_as(db)).get(type, Record)
-    query = model.find(conditions)
+    query = model.build_query(conditions)
     found = (query.where(model.type == type) if type else query).order_by(None).subquery()
     if INSIDE.fullmatch(field):
         value = inside(found.c, field)
