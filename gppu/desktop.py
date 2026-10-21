@@ -6,12 +6,14 @@ below those folders belong to gppufs. No handler parsing or index lives here.
 from __future__ import annotations
 
 import os
+import posixpath
 from errno import EROFS
 from pathlib import PurePosixPath
 
 from fsspec import AbstractFileSystem
 
 from .fs import GppuFileSystem
+from .handlers import IGNORED
 from .fs_index import GppuIndexedFileSystem, indexes
 
 
@@ -55,10 +57,10 @@ class DesktopFileSystem(AbstractFileSystem):
     def _discover_roots(self):
         for name, fs in self.sources.items():
             self._discover(fs, fs.root, name)
-            for row in fs.fs.ls(fs.root, detail=True):
-                if row['type'] == 'directory':
-                    child = PurePosixPath(row['name'].replace('\\', '/')).name
-                    self._discover(fs, fs.root.rstrip('/') + '/' + child, name + ' › ' + child)
+            for row in fs.ls_sync(fs.root):   # gppufs's listing: an ignored folder, a junction or a link is not entered
+                if row['gppu']['type'] == 'folder' and not set(row['gppu']['handlers']) & set(IGNORED):
+                    child = PurePosixPath(row['gppu']['path'].replace('\\', '/')).name
+                    self._discover(fs, posixpath.join(fs.root, child), name + ' › ' + child)
 
     def _index_view(self, parts):
         label = next((name for name in self.indexed if name.casefold() == parts[1].casefold()), None)
@@ -83,7 +85,7 @@ class DesktopFileSystem(AbstractFileSystem):
         if name is None:
             raise FileNotFoundError(path)
         fs = self.sources[name]
-        return fs, '/'.join((fs.root.rstrip('/'), *parts[1:]))
+        return fs, posixpath.join(fs.root, *parts[1:])   # a drive's root, D:/, keeps its slash
 
     @staticmethod
     def _row(row, name):

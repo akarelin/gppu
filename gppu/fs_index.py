@@ -11,6 +11,7 @@ from collections import Counter
 from contextlib import nullcontext
 from pathlib import Path, PurePosixPath
 
+import fsspec
 from fsspec import AbstractFileSystem
 
 from .fs import GppuFileSystem
@@ -44,18 +45,25 @@ class GppuIndexedFileSystem(AbstractFileSystem):
         paths = [row[0] for row in database.execute(
             "SELECT path FROM gppufs_entries WHERE json_extract(metadata, '$.type') = 'file' ORDER BY path")]
         paths = [path for path in paths if not path.endswith(('.gppufs.sqlite', '.gppufs.sqlite-wal', '.gppufs.sqlite-shm'))]
-        names = Counter(PurePosixPath(path).name.casefold() for path in paths)
+        parts = {path: self._parts(path) for path in paths}
+        names = Counter(each[-1].casefold() for each in parts.values())
         aliases = {}
         for path in paths:
-            relative = PurePosixPath(path)
-            if relative.is_absolute() or '..' in relative.parts:
-                raise ValueError(f'{self.index}: index path is not relative: {path}')
-            name = relative.name if names[relative.name.casefold()] == 1 else ' › '.join(relative.parts)
+            name = parts[path][-1] if names[parts[path][-1].casefold()] == 1 else ' › '.join(parts[path])
             if name.casefold() in aliases:
                 raise ValueError(f'{self.index}: indexed names collide on Windows: {name}')
             aliases[name.casefold()] = (name, path)
         self._paths = {key: path for key, (_, path) in aliases.items()}
         return aliases
+
+    def _parts(self, path):
+        """The names an index path takes below its location. A member of an archive, which fsspec chains as
+        protocol://member::archive, is the archive's names and then the member's, so no name holds the chain's colons."""
+        member, _, archive = path.partition('::')
+        relative = PurePosixPath(archive or path)
+        if relative.is_absolute() or '..' in relative.parts or (not archive and '://' in path):
+            raise ValueError(f'{self.index}: index path is not relative: {path}')
+        return relative.parts + (PurePosixPath(member.partition('://')[2]).parts if archive else ())
 
     def _metadata(self, database, path, name):
         found = database.execute('SELECT metadata FROM gppufs_entries WHERE path=?', (path,)).fetchone()
@@ -98,11 +106,18 @@ class GppuIndexedFileSystem(AbstractFileSystem):
             raise PermissionError('an indexed view is read-only')
         if self.source is None:
             raise FileNotFoundError(f'{self.index}: this index snapshot has no bound original source for {path}')
-        return self.source.open(self.source.root.rstrip('/') + '/' + self._relative(path), mode=mode, **kwargs)
+        member, _, archive = self._relative(path).partition('::')
+        if archive:   # the member, read from its archive in the location; an archive that is not there is not found
+            return fsspec.open(f"{member}::{self.source.root.rstrip('/')}/{archive}", mode).open()
+        return self.source.open(self.source.root.rstrip('/') + '/' + member, mode=mode, **kwargs)
 
 
 def indexes(files: GppuFileSystem, folder: str):
     """Index paths immediately in folder; GppuIndexedFileSystem validates their tables."""
-    for row in files.fs.ls(folder, detail=True):
+    try:
+        rows = files.fs.ls(folder, detail=True)
+    except PermissionError:
+        return   # a folder this account cannot list holds no index it could read, as gppufs's _index_at says
+    for row in rows:
         if row['type'] == 'file' and row['name'].endswith('.gppufs.sqlite'):
             yield Path(row['name'])
