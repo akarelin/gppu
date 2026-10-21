@@ -1,45 +1,35 @@
 # Apps
 
-An app is a class built on gppu's app classes: `App` and `CliApp` in `gppu/gppu.py` with `Env`, the apps with steps in `gppu/app.py`. Building the object is what sets it up: by the time it exists, `Env` holds the configuration and the object's `_my` holds a copy of it. What the app does after that is its own methods.
-
-## Configuration on construction
-
-Anything that has `_Config`, `_Base` and every app among them, has `Env` loaded when it exists. If nothing loaded `Env` first, the object loads it from beside its class: `<name>.yaml` or `config.yaml`, searched upward from the class's folder. If `Env` is already loaded, by `Env.from_env(...)`, `Env.from_dict(...)` or an earlier app, the object takes that one. Either way its `_my` is a copy of `Env`, read with `self.my('key')`, `self.my_int(...)`, `self.my_list(...)` and `self.my_dict(...)`.
-
-`_App` adds the name: the name given to the constructor, or the stem of the class's file.
-
-## App
-
-`App` is `_App` with the data class `_DC`: what it is constructed with is its data, and annotated fields read from it. It has no entry method of its own. Construct it and call what the app defines:
+Any Python program that imports gppu is already an app. Importing gppu gives it its environment, `Env`, which it never needs to know of: `Info`, `Warn`, `Error`, `Debug` and `glob` are Env's members promoted to module names. [examples/basic.py](../examples/basic.py) is the whole of it:
 
 ```python
-from gppu import App, Env, dict_from_yml
+from gppu import Env, Info, Logger, glob
 
-class Xmqtt2Mqtt(App):
-  def run(self):
-    ...
-
-Env.from_dict(dict_from_yml(CONFIG))
-Xmqtt2Mqtt(name='xmqtt2mqtt').run()
+Info('started on', Env.host)
+if glob('trace'): Logger.trace_rules['all'] = True
+if glob('log_file'): Logger.enable_file_logging(log_file=glob('log_file'))
 ```
 
-`App` has no steps.
+## The environment
 
-## CliApp
+`Env` is an app of a special kind: static, global, one per program. Its first read of the configuration loads it: `<name>.yaml` or `config.yaml`, searched upward from the program's folder, named after the program; a program with no such file runs without one. The command line goes over it: `--key value` sets that key, a bare `--flag` sets it to True, a slash path names a nested key; other arguments are the program's own. Env also holds what needs no file: `host`, `platform`, `os`, `user`, `home`.
 
-`CliApp` is a command-line utility. It defines `main`, and `MyApp.cli()` builds the app and runs `main`. Its `_my` is the configuration with the command line over it: `--days 7 --dry-run true`, each value a string. What `main` returns is printed as JSON on stdout; logs go to stderr. `CliApp` has no steps.
+## The log
 
-## AsyncApp and the steps
+`Logger` is the program's log: on the console from gppu's first line, with colours and trace rules, mirrored to a file once `Logger.enable_file_logging(log_file=...)` is called or the configuration names a `log_file`. `Logger.trace_rules` decides which `Debug` lines show; `{'all': True}` shows them all. A line names where it came from: `<module>` for a script, `Class.method` for a method.
 
-`AsyncApp` is `_App` composed with `mixin_Stepper`, the YMRO steps, and `mixin_EventLoopBridge`. Construction runs `init`; `await app.run()` runs `init`, `load` and `start` on the app's loop and returns when the work they spawned with `self._spawn(...)` has finished. `app.stop()` cancels it.
+## Objects that need more
 
-- `init` does light loading, what can be loaded and parsed, as a constructor does.
-- `load` does the heavy loading of data.
-- `start` comes last; at its end the callbacks and timers start working.
+`_Base` is the parent the environment and the apps share: `mixin_Logger`, the log under the class's own name, with `mixin_Config`, the configuration. An object built on it is named as given or after the program, and its `_my` is a copy of Env, read with `self.my(...)`, `self.my_int(...)`, `self.my_list(...)` and `self.my_dict(...)`.
+
+- `App` is `_Base` with the data class `_DC`, for a program that is more than a script: what it is constructed with is its data.
+- `CliApp` runs `main` and prints what it returns as JSON: `MyApp.cli()`.
+- `AsyncApp` composes `_Base` with `mixin_Stepper`, the YMRO steps, and `mixin_EventLoopBridge`. Construction runs `init`; `await app.run()` runs `init`, `load` and `start` on the app's loop and returns when the work they spawned with `self._spawn(...)` has finished. `app.stop()` cancels it.
+  - `init` does light loading, what can be loaded and parsed, as a constructor does.
+  - `load` does the heavy loading of data.
+  - `start` comes last; at its end the callbacks and timers start working.
 
 An app gives its part of a step by overriding the regular `init`, `load` or `start` and calling super. The double-underscore parts, `__init`, `__load`, `__start` and `__stop`, which YMRO calls once for every class that defines one, are for rare cases: a mixin adding its part without knowing the other classes. A part may be `async def`; YMRO awaits it in an async app.
-
-Any other class that needs the steps composes `_App` with `mixin_Stepper`.
 
 ## Built on AsyncApp
 
