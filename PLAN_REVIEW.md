@@ -1,7 +1,7 @@
 ---
 fileClass: Document
 created: 2026-10-19
-updated: 2026-10-20
+updated: 2026-10-21
 generated: { by: claude-code/opus-5-5, at: 2026-10-19T10:55 }
 ---
 
@@ -26,7 +26,7 @@ Alex's requirements (2026-10-18, deciding where Linked Data lives): Linked Data 
 12. Slash paths: done. `y2path` has no file system behaviour; `gppu.gppu.Path(y2path, pathlib.Path)` is the file system path, with y2path's segments, operators and string form and everything of `pathlib.Path`; no caller used y2path's file system members. `deepget` and its typed variants, `TemplateSet.table`, `Env.glob*`, `on_change`, `update_config`, `template_set` and `my*` take `str | y2path`. `hash(Path(x))` follows y2path's string form, not `pathlib.Path`'s.
 13. No State in gppu: done. `State`, the objects it built from configuration rows with templates, the registered kinds, the services and `Env.<table>.<macro>(...)` with its metaclass are gone, and so are `Env.template_set` and `Env.named_templates`, which only State used. `TemplateSet` stays, with its two kinds of Jinja. Their tests are gone; `tests/test_environment.py` is `tests/test_templateset.py`, `TemplateSet`'s own. The examples built on State (`examples/config`, `examples/contacts`, `examples/_config`) and the State documentation are in `archive/`; `docs/environment.md` is `Env`. CRAP's lake and admin_ui import `State` and call table macros, and stop working against this gppu.
 14. AppService: done. `gppu/app_service.py`'s `AppService(MqttApp)` listens on its configuration's `config_mqtt/topics` when it starts and replaces each subtree as it arrives; `AppService.on_change`, `update_config`, `changed_paths` and `from_mqtt` were `Env`'s, and `mqtt_config`, `_receive_config` and the topic check were `mixin_Mqtt`'s. `Env` loads configuration and reports no changes. IoT display-control's `DisplayControl` is an `AppService`, and `dc.py` reads its startup configuration with `AppService.from_mqtt`.
-15. One YMRO: done. gppu's YMRO is Alex's, from `IoT/archive/ads/gppu-storm/gppu_users/gppu/app.py`, with the step classes private (`_YInit`, `_YLoad`, `_YStart`); `_callall` and `_trace_mro` are his again, where a later rewrite had changed them. An asynchronous step method is decorated with `@sync`. `mixin_Rest` is on `APIApp`, not on `AsyncApp`. Open: `Env` and the apps running their steps through YMRO.
+15. One YMRO: in progress. gppu's YMRO is Alex's, from `IoT/archive/ads/gppu-storm/gppu_users/gppu/app.py`, with the step classes private (`_YInit`, `_YLoad`, `_YStart`); `_trace_mro` is his again, and `_callall` is his with one line that hands a step whose methods include a coroutine function to his aYMRO's `_acallall`, which awaits them in order. `MqttApp.__start` and `AppService.__load` are `async def` without `@sync`, since gppu's `sync` on a running loop returns a task without waiting for it. `mixin_Rest` is on `APIApp`, not on `AsyncApp`. The apps that start, `AsyncApp`, `MqttApp`, `APIApp`, `AppService` and y2's `YObject`, run their steps through YMRO; `App` and `CliApp` have none. Open: `Env` running its steps through YMRO, which no code in gppu, y2, IoT, CRAP or RAN calls for; `@sync` against the steps finishing in order.
 
 16. Handlers: done.
   - Handlers are a universal way to get information about a file or a folder, apart from gppufs: done, `gppu/handlers.py`.
