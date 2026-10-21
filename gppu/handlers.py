@@ -1445,64 +1445,73 @@ class SessionFolderHandler(FolderHandler):
                 yield from cls._sessions(member)
 
 
-# A file's handler by its suffix; a program adds a handler by adding its suffix.
+# What probe reads off a path: a file's handler by its suffix, a folder's by its path; a program adds its own.
 SUFFIXES: dict[str, type[Handler]] = {
     ".sqlite": SqliteHandler, ".sqlite3": SqliteHandler, ".db": SqliteHandler, ".md": MarkdownHandler,
     ".csv": CSVHandler, ".log": LogHandler, ".eml": EmailHandler, ".msg": EmailHandler, ".jsonl": SessionHandler,
 }
-# The handler that reads a record of a type and subtype; a path of any other, such as one ignored, is what probe gives.
+FOLDERS: dict[str, type[Handler]] = {
+    ".hermes": SessionFolderHandler, ".gemini/antigravity": SessionFolderHandler,
+    ".gemini/antigravity-cli": SessionFolderHandler, ".gemini/antigravity-cli/brain/*": SessionFolderHandler,
+}
+# The handler that reads a record of a type and subtype; a link, a junction, an offline file or an ignored path has none.
 HANDLERS: dict[tuple[str, str | None], type[Handler]] = {
     (handler.type, handler.subtype): handler
-    for handler in (FolderHandler, SessionFolderHandler, FileHandler, *SUFFIXES.values())
+    for handler in (FolderHandler, FileHandler, *SUFFIXES.values(), *FOLDERS.values())
 }
+
+
+def kind(stat: os.stat_result) -> str:
+    """What the stat says a path is: a symlink, a junction, an offline file, a folder or a file."""
+    if stat_module.S_ISLNK(stat.st_mode):
+        return "symlink"
+    if getattr(stat, "st_reparse_tag", 0) == getattr(stat_module, "IO_REPARSE_TAG_MOUNT_POINT", None):
+        return "junction"
+    if getattr(stat, "st_file_attributes", 0) & OFFLINE:
+        return "offline"
+    if stat_module.S_ISDIR(stat.st_mode):
+        return "folder"
+    if stat_module.S_ISREG(stat.st_mode):
+        return "file"
+    raise ValueError("neither a folder nor a file")
+
+
+def ignored(path: Path, stat: os.stat_result) -> bool:
+    """FileIndexer's global ignore rules: a name, a suffix or a prefix, and a folder's name or its Windows system
+    attribute. A folder is not ignored for starting with a dot or for being hidden; a root, with no name, never is."""
+    folder = stat_module.S_ISDIR(stat.st_mode)
+    return bool(path.name) and (path.name in IGNORED_NAMES or path.suffix in IGNORED_SUFFIXES
+                                or path.name.startswith(IGNORED_PREFIX)
+                                or folder and (path.name in IGNORED_FOLDERS
+                                               or bool(getattr(stat, "st_file_attributes", 0) & WINDOWS_SYSTEM)))
 
 
 @sync
 async def probe(path: str | Path) -> Record:
-    """What info gives of a path, a file's or a folder's: its record from its stat and its name, nothing read, its
-    type and subtype telling which handler reads it.
+    """What info gives of a path: its record from its stat and its name, nothing read. The stat says what the path
+    is; a link or a junction is that and its target, an offline file is a file whose bytes are not on this host, and
+    an ignored path is ignored. A folder's handler is the one FOLDERS gives its path, a file's the one SUFFIXES gives
+    its suffix. Awaited inside an event loop, returned directly outside one.
 
-    The stat says a link, a junction, an offline file, and a folder or a file. The name says what is ignored, by
-    FileIndexer's global rules: a name, a suffix or a prefix, a folder's name, or a Windows folder's system attribute;
-    a folder is not ignored for starting with a dot or for being hidden, and a filesystem root, which has no name,
-    never is. It says a harness's session folder, and a file's handler by its suffix; a .jsonl with nothing in it yet,
-    one a harness has only just made, is a file. The path is taken as given, a link as the link. Awaited inside an
-    event loop, returned directly outside one.
-
-    Returns: type and subtype: symlink or junction, with data.target, the path it points to; ignored, folder or
-    file, with data.reason, the rule; file and offline, a file whose bytes are not on this host; else a handler's,
-    folder, its session folder, file or a file's by its suffix. name the path's name; created and updated as stat
-    gives them; meta.size its size as stat gives it."""
+    Returns: type and subtype, which say the handler that reads it: symlink or junction, with data.target; file and
+    offline; ignored, with subtype folder or file; else the handler's. name the path's name; created and updated as
+    stat gives them; meta.size."""
     path = Path(path).absolute()
     stat = path.stat(follow_symlinks=False)
-    name, folder = path.name, stat_module.S_ISDIR(stat.st_mode)
-    attributes = getattr(stat, "st_file_attributes", 0)
-    record = Record(name=name or str(path), meta={"size": stat.st_size},
+    record = Record(name=path.name or str(path), meta={"size": stat.st_size},
                     created=datetime.fromtimestamp(getattr(stat, "st_birthtime", stat.st_ctime)).astimezone(),
                     updated=datetime.fromtimestamp(stat.st_mtime).astimezone())
-    if stat_module.S_ISLNK(stat.st_mode):
-        record.type, record.data["target"] = "symlink", os.readlink(path)
-    elif getattr(stat, "st_reparse_tag", 0) == getattr(stat_module, "IO_REPARSE_TAG_MOUNT_POINT", None):
-        record.type, record.data["target"] = "junction", os.readlink(path)
-    elif not folder and not stat_module.S_ISREG(stat.st_mode):
-        raise ValueError(f"{path}: neither a folder nor a file")
-    elif attributes & OFFLINE:
-        record.type, record.subtype = "file", "offline"
-    elif name and (reason := (f"name:{name}" if name in IGNORED_NAMES
-                              else f"name:*{path.suffix}" if path.suffix in IGNORED_SUFFIXES
-                              else f"name:{IGNORED_PREFIX}*" if name.startswith(IGNORED_PREFIX)
-                              else f"folder:{name}" if folder and name in IGNORED_FOLDERS
-                              else "folder:FILE_ATTRIBUTE_SYSTEM" if folder and attributes & WINDOWS_SYSTEM
-                              else None)):
-        record.type, record.subtype, record.data["reason"] = "ignored", "folder" if folder else "file", reason
-    elif folder:
-        parent = path.parent
-        harness = (name == ".hermes" or parent.name == ".gemini" and name in ("antigravity", "antigravity-cli")
-                   or parent.name == "brain" and parent.parent.name == "antigravity-cli")
-        handler = SessionFolderHandler if harness else FolderHandler
-        record.type, record.subtype = handler.type, handler.subtype
-    else:
-        handler = SUFFIXES.get(path.suffix.casefold(), FileHandler)
-        handler = FileHandler if handler is SessionHandler and not stat.st_size else handler
-        record.type, record.subtype = handler.type, handler.subtype
+    match kind(stat):
+        case "symlink" | "junction" as link:
+            record.type, record.data["target"] = link, os.readlink(path)
+        case "offline":
+            record.type, record.subtype = "file", "offline"
+        case found if ignored(path, stat):
+            record.type, record.subtype = "ignored", found
+        case "folder":
+            handler = next((handler for pattern, handler in FOLDERS.items() if path.match(pattern)), FolderHandler)
+            record.type, record.subtype = handler.type, handler.subtype
+        case "file":
+            handler = SUFFIXES.get(path.suffix.casefold(), FileHandler)
+            record.type, record.subtype = handler.type, handler.subtype
     return record
