@@ -72,7 +72,7 @@ Config file resolution: looks for `<name>.yaml` then `config.yaml` in the app pa
 
 [Configuration from MQTT](docs/mqtt-config.md): startup loading, optional live updates, and `Env.on_change()` notifications for the affected configuration paths.
 
-[Env and State](docs/environment.md): the shared configuration and what it constructs — tables of rows resolved through their templates, checked against what they reference, built into objects; the questions a utility used to answer for itself are macros of the configuration.
+[Env](docs/environment.md): the global configuration and what any app looks up — its name, host, platform, the trace rules; every object reads it from its `_my`.
 
 [The REST surface](docs/rest.md): `mixin_Rest`, on `AsyncApp` — every registered object answers for its own members, walked from the classes born under `Env.app_path`; manifest, read, call.
 

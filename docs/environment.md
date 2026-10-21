@@ -1,58 +1,9 @@
----
-fileClass: Document
-created: "2026-09-16 2040"
-updated: "2026-09-16 2040"
-generated: { by: "Claude/fable-5.1", at: "2026-09-16T20:40:00-07:00" }
----
+# Env
 
-# Env and State
+`gppu.Env` is the global configuration and what any app may look up: the app's `name`, `host`, `platform` (`windows`, `wsl`, `debian`, `macos`), `user`, `home`, `os` and the trace rules. It holds what the app was configured with, not what the app is doing: the configuration changes only when it is loaded again or updated (`update_config`, `from_mqtt`), and `on_change` tells whoever listens; the app's own objects and their state live in the app, never in `Env`.
 
-Alex, 2026-09-16: "Currently all y2 apps share state and config. I want to do the same for python utils and tuis. Have every app on load already have all it needs. Doing it with heavy templating, full referential integrity, minimize general code in utilities. Move as much as reasonable to configs." On construction: "Build default object dict from uid. Update dict with customization for particular hosts (very rare). build object from dict. register in State object if a service".
+`Env.from_env(name, app_path)` loads the app's configuration: `<name>.yaml`, or `config.yaml`, found walking up from `app_path`, with its `!include`s. `Env.glob(path)`, `glob_int`, `glob_list` and `glob_dict` read it by a slash path, a string or a `y2path`.
 
-`gppu.Env` is the basic level, with no configuration file: `platform` (`windows`, `wsl`, `debian`, `macos`, the vocabulary of the shared configuration), `host`, `user`, `home` and `os`. `Env.from_env(name, app_path)` loads the app's configuration, and `State` is constructed from it when it is first read; an `App` loads both when it is constructed, so a utility on the app object has everything at load.
+Every object built on `_Config` (every `_Base` and `App`) copies the configuration into its `_my` when it is built, and reads it with `self.my(path)`. An `App` loads `Env` when it is constructed and `Env` is not loaded yet.
 
-An app's `config.yaml` brings the shared configuration in with one line, and nothing in the app reads it as a file:
-
-```yaml
-!include ../_config/_config.yaml
-
-browse:
-  addresses: [sd://SD.Lake/inbox]
-```
-
-## Startup: tables and rows
-
-The configuration's Jinja is of two kinds, evaluated at different times. What follows here is evaluated once, at startup, while the configuration loads; what it computes is the rows' data. The next section is what code evaluates at runtime.
-
-A key of the configuration that carries `templates` is a table. Every other mapping under it is a row keyed by its uid; `macros` and `generators` beside them belong to the table, and a `*_templates` block of named templates to the whole configuration. Tables are constructed in the order the configuration lists them, and a table constructed later sees an earlier one resolved, so a location's rules may read what a connection's template computed.
-
-Per row: the templates it names build the default dict from the uid; the row updates it with what differs; the dict is checked against the tables the templates say it references; the object is built by the class the dict's `kind` names — the app that cares registers it with `State.register(Location=Location)`, any other app gets a plain `_DC` carrying the kind; a row marked `service: true` also registers in `State.services`. Construction runs when `State` is first read after the configuration loads, and at an `App`'s construction.
-
-```python
-from gppu import App, State
-from gppu.gppu import _DC
-
-class Location(_DC):
-  name: str
-  local: str
-
-State.register(Location=Location)
-
-class Browse(App):
-  def main(self):
-    for uid, location in State.locations.items(): print(uid, location.local)
-```
-
-`State.locations`, `State.hosts`, `State.connections` — one attribute per table, uid to object. Lookups go through `Env.glob(path)`, `glob_list`, `glob_dict`. A query is a Jinja filter in a template or a comprehension over a table, not a method.
-
-## Runtime: the configuration answers
-
-What a utility used to compute for itself is a rule of the configuration — a macro of a table — reached as `Env.<table>.<rule>(...)`. gppu knows no rule by name; a rule that wants this host and platform says so in its own signature, `{% macro place(uid, host=Env.host, platform=Env.platform) %}`. The locations table of the reference configuration defines `place`, `folder`, `uri`, `location_of` and `local_of`; the hosts table defines `ssh(host, platform)`. A rule that says nothing answers `None`.
-
-```python
-Env.locations.place('sd-lake')                    # where it is on this host
-Env.locations.local_of('sd://SD.Lake/inbox')      # the path here of an address
-Env.hosts.ssh('seven', 'debian')                  # ['ssh', '-p', '22', 'alex@7.c.karel.in', 'bash', '-s']
-```
-
-`examples/config` is the reference: `examples/_config/_config.yaml`, the root in the `_creekview.yaml` shape with the platforms and `resources` (one row per URI scheme: the resource class and the address grammar), `connections` (the boxes and tenants, providers as templates), `hosts` and `locations` beside it, each carrying its templates with its rows. A location's templates carry the logic Alex stated: a file service provides files and folders, the row computes its canonical address, its mirrors and its place on this host. `browse.py` is an `App` that lists every location so and walks the addresses under its own key through gppufs. Run it with no arguments.
+One `Env` holds one app's configuration. Several apps sharing one environment, each with its own section, is y2's, not gppu's; the TUI launcher starts each app as its own process, which loads its own `Env`.

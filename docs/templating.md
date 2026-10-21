@@ -82,6 +82,3 @@ field written with `*` is a key pattern: every key of the row shaped `smb/<name>
 references a connection. A table is a mapping at a slash path of the context, or a list
 of paths. A reference nothing answers fails the resolution naming row, field and value.
 
-`Env.template_set(path)` builds one from a table of the loaded configuration, with the
-root's macros and the rest of the configuration offered to every generator. `State`
-([Env and State](environment.md)) resolves every table this way.

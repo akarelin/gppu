@@ -13,23 +13,10 @@ the lifecycle by overriding ``POSSIBLE_STEPS``. These are stepper hooks;
 synchronous ``setup()`` hook, and ``run()`` opens one ``TaskGroup`` before
 calling ``start()``. Long-lived work is added with ``_spawn()``.
 
-Env and State: what an app knows at startup, the Y2 way.
-
-Env is the basic level, with no configuration file: platform, host, user, home,
-os and the trace rules. Once `Env.from_env` has loaded the app's configuration —
-and through its `!include` of the shared one, everything the fleet knows — lookups into
-it are strict, and the questions a utility used to answer for itself are rules of the
-configuration — its macros — reached as `Env.<table>.<rule>(...)`: where a
-location is on a host, what its address is on a connection, which path an address means
-here, how a command runs on a host. gppu knows no rule by name.
-
-State holds what the configuration constructs, a single instance, as in Y2. Every key of the configuration carrying
-`templates` is a table; every other mapping under it is a row keyed by its uid. A row
-resolves through the table's TemplateSet — the template builds the default dict from the uid, the row
-updates it with what differs — is checked against the tables it references, and is
-built by the class its `kind` names — the app that cares registers it, any other app
-gets a plain _DC carrying the kind. A row marked `service` registers in
-State.services. Construction runs when State is first read after the configuration loads.
+Env: the configuration. One global Env loads the app's configuration (`Env.from_env`), and
+through its `!include` of the shared one, everything the fleet knows; with it the basic level that
+needs no file: platform, host, user, home, os and the trace rules. Every object built on `_Config`
+copies the configuration into its `_my` and reads it with `self.my(...)`.
 
 CliApp's parameters: what an app's ``main`` asks for, read from its signature, as Windmill reads a script's ``main``.
 
@@ -71,7 +58,7 @@ from string import Template
 from typing import Any, Literal, Optional, final
 
 from . import gppu as _core   # _core._logger is rebound by init_logger
-from .gppu import (TRACE_RULES, Debug, Dump, Error, Info, Logger, OSType, TemplateSet, Warn, _DC, _Logger, _file_handlers,
+from .gppu import (TRACE_RULES, Debug, Dump, Error, Info, Logger, OSType, Warn, _DC, _Logger, _file_handlers,
                    _log_root, _mixin, deepget, deepget_dict, deepget_float, deepget_int, deepget_list, detect_os, dict_from_yml,
                    enable_file_logging, sync, y2path)
 
@@ -94,13 +81,7 @@ def _config_changes(before: dict, after: dict, prefix: str = '') -> frozenset[st
   return frozenset(changed)
 
 
-class _Tables(type):   # runtime: code calls a table's macro as Env.<table>.<macro>(...)
-  def __getattr__(cls, table: str):
-    if table in State.templates: return _Rules(table, State.templates[table])
-    raise AttributeError(f'no table named {table!r}')
-
-
-class Env(metaclass=_Tables):
+class Env:
   data: dict[str, Any] = {}
   initialized: bool = False
   changed_paths: frozenset[str] = frozenset()
@@ -140,7 +121,6 @@ class Env(metaclass=_Tables):
       TRACE_RULES.clear()
       TRACE_RULES.update(rules)
     if 'log_file' in Env.data: enable_file_logging(log_file=Env.data['log_file'])
-    State.stale = True   # what the configuration constructs, built when first read
     Env.changed_paths = changed
     for path, callback in tuple(Env._listeners):
       relevant = frozenset(key for key in changed if not path or key == path
@@ -197,31 +177,6 @@ class Env(metaclass=_Tables):
     """
     from .iot import _MqttConfig
     await _MqttConfig(config).run()
-
-  @staticmethod
-  def template_set(path: str | y2path = '', **context) -> 'TemplateSet':
-    """The macros, generators and templates of one table of the configuration.
-
-    A table that declares them resolves its own rows; the root's macros are offered to
-    every table, and the rest of the configuration to every generator, so one can reach
-    the tables it computes against."""
-    table = Env.glob_dict(path) if path else Env.data
-    macros = chr(10).join(block for block in (Env.data.get('macros', '') if path else '', table.get('macros', '')) if block)
-    return TemplateSet(macros=macros, generators=table.get('generators'), templates=table.get('templates'),
-                       named=Env.named_templates(), context=Env.data | context)
-
-  @staticmethod
-  def named_templates() -> dict[str, dict]:
-    """Every `*_templates` block of the configuration, the root's and every table's, by block
-    name: the named templates any rule may render, as in Y2. A name is unique across the
-    configuration."""
-    blocks: dict[str, dict] = {}
-    for holder in (Env.data, *(content for content in Env.data.values() if isinstance(content, dict))):
-      for key, block in holder.items():
-        if not (key.endswith('_templates') and isinstance(block, dict)): continue
-        if clash := set(blocks.get(key, {})) & set(block): raise ValueError(f'{key}: {sorted(clash)} defined twice')
-        blocks.setdefault(key, {}).update(block)
-    return blocks
 
   @staticmethod
   def glob(path: str | y2path, default=None) -> Any: return Env.data if path == '' else deepget(path, Env.data, default=default)
@@ -341,77 +296,9 @@ class _Base(_Logger, _Config): pass
 # endregion
 
 
-# region State
+# region Configuration keys
 def is_table_key(name: str) -> bool:   # what a table holds beside its rows: its macros, its generators, its templates and
   return name in ('macros', 'generators', 'templates') or name.endswith('_templates')   # its named templates
-
-
-class _Rules:
-  def __init__(self, table: str, templates: TemplateSet):
-    self._table, self._globals = table, templates.environment.globals
-
-  def __getattr__(self, name: str):
-    rule = self._globals.get(name)
-    if not callable(rule): raise AttributeError(f'{self._table} defines no rule {name!r}')
-    return rule
-
-
-class _State:
-  def __init__(self) -> None:
-    self._tables: dict[str, dict[str, Any]] = {}
-    self._templates: dict[str, TemplateSet] = {}
-    self._services: dict[str, Any] = {}
-    self.kinds: dict[str, type] = {}
-    self.stale = True
-
-  def register(self, **kinds: type) -> None:
-    """The classes a template's `kind` may name."""
-    self.kinds.update(kinds)
-    self.stale = True
-
-  def reset(self) -> None:
-    self._tables, self._templates, self._services = {}, {}, {}
-    self.stale = True
-
-  @property
-  def tables(self) -> dict[str, dict[str, Any]]: return self._fresh()._tables
-  @property
-  def templates(self) -> dict[str, TemplateSet]: return self._fresh()._templates
-  @property
-  def services(self) -> dict[str, Any]: return self._fresh()._services
-
-  def __getattr__(self, table: str):   # State.<table> is its rows
-    if table[0] != '_' and table in self._fresh()._tables: return self._tables[table]
-    raise AttributeError(f'no table named {table!r}')
-
-  def _fresh(self) -> _State:
-    if self.stale: self.load()
-    return self
-
-  def rows(self, table: str) -> dict[str, dict]:
-    """The rows of a table: every mapping under its key that is not macros, generators or templates."""
-    return {uid: row for uid, row in Env.glob_dict(table).items() if not is_table_key(uid) and isinstance(row, dict)}
-
-  def load(self) -> None:
-    """Startup: construct every table of the loaded configuration."""
-    self.reset()
-    self.stale = False
-    names = [name for name, content in Env.data.items() if isinstance(content, dict) and 'templates' in content]
-    rows = {name: self.rows(name) for name in names}   # what a macro sees under a table's name: its rows, resolved
-    for name in names:                                  # once the table is, so a table resolved later sees what an
-      if hasattr(_State, name) or name in vars(self): raise ValueError(f'{name}: a table cannot be named after a State member')   # earlier one computed
-      templates = Env.template_set(name, Env=Env, State=self, **rows)
-      resolved = {uid: templates.resolve({'uid': uid, **row}) for uid, row in rows[name].items()}
-      rows[name].clear(); rows[name].update(resolved)
-      table = {}
-      for uid, data in resolved.items():
-        obj = self.kinds.get(data.get('kind'), _DC)(data=data)   # the app that cares registers the class
-        table[uid] = obj
-        if data.get('service'): self._services[uid] = obj
-      self._tables[name], self._templates[name] = table, templates
-
-
-State = _State()
 # endregion
 
 
@@ -674,16 +561,15 @@ class _App(_Base):
     app_file = Path(inspect.getfile(type(self))).resolve()
     self.name = name or app_file.stem
     if not Env.initialized:
-      Env.from_env(name=self.name, app_path=app_file.parent)   # the config, and what it constructs:
-      State.load()                                              # an app fails at start on a bad table
+      Env.from_env(name=self.name, app_path=app_file.parent)
     super().__init__(name=self.name, **kw)
 
 
 class App(_App, _DC):
   """Synchronous utility: define an entry method and call it after construction.
 
-  Read settings with ``self.my(...)``. Construction loads Env, and State with it,
-  beside the subclass when Env is uninitialized; an already loaded Env is reused.
+  Read settings with ``self.my(...)``. Construction loads Env beside the subclass
+  when Env is uninitialized; an already loaded Env is reused.
 
   Usage::
 
