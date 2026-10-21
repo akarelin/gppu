@@ -1843,9 +1843,10 @@ class GppuFileSystem(AbstractFileSystem):
     Awaited inside an event loop, called plainly outside one, as gppu's sync makes it.
     Every entry the listing finds is identified, nothing read. Entries already
     indexed keep their indexed metadata. ``refresh=True`` parses the folder and
-    everything below it. An archive is entered only when it is listed itself,
-    never by a recursion; its members are identified from its listing, and
-    refreshing the archive parses them one at a time.
+    everything below it. An archive is opened only when it is listed itself;
+    its members are identified from its listing, and refreshing the archive
+    parses them one at a time. A recursion enters an archive whose listing the
+    index holds, and opens none.
     """
     return self.ls_sync(path, detail, recurse, refresh, live)
 
@@ -1892,7 +1893,8 @@ class GppuFileSystem(AbstractFileSystem):
         if cached is None:
           continue
         row = cached[0]
-        if recurse and row['gppu']['type'] == 'folder':   # a recursion enters folders, never an archive
+        if recurse and (row['gppu']['type'] == 'folder' or (row['gppu']['is_container'] and cached[1] is not None)):
+          # a recursion enters folders, and an archive only when the index holds its listing: it never opens one
           below = self.ls_sync(row['name'], recurse=True, live=live)
           result.append(row)
           result.extend(below)

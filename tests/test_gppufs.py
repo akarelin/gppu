@@ -370,8 +370,10 @@ def test_nested_archives_retain_addresses_after_folder_rename(tmp_path, monkeypa
   with zipfile.ZipFile(old / 'outer.zip', 'w') as archive:
     archive.writestr('inner.zip', nested.getvalue())
   fs = GppuFileSystem(tmp_path)
-  assert [row['gppu']['name'] for row in fs.ls(recurse=True)] == ['old', 'outer.zip']   # a recursion never enters an archive
-  before = fs.ls(recurse=True) + fs.ls('old/outer.zip') + fs.ls('old/outer.zip/inner.zip')
+  assert [row['gppu']['name'] for row in fs.ls(recurse=True)] == ['old', 'outer.zip']   # a recursion opens no archive
+  fs.ls('old/outer.zip')
+  fs.ls('old/outer.zip/inner.zip')   # listed, each archive's listing is in the index, and a recursion enters it
+  before = fs.ls(recurse=True)
   assert [row['gppu']['name'] for row in before] == ['old', 'outer.zip', 'inner.zip', 'note.md']
   assert [row['name'] for row in before] == [fs.location + '/' + path for path in
     ('old', 'old/outer.zip', 'old/outer.zip/inner.zip', 'old/outer.zip/inner.zip/note.md')]
@@ -380,7 +382,7 @@ def test_nested_archives_retain_addresses_after_folder_rename(tmp_path, monkeypa
   new = tmp_path / 'new'
   rename(old, new, tmp_path)
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
-  after = fs.ls(recurse=True) + fs.ls('new/outer.zip') + fs.ls('new/outer.zip/inner.zip')
+  after = fs.ls(recurse=True)
   assert all('/old/' not in row['name'] for row in after)
   assert [row['gppu']['name'] for row in after] == ['new', 'outer.zip', 'inner.zip', 'note.md']
   assert after[-1]['name'] == fs.location + '/new/outer.zip/inner.zip/note.md'
