@@ -50,6 +50,12 @@ VER_GPPU_BUILD = _ver_parts[3] if len(_ver_parts) > 3 else '0'
 VER_GPPU = _ver_full
 
 
+# region Bootstrap log: the console, plain, from gppu's first line; _Env adds colours, trace rules and the file mirror
+_log_root = logging.getLogger('gppu'); _log_root.setLevel(logging.DEBUG)
+_sh = logging.StreamHandler(sys.stderr); _log_root.addHandler(_sh)
+# endregion
+
+
 # region OS
 class OSType(Enum):
   """Operating System type enumeration"""
@@ -1282,20 +1288,24 @@ class _EmptyMessageFilter(logging.Filter):
 TRACE_RULES: dict = {}
 
 
-class Logger:
-  """The app's default global logger: every app that runs has it, on the console. ``Logger.Info(...)`` logs to it;
-  a class with its own logger is a ``mixin_Logger``. Files mirror it after ``enable_file_logging``."""
+class _Env:
+  """The basic environment every program has, with no configuration: the operating system and host, and the log the
+  bootstrap started, now with colours, trace rules and the file mirror. Its methods are promoted to module names, so
+  code calls ``Info(...)`` and never sees this class. ``Env`` in gppu.app builds the app's level on it; a class with
+  its own log is a ``mixin_Logger``."""
+  home: Path = Path.home()
+  user: str = getpass.getuser()
+  os: OSType = detect_os()
+  platform: str = {OSType.W11: 'windows', OSType.WSL: 'wsl', OSType.LINUX: 'debian', OSType.MACOS: 'macos'}[os]   # the shared configuration's words
+  host: str = socket.gethostname().split('.')[0].lower()
+
   trace_folder: str = '.'
   trace_rules: dict = TRACE_RULES
 
-  _root = logging.getLogger('gppu')
-  _root.setLevel(logging.DEBUG)
-  _logger = _root
-  _console = logging.StreamHandler(sys.stderr)
-  _console.setLevel(logging.DEBUG)
+  _root = _logger = _log_root
+  _console = _sh
   _console.setFormatter(_LogColorizer())
   _console.addFilter(_EmptyMessageFilter())
-  _root.addHandler(_console)
   _file_handlers: dict[str, logging.Handler] = {}   # on the shared parent, so classes made earlier receive them
 
   @staticmethod
@@ -1305,7 +1315,7 @@ class Logger:
       trace_rules = dict(trace_rules)
       TRACE_RULES.clear()
       TRACE_RULES.update(trace_rules)
-    Logger._logger = Logger._root if name == 'gppu' else Logger._root.getChild(name)
+    _Env._logger = _Env._root if name == 'gppu' else _Env._root.getChild(name)
 
   @staticmethod
   def enable_file_logging(name: str | None = None, log_dir: str | Path | None = None,
@@ -1325,15 +1335,15 @@ class Logger:
       path = full_path(value)
     path.parent.mkdir(parents=True, exist_ok=True)
     key = str(path)
-    if key in Logger._file_handlers:
+    if key in _Env._file_handlers:
       return path
     from logging.handlers import RotatingFileHandler
     fh = RotatingFileHandler(path, maxBytes=4_000_000, backupCount=5, encoding='utf-8')
     fh.setLevel(level)
     fh.setFormatter(_PlainFormatter())
     fh.addFilter(_EmptyMessageFilter())
-    Logger._root.addHandler(fh)
-    Logger._file_handlers[key] = fh
+    _Env._root.addHandler(fh)
+    _Env._file_handlers[key] = fh
     return path
 
   @staticmethod
@@ -1344,18 +1354,18 @@ class Logger:
     mirrors panel lines into the log file without writing to stderr (which would
     corrupt the live TUI). No-op when file logging isn't enabled.
     """
-    if not Logger._file_handlers:
+    if not _Env._file_handlers:
       return
-    record = Logger._logger.makeRecord(Logger._logger.name, level, '(app)', 0,
+    record = _Env._logger.makeRecord(_Env._logger.name, level, '(app)', 0,
                                        _LogColorizer.ANSI.sub('', pcp(msg, *args)), (), None,
                                        func='file_log', extra={'gppu_args': (msg, *args)})
-    for h in Logger._file_handlers.values():
+    for h in _Env._file_handlers.values():
       if record.levelno >= h.level:
         h.handle(record)
 
   @staticmethod
   def _log(level: int, args: tuple, logger, options: dict) -> None:
-    target = Logger._logger if logger is None else logger
+    target = _Env._logger if logger is None else logger
     if not target.isEnabledFor(level): return
     frame = inspect.currentframe().f_back.f_back
     extra = dict(options.pop('extra')) if 'extra' in options else {}
@@ -1366,25 +1376,25 @@ class Logger:
     target.log(level, _LogColorizer.ANSI.sub('', pcp(*args)), extra=extra, stacklevel=stacklevel + 2, **options)
 
   @staticmethod
-  def Debug(*a, logger=None, **kw): Logger._log(logging.DEBUG, a, logger, kw)
+  def Debug(*a, logger=None, **kw): _Env._log(logging.DEBUG, a, logger, kw)
   @staticmethod
-  def Info(*a, logger=None, **kw): Logger._log(logging.INFO, a, logger, kw)
+  def Info(*a, logger=None, **kw): _Env._log(logging.INFO, a, logger, kw)
   @staticmethod
-  def Warn(*a, logger=None, **kw): Logger._log(logging.WARNING, a, logger, kw)
+  def Warn(*a, logger=None, **kw): _Env._log(logging.WARNING, a, logger, kw)
   @staticmethod
-  def Error(*a, logger=None, **kw): Logger._log(logging.ERROR, a, logger, kw)
+  def Error(*a, logger=None, **kw): _Env._log(logging.ERROR, a, logger, kw)
   @staticmethod
   @sync
   async def Dump(filename: str, data={}, **kw) -> None:
     """ Saves data object to yml file in trace folder """
     if '.' not in filename or not filename.endswith('.yml'): filename += '.yml'
-    if Logger.trace_folder:
-      filename = f"{Logger.trace_folder}/{filename}"
+    if _Env.trace_folder:
+      filename = f"{_Env.trace_folder}/{filename}"
     dict_to_yml(filename=filename, data=data)
 
 
-Debug, Info, Warn, Error, Dump = Logger.Debug, Logger.Info, Logger.Warn, Logger.Error, Logger.Dump
-init_logger, enable_file_logging, file_log = Logger.init_logger, Logger.enable_file_logging, Logger.file_log
+Debug, Info, Warn, Error, Dump = _Env.Debug, _Env.Info, _Env.Warn, _Env.Error, _Env.Dump
+init_logger, enable_file_logging, file_log = _Env.init_logger, _Env.enable_file_logging, _Env.file_log
 # endregion
 
 
@@ -1404,8 +1414,8 @@ class mixin_Logger(_mixin):
   @classmethod
   def __init_subclass__(cls, **kw):
     super().__init_subclass__(**kw)
-    cls._logger = Logger._logger.getChild(cls.__name__)
-    for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'): setattr(cls, name, staticmethod(partial(getattr(Logger, name), logger=cls._logger)))
+    cls._logger = _Env._logger.getChild(cls.__name__)
+    for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'): setattr(cls, name, staticmethod(partial(getattr(_Env, name), logger=cls._logger)))
 
 class _Logger(mixin_Logger): pass
 # endregion

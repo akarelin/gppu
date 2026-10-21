@@ -13,42 +13,30 @@ serves HTTP on it. For Textual, use ``gppu.tui.TUIApp``; for MQTT, ``gppu.iot.Mq
 from __future__ import annotations
 
 import asyncio
-import getpass
 import inspect
 import json
-import logging
-import socket
 import sys
 from abc import abstractmethod
 from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
 from copy import deepcopy
-from functools import partial
 from pathlib import Path
 from string import Template
 from typing import Any, Optional, final
 
-from .gppu import (TRACE_RULES, Debug, Dump, Error, Info, Logger, OSType, Warn, _DC, _Logger, _mixin, deepget, deepget_dict, deepget_float, deepget_int, deepget_list, detect_os, dict_from_yml,
-                   enable_file_logging, sync, y2path)
+from .gppu import (TRACE_RULES, Debug, Dump, Info, _DC, _Env, _Logger, _mixin, deepget, deepget_dict, deepget_float,
+                   deepget_int, deepget_list, dict_from_yml, enable_file_logging, sync, y2path)
 
 _trace_mro = False
 
 
 # region Env: the configuration
-class Env:
+class Env(_Env):
   data: dict[str, Any] = {}
   initialized: bool = False
 
   name: str
   app_path: Path
-
-  home: Path = Path.home()
-  user: str = getpass.getuser()
-  os: OSType = detect_os()
-  platform: str = {OSType.W11: 'windows', OSType.WSL: 'wsl', OSType.LINUX: 'debian', OSType.MACOS: 'macos'}[os]   # the shared configuration's words
-  host: str = socket.gethostname().split('.')[0].lower()
-
-  _logger: logging.Logger
 
   @staticmethod
   def _load_dict(d: dict) -> None:
@@ -60,7 +48,7 @@ class Env:
     if 'log_file' in data and (not isinstance(data['log_file'], str) or not data['log_file'].strip()):
       raise ValueError('File logging requires an explicit log_file in configuration')
     if 'trace_rules' in Env.data and 'trace_rules' not in data: TRACE_RULES.clear()
-    if Env.initialized or Env.data: Env.reset(); Logger.Info('INFO', 'Environment', 'WRED', 'reset()')
+    if Env.initialized or Env.data: Env.reset(); Info('INFO', 'Environment', 'WRED', 'reset()')
     Env.data = data
     Env.initialized = True
     if 'trace_rules' in Env.data:
@@ -72,10 +60,10 @@ class Env:
 
   @staticmethod
   def reset() -> None:
-    for handler in tuple(Logger._file_handlers.values()):
-      Logger._root.removeHandler(handler)
+    for handler in tuple(Env._file_handlers.values()):
+      Env._root.removeHandler(handler)
       handler.close()
-    Logger._file_handlers.clear()
+    Env._file_handlers.clear()
     Env.data = {}
     Env.initialized = False
 
@@ -124,9 +112,7 @@ class Env:
     Env.app_path = Env._resolve_app_path(app_path)
     Env.config_file = Env._config_file()
 
-    Env._logger = Logger._logger.getChild(Env.name)
-    for attr_name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error), ('Dump', Dump)):
-      setattr(Env, attr_name, staticmethod(partial(fn, logger=Env._logger)))
+    Env.init_logger(Env.name)
 
     config_data = dict_from_yml(Env.config_file)
     Env.from_dict(config_data)   # resolves a `topology:` key if the config has one
@@ -210,18 +196,18 @@ class _YMRO:
 
 
   def print_ymro(self):
-    Logger.Debug('BY', self.__class__.__qualname__)
+    Debug('BY', self.__class__.__qualname__)
     siblings = [c for c in reversed(self.__class__.__mro__) if c != _YMRO and issubclass(c, _YMRO)]
     step = 'init'
     for sibling in siblings:
-      Logger.Debug('DG', f"  {sibling.__qualname__}")
+      Debug('DG', f"  {sibling.__qualname__}")
       qname = f"{sibling.__qualname__}__{step}"
       if qname[0] != '_': qname = '_' + qname
       method = getattr(self, qname, None)
       if method:
-        Logger.Debug('INFO', f"  {method.__qualname__}")
+        Debug('INFO', f"  {method.__qualname__}")
         initers = getattr(sibling, '_initers', [])
-        for initer in initers: Logger.Debug('DIM', f"     {initer.__qualname__}")
+        for initer in initers: Debug('DIM', f"     {initer.__qualname__}")
 
 
   def _ymros(self):

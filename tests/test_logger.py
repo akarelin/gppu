@@ -5,7 +5,7 @@ import io
 
 import pytest
 from gppu import TRACE_RULES
-from gppu import Env, Logger, init_logger, mixin_Logger
+from gppu import Env, init_logger, mixin_Logger
 
 
 @pytest.fixture
@@ -13,15 +13,15 @@ def output(monkeypatch, tmp_path):
     core = importlib.import_module('gppu.gppu')
     previous_rules = dict(TRACE_RULES)
     console = io.StringIO()
-    original = core.Logger._console.setStream(console)
+    original = core._Env._console.setStream(console)
     init_logger('logging-verification', trace_rules={'all': True})
     path = core.enable_file_logging('verification', log_dir=tmp_path)
     yield core, console, path
-    core.Logger._console.setStream(original)
-    for handler in tuple(core.Logger._file_handlers.values()):
-        core.Logger._root.removeHandler(handler)
+    core._Env._console.setStream(original)
+    for handler in tuple(core._Env._file_handlers.values()):
+        core._Env._root.removeHandler(handler)
         handler.close()
-    core.Logger._file_handlers.clear()
+    core._Env._file_handlers.clear()
     TRACE_RULES.clear()
     TRACE_RULES.update(previous_rules)
 
@@ -39,12 +39,12 @@ def test_standard_handlers_accept_gppu_multiple_arguments(output):
     core, _, _ = output
     text = io.StringIO()
     handler = logging.StreamHandler(text)
-    core.Logger._logger.addHandler(handler)
+    core._Env._logger.addHandler(handler)
     try:
         core.Info('WBLUE', 'message', 'NONE', 'value')
-        core.Logger._logger.info('ordinary %s', 'message')
+        core._Env._logger.info('ordinary %s', 'message')
     finally:
-        core.Logger._logger.removeHandler(handler)
+        core._Env._logger.removeHandler(handler)
     assert text.getvalue().splitlines() == ['message value', 'ordinary message']
 
 
@@ -97,13 +97,13 @@ def test_file_only_messages_do_not_write_to_console(output):
     assert path.read_text().strip() == 'panel line'
 
 
-class TestLogger:
+class TestEnvLogging:
     def test_logger_has_methods(self):
-        assert callable(Logger.Debug)
-        assert callable(Logger.Info)
-        assert callable(Logger.Warn)
-        assert callable(Logger.Error)
-        assert callable(Logger.Dump)
+        assert callable(Env.Debug)
+        assert callable(Env.Info)
+        assert callable(Env.Warn)
+        assert callable(Env.Error)
+        assert callable(Env.Dump)
 
 
 class TestInitLogger:
@@ -114,7 +114,7 @@ class TestInitLogger:
     def test_init_with_trace_rules(self):
         rules = {"debug": True, "MyClass": False}
         init_logger("test_app", trace_rules=rules)
-        assert Logger.trace_rules == rules
+        assert Env.trace_rules == rules
 
     def test_init_logger_importable_from_gppu(self):
         from gppu import init_logger as top_init_logger
@@ -158,10 +158,10 @@ def configured_output():
   Env.reset()
   TRACE_RULES.clear()
   console = io.StringIO()
-  original = core.Logger._console.setStream(console)
+  original = core._Env._console.setStream(console)
   yield core, console
   Env.reset()
-  core.Logger._console.setStream(original)
+  core._Env._console.setStream(original)
   TRACE_RULES.clear()
   TRACE_RULES.update(previous_rules)
 
@@ -176,7 +176,7 @@ def test_env_defaults_to_console_without_legacy_environment_paths(configured_out
   core.Debug('hidden trace')
   assert 'console message' in console.getvalue()
   assert 'hidden trace' not in console.getvalue()
-  assert not core.Logger._file_handlers
+  assert not core._Env._file_handlers
   assert not (tmp_path / 'invented').exists()
 
 
@@ -205,9 +205,9 @@ def test_one_line_trace_yaml_keeps_the_mapping(configured_output, tmp_path):
   core.Debug('included trace')
   assert 'excluded trace' not in console.getvalue()
   assert 'included trace' in console.getvalue()
-  assert Logger.trace_rules == {'all': True, 'Component': False}
-  init_logger(trace_rules=Logger.trace_rules)
-  assert Logger.trace_rules == {'all': True, 'Component': False}
+  assert Env.trace_rules == {'all': True, 'Component': False}
+  init_logger(trace_rules=Env.trace_rules)
+  assert Env.trace_rules == {'all': True, 'Component': False}
 
 
 def test_reloading_env_closes_previous_file(configured_output, tmp_path):
@@ -221,7 +221,7 @@ def test_reloading_env_closes_previous_file(configured_output, tmp_path):
   core.Info('console only')
   assert first.read_text().strip() == 'first message'
   assert second.read_text().strip() == 'second message'
-  assert not core.Logger._file_handlers
+  assert not core._Env._file_handlers
 
 
 @pytest.mark.parametrize('value', [None, '', True])
