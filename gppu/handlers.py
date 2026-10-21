@@ -52,6 +52,26 @@ LOG_BLOCK = 65536   # how much of a log's tail is read at a time
 LOG_TIMESTAMP = re.compile(
     r"^\s*[\[(]?(?P<timestamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)"
 )
+# What a name says of its time, the first that matches: a span of two YYMMDD dates, a date and time with its GMT offset,
+# a date and time without a zone, which is local, Unix seconds; else an ISO date or a YYMMDD date, which is the whole day.
+NAMED_SPAN = re.compile(r"(?<![A-Za-z0-9])(\d{6})-(\d{6})(?![A-Za-z0-9])")
+NAMED_GMT = re.compile(r"(?<![A-Za-z0-9])(\d{2}-\d{2}-\d{4},\s*\d{2}\.\d{2}\.\d{2})\s*GMT([+-]\d{1,2})(?!\d)", re.I)
+NAMED_TIMES = (
+    (re.compile(r"(?<![A-Za-z0-9])(\d{17})(?![A-Za-z0-9])"), "%Y%m%d%H%M%S%f"),
+    (re.compile(r"(?<![A-Za-z0-9])(\d{14})(?![A-Za-z0-9])"), "%Y%m%d%H%M%S"),
+    (re.compile(r"(?<![A-Za-z0-9])(\d{8}-\d{6})(?![A-Za-z0-9])"), "%Y%m%d-%H%M%S"),
+    (re.compile(r"(?<![A-Za-z0-9])(\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2})(?![A-Za-z0-9])"), "%Y-%m-%d-%H-%M-%S"),
+    (re.compile(r"(?<![A-Za-z0-9])(\d{6}\.\d{6})(?![A-Za-z0-9])"), "%y%m%d.%H%M%S"),
+    (re.compile(r"(?<![A-Za-z0-9])(\d{6}-\d{4})(?![A-Za-z0-9])"), "%y%m%d-%H%M"),
+)
+NAMED_EPOCH = re.compile(r"(?<![A-Za-z0-9])([1-9]\d{9})(?![A-Za-z0-9])")
+NAMED_DATES = (
+    (re.compile(r"(?<![A-Za-z0-9])(\d{4}-\d{2}-\d{2})(?![A-Za-z0-9])"), "%Y-%m-%d"),
+    (re.compile(r"(?<![A-Za-z0-9])(\d{6})(?![A-Za-z0-9])"), "%y%m%d"),
+)
+# A duration after a single time in a name, `~2h` or `(30m)`, is where its span ends.
+NAMED_DURATION = re.compile(r"(?:~|\()\s*(\d+)\s*([dhms])\)?", re.I)
+SECONDS = {"d": 86400, "h": 3600, "m": 60, "s": 1}
 Harness = Literal[
     "chatgpt",
     "cx",
@@ -245,6 +265,50 @@ class Handler:
     def spanning(times: list[datetime] | tuple[datetime, ...]) -> TimeSpan | None:
         """The span from the earliest to the latest of times, or None when there are none."""
         return TimeSpan(min(times), max(times)) if times else None
+
+    @classmethod
+    def named(cls, name: str) -> TimeSpan | None:
+        """The span a file's or a folder's name says, by the first of NAMED_SPAN, NAMED_GMT, NAMED_TIMES, NAMED_EPOCH and
+        NAMED_DATES that matches; a date is the whole day, and a single time followed by a duration ends after it. None
+        when the name says no time."""
+        def read(value: str, form: str, zone: timezone | None = None) -> datetime | None:
+            try:
+                moment = datetime.strptime(value, form)
+            except ValueError:
+                return None
+            if moment.timetuple()[:6] <= PLACEHOLDER_TIMES[2]:
+                return None
+            try:
+                return cls.valid_time(moment.replace(tzinfo=zone) if zone else moment.astimezone())
+            except (OSError, OverflowError, ValueError):
+                return None   # a number shaped like a date this host cannot put a zone on is not a date
+
+        def days(dates: list[datetime]) -> TimeSpan | None:
+            return TimeSpan(min(dates), max(dates) + timedelta(days=1, microseconds=-1)) if dates else None
+
+        if match := NAMED_SPAN.search(name):
+            dates = [moment for value in match.groups() if (moment := read(value, "%y%m%d"))]
+            return days(dates) if len(dates) == 2 else None
+        times: list[datetime] = []
+        if found := NAMED_GMT.findall(name):
+            times = [moment for value, offset in found if -24 < int(offset) < 24
+                     and (moment := read(value, "%m-%d-%Y, %H.%M.%S", timezone(timedelta(hours=int(offset)))))]
+        else:
+            for pattern, form in NAMED_TIMES:
+                if times := [moment for value in pattern.findall(name) if (moment := read(value, form))]:
+                    break
+            else:
+                times = [moment for value in NAMED_EPOCH.findall(name) if (moment := cls.time(int(value)))]
+        if times:
+            span = cls.spanning(times)
+            if len(times) == 1 and (duration := NAMED_DURATION.search(name)):
+                end = cls.valid_time(span.start + timedelta(seconds=int(duration.group(1)) * SECONDS[duration.group(2).casefold()]))
+                span = TimeSpan(span.start, end) if end else span
+            return span
+        for pattern, form in NAMED_DATES:
+            if found := pattern.findall(name):
+                return days([moment for value in found if (moment := read(value, form))])
+        return None
 
 
 class FolderHandler(Handler):
