@@ -346,18 +346,8 @@ class _App(_Base):
 
 
 class App(_App, _DC):
-  """Synchronous utility: define an entry method and call it after construction.
-
-  Read settings with ``self.my(...)``.
-
-  Usage::
-
-      from gppu import App
-      class Hello(App):
-        def main(self):
-          self.Info('Hello world')
-      Hello().main()
-  """
+  """An app with the data class: what it is constructed with is its data. It has no entry method and no steps;
+  construct it and call what the app defines. Read settings with ``self.my(...)``. See docs/app.md."""
   pass
 
 

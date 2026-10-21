@@ -32,7 +32,7 @@ Documentation from the code's docstrings, with this README and the documents bes
 
 | Module | Purpose |
 |--------|---------|
-| [`gppu.app`](gppu/app.py) | `Env` config loader with `!include`, typed path access (`glob`, `glob_int`, `glob_list`, `glob_dict`), and `_Base`, an object's logging and configuration section.<br>`CliApp` for command-line utilities: configuration and logging on construction, typed options and `--help` from `main`, `--schema`, parameter binding and JSON results. `App` for direct calls; `AsyncApp` for asyncio work.<br>[State](docs/environment.md): `Env` also holds the basic level with no file (platform, host, user, home, os) and the configuration's macros called by name, `Env.<table>.<rule>(...)` (`place`, `folder`, `uri`, `location_of`, `local_of`).<br>`State`: every table of the loaded configuration resolved through its templates, checked against what it references and built into objects; `services` for the rows marked so |
+| [`gppu.app`](gppu/app.py) | [`Env`](docs/environment.md), the configuration, with `!include` and typed path access (`glob`, `glob_int`, `glob_list`, `glob_dict`), and `_Base`, an object's logging and configuration.<br>[Apps](docs/app.md): `App`, `CliApp` for command-line utilities, `AsyncApp` on the YMRO steps, `APIApp` |
 | `gppu` (core)<br> | **Logger**: colored `Info`/`Warn`/`Error`/`Debug`/`Dump`. <br>**Vault**: `Vault.get`/`create`/`update`/`list` with Azure Key Vault and `SECRET_*` env-var backends; `!secret` YAML tag.<br>Plus: type coercion, dict utilities, YAML/JSON I/O, time helpers, OS detection + `full_path` path resolution (env vars, `~`, WSL drive mapping), async helpers, template population |
 | [`gppu.handlers`](docs/handlers.md) | Generated handler API and supported-format reference. |
 | `gppu.ymro` | YMRO lifecycle: multi-inheritance-aware init→load→start steppers (`YInit`/`YLoad`/`YStart`/`mixin_Stepper`).<br>`Tracer` flight recorder: JSONL trace of object snapshots, triggers, callbacks, and periodic state (AppDaemon hooks via `Tracer.install`); `_tracer` before/after/instead method decorators |
@@ -74,7 +74,7 @@ Config file resolution: looks for `<name>.yaml` then `config.yaml` in the app pa
 
 [Env](docs/environment.md): the global configuration and what any app looks up — its name, host, platform, the trace rules; every object reads it from its `_my`.
 
-[The REST surface](docs/rest.md): `mixin_Rest`, on `AsyncApp` — every registered object answers for its own members, walked from the classes born under `Env.app_path`; manifest, read, call.
+[The REST surface](docs/rest.md): `mixin_Rest`, for an async app — every registered object answers for its own members, walked from the classes born under `Env.app_path`; manifest, read, call.
 
 YAML `!include` support, as the value of a key or on its own line, where the included file's keys merge into the document:
 ```yaml
@@ -116,7 +116,7 @@ In YAML: `password: !secret db-pass` resolves at load time via `Vault.get`. Requ
 
 ## How Apps Work
 
-Command-line utilities subclass `CliApp`, define `main`, and call `MyApp.cli()`. Construction loads the shared configuration and logging; the command line overrides keys of the configuration, and gppu prints what `main` returns as JSON. Do not build that setup in each utility. Use `App` for an object called directly and `AsyncApp` for asyncio work.
+Command-line utilities subclass `CliApp`, define `main`, and call `MyApp.cli()`. Construction loads the shared configuration and logging; the command line overrides keys of the configuration, and gppu prints what `main` returns as JSON. Do not build that setup in each utility. Use `App` for an object called directly and `AsyncApp` for asyncio work; see [Apps](docs/app.md).
 
 ### 1. Use the project's shared configuration
 
