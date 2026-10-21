@@ -951,9 +951,8 @@ class APIApp(AsyncApp):
     values, ``POST /rest/{registry}/{key}/{name}`` calls a method with the JSON body as its arguments. Override ``apis()``; override
     ``start()`` for work before serving and end it with ``await super().start()``. FastAPI and uvicorn come with the ``ld`` extra::
 
-        class LDAPI(APIApp):
-            def setup(self): ld.connect(self.my('postgres'))
-            def apis(self): return {'/ld/v1': ld.served({'/work': work.app})}
+        class LDAPI(APIApp, _SQABase):   # its store: the configuration's `db`, the engine and each request's session
+            def apis(self): return {'/ld/v1': ld.served({'/work': work.app}, self)}
     """
 
     def apis(self) -> dict[str, Any]:

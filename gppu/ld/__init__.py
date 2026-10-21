@@ -4,8 +4,9 @@
 data models on it (`_Event`, `_Activity`, `_View`, `_Link`; `_Content`, `_Container`, `_Resource`); and each type's class, which only
 defines its table: the core's (`Record`, `Node`, `Collection`, `View`, `Event`, `Message`, `Activity`, `Link`) here, a domain's in
 its own module. The core's paths (`app`: `/types`, `/records`, `/links`), and for a domain's API: `typed()`, its types' paths;
-`api_at()`, the API with its own documentation; `served()`, the APIs at one address. The tables are made by the store's
-`schema.sql` (RAN `Projects/ld`); `connect()` opens the store.
+`api_at()`, the API with its own documentation; `served()`, the APIs at one address, on the store of the app that serves them.
+The tables are made by the store's `schema.sql` (RAN `Projects/ld`). The store is the app's: a `gppu.data._SQABase`, which RAN
+`Projects/ld/api.py`'s `LDAPI` is, gives the engine and each request's database session.
 
 Needs the `ld` extra, and fastapi-querybuilder installed with `--no-deps`: its metadata lists poetry, uvicorn and aiosqlite as runtime
 dependencies."""
@@ -33,18 +34,16 @@ from sqlakeyset import custom_bookmark_type
 from sqlalchemy import DateTime, FetchedValue, SmallInteger, String, TypeDecorator, bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB, TSTZRANGE, Range
 from sqlalchemy.exc import DataError, IntegrityError, NoResultFound, StatementError
-from sqlalchemy.ext.asyncio import create_async_engine  # noqa: F401  RAN Projects/ld's checks make their engine with ld.create_async_engine
 from sqlalchemy.sql.elements import UnaryExpression
 from sqlalchemy.sql.visitors import iterate
 from sqlmodel import Column, Field, SQLModel, delete, func, not_, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from ..data import async_engine
+from ..data import _SQABase
 from ..gppu import TimeSpan
 
 T = TypeVar('T')
 
-engine = None   # the store, opened by connect()
 LIST = 1000   # the most records a list sends: the older data's largest list of like records is a folder's 585 files (work 15, a location's runs 16, 2026-10-17)
 LIST_BYTES = 1_000_000   # and the most data it sends, `data` and `meta` as Postgres stores them: that folder's are 187 kB (work 45 kB; a session's messages up to 145 MB, so they are read a page at a time)
 DATETIME, DURATION = TypeAdapter(datetime), TypeAdapter(timedelta)
@@ -52,16 +51,10 @@ STATUSES = ('new', 'active', 'pending', 'discarded', 'rejected', 'archived')   #
 STORE = ('id', 'created', 'updated', 'type')   # the columns Postgres fills: a caller does not send them
 
 
-def connect(dsn: str):
-    """The store at `dsn`, `postgresql+psycopg://user:password@host:port/database`, through gppu.data's `async_engine`; a filter's
-    time is read without its zone, so compared as UTC."""
-    global engine
-    engine = async_engine(dsn)
-
-
-async def database():
-    """A database session per request, not a Linked Data session."""
-    async with AsyncSession(engine, expire_on_commit=False) as db:
+async def database(request: Request):
+    """A database session per request, not a Linked Data session: the store's, of the app serving the API (`served()`), committed
+    when the call ends and rolled back on an error. The store's zone is UTC, so a filter's time without a zone is compared as UTC."""
+    async with request.app.state.store.session() as db:
         yield db
 
 Db = Annotated[AsyncSession, Depends(database)]
@@ -553,9 +546,9 @@ class TypeRead(TypeFields):
     statuses: list[str] = Field(description="The statuses its records take: every record's, then those its type adds.")
 
 
-async def types_agree():
+async def types_agree(store: _SQABase):
     """The store's types are `Type`'s, code for code and name for name; a store that differs is not this code's to serve."""
-    async with AsyncSession(engine) as db:
+    async with store.session() as db:
         stored = {t.id: t.name for t in (await db.exec(select(RecordType))).all()}
     if stored != {t.value: t.name.lower() for t in Type}:
         raise RuntimeError(f'the store\'s record_types {stored} are not the types this code makes and reads')
@@ -886,9 +879,10 @@ def api_at(path: str, name: str, summary: str, *routers: APIRouter) -> FastAPI:
     return handled(built)
 
 
-def served(apis: dict[str, FastAPI]) -> FastAPI:
-    """The core and the APIs built on it as one API: every route in one OpenAPI document, `/openapi.json`, shown at `/docs`, each
-    API's routes under its tag; each API built on it keeps its own document at `{path}/docs` as well."""
+def served(apis: dict[str, FastAPI], store: _SQABase) -> FastAPI:
+    """The core and the APIs built on it as one API on `store`, the app's, whose sessions its requests read and write: every route in
+    one OpenAPI document, `/openapi.json`, shown at `/docs`, each API's routes under its tag; each API built on it keeps its own
+    document at `{path}/docs` as well. With no APIs, the core alone."""
     tags = {t: a.summary for a in apis.values() for ops in a.openapi()['paths'].values() for op in ops.values() for t in op.get('tags', ())}   # each API's tags, described by its summary
     one = FastAPI(title=app.title, version=app.version, summary='Records and the links between them, and the APIs built on them: '
                   + ', '.join(p.strip('/') for p in apis) + '.',
@@ -896,4 +890,5 @@ def served(apis: dict[str, FastAPI]) -> FastAPI:
     one.include_router(router)
     for api in apis.values():
         one.include_router(api.router)
+    one.state.store = store
     return handled(one)
