@@ -2,9 +2,9 @@
 "Linked Data - Universal types, statuses and sharding", # Implementation). `_Record`, every record's columns and its operations
 (# Universals, Operations: create, read, update, delete, list, search), with no table; the types that add columns as data models on
 it (`_Event`, `_Activity`, `_View`, `_Link`); and each type's class, which only defines its table: the core's (`Record`, `Node`,
-`Collection`, `View`, `Event`, `Message`, `Activity`, `Link`) here, a domain's in its own module. `typed()` gives a path its types'
+`Collection`, `View`, `Event`, `Message`, `Activity`, `Link`) here, a domain's in its own module. `operations()` gives a path its types'
 create, read, update, delete and search, the core's `/records` and `/links` and each domain's; `app` is the core with `/types` and
-what controls read; `api_at()`, a domain's API with its own documentation; `served()`, the APIs at one address, on the store of the
+what controls read; `api_at()`, a domain's API with its own documentation; `serve()`, the APIs at one address, on the store of the
 app that serves them. The tables are made by the store's `schema.sql` (RAN `Projects/ld`), and how they inherit is Postgres'. The
 store is the app's: a `gppu.data._SQABase`, which RAN `Projects/ld/api.py`'s `LDAPI` is, gives the engine and each request's
 database session.
@@ -49,7 +49,7 @@ STORE = ('id', 'created', 'updated', 'type')   # the columns Postgres fills: a c
 
 
 async def transaction():
-    """Each request is one transaction, a FastAPI dependency with yield of the API `served()` serves: the request's database
+    """Each request is one transaction, a FastAPI dependency with yield of the API `serve()` serves: the request's database
     session, the store's scoped session for the task serving it, committed when the call ends and before its answer is sent
     (scope='function'; FastAPI's default runs it after, so a caller's next read could miss what it wrote), rolled back on an
     error and removed. The store's zone is UTC, so a filter's time without a zone is compared as UTC."""
@@ -165,7 +165,7 @@ class _Record(SQLModel):
     `class Node(_Record, table=True)`, so it is created, read, updated, deleted, listed and searched in its own table by its own
     rules. What a caller sends is a record without the columns Postgres fills (`STORE`); a field its type has not is refused."""
     model_config = ConfigDict(extra='forbid')
-    db: ClassVar[Any] = None   # the store's scoped session, set once by served(): called, the session of the request being served
+    db: ClassVar[Any] = None   # the store's scoped session, set once by serve(): called, the session of the request being served
     __mapper_args__ = {'eager_defaults': True}   # the id, type and times the table makes come back with the insert
     id: UUID | None = Field(None, primary_key=True, sa_column_kwargs={'server_default': FetchedValue()},
                             description="The record's identity in this system; its first byte is the `type`.")
@@ -367,40 +367,44 @@ async def types_agree(store: _SQABase):
         raise RuntimeError(f'the store\'s record_types {stored} are not the types this code makes and reads')
 
 
-def typed(path: str, body: type[_Record], name: str, *models: type[_Record]) -> APIRouter:
+def operations(path: str, body: type[_Record], name: str, *models: type[_Record]) -> APIRouter:
     """A path for its types: create, read, update, delete and search, each type in its own table, `body` what a caller sends.
     A path of several types takes the `type` a create makes, the first by default, and the one a search reads, every one of them by
     default; a read, an update or a delete's `id` says its type, and one of a type the path has not is read and changed through
     the first, with its columns."""
     routes, base = APIRouter(tags=[name]), models[0]
     own = {Type[m.__tablename__.upper()]: m for m in models}   # the path's types, in its order
+    coded = own | {code: m for m in models if issubclass(m, _Link) for code in LINKS}   # an id's first byte to its table, a link's any of LINKS
     One = Union[models]   # a record of the path, read with its own type's columns
 
-    def made(type: Type | None = None):
+    def table(type: Type | None = None):
         """The table of the `type` a create makes, one of the path's."""
         if type is not None and type not in own:
             raise HTTPException(422, f'{path} makes {", ".join(t.name.lower() for t in own)}, not {type.name.lower()}')
         return own[type] if type is not None else base
 
     @routes.post(path, response_model=One, summary=f'Create a {name}')
-    async def create(record: body, model=Depends(made if len(models) > 1 else lambda: base)):
+    async def create(record: body, model=Depends(table if len(models) > 1 else lambda: base)):
         """It comes back with the `id`, `type` and `created` the store gave it."""
         return await model.create(record)
 
     @routes.get(path + '/{id}', response_model=One, summary=f'Read a {name}')
     async def read(id: UUID):
         """404 when there is none."""
-        return await own.get(id.bytes[0], base).read(id)
+        return await coded.get(id.bytes[0], base).read(id)
 
     @routes.put(path + '/{id}', response_model=One, summary=f'Update a {name}')
     async def update(id: UUID, record: body):
-        """Merged with what is sent when the `id` is there, created with that `id` when it is not."""
-        return await own.get(id.bytes[0], base).update(id, record)
+        """Merged with what is sent when the `id` is there, created with that `id` when it is not; an `id` of a type the path does not
+        make is refused when it is not there."""
+        if id.bytes[0] not in coded and not await base.db().get(base, id):
+            raise HTTPException(422, f'{path} makes {", ".join(t.name.lower() for t in own)}; no {base.__tablename__} {id} is there to update')
+        return await coded.get(id.bytes[0], base).update(id, record)
 
     @routes.delete(path + '/{id}', status_code=204, summary=f'Delete a {name}')
     async def delete(id: UUID):
         """With its links; refused while it holds records, which are deleted or moved out first. 404 when there is none."""
-        await own.get(id.bytes[0], base).delete(id)
+        await coded.get(id.bytes[0], base).delete(id)
 
     @routes.get(path, response_model=Page[One], summary=f'Search {name}s')
     async def search(type: Type | None = None, conditions: QueryParams = Depends(), params: Params = Depends()):
@@ -445,11 +449,11 @@ async def record_links(id: UUID, conditions: QueryParams = Depends(), params: Pa
     return await Link.search(params, or_(Link.from_id == id, Link.to_id == id), conditions=conditions)
 
 
-router.include_router(typed('/records', Fields, 'record', Record, Node, Collection, View, Event, Message, Activity, Link))
-router.include_router(typed('/links', _Link, 'link', Link))
+router.include_router(operations('/records', Fields, 'record', Record, Node, Collection, View, Event, Message, Activity, Link))
+router.include_router(operations('/links', _Link, 'link', Link))
 
 
-async def refused(request: Request, e: StatementError):
+async def refusal(request: Request, e: StatementError):
     """What a table refuses, a link without an end, a parent of another type, a name taken under its parent, a value Postgres cannot hold,
     and a filter its column cannot take, an operator its type has not or a value not of its kind, is the caller's to fix: 422 with the
     reason. Any other failure is the API's own."""
@@ -478,7 +482,7 @@ def api_at(path: str, name: str, summary: str, *routers: APIRouter) -> FastAPI:
     return built
 
 
-def served(apis: dict[str, FastAPI], store: _SQABase) -> FastAPI:
+def serve(apis: dict[str, FastAPI], store: _SQABase) -> FastAPI:
     """The core and the APIs built on it as one API on `store`, the app's: its scoped session is every record's (`_Record.db`), set
     once here, and each request is one transaction (`transaction`). Every route in one OpenAPI document, `/openapi.json`, shown at `/docs`, each API's routes under its tag; each API built on it keeps its own
     document at `{path}/docs` as well. With no APIs, the core alone."""
@@ -486,7 +490,7 @@ def served(apis: dict[str, FastAPI], store: _SQABase) -> FastAPI:
     one = FastAPI(title=app.title, version=app.version, summary='Records and the links between them, and the APIs built on them: '
                   + ', '.join(p.strip('/') for p in apis) + '.',
                   openapi_tags=app.openapi_tags + [{'name': t, 'description': s} for t, s in tags.items()],
-                  dependencies=[Depends(transaction, scope='function')], exception_handlers={StatementError: refused})
+                  dependencies=[Depends(transaction, scope='function')], exception_handlers={StatementError: refusal})
     one.include_router(router)
     for api in apis.values():
         one.include_router(api.router)

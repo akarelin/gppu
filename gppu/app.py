@@ -357,7 +357,7 @@ class APIApp(AsyncApp):
     in ``load``. FastAPI and uvicorn come with the ``ld`` extra::
 
         class LDAPI(APIApp, _SQABase):   # its store: the configuration's `db`, the engine and each request's session
-            def apis(self): return {'/ld/v1': ld.served({'/work': work.app}, self)}
+            def apis(self): return {'/ld/v1': ld.serve({'/work': work.app}, self)}
     """
 
     def apis(self) -> dict[str, Any]:
