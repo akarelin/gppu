@@ -32,7 +32,7 @@ Documentation from the code's docstrings, with this README and the documents bes
 
 | Module | Purpose |
 |--------|---------|
-| [`gppu.app`](gppu/app.py) | [`Env`](docs/environment.md), the configuration, with `!include` and typed path access (`glob`, `glob_int`, `glob_list`, `glob_dict`), and `_Base`, an object's logging and configuration.<br>[Apps](docs/app.md): `App`, `CliApp` for command-line utilities, `AsyncApp` on the YMRO steps, `APIApp` |
+| [`gppu.app`](gppu/app.py) | [`Env`](docs/environment.md), the configuration, with `!include` and typed path access (`glob`, `glob_int`, `glob_list`, `glob_dict`), and `_Base`, an object's logging and configuration.<br>[Apps](docs/app.md): `APP`, what a program says about itself; `App`, `AsyncApp` on the YMRO steps, `APIApp` |
 | `gppu` (core)<br> | **Logger**: colored `Info`/`Warn`/`Error`/`Debug`/`Dump`. <br>**Vault**: `Vault.get`/`create`/`update`/`list` with Azure Key Vault and `SECRET_*` env-var backends; `!secret` YAML tag.<br>Plus: type coercion, dict utilities, YAML/JSON I/O, time helpers, OS detection + `full_path` path resolution (env vars, `~`, WSL drive mapping), async helpers, template population |
 | [`gppu.handlers`](docs/handlers.md) | Generated handler API and supported-format reference. |
 | `gppu.ymro` | YMRO lifecycle: multi-inheritance-aware init→load→start steppers (`YInit`/`YLoad`/`YStart`/`mixin_Stepper`).<br>`Tracer` flight recorder: JSONL trace of object snapshots, triggers, callbacks, and periodic state (AppDaemon hooks via `Tracer.install`); `_tracer` before/after/instead method decorators |
@@ -52,7 +52,7 @@ python -m examples.handler_browser
 
 ## Environment
 
-`CliApp` loads configuration automatically. The explicit loader below is for code that needs configuration without constructing an app.
+A program's first read of the configuration loads it. The explicit loader below is for code that loads it itself.
 
 ```python
 from gppu import Env
@@ -116,7 +116,7 @@ In YAML: `password: !secret db-pass` resolves at load time via `Vault.get`. Requ
 
 ## How Apps Work
 
-Command-line utilities subclass `CliApp`, define `main`, and call `MyApp.cli()`. Construction loads the shared configuration and logging; the command line overrides keys of the configuration, and gppu prints what `main` returns as JSON. Do not build that setup in each utility. Use `App` for an object called directly and `AsyncApp` for asyncio work; see [Apps](docs/app.md).
+Any program that imports gppu is already an app: `Info`, `Warn` and `glob` work from the import, and `APP` is what the program says about itself. See [Apps](docs/app.md) and [examples/basic.py](examples/basic.py).
 
 ### 1. Use the project's shared configuration
 
@@ -126,25 +126,18 @@ When the script folder needs a configuration entry point, `config.yaml` includes
 !include ../_config/_config.yaml
 ```
 
-### 2. Define the command's work
+### 2. Say what the program is, then do its work
 
-This example takes `logs`, `level` and `days` from the configuration. The command line overrides those keys.
+This example takes `logs`, `level` and `days` from the configuration, and lets the command line override them.
 
 ```python
-from gppu import CliApp
+from gppu import APP, Info, glob
 
-class MyApp(CliApp):
-    def main(self) -> dict:
-        """Read the configured logs."""
-        logs, level, days = self.my('logs'), self.my('level'), self.my('days')
-        self.Info('Reading logs', level, days)
-        return {'logs': logs, 'level': level, 'days': days}
-
-if __name__ == '__main__':
-    MyApp.cli()
+APP['cli'] = True
+Info('Reading logs', glob('logs'), glob('level'), glob('days'))
 ```
 
-No arguments runs `main` with configuration values. `--days 7` overrides `days`; every value is a string. Returned data goes to stdout as JSON and logs go to stderr. See [`gppu.app.CliApp`](gppu/app.py).
+`--days 7` overrides `days`, as a string; a bare `--verbose` sets `verbose` to True. Use `App` for an object that needs more and `AsyncApp` for asyncio work.
 
 ### 3. For TUI apps — subclass `TUIApp` and use `Env` the same way:
 

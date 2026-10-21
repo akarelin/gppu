@@ -18,7 +18,6 @@ from .gppu import (
     mixin_Config,
     _Base,
     App,
-    CliApp,
 )
 
 from .app import (
@@ -202,7 +201,7 @@ __all__ = [
     'APP', 'glob', 'glob_int', 'glob_list', 'glob_dict',
 
     # Foundation classes
-    '_Base', 'App', 'CliApp', 'AsyncApp', 'APIApp', 'mixin_Rest',
+    '_Base', 'App', 'AsyncApp', 'APIApp', 'mixin_Rest',
 
     # y2xxx classes
     'y2list', 'y2path', 'y2uri', 'y2topic', 'y2slug', 'y2eid',
