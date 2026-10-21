@@ -456,6 +456,68 @@ class mixin_EventLoopBridge(_mixin):
 # endregion
 
 
+# region async application
+class AsyncApp(_App, mixin_EventLoopBridge):
+  """Application base for long-lived asyncio services, on the YMRO steps.
+
+  ``run()`` runs init (light loading, with the configuration ready), load (the heavy
+  loading) and start, last, on the app's loop: ``asyncio.run(MyApp().run())``. A class
+  gives its part of a step as ``__init``, ``__load`` or ``__start``, sync or ``async def``.
+  A part adds concurrent work with ``self._spawn(coro)``; ``run()`` returns when all of it
+  has finished, and ``app.stop()`` cancels it.
+  The app is a ``mixin_EventLoopBridge`` onto its own running loop, so off-loop threads
+  ``schedule``/``submit``/``call`` work onto it.
+  """
+
+  _task_group: asyncio.TaskGroup | None
+  _background_tasks: set[asyncio.Task[Any]]
+  _loop: asyncio.AbstractEventLoop | None
+
+  def __init__(self, name: str = '', **kw) -> None:
+    super().__init__(name=name, **kw)
+    self._task_group = None
+    self._background_tasks = set()
+    self._loop = None
+
+  def __stop(self) -> None:
+    current = asyncio.current_task()
+    for task in self._background_tasks:
+      if task is not current and not task.done(): task.cancel()
+
+  def _get_loop(self) -> asyncio.AbstractEventLoop:
+    loop = self._loop
+    if loop is None: raise RuntimeError(f'{self!r} is not running')
+    return loop
+
+  async def run(self) -> None:
+    """init, load and start on this loop; returns when the work they spawned has finished."""
+    if self._task_group is not None: raise RuntimeError(f'{self!r} is already running')
+    try:
+      self._loop = asyncio.get_running_loop()
+      async with asyncio.TaskGroup() as tasks:
+        self._task_group = tasks
+        for step in (self.init, self.load, self.start):
+          if result := step(): await result
+    finally:
+      self._task_group = None
+      self._loop = None
+      self._background_tasks.clear()
+
+  def _spawn[T](self, coroutine: Coroutine[Any, Any, T], /) -> asyncio.Task[T]:
+    tasks = self._task_group
+    if tasks is None:
+      coroutine.close()
+      raise RuntimeError(f'{self!r} is not running')
+    try: task = tasks.create_task(coroutine)
+    except BaseException:
+      coroutine.close()
+      raise
+    self._background_tasks.add(task)
+    task.add_done_callback(self._background_tasks.discard)
+    return task
+# endregion
+
+
 # region REST surface
 class mixin_Rest:
   """Every public member of the application's own classes, over HTTP, and nothing
@@ -465,7 +527,7 @@ class mixin_Rest:
   it — a base may define it too — and the private names and the lifecycle steps
   are the only exclusion.
 
-  The universal REST API to any object. It is not the default: no gppu app
+  The universal REST API to any object. It works only in an AsyncApp. It is not the default: no gppu app
   includes it; an application that wants it composes it before its application
   base, as Y2 does. Override ``rest_registries()`` with
   ``{registry: {key: object}}``; by default it contains the app itself. The HTTP
@@ -554,68 +616,6 @@ class mixin_Rest:
     if row['async']: result = await method(**args)
     else: result = await asyncio.get_running_loop().run_in_executor(None, lambda: method(**args))
     return {'success': True, 'result': result}, 200
-# endregion
-
-
-# region async application
-class AsyncApp(_App, mixin_EventLoopBridge):
-  """Application base for long-lived asyncio services, on the YMRO steps.
-
-  ``run()`` runs init (light loading, with the configuration ready), load (the heavy
-  loading) and start, last, on the app's loop: ``asyncio.run(MyApp().run())``. A class
-  gives its part of a step as ``__init``, ``__load`` or ``__start``, sync or ``async def``.
-  A part adds concurrent work with ``self._spawn(coro)``; ``run()`` returns when all of it
-  has finished, and ``app.stop()`` cancels it.
-  The app is a ``mixin_EventLoopBridge`` onto its own running loop, so off-loop threads
-  ``schedule``/``submit``/``call`` work onto it.
-  """
-
-  _task_group: asyncio.TaskGroup | None
-  _background_tasks: set[asyncio.Task[Any]]
-  _loop: asyncio.AbstractEventLoop | None
-
-  def __init__(self, name: str = '', **kw) -> None:
-    super().__init__(name=name, **kw)
-    self._task_group = None
-    self._background_tasks = set()
-    self._loop = None
-
-  def __stop(self) -> None:
-    current = asyncio.current_task()
-    for task in self._background_tasks:
-      if task is not current and not task.done(): task.cancel()
-
-  def _get_loop(self) -> asyncio.AbstractEventLoop:
-    loop = self._loop
-    if loop is None: raise RuntimeError(f'{self!r} is not running')
-    return loop
-
-  async def run(self) -> None:
-    """init, load and start on this loop; returns when the work they spawned has finished."""
-    if self._task_group is not None: raise RuntimeError(f'{self!r} is already running')
-    try:
-      self._loop = asyncio.get_running_loop()
-      async with asyncio.TaskGroup() as tasks:
-        self._task_group = tasks
-        for step in (self.init, self.load, self.start):
-          if result := step(): await result
-    finally:
-      self._task_group = None
-      self._loop = None
-      self._background_tasks.clear()
-
-  def _spawn[T](self, coroutine: Coroutine[Any, Any, T], /) -> asyncio.Task[T]:
-    tasks = self._task_group
-    if tasks is None:
-      coroutine.close()
-      raise RuntimeError(f'{self!r} is not running')
-    try: task = tasks.create_task(coroutine)
-    except BaseException:
-      coroutine.close()
-      raise
-    self._background_tasks.add(task)
-    task.add_done_callback(self._background_tasks.discard)
-    return task
 # endregion
 
 
