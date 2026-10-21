@@ -1,26 +1,20 @@
-<!-- written by Claude Code (haiku) from docs/prompts/module.md 41eee7c201042b801b3c26aaf28b2d27d9f39fac and gppu/desktop.py eb3b8814d42c380c3a76746746e417a37628cb85 -->
-## Purpose
-
-`gppu.desktop` presents gppufs sources as ordinary folders in Windows, so Explorer and other desktop programs can browse them. The view is read-only. It holds no handler parsing or index: navigation and file bytes below each source folder come from gppufs.
+<!-- written by Claude Code (haiku) from docs/prompts/module.md 41eee7c201042b801b3c26aaf28b2d27d9f39fac and gppu/desktop.py e9f85372cf910d3b5985d71817edbb0dea67ed55 -->
+`gppu.desktop` shows gppufs sources as one read-only Windows folder tree, mounted through fsspec's FUSE bridge. Each configured source is one named folder. Navigation and file bytes below it come from gppufs, and the module has no handler parsing and no index of its own.
 
 ## Classes and functions
 
-`DesktopFileSystem` is an fsspec filesystem that combines several named gppufs roots into one namespace. It takes a dict that maps a folder name to a `GppuFileSystem`. Each name must be a single Windows folder name, must not be `Indexed` in any letter case, and must be unique when compared case-insensitively. An empty dict also raises `ValueError`.
+`DesktopFileSystem` is an fsspec file system with the protocol `gppu-desktop`. It takes a dict that maps each folder name to a `GppuFileSystem`. The constructor rejects a name that is empty, `.` or `..`, that contains a slash, backslash or colon, or that is `Indexed`. It also rejects two names that are equal when compared case-insensitively. `ls`, `info` and `_open` take the first path segment, match it to a source name without regard to case, and join the rest onto that source's root. A path containing `..` raises `ValueError`. Any open other than `rb` raises `EROFS`.
 
-Each source appears as a top-level folder. A subfolder that holds a gppufs index file is listed as an index view instead of a plain folder, and the index file itself is hidden from the source listing. Index views are gathered under a top-level `Indexed` folder and labelled with the source and subfolder name. Each is opened as a `GppuIndexedFileSystem`, and `close()` releases them. Discovery runs as folders are listed, so an index appears when its folder is first browsed.
+`Indexed` is a virtual folder. Its contents are found when `Indexed` or a source folder is listed. The index files found are those in a source's root and in each of its first-level folders that no handler ignores. Each index opens as a `GppuIndexedFileSystem`. Its label is the source name, followed by ` › ` and the index name when the two differ. Discovered index files are left out of the source listings. A container that gppufs declares, such as an archive, shows as a directory with size zero. `close()` closes every index view.
 
-An archive that gppufs declares as a container appears as a directory with size 0, even though fsspec sees it as a file. A path containing `..` raises `ValueError`. A name that matches no source or index view raises `FileNotFoundError`.
+`mount(sources, mount_point)` mounts a `DesktopFileSystem` in the current process and runs in the foreground. Its FUSE subclass refuses writes, creates, truncation, deletions, renames and permission or time changes with `EROFS`. It closes the file system when the mount is destroyed. WinFsp owns the Windows mount lifecycle. The FUSE bindings load only when `mount` runs, so the module imports without them.
 
-Writing is refused. Opening anything in a mode other than `rb` raises `OSError` with `EROFS`. The FUSE layer returns the same error for create, write, rename, delete and similar operations.
+## Using it
 
-`mount()` is the only function. It imports the FUSE bridge when called, then runs the mount in the current process, in the foreground, read-only, under the volume name `gppufs`. WinFsp owns the Windows mount lifecycle. Each released file handle is closed, and when the mount is destroyed the filesystem closes its index views.
-
-## Usage
+A program builds a dict of `GppuFileSystem` objects and passes it to `mount` with a mount point:
 
 ```python
 from gppu.desktop import mount
 
-mount({'Lake': lake}, mount_point)
+mount({'Data': data_fs}, 'X:')   # data_fs is a GppuFileSystem built elsewhere; 'X:' is the mount point
 ```
-
-Here `lake` is a `GppuFileSystem`, and `mount_point` is where the view appears. The call blocks while the mount is up.

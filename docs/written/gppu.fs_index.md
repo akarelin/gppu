@@ -1,21 +1,17 @@
-<!-- written by Claude Code (haiku) from docs/prompts/module.md 41eee7c201042b801b3c26aaf28b2d27d9f39fac and gppu/fs_index.py e76c0537f2fc1ae1b34f49c15c45df5c65ca8141 -->
-`gppu.fs_index` reads an existing gppufs SQLite index as a flat, read-only fsspec filesystem. The listing comes from the index itself, so a copied or synced index shows the same files. Byte reads go to the original files by their stored relative paths, and the index is never renamed.
+<!-- written by Claude Code (haiku) from docs/prompts/module.md 41eee7c201042b801b3c26aaf28b2d27d9f39fac and gppu/fs_index.py 24b97ff3d71aa42ba27311a90d605597a952e94e -->
+Reads an existing gppufs SQLite index as a flat, read-only fsspec filesystem. The index is the source of the listing, including for a copied or synced index, and original relative paths are kept so bytes can still be read. The index file is never renamed or written.
 
-`GppuIndexedFileSystem` is the filesystem. On construction it opens the index read-only and checks that it has the `gppufs_entries` table. Its `info()` and `ls()` answer from the metadata JSON that the index stores for each file. Only files are listed, with no subdirectories. The root listing shows each file by its bare name. When two files share a name, ignoring case, each is shown by its path joined with ` › `. Two names that still collide on Windows raise `ValueError`, and so does any stored path that is absolute or contains `..`. Index files named `*.gppufs.sqlite` and their WAL and shared-memory files are left out of the listing.
+`GppuIndexedFileSystem` is the filesystem. It opens the index read-only and checks that it has the `gppufs_entries` table. `ls` lists the index's files at the root, each with metadata from its index row, and `info` returns the same for one name. The root is a directory. A name is the last part of an indexed path. When two names collide ignoring case, each takes its full path, joined with ` › `. If those still collide on Windows, listing raises `ValueError`. Files the handlers call ignored, and gppufs's own `.gppufs.sqlite` files, are not listed. Instances are not reused by fsspec's instance cache.
 
-Reading bytes needs a source. An index whose name starts with a dot is colocated, and the filesystem binds it to a `GppuFileSystem` rooted at the index's folder. Any other index is a snapshot with no bound source, so opening one of its files raises `FileNotFoundError`. Opening is read-only: any mode other than `'rb'` raises `PermissionError`.
+Reading bytes needs an original source. An index whose name starts with `.` is colocated: the folder it sits in is the source. A snapshot with a provenance name has no source, so reading its files raises `FileNotFoundError`. Only the `rb` mode is accepted; any other mode raises `PermissionError`. A member of an archive has a path containing `::`. It is read from its archive in the source and returned whole, in memory.
 
-`indexes(files, folder)` is the companion function. It yields the path of each index file directly in `folder`, found through a `GppuFileSystem`. It does not open them. Each one is checked when it is passed to `GppuIndexedFileSystem`.
-
-A program lists one folder's indexes and reads a file from one of them like this:
+`indexes(files, folder)` is a generator. It yields the path of each `.gppufs.sqlite` file directly in `folder`, and yields nothing when the folder cannot be listed. It does not check the tables; opening the index with `GppuIndexedFileSystem` does that.
 
 ```python
-from gppu.fs import GppuFileSystem
-from gppu.fs_index import GppuIndexedFileSystem, indexes
+from gppu.fs_index import GppuIndexedFileSystem
 
-files = GppuFileSystem(root)
-for index in indexes(files, folder):
-    view = GppuIndexedFileSystem(index)
-    print(view.ls('', detail=False))
-    view.close()
+fs = GppuIndexedFileSystem(index)  # index: a str or Path to a .gppufs.sqlite file
+for name in fs.ls('/', detail=False):  # names start with '/'
+    print(fs.info(name))
+fs.close()
 ```
