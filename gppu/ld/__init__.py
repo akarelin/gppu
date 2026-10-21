@@ -209,15 +209,6 @@ def clauses(expr, condition: Any) -> list:
     return clauses
 
 
-class TypeCode(TypeDecorator):
-    """A record's `type` as Postgres computes it from the `id` (schema.sql), read as the `Type` it names."""
-    impl = SmallInteger
-    cache_ok = True
-
-    def process_result_value(self, value, dialect):
-        return None if value is None else Type(value) if value in Type else value   # a link's 0xA1 to 0xAF have no name in record_types
-
-
 # ++     _Record: every record's columns and its operations; a type's class only defines its table
 
 class _Record(SQLModel):
@@ -232,7 +223,7 @@ class _Record(SQLModel):
     # DateTime, not SQLModel's own: filters read a time they are given only for DateTime columns
     created: datetime | None = Field(None, sa_type=DateTime(timezone=True), sa_column_kwargs={'server_default': FetchedValue(), 'nullable': False}, description='When the record was made.')
     updated: datetime | None = Field(None, sa_type=DateTime(timezone=True), sa_column_kwargs={'onupdate': func.now()}, description='When the record was last changed.')
-    type: Type | int | None = Field(None, sa_type=TypeCode, sa_column_kwargs={'server_default': FetchedValue()}, description='What the record is: the first byte of its `id`. Read only.')
+    type: int | None = Field(None, sa_type=SmallInteger, sa_column_kwargs={'server_default': FetchedValue()}, description='What the record is: the first byte of its `id`. Read only.')
     # String, not SQLModel's own AutoString: search looks for its text only in String columns
     subtype: str | None = Field(None, sa_type=String, description='Plain text refining the `type`, from a short list per type that Postgres does not enforce.')
     status: str | None = Field(None, sa_type=String, description='Slug, one of the statuses the spec gives its type (# States); stored as it is sent.')
@@ -370,7 +361,7 @@ class _Record(SQLModel):
         if not (parent := await db.get(Record, row.parent_id)):   # every table inherits record: a record of any type
             raise HTTPException(422, f'no record {row.parent_id} to hold it')
         if cls.PARENTS and parent.type not in cls.PARENTS:
-            raise HTTPException(422, f"a {cls.__tablename__}'s parent is a {' or a '.join(t.name.lower() for t in cls.PARENTS)}, not a {parent.type.name.lower()}")
+            raise HTTPException(422, f"a {cls.__tablename__}'s parent is a {' or a '.join(t.name.lower() for t in cls.PARENTS)}, not a {Type(parent.type).name.lower()}")
         seen, at = set(), parent
         while at and at.id not in seen:   # up the containers it would be in
             if at.id == row.id:
