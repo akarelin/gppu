@@ -95,7 +95,7 @@ from fsspec.spec import AbstractFileSystem
 from fsspec.utils import stringify_path
 
 from .gppu import MY_TZ, TimeSpan, OSType, TemplateSet, detect_os, full_path, sync, y2path, y2uri
-from .app import Env, _Base, is_table_key
+from .app import Env, _Base
 
 
 # region providers
@@ -7936,7 +7936,7 @@ class Collection:
     tables = {name: rows for name, rows in self._catalog._config.items() if isinstance(rows, Mapping)}
     if table is None:
       return sorted(tables)
-    return {uid: deepcopy(row) for uid, row in tables[table].items() if isinstance(row, Mapping) and not is_table_key(uid)}
+    return {uid: deepcopy(row) for uid, row in tables[table].items() if isinstance(row, Mapping)}
 
   def _at(self, uri: y2uri | str) -> tuple[Container, y2path]:
     location, path = self.location_of(uri)

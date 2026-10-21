@@ -19,37 +19,6 @@ from .gppu import y2path, y2topic
 from .iot import MqttApp
 
 
-def _config_changes(before: dict, after: dict, prefix: str = '') -> frozenset[str]:
-  changed = set()
-  for key in before.keys() | after.keys():
-    path = f'{prefix}/{key}' if prefix else str(key)
-    if key not in before or key not in after:
-      changed.add(path)
-    elif isinstance(before[key], dict) and isinstance(after[key], dict):
-      changed.update(_config_changes(before[key], after[key], path))
-    elif isinstance(before[key], list) and isinstance(after[key], list):
-      if json.dumps(before[key], sort_keys=True) != json.dumps(after[key], sort_keys=True): changed.add(path)
-    elif type(before[key]) is not type(after[key]) or before[key] != after[key]:
-      changed.add(path)
-  return frozenset(changed)
-
-
-def _config_topics(topics: dict[str, str]) -> dict[str, str]:
-  if not isinstance(topics, dict) or not topics:
-    raise ValueError('MQTT configuration requires a topic to Env path mapping')
-  paths = []
-  for topic, path in topics.items():
-    if not isinstance(topic, str) or not topic or '+' in topic or '#' in topic:
-      raise ValueError('MQTT configuration topics must be exact topic names')
-    if not isinstance(path, str) or (path and any(not part for part in path.split('/'))):
-      raise ValueError('MQTT configuration paths must be slash paths or empty for the root')
-    if any(not path or not other or path == other or path.startswith(other + '/')
-           or other.startswith(path + '/') for other in paths):
-      raise ValueError('MQTT configuration paths must not overlap')
-    paths.append(path)
-  return dict(topics)
-
-
 class AppService(MqttApp):
   """An MqttApp that runs all the time and reloads its configuration from MQTT.
 
@@ -61,6 +30,38 @@ class AppService(MqttApp):
   changed_paths: frozenset[str] = frozenset()
   _listeners: list[tuple[str, Callable[[frozenset[str]], None]]] = []
   _config_paths: dict[str, str]
+
+  @staticmethod
+  def _config_changes(before: dict, after: dict, prefix: str = '') -> frozenset[str]:
+    changed = set()
+    for key in before.keys() | after.keys():
+      path = f'{prefix}/{key}' if prefix else str(key)
+      if key not in before or key not in after:
+        changed.add(path)
+      elif isinstance(before[key], dict) and isinstance(after[key], dict):
+        changed.update(AppService._config_changes(before[key], after[key], path))
+      elif isinstance(before[key], list) and isinstance(after[key], list):
+        if json.dumps(before[key], sort_keys=True) != json.dumps(after[key], sort_keys=True): changed.add(path)
+      elif type(before[key]) is not type(after[key]) or before[key] != after[key]:
+        changed.add(path)
+    return frozenset(changed)
+
+
+  @staticmethod
+  def _config_topics(topics: dict[str, str]) -> dict[str, str]:
+    if not isinstance(topics, dict) or not topics:
+      raise ValueError('MQTT configuration requires a topic to Env path mapping')
+    paths = []
+    for topic, path in topics.items():
+      if not isinstance(topic, str) or not topic or '+' in topic or '#' in topic:
+        raise ValueError('MQTT configuration topics must be exact topic names')
+      if not isinstance(path, str) or (path and any(not part for part in path.split('/'))):
+        raise ValueError('MQTT configuration paths must be slash paths or empty for the root')
+      if any(not path or not other or path == other or path.startswith(other + '/')
+             or other.startswith(path + '/') for other in paths):
+        raise ValueError('MQTT configuration paths must not overlap')
+      paths.append(path)
+    return dict(topics)
 
   @staticmethod
   def on_change(callback: Callable[[frozenset[str]], None], path: str | y2path = '') -> Callable[[], None]:
@@ -89,7 +90,7 @@ class AppService(MqttApp):
         node = node[parent]
         if not isinstance(node, dict): raise TypeError(f'configuration parent is not a mapping: {path}')
       node[key] = data
-    changed = _config_changes(Env.data, updated)
+    changed = AppService._config_changes(Env.data, updated)
     AppService.changed_paths = changed
     if Env.initialized and not changed: return
     Env._load_dict(updated)
@@ -112,7 +113,7 @@ class AppService(MqttApp):
 
   async def start(self) -> None:
     if not Env.initialized: raise RuntimeError('load the MQTT bootstrap with Env.from_env() first')
-    self._config_paths = _config_topics(self.config_topics())
+    self._config_paths = self._config_topics(self.config_topics())
     for topic in self._config_paths:
       await self.mqtt_listen(self._receive_config, topic, qos=1, raise_errors=True)
     await super().start()
@@ -127,7 +128,7 @@ class _StartupConfig(AppService):
   """Read retained startup configuration, then close the temporary connection."""
 
   def __init__(self, config: dict):
-    connection, topics = config['connection'], _config_topics(config['topics'])
+    connection, topics = config['connection'], self._config_topics(config['topics'])
     if not isinstance(connection, dict) or not connection.get('hostname'):
       raise ValueError('MQTT configuration requires connection.hostname')
     if not Env.initialized: raise RuntimeError('load the MQTT bootstrap with Env.from_env() first')

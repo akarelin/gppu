@@ -25,7 +25,6 @@ from .app import (
     mixin_Config,
     _Config,
     _Base,
-    is_table_key,
 
     # sync lifecycle (AppDaemon / Y2)
     _YMRO,
@@ -210,7 +209,7 @@ __all__ = [
     'format_size', 'format_duration', 'format_since',
 
     # Env
-    'Env', 'is_table_key',
+    'Env',
 
     # Config access
     'glob', 'glob_int', 'glob_list', 'glob_dict',
