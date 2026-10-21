@@ -7,47 +7,15 @@ with its uri.
 
 The public methods are the API. The Lake, which saves objects and retrieves them by uri, is gppu.lake.
 
-Handlers:
-Typed, caller-composed handlers for large file hierarchies.
+Files:
+``GppuFileSystem(location)`` is the fsspec file system of a location, with a SQLite index beside each folder it lists. ``ls`` and
+``info`` identify an entry from its listing, by :func:`gppu.handlers.probe` on this host, and read nothing; ``refresh=True`` parses
+it with the handler :mod:`gppu.handlers` gives it, and a row carries the handler's Record under ``gppu.record``. A file a handler
+reads on a store other than this host is fetched into the cache, one at a time, and removed. An archive is opened only when it is
+listed itself; a recursion enters folders, never an ignored one, and an archive only when the index holds its listing.
 
-A domain handler receives one :class:`pathlib.Path` and returns ``(stats,
-typed_object)``. Statistics are derived from the complete typed object. Users
-select behavior with normal multiple inheritance::
-
-    class MyFiles(
-        FileHandler,
-        IgnoredHandler,
-        MarkdownHandler,
-        CSVHandler,
-        LogHandler,
-        FolderHandler,
-    ):
-        pass
-
-    files = MyFiles(metadata={"source": "local"})
-
-``GppuFileSystem(location)`` composes the implemented parsers behind fsspec
-``ls`` and ``info``, with SQLite metadata indexes beside the source folders.
-
-Every handler copies the optional metadata mapping supplied by its caller.
-``Probe.metadata`` combines that mapping with metadata detected by the typed
-object. Caller metadata wins when the same key exists in both mappings.
-
-Default calls do not stop a hierarchy scan. A read failure is represented by
-:class:`HandlerError`; a composed probe stores it on ``Probe.error`` and
-``Record.errors``. Construct a handler with ``strict=True`` when an exception
-and traceback are required. Cancellation and process-exit exceptions are not
-captured.
-
-Public I/O calls decorated with :func:`gppu.sync` return directly outside an
-event loop and are awaitable inside one. Their ``*_sync`` methods are the
-strict worker implementations. All local paths are resolved by
-:func:`gppu.full_path`.
-
-Archive members use the same :class:`Record` hierarchy as filesystem entries,
-with the archive path in ``location``. Ignored folders remain visible but are
-not descended into. ``GitHandler`` reads only local history and configuration;
-it never fetches or contacts an upstream.
+Public I/O calls decorated with :func:`gppu.sync` return directly outside an event loop and are awaitable inside one; their
+``*_sync`` methods run on the calling thread. All local paths are resolved by :func:`gppu.full_path`.
 """
 from __future__ import annotations
 
