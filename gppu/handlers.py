@@ -704,14 +704,13 @@ class SessionHandler(FileHandler):
         else its first prompt as a person reads it, else its uid; its span its messages' first to last time, else its
         lines'; its title, topic, cwd and models; and the session that spawned it in meta.parent_uid."""
         session, messages = self._linked
-        times = [message["ts"] for message in messages] or [
-            datetime.fromisoformat(record["timestamp"]) for record in self.records if record.get("timestamp")]
+        times = session["times"]
         data = {"title": session["title"], "topic": session["topic"], "cwd": session["cwd"],
                 "models": sorted(session["models"]) or None}
         meta = {"source": str(self.path)} | ({"parent_uid": session["parent_uid"]} if session["parent_uid"] else {})
         return {"type": self.type, "subtype": self.subtype, "uid": session["uid"],
-                "name": self._first_line(session["title"] or "") or self._first_line(session["name"] or "") or session["uid"],
-                "span": {"start": min(times), "end": max(times)} if times else None,
+                "name": self.first_line(session["title"] or "") or self.first_line(session["name"] or "") or session["uid"],
+                "span": {"start": times[0], "end": times[1]} if times else None,
                 "data": {key: value for key, value in data.items() if value is not None}, "meta": meta}
 
     @property
@@ -723,14 +722,30 @@ class SessionHandler(FileHandler):
 
     @cached_property
     def _linked(self) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        if self.harness == "cc":
-            return self._claude_lines()
-        if self.harness == "cx":
-            return self._codex_lines()
-        raise NotImplementedError(f"{self.path}: Linked Data reads the lines of cc and cx, not of {self.harness}")
+        return self.parse(self.harness, self.records)
+
+    @classmethod
+    def parse(cls, harness: str, lines: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...], offset: int = 0,
+              uid: str | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """The session and the messages a harness's lines say: the whole file, or the lines after the offset lines read
+        before, each numbered by its place in the file, counted from 1. A Codex delta names no session, so its uid is
+        given. The session's times are its messages' first and last (a resumed session's copied lines are out of time
+        order); with none, its lines', a moment when they are one (a Codex session opened and left). Linked Data's
+        sessions API reads what a session hook sends through this, as a SessionHandler reads its file."""
+        if harness == "cc":
+            session, messages = cls._claude_lines(lines, offset, uid)
+        elif harness == "cx":
+            session, messages = cls._codex_lines(lines, offset, uid)
+        else:
+            raise NotImplementedError(f"the lines of cc and cx are read into messages, not those of {harness}")
+        times = [message["ts"] for message in messages] or [
+            datetime.fromisoformat(line["timestamp"]) for line in lines if line.get("timestamp")]
+        session["times"] = [min(times), max(times)] if times else []
+        return session, messages
 
     @staticmethod
-    def _first_line(text: str) -> str:
+    def first_line(text: str) -> str:
+        """The first line of a text, clipped to NAME_LEN: a name."""
         return next((line.strip()[:NAME_LEN] for line in text.replace(chr(0), "").splitlines() if line.strip()), "")
 
     @classmethod
@@ -753,27 +768,29 @@ class SessionHandler(FileHandler):
             return text
         if (summary := SUMMARY.search(opening[2])) and summary[1].strip():
             return html.unescape(summary[1])
-        return cls._first_line(TAGS.sub("", ELEMENT.sub("", text))) or TAGS.sub("", text)
+        return cls.first_line(TAGS.sub("", ELEMENT.sub("", text))) or TAGS.sub("", text)
 
     @classmethod
     def _prompted(cls, session: dict[str, Any], text: str) -> None:
         """The first prompt a person typed is the session's topic, and its name as a person reads it; one opening with a
         tag gives way to the first that does not."""
-        prompt = cls._first_line(text)
+        prompt = cls.first_line(text)
         if prompt and (not session["topic"] or session["topic"].startswith("<") and not prompt.startswith("<")):
-            session["topic"], session["name"] = prompt, cls._first_line(cls._readable(text))
+            session["topic"], session["name"] = prompt, cls.first_line(cls._readable(text))
 
-    def _message(self, uid: str, line: Mapping[str, Any], n: int, subtype: str, text: str) -> dict[str, Any]:
+    @classmethod
+    def _message(cls, uid: str, line: Mapping[str, Any], n: int, subtype: str, text: str) -> dict[str, Any]:
         return {"uid": uid, "ts": datetime.fromisoformat(line["timestamp"]), "subtype": subtype,
-                "name": self._first_line(text) or subtype, "data": line, "line": n}
+                "name": cls.first_line(text) or subtype, "data": line, "line": n}
 
-    def _claude_lines(self) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    @classmethod
+    def _claude_lines(cls, lines, offset: int, uid: str | None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         """Each user or assistant line is a message, its id the line's uuid. A subagent run's lines name the run, agentId,
         and the session that spawned it, sessionId. A line marked isMeta is not a prompt. An ai-title, agent-name or
         custom-title line names the session."""
-        session = {"uid": None, "parent_uid": None, "title": None, "topic": None, "name": None, "cwd": None, "models": set()}
+        session = {"uid": uid, "parent_uid": None, "title": None, "topic": None, "name": None, "cwd": None, "models": set()}
         messages = []
-        for n, line in enumerate(self.records, 1):
+        for n, line in enumerate(lines, offset + 1):
             kind = line.get("type")
             if kind in TITLES:
                 session["title"] = line.get(TITLES[kind]) or session["title"]
@@ -791,42 +808,43 @@ class SessionHandler(FileHandler):
             blocks = content if isinstance(content, list) else [{"type": "text", "text": content or ""}]
             types = {block.get("type") for block in blocks}
             if kind == "user" and not line.get("isMeta") and "text" in types:
-                self._prompted(session, self._text_of(blocks, ("text",)))
+                cls._prompted(session, cls._text_of(blocks, ("text",)))
             subtype = ("tool_result" if "tool_result" in types else "user" if kind == "user"
                        else "tool_use" if "tool_use" in types else "agent" if "text" in types else "thinking")
             text = (" ".join(block.get("name", "") for block in blocks if block.get("type") == "tool_use")
-                    if subtype == "tool_use" else self._text_of(blocks))
-            messages.append(self._message(line["uuid"], line, n, subtype, text))
+                    if subtype == "tool_use" else cls._text_of(blocks))
+            messages.append(cls._message(line["uuid"], line, n, subtype, text))
         return session, messages
 
-    def _codex_lines(self) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    @classmethod
+    def _codex_lines(cls, lines, offset: int, uid: str | None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         """The first session_meta line names the session, its folder and the session that spawned it. A response_item of
         a message, a tool call or a tool's output is a message, its id made from the session's uid and the line. The
         AGENTS.md Codex reads into a session is not a prompt."""
-        session = {"uid": None, "parent_uid": None, "title": None, "topic": None, "name": None, "cwd": None, "models": set()}
+        session = {"uid": uid, "parent_uid": None, "title": None, "topic": None, "name": None, "cwd": None, "models": set()}
         messages, named = [], False
-        for n, line in enumerate(self.records, 1):
+        for n, line in enumerate(lines, offset + 1):
             payload = line.get("payload") or {}
             if line.get("type") == "session_meta" and not named:
                 named = True
                 source = payload.get("source")
-                session["uid"] = payload.get("id") or payload.get("session_id")
+                session["uid"] = session["uid"] or payload.get("id") or payload.get("session_id")
                 session["parent_uid"] = (((source.get("subagent") or {}).get("thread_spawn") or {}).get("parent_thread_id")
                                          if isinstance(source, dict) else None)
                 session["cwd"] = payload.get("cwd")
             if line.get("type") != "response_item" or payload.get("type") not in CODEX_MESSAGES:
                 continue
             if payload["type"] == "message":
-                subtype, text = CODEX_ROLES[payload["role"]], self._text_of(payload.get("content"))
+                subtype, text = CODEX_ROLES[payload["role"]], cls._text_of(payload.get("content"))
                 if payload["role"] == "user" and not text.startswith(CODEX_INSTRUCTIONS):
-                    self._prompted(session, self._text_of(payload.get("content"), ("text",)))
+                    cls._prompted(session, cls._text_of(payload.get("content"), ("text",)))
             elif payload["type"].endswith("_output"):
-                subtype, text = "tool_result", self._text_of(payload.get("output"))
+                subtype, text = "tool_result", cls._text_of(payload.get("output"))
             elif payload["type"] == "agent_message":
-                subtype, text = "agent", self._text_of(payload.get("content") or payload.get("text"))
+                subtype, text = "agent", cls._text_of(payload.get("content") or payload.get("text"))
             else:
                 subtype, text = "tool_use", payload.get("name") or ""
-            messages.append(self._message(str(uuid5(NAMESPACE, f"{session['uid']}/{line.get('ordinal', n)}")), line, n, subtype, text))
+            messages.append(cls._message(str(uuid5(NAMESPACE, f"{session['uid']}/{line.get('ordinal', n)}")), line, n, subtype, text))
         return session, messages
 
     @classmethod
