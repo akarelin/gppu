@@ -173,9 +173,8 @@ def probe_path(path: str | Path) -> dict:
     attributes=getattr(stat, "st_file_attributes", None),
   )
   return result
-
-
 # endregion
+
 
 # region Safe typecasting
 def safe_float(o, default: float = float("NaN")) -> float:
