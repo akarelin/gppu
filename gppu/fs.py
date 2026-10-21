@@ -1035,7 +1035,7 @@ class GppuFileSystem(AbstractFileSystem):
 
   def _index_at(self, folder: str) -> str | None:
     expected = self._database_path(folder)
-    if self.fs.isfile(expected):
+    if self.fs.isfile(expected) and self.fs.size(expected):   # an empty file is what an open the store refused leaves
       if isinstance(self.fs, LocalFileSystem) and os.name == 'nt':
         actual_name = Path(expected).resolve(strict=True).name
         if actual_name != PurePosixPath(expected).name:
@@ -1054,7 +1054,7 @@ class GppuFileSystem(AbstractFileSystem):
     except PermissionError:
       return None  # A folder this account cannot list holds no index it could read.
     candidates = [item['name'] for item in entries
-      if item['type'] == 'file' and item['name'].endswith('.gppufs.sqlite')
+      if item['type'] == 'file' and item['size'] and item['name'].endswith('.gppufs.sqlite')
       and self._index_name.fullmatch(PurePosixPath(item['name']).name)]
     if not candidates:
       return None
@@ -1215,11 +1215,22 @@ class GppuFileSystem(AbstractFileSystem):
       except sqlite3.OperationalError:   # a read-only folder will not hold the file; only the cache is lost
         self._cacheless = True
       else:
-        with closing(connection) as database, database:
-          if write:
-            self._prepare(database, owner, exists)
-          yield database
-        return
+        with closing(connection) as database:
+          try:
+            database.execute('SELECT count(*) FROM sqlite_master')   # takes the lock a share may refuse
+            if write:
+              with database:
+                self._prepare(database, owner, exists)   # and the first write, the lock a share refuses
+          except sqlite3.OperationalError as error:
+            # An SMB share (\s1\Lake on trix) opens the file and refuses its lock: it will not hold the index in place,
+            # as a read-only one will not, so it is held in memory and written back whole. Any other refusal is raised.
+            if 'database is locked' not in str(error):
+              raise
+          else:
+            with database:
+              yield database
+            return
+        self._cacheless = True
     database = self._held(owner)
     with database:
       if write:
