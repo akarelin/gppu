@@ -73,7 +73,7 @@ from typing import Any, Literal, Optional, final
 from . import gppu as _core   # _core._logger is rebound by init_logger
 from .gppu import (TRACE_RULES, Debug, Dump, Error, Info, Logger, OSType, TemplateSet, Warn, _DC, _Logger, _file_handlers,
                    _log_root, _mixin, deepget, deepget_dict, deepget_float, deepget_int, deepget_list, detect_os, dict_from_yml,
-                   enable_file_logging, sync)
+                   enable_file_logging, sync, y2path)
 
 _MISSING = object()
 
@@ -158,21 +158,21 @@ class Env(metaclass=_Tables):
     Env.changed_paths = frozenset()
 
   @staticmethod
-  def on_change(callback: Callable[[frozenset[str]], None], path: str = '') -> Callable[[], None]:
+  def on_change(callback: Callable[[frozenset[str]], None], path: str | y2path = '') -> Callable[[], None]:
     """Observe changed slash paths after loading; return a callable to unsubscribe.
 
     Callbacks are synchronous. The consumer decides how to apply each change.
     Registrations survive configuration reloads and reset().
     """
     if inspect.iscoroutinefunction(callback): raise TypeError('configuration change callbacks must be synchronous')
-    entry = (path.strip('/'), callback)
+    entry = (str(path).strip('/'), callback)
     Env._listeners.append(entry)
     def unsubscribe():
       if entry in Env._listeners: Env._listeners.remove(entry)
     return unsubscribe
 
   @staticmethod
-  def update_config(data: dict, path: str = '') -> None:
+  def update_config(data: dict, path: str | y2path = '') -> None:
     """Replace one configuration subtree; an empty path replaces the whole config."""
     if not isinstance(data, dict): raise TypeError('configuration must be a mapping')
     if not path:
@@ -180,7 +180,7 @@ class Env(metaclass=_Tables):
       return
     updated = deepcopy(Env.data)
     node = updated
-    *parents, key = path.split('/')
+    *parents, key = str(path).split('/')
     for parent in parents:
       if parent not in node: node[parent] = {}
       node = node[parent]
@@ -199,7 +199,7 @@ class Env(metaclass=_Tables):
     await _MqttConfig(config).run()
 
   @staticmethod
-  def template_set(path: str = '', **context) -> 'TemplateSet':
+  def template_set(path: str | y2path = '', **context) -> 'TemplateSet':
     """The macros, generators and templates of one table of the configuration.
 
     A table that declares them resolves its own rows; the root's macros are offered to
@@ -224,13 +224,13 @@ class Env(metaclass=_Tables):
     return blocks
 
   @staticmethod
-  def glob(path, default=None) -> Any: return Env.data if path == '' else deepget(path, Env.data, default=default)
+  def glob(path: str | y2path, default=None) -> Any: return Env.data if path == '' else deepget(path, Env.data, default=default)
   @staticmethod
-  def glob_int(path, default: int = 0) -> int: return deepget_int(path, Env.data, default=default)
+  def glob_int(path: str | y2path, default: int = 0) -> int: return deepget_int(path, Env.data, default=default)
   @staticmethod
-  def glob_list(path, default=[]) -> list: return deepget_list(path, Env.data, default=default)
+  def glob_list(path: str | y2path, default=[]) -> list: return deepget_list(path, Env.data, default=default)
   @staticmethod
-  def glob_dict(path, default={}) -> dict: return Env.data if path == '' else deepget_dict(path, Env.data, default=default)
+  def glob_dict(path: str | y2path, default={}) -> dict: return Env.data if path == '' else deepget_dict(path, Env.data, default=default)
   @staticmethod
   @sync
   async def dump():
@@ -318,11 +318,11 @@ class mixin_Config(_mixin):
   def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
   def _config_from_env(self) -> None: self._my = deepcopy(Env.data)
 
-  def my(self, path, default=None) -> Any: return deepget(path, self._my, default=default)
-  def my_int(self, path, default: int = 0) -> int: return deepget_int(path, self._my, default=default)
-  def my_float(self, path, default: float = float('nan')) -> float: return deepget_float(path, self._my, default=default)
-  def my_list(self, path, default: list = []) -> list: return deepget_list(path, self._my, default=default or [])
-  def my_dict(self, path, default: dict = {}) -> dict: return deepget_dict(path, self._my, default=default or {})
+  def my(self, path: str | y2path, default=None) -> Any: return deepget(path, self._my, default=default)
+  def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self._my, default=default)
+  def my_float(self, path: str | y2path, default: float = float('nan')) -> float: return deepget_float(path, self._my, default=default)
+  def my_list(self, path: str | y2path, default: list = []) -> list: return deepget_list(path, self._my, default=default or [])
+  def my_dict(self, path: str | y2path, default: dict = {}) -> dict: return deepget_dict(path, self._my, default=default or {})
 
 
 class _Config(mixin_Config):
