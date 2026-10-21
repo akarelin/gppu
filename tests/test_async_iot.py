@@ -21,10 +21,10 @@ class _FiniteApp(AsyncApp):
   values: list[int]
   connection: dict[str, Any]
 
-  def setup(self) -> None:
+  def __init(self) -> None:
     self.seen = list(self.values)
 
-  async def start(self) -> None:
+  async def __start(self) -> None:
     self._spawn(self._worker())
 
   async def _worker(self) -> None:
@@ -40,7 +40,6 @@ class _ExternalLoop(mixin_EventLoopBridge):
 class AsyncAppTests(unittest.IsolatedAsyncioTestCase):
   async def test_setup_run_and_dc_generics(self) -> None:
     app = _FiniteApp(name='finite', data={'values': [1, 2], 'connection': {'hostname': 'broker'}})
-    self.assertEqual(app.seen, [1, 2])
     self.assertEqual(app.connection, {'hostname': 'broker'})
     await app.run()
     self.assertEqual(app.seen, [1, 2, 3])

@@ -288,8 +288,8 @@ class MqttApp(mixin_Mqtt, AsyncApp):
   Override async ``subscribe()`` to ``await self.mqtt_listen(callback,
   topic)``; callbacks take ``(topic, payload)`` and may be sync or async.
 
-  Run with ``asyncio.run(MyApp(data=config).run())`` and stop as for ``AsyncApp``. Keep
-  ``await super().start()`` if overriding ``start()``. Subscriptions register
+  Run with ``asyncio.run(MyApp(data=config).run())`` and stop as for ``AsyncApp``; its
+  ``__start`` subscribes and connects. Subscriptions register
   before connection; for work needing a connection, have ``_mqtt_tasks()``
   return fresh coroutines for each connection. Publish with
   ``await self.mqtt_publish(topic, payload)``; disconnected publishes are discarded.
@@ -297,8 +297,7 @@ class MqttApp(mixin_Mqtt, AsyncApp):
 
   async def subscribe(self) -> None: pass
 
-  async def start(self) -> None:
-    await super().start()
+  async def __start(self) -> None:
     await self.subscribe()
     self._start_mqtt()
 # endregion

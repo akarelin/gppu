@@ -252,7 +252,14 @@ class _YMRO:
 
   def _ymro(self, method: str) -> list: return self._ymros().get(method, [])
 
-  def _callall(self, method, *a, **kw): [m(*a, **kw) for m in self._ymro(method)]
+  def _callall(self, method, *a, **kw):
+    if any(inspect.iscoroutinefunction(m) for m in self._ymro(method)): return self._acallall(method, *a, **kw)
+    [m(*a, **kw) for m in self._ymro(method)]
+
+  async def _acallall(self, method: str, *a, **kw) -> None:
+    for m in self._ymro(method):
+      result = m(*a, **kw)
+      if asyncio.iscoroutine(result): await result
 
 
 class _YInit(_YMRO):
@@ -262,8 +269,9 @@ class _YInit(_YMRO):
   @final
   def init(self):
     if self.initialized: return
-    self._callall('init')
+    result = self._callall('init')
     self.initialized = True
+    return result
 
   @property
   def initialized(self) -> bool: return getattr(self, '_initialized', False)
@@ -279,8 +287,9 @@ class _YLoad(_YInit):
   def load(self):
     if self.loaded: return
     assert self.initialized
-    self._callall('load')
+    result = self._callall('load')
     self.loaded = True
+    return result
 
   @property
   def loaded(self) -> bool: return getattr(self, '_loaded', False)
@@ -295,8 +304,9 @@ class _YStart(_YLoad):
   @final
   def start(self):
     if self.started: return
-    self._callall('start')
+    result = self._callall('start')
     self.started = True
+    return result
 
   @property
   def started(self) -> bool: return getattr(self, '_started', False)
@@ -307,10 +317,11 @@ class _YStart(_YLoad):
   @final
   def stop(self):
     if self.stopped: return
-    self._callall('stop')
+    result = self._callall('stop')
     self.started = False
     self.stopped = True
     self.loaded = False
+    return result
 
 
   @property
@@ -531,18 +542,15 @@ class mixin_Rest:
 
 
 # region async application
-class AsyncApp(App, mixin_EventLoopBridge):
-  """Application base for long-lived asyncio services.
+class AsyncApp(mixin_Stepper, App, mixin_EventLoopBridge):
+  """Application base for long-lived asyncio services, on the YMRO steps.
 
-  Override ``setup()`` for synchronous setup during construction with config ready,
-  and async ``start()`` for work. Run with ``asyncio.run(MyApp().run())`` or
-  ``await app.run()`` on a host's loop. In ``start()``, use ``self._spawn(coro)``
-  for concurrent work; ``run()`` waits for start and its TaskGroup to finish.
-
-  On that loop, ``await app.stop()`` cancels spawned tasks, not ``start()`` itself.
-  Put resource cleanup in the owning coroutine's ``finally`` or async context;
-  ``run()`` does not call ``stop()`` automatically.
-  The app is an ``mixin_EventLoopBridge`` onto its own running loop, so off-loop threads
+  ``run()`` runs init (light loading, with the configuration ready), load (the heavy
+  loading) and start, last, on the app's loop: ``asyncio.run(MyApp().run())``. A class
+  gives its part of a step as ``__init``, ``__load`` or ``__start``, sync or ``async def``.
+  A part adds concurrent work with ``self._spawn(coro)``; ``run()`` returns when all of it
+  has finished, and ``app.stop()`` cancels it.
+  The app is a ``mixin_EventLoopBridge`` onto its own running loop, so off-loop threads
   ``schedule``/``submit``/``call`` work onto it.
   """
 
@@ -555,10 +563,11 @@ class AsyncApp(App, mixin_EventLoopBridge):
     self._task_group = None
     self._background_tasks = set()
     self._loop = None
-    self.setup()
 
-  def setup(self) -> None: pass
-  async def start(self) -> None: pass
+  def __stop(self) -> None:
+    current = asyncio.current_task()
+    for task in self._background_tasks:
+      if task is not current and not task.done(): task.cancel()
 
   def _get_loop(self) -> asyncio.AbstractEventLoop:
     loop = self._loop
@@ -566,22 +575,18 @@ class AsyncApp(App, mixin_EventLoopBridge):
     return loop
 
   async def run(self) -> None:
+    """init, load and start on this loop; returns when the work they spawned has finished."""
     if self._task_group is not None: raise RuntimeError(f'{self!r} is already running')
     try:
       self._loop = asyncio.get_running_loop()
       async with asyncio.TaskGroup() as tasks:
         self._task_group = tasks
-        await self.start()
+        for step in (self.init, self.load, self.start):
+          if result := step(): await result
     finally:
       self._task_group = None
       self._loop = None
       self._background_tasks.clear()
-
-  async def stop(self) -> None:
-    current = asyncio.current_task()
-    tasks = [task for task in self._background_tasks if task is not current and not task.done()]
-    for task in tasks: task.cancel()
-    if tasks: await asyncio.gather(*tasks, return_exceptions=True)
 
   def _spawn[T](self, coroutine: Coroutine[Any, Any, T], /) -> asyncio.Task[T]:
     tasks = self._task_group
@@ -601,8 +606,8 @@ class AsyncApp(App, mixin_EventLoopBridge):
 # region API application
 class APIApp(AsyncApp):
     """An AsyncApp that serves HTTP: on uvicorn, at the ``host`` and ``port`` of its configuration, each ASGI app
-    ``apis()`` gives at its path. Override ``apis()``; override ``start()`` for work before serving and end it with
-    ``await super().start()``. FastAPI and uvicorn come with the ``ld`` extra::
+    ``apis()`` gives at its path, from the end of ``start``. Override ``apis()``; work needed before serving is a
+    ``__load`` part. FastAPI and uvicorn come with the ``ld`` extra::
 
         class LDAPI(APIApp, _SQABase):   # its store: the configuration's `db`, the engine and each request's session
             def apis(self): return {'/ld/v1': ld.served({'/work': work.app}, self)}
@@ -620,7 +625,7 @@ class APIApp(AsyncApp):
         for path, app in self.apis().items(): root.mount(path, app)
         return root
 
-    async def start(self) -> None:
+    def __start(self) -> None:
         import uvicorn
-        await uvicorn.Server(uvicorn.Config(self.asgi(), host=self.my('host'), port=self.my('port'))).serve()
+        self._spawn(uvicorn.Server(uvicorn.Config(self.asgi(), host=self.my('host'), port=self.my('port'))).serve())
 # endregion

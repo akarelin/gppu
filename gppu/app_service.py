@@ -111,12 +111,11 @@ class AppService(MqttApp):
     """MQTT topic -> the configuration path it replaces."""
     return self.my('config_mqtt/topics')
 
-  async def start(self) -> None:
+  async def __load(self) -> None:
     if not Env.initialized: raise RuntimeError('load the MQTT bootstrap with Env.from_env() first')
     self._config_paths = self._config_topics(self.config_topics())
     for topic in self._config_paths:
       await self.mqtt_listen(self._receive_config, topic, qos=1, raise_errors=True)
-    await super().start()
 
   async def _receive_config(self, topic: y2topic, payload: object) -> None:
     data = yaml.safe_load(payload) if isinstance(payload, str) else payload
@@ -141,4 +140,4 @@ class _StartupConfig(AppService):
   async def _receive_config(self, topic: y2topic, payload: object) -> None:
     await super()._receive_config(topic, payload)
     self.pending.discard(str(topic))
-    if not self.pending: await self.stop()
+    if not self.pending: self.stop()
