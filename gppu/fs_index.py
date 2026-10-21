@@ -30,6 +30,7 @@ class GppuIndexedFileSystem(AbstractFileSystem):
         # snapshot is only an index; its parent is not the original data root.
         self.source = GppuFileSystem(self.index.parent) if self.index.name.startswith('.') else None
         self._paths: dict[str, str] = {}  # display name -> original relative path; metadata stays in SQLite
+        self._stamp, self._aliases = None, {}   # the index file's modified time and size when its names were read
         uri = self.index.as_uri()
         if self.index.anchor.startswith('\\\\'):
             uri = uri.replace('file://', 'file:////', 1)
@@ -44,6 +45,9 @@ class GppuIndexedFileSystem(AbstractFileSystem):
         self._database.close()
 
     def _names(self, database):
+        stamp = self.index.stat()
+        if (stamp.st_mtime_ns, stamp.st_size) == self._stamp:   # the index has not changed since its names were read
+            return self._aliases
         # what the handlers call ignored is not listed, as gppufs lists it nowhere; an index written before that still holds it
         paths = [path for path, handlers in database.execute(
             "SELECT path, json_extract(metadata, '$.gppu.handlers') FROM gppufs_entries"
@@ -59,6 +63,7 @@ class GppuIndexedFileSystem(AbstractFileSystem):
                 raise ValueError(f'{self.index}: indexed names collide on Windows: {name}')
             aliases[name.casefold()] = (name, path)
         self._paths = {key: path for key, (_, path) in aliases.items()}
+        self._stamp, self._aliases = (stamp.st_mtime_ns, stamp.st_size), aliases
         return aliases
 
     def _parts(self, path):

@@ -1,7 +1,9 @@
 import io
+import re
 import shutil
 import sqlite3
 import zipfile
+from datetime import datetime
 
 import pytest
 
@@ -133,6 +135,21 @@ def test_index_view_names_archive_members_for_windows_and_leaves_out_ignored(tmp
     assert view.cat_file('/member.txt') == b'from the archive'
     with pytest.raises(FileNotFoundError):
         view.cat_file('/gone.txt')
+
+
+def test_a_time_an_index_holds_as_text_reaches_windows_in_seconds(tmp_path):
+    root = tmp_path / 'original'
+    root.mkdir()
+    (root / 'note.txt').write_text('a note')
+    GppuFileSystem(root).ls_sync()
+    with sqlite3.connect(root / '.original.gppufs.sqlite') as db:   # an archive member's row: its time as text
+        metadata = db.execute("SELECT metadata FROM gppufs_entries WHERE path='note.txt'").fetchone()[0]
+        member = re.sub(r'"mtime": [0-9.]+', '"mtime": "2026-08-05 16:08:05-07:00"', metadata)
+        db.execute('INSERT INTO gppufs_entries VALUES (?, ?, NULL)', ('zip://member.txt::bundle.zip', member))
+    fs = DesktopFileSystem({'Data': GppuFileSystem(root)})
+    view = next(name for name in fs.ls('/Indexed', detail=False) if name.endswith('original'))
+    assert fs.info(view + '/member.txt')['mtime'] == datetime.fromisoformat('2026-08-05 16:08:05-07:00').timestamp()
+    assert isinstance(fs.info(view + '/note.txt')['mtime'], float)
 
 
 def test_a_drive_root_is_a_source(tmp_path):

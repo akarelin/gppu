@@ -88,9 +88,17 @@ class DesktopFileSystem(AbstractFileSystem):
         return fs, posixpath.join(fs.root, *parts[1:])   # a drive's root, D:/, keeps its slash
 
     @staticmethod
-    def _row(row, name):
+    def _seconds(row, name):
+        """The row as Windows is given it: its modified time in seconds, as gppufs reads a row's time. An archive member's
+        index row holds it as text, which fusepy cannot give Windows, and Windows leaves out the entry."""
+        modified = GppuFileSystem._modified(row)
+        result = {key: value for key, value in row.items() if key != 'mtime'} | {'name': name}
+        return result | ({'mtime': modified.timestamp()} if modified else {})
+
+    @classmethod
+    def _row(cls, row, name):
         # Archive bytes are files to fsspec, but gppufs declares them navigable.
-        result = dict(row, name=name)
+        result = cls._seconds(row, name)
         if row['gppu']['is_container']:
             result.update(type='directory', size=0)
         return result
@@ -103,7 +111,7 @@ class DesktopFileSystem(AbstractFileSystem):
             if len(parts) == 1:
                 return {'name': '/Indexed', 'type': 'directory', 'size': 0}
             fs, relative = self._index_view(parts)
-            return dict(fs.info(relative), name='/' + '/'.join(parts))
+            return self._seconds(fs.info(relative), '/' + '/'.join(parts))
         fs, source = self._source(path)
         return self._row(fs.info_sync(source), '/' + '/'.join(self._parts(path)))
 
@@ -117,7 +125,9 @@ class DesktopFileSystem(AbstractFileSystem):
                 rows = [self.info('/Indexed/' + name) for name in self.indexed]
             else:
                 fs, relative = self._index_view(parts)
-                rows = [dict(row, name='/Indexed/' + parts[1] + row['name']) for row in fs.ls(relative)]
+                if not detail:   # names alone, as Windows asks a listing: no row's metadata is read for it
+                    return ['/Indexed/' + parts[1] + name for name in fs.ls(relative, detail=False)]
+                rows = [self._seconds(row, '/Indexed/' + parts[1] + row['name']) for row in fs.ls(relative)]
         else:
             fs, source = self._source(path)
             self._discover(fs, source, ' › '.join(self._parts(path)))
