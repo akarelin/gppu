@@ -400,7 +400,7 @@ class _YMRO:
   def _async(self, method: str) -> bool: return any(inspect.iscoroutinefunction(m) for m in self._ymro(method))
 
 
-class YInit(_YMRO):
+class _YInit(_YMRO):
   @abstractmethod
   def __init(self): pass
 
@@ -421,7 +421,7 @@ class YInit(_YMRO):
   def initialized(self, value: bool): self._initialized = value
 
 
-class YLoad(YInit):
+class _YLoad(_YInit):
   @abstractmethod
   def __load(self): pass
 
@@ -443,7 +443,7 @@ class YLoad(YInit):
   def loaded(self, value: bool): self._loaded = value
 
 
-class YStart(YLoad):
+class _YStart(_YLoad):
   @abstractmethod
   def __start(self): pass
 
@@ -486,7 +486,7 @@ class YStart(YLoad):
   def stopped(self, value: bool): self._stopped = value
 
 
-YStepper = YStart
+YStepper = _YStart
 class mixin_Stepper(YStepper, _mixin): pass
 # endregion
 
