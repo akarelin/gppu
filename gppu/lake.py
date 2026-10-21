@@ -8,13 +8,17 @@ itself is configured with is the app's, in Env: the uri of the Lake saved object
 (CRAP Systems/lake/docs/layout.md), one per type of record gppu's handlers read, `source` for any other.
 
   Lake(catalog, store, templates)   the Lake over catalog's locations, saving below store by templates
-  api(lake)                         the Lake as a FastAPI app, which an APIApp serves at /lake among its apis()"""
+  api(lake)                         the Lake as a FastAPI app, which an APIApp serves at /lake among its apis()
+  LakeFileSystem(url, root)         the Lake through its API as an fsspec filesystem, what a desktop or a UI browses it with"""
+import io
 import json
 import tempfile
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, BinaryIO, Mapping
 from urllib.parse import unquote, urlsplit
+
+from fsspec import AbstractFileSystem
 
 from . import handlers
 from .fs import CACHE, Container, DataObject, GppuCatalog, GppuFileSystem, Location, _below
@@ -189,3 +193,45 @@ def api(lake: Lake):
         return reply(b'', 204)
 
     return app
+
+
+class LakeFileSystem(AbstractFileSystem):
+    """The Lake through its API, an fsspec filesystem whose paths are relative to root, the uri of the Lake or a folder in it: ls and
+    info answer what the Lake's catalog answers, open gives the bytes. Read-only; saving goes through the API's POST. client is
+    the API's, made from url, or one a caller gives, such as a test's."""
+
+    protocol = 'lake'
+    cachable = False
+
+    def __init__(self, url: str = '', root: str = '', client: Any = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        import httpx
+        self.root = root.rstrip('/')
+        self.client = client or httpx.Client(base_url=url.rstrip('/'), timeout=300)   # as gppu.ld.gppufs.connect gives each call
+
+    def _uri(self, path: str) -> str:
+        path = self._strip_protocol(path).strip('/')
+        return f'{self.root}/{path}' if path else self.root
+
+    def _get(self, path: str, **flags: str) -> Any:
+        r = self.client.get(f'/lake/{self._uri(path)}', params=flags)
+        if r.status_code == 404:
+            raise FileNotFoundError(path)
+        r.raise_for_status()
+        return r
+
+    def _entry(self, row: dict[str, Any]) -> dict[str, Any]:
+        """A Lake row as fsspec has an entry: named by its path below root."""
+        return row | {'name': row['name'][len(self.root):].strip('/')}
+
+    def ls(self, path: str = '', detail: bool = True, **kwargs: Any) -> list[dict[str, Any]] | list[str]:
+        rows = [self._entry(row) for row in self._get(path, ls='').json()]
+        return rows if detail else [row['name'] for row in rows]
+
+    def info(self, path: str = '', **kwargs: Any) -> dict[str, Any]:
+        return self._entry(self._get(path).json())
+
+    def _open(self, path: str, mode: str = 'rb', **kwargs: Any) -> BinaryIO:
+        if mode != 'rb':
+            raise PermissionError(f'{path}: the Lake is read through its API; a file is saved with POST /lake/')
+        return io.BytesIO(self._get(path, content='').content)

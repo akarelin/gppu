@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from gppu.fs import DataObject, GppuCatalog
-from gppu.lake import Lake, api
+from gppu.lake import Lake, LakeFileSystem, api
 
 UID = '01c098c1-c196-49d4-b7e2-d2f544809574'
 SESSION = '\n'.join(json.dumps(line) for line in (
@@ -76,3 +76,16 @@ def test_the_api_at_lake_answers_what_the_lake_answers(tmp_path):
     unread = client.post('/lake/', params={'name': f'{UID}.jsonl'}, content=b'{"type": "user", "sessionId": "' + UID.encode() + b'"}\n')
     assert unread.status_code == 400 and 'cannot read' in unread.json()['error']
     assert client.post('/lake/', params={'name': 'note.txt'}, content=b'text').status_code == 400
+
+
+def test_the_lake_api_is_an_fsspec_filesystem(tmp_path):
+    lake, outer = lake_of(tmp_path)
+    served = FastAPI()
+    served.mount('/lake', api(lake))
+    fs = LakeFileSystem(root=outer.as_uri(), client=TestClient(served))
+    assert sorted(fs.ls('', detail=False)) == ['a.txt', 'inner']
+    assert fs.info('inner/b.md')['type'] == 'file' and fs.cat_file('a.txt') == b'a'
+    with pytest.raises(FileNotFoundError):
+        fs.info('missing.txt')
+    with pytest.raises(PermissionError):
+        fs.open('a.txt', 'wb')
