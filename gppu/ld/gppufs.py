@@ -3,13 +3,11 @@ through it only, at the address the caller gives connect(); its files in gppufs'
 (Linked Data - gppufs: "Files stay in gppufs's indexes; they are not Linked Data records"). The app using it loads its own
 configuration into gppu's Env: `drives`, where a Windows host's WSL mounts its drives, is read from it (Drives).
 
-  catalog()     gppu.fs.GppuCatalog made from GET /files/locations: every location in use, each reached over its root location's
+  catalog()     gppu.fs.GppuCatalog made from GET /files' locations: every location in use, each reached over its root location's
                 handler, its connection. Its Providers are gppufs's own, FileSystem for file://, and those a caller gives, as
                 GppuCatalog takes them: the Locations and Containers FileIndexer and every gppufs user reach files through
-  collection()  gppu.fs.Collection, the Lake, over the catalog, a Location's configuration written back by store()
   filesystem()  the GppuFileSystem of a location this host reaches, its index beside it: a listing reads the folder and keeps what
                 gppufs's handlers read there, a lookup answers from it"""
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
@@ -17,11 +15,12 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 import httpx
 
 from . import Type
-from ..fs import Collection, FileSystem, GppuCatalog, GppuFileSystem, Location
+from ..fs import FileSystem, GppuCatalog, GppuFileSystem
 from ..app import glob
 from ..gppu import full_path
 
 client: httpx.Client   # the API, opened by connect()
+NOT_IN_USE = ('discarded', 'rejected', 'archived')   # the statuses of a location not in use (# States)
 
 
 def connect(url: str) -> None:
@@ -56,41 +55,28 @@ class Drives(FileSystem):
 
 
 def catalog(**location_types: Any) -> GppuCatalog:
-    """gppufs's catalog of Linked Data's locations: the rows of GET /files/locations, each over its connection, the handler of the root
-    location it names. location_types are the Providers a caller adds by scheme, as GppuCatalog takes them; gppufs's FileSystem reaches
+    """gppufs's catalog of Linked Data's locations (GET /files, its fs_location records): every location in use that has a uid and a
+    canonical uri, the two a gppufs Location is known and reached by, as a row of gppufs's configuration table, its data with its id,
+    name, parent's uid and tags. A location in use is not discarded, rejected or archived, inside locations that are in use too, since
+    a location is part of the location above it; its connection is its root location, whose data.handler holds the connection's
+    parameters. location_types are the Providers a caller adds by scheme, as GppuCatalog takes them; gppufs's FileSystem reaches
     file://, and in a Windows host's WSL, Drives does."""
-    rows = api('GET', '/files/locations')
+    records = {r['id']: r for r in api('GET', '/files', type=int(Type.FS_LOCATION))['items']
+               if r['status'] not in NOT_IN_USE and r['data'].get('uid') and r['data'].get('canonical')}
+
+    def root(r: dict) -> dict | None:
+        """The root location above it; none when one above it is not in use, so it is not in use either."""
+        while r['parent_id']:
+            if not (r := records.get(r['parent_id'])):
+                return None
+        return r
+    rows = [r['data'] | {'id': r['id'], 'name': r['name'], 'parent': r['parent_id'] and records[r['parent_id']]['data']['uid'],
+                         'connection': top['data']['uid']} | ({'tags': r['meta']['tags']} if 'tags' in r['meta'] else {})
+            for r in records.values() if (top := root(r))]
     roots = [r for r in rows if r['connection'] == r['uid']]
-    if missing := [r['uid'] for r in roots if r['handler'] is None]:
+    if missing := [r['uid'] for r in roots if r.get('handler') is None]:
         raise ValueError(f'root locations without a handler, their connection: {", ".join(missing)}')
     return GppuCatalog({'locations': rows, 'connections': {r['uid']: r['handler'] for r in roots}}, location_types=location_types)
-
-
-def store(location: Location | None, who: str, fields: dict[str, Any]) -> None:
-    """A Location's configuration written as who, as gppufs's Collection stores it: into the location's record, a new fs_location when
-    location is None. Its name is the record's, its tags meta.tags, its parent the location with that uid, the rest its data; meta.generated
-    says who wrote it and when (Alex's provenance, generated: {by, at}). A null removes a field."""
-    if not who:
-        raise ValueError('configuration author is required')
-    fields, record = dict(fields), {'meta': {'generated': {'by': who, 'at': datetime.now().astimezone().isoformat()}}}
-    if 'name' in fields:
-        record['name'] = fields.pop('name')
-    if 'tags' in fields:
-        record['meta']['tags'] = fields.pop('tags')
-    if 'parent' in fields:
-        parent = fields.pop('parent')
-        record['parent_id'] = parent and next(r['id'] for r in api('GET', '/files/locations') if r['uid'] == parent)
-    record['data'] = fields
-    if location is None:
-        api('POST', '/files', record, type=int(Type.FS_LOCATION))
-    else:
-        api('PUT', f"/files/{location.data['id']}", record)
-
-
-def collection(**location_types: Any) -> Collection:
-    """gppufs's Collection, the Lake, over Linked Data: its Locations read from it (catalog()) and their configuration written back
-    into it (store()); gppu.fs.api serves it as /config and /lake."""
-    return Collection(lambda: catalog(**location_types), store)
 
 
 def here(catalog: GppuCatalog, uri: str) -> Path | None:
