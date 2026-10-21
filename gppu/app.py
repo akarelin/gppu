@@ -20,7 +20,6 @@ from abc import abstractmethod
 from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
 from copy import deepcopy
-
 from string import Template
 from typing import Any, Optional, final
 
