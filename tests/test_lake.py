@@ -44,3 +44,5 @@ def test_the_api_at_lake_answers_what_the_lake_answers(tmp_path):
     assert listed.status_code == 200 and [row['name'] for row in listed.json()] == [row['name'] for row in lake.ls(top)]
     assert client.get(f'/lake/{top}/inbox/posted.json', params={'retrieve': ''}).json()['content'] == {'text': 'posted'}
     assert client.get('/lake/file://nowhere/x').status_code == 404
+    taken = client.post('/lake/', json={'content': {'text': 'another'}, 'name': 'posted.json'})
+    assert taken.status_code == 409 and 'error' in taken.json()

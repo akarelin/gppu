@@ -109,5 +109,6 @@ Linked Data and its parts:
 - The `ld` image has no `textual`, so `check_fileindexer.py`'s TUI part fails in it unless installed.
 - Something in the RAN checkout commits staged changes on its own, with generic messages (b656547eb, bcb6abc3a); the gppu checkout too (4f2caa6), and a clone under `C:\.cache` once its files were open in VS Code. On 2026-10-19 at 13:44 it merged two such clones into the D:\Dev checkouts' master and pushed gppu and RAN to GitHub.
 - CRAP's admin_ui runs its own HTTP server rather than an `APIApp`.
+- nginx merges slashes in a path by default, so behind it `GET /lake/file://trix/...` would arrive as `file:/trix/...`.
 - RAN `Projects/ld/work.py:152` builds a `Span` from a value that is not one.
 - A gppufs index writes a time in its host's zone (`_metadata_text`) and `TimeSpan` reads it into `MY_TZ`, so on a host in UTC, such as a container, the catalog's summary and a folder's row give one span in two zones, and `test_catalog_lists_locations_and_serves_each_through_its_own_index` fails there.

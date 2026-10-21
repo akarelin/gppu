@@ -91,7 +91,8 @@ def api(lake: Lake):
                              ?retrieve the object with its content, ?content its bytes
     DELETE /{uri}            remove the object at uri
 
-    A uri no location holds answers 404 and a value the Lake refuses 400, each with its error."""
+    A uri no location holds answers 404, a save to a place another object holds 409 and a value the Lake refuses 400, each with
+    its error."""
     from fastapi import Body, FastAPI, Response
 
     def reply(payload: Any, status: int = 200, content_type: str = 'application/json; charset=utf-8') -> Response:
@@ -100,6 +101,7 @@ def api(lake: Lake):
 
     app = FastAPI(title='Lake')
     app.add_exception_handler(LookupError, lambda request, error: reply({'error': str(error)}, 404))
+    app.add_exception_handler(FileExistsError, lambda request, error: reply({'error': str(error)}, 409))   # the place is taken
     for refused in (ValueError, TypeError):
         app.add_exception_handler(refused, lambda request, error: reply({'error': str(error)}, 400))
 
