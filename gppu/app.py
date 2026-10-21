@@ -411,6 +411,7 @@ class _YInit(_YMRO):
     self._callall('init')
     self.initialized = True
 
+  @final
   async def _ainit(self):
     await self._acallall('init')
     self.initialized = True
@@ -433,6 +434,7 @@ class _YLoad(_YInit):
     self._callall('load')
     self.loaded = True
 
+  @final
   async def _aload(self):
     await self._acallall('load')
     self.loaded = True
@@ -454,6 +456,7 @@ class _YStart(_YLoad):
     self._callall('start')
     self.started = True
 
+  @final
   async def _astart(self):
     await self._acallall('start')
     self.started = True
@@ -473,6 +476,7 @@ class _YStart(_YLoad):
     self.stopped = True
     self.loaded = False
 
+  @final
   async def _astop(self):
     await self._acallall('stop')
     self.started = False
