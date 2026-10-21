@@ -32,7 +32,8 @@ from datetime import datetime as dt, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from copy import copy, deepcopy
-from pathlib import Path, PurePosixPath, PureWindowsPath
+import pathlib
+from pathlib import PurePath, PurePosixPath, PureWindowsPath
 
 from string import Template
 
@@ -70,7 +71,7 @@ def detect_os() -> OSType:
   else: return OSType.OTHER
 
 
-def full_path(path: str | Path, base_dir: str | Path | None = None, *, strict: bool = False) -> Path:
+def full_path(path: str | pathlib.Path, base_dir: str | pathlib.Path | None = None, *, strict: bool = False) -> pathlib.Path:
   """
     Resolve a user-supplied path to a local Path suitable for open()/read/write.
 
@@ -82,11 +83,11 @@ def full_path(path: str | Path, base_dir: str | Path | None = None, *, strict: b
   """
   raw = os.path.expandvars(str(path))
 
-  if detect_os() == OSType.W11 and len(raw) >= 7 and raw.startswith('/mnt/') and raw[5].isalpha() and raw[6] == '/': result = Path(f'{raw[5].upper()}:\\') / raw[7:]
-  else: result = Path(raw)
+  if detect_os() == OSType.W11 and len(raw) >= 7 and raw.startswith('/mnt/') and raw[5].isalpha() and raw[6] == '/': result = pathlib.Path(f'{raw[5].upper()}:\\') / raw[7:]
+  else: result = pathlib.Path(raw)
   result = result.expanduser()
 
-  if not result.is_absolute(): result = (Path.cwd() if base_dir is None else full_path(base_dir)) / result
+  if not result.is_absolute(): result = (pathlib.Path.cwd() if base_dir is None else full_path(base_dir)) / result
   
   return result.resolve(strict=strict)
 # endregion
@@ -140,14 +141,14 @@ def now_ts(): return dt.now().timestamp()
 def timestamp(): return dt.now().strftime("%y%m%d-%H%M")
 def datestamp(): return dt.now().strftime("%y%m%d")
 
-def prepend_datestamp(path, separator=" ") -> Path:
+def prepend_datestamp(path, separator=" ") -> pathlib.Path:
   datestamp_str = datestamp()  
-  _ = Path(path)
+  _ = pathlib.Path(path)
   return _.parent / f"{datestamp_str}{separator}{_.name}"
 
-def append_timestamp(path, separator=" ") -> Path:
+def append_timestamp(path, separator=" ") -> pathlib.Path:
   timestamp_str = timestamp()
-  _ = Path(path)
+  _ = pathlib.Path(path)
   return _.parent / f"{_.stem}{separator}{timestamp_str}{_.suffix}"
 
 
@@ -292,7 +293,7 @@ class y2path(y2list):
   def __init__(self, *args):
     data = []
     self.token = '/'
-    self._root = ''
+    self._lead = ''
     self._drive_root = False
 
     for i, a in enumerate(args):
@@ -300,13 +301,13 @@ class y2path(y2list):
       if isinstance(a, str):
         if os.sep != '/': a = a.replace(os.sep, '/')
         if i == 0:
-          self._root = '//' if a.startswith('//') else '/' if a.startswith('/') else ''
+          self._lead = '//' if a.startswith('//') else '/' if a.startswith('/') else ''
           self._drive_root = bool(PureWindowsPath(a).drive and PureWindowsPath(a).root)
       data += self._any2list(a)
     self.data = self._any2list(data)
 
   def __str__(self):
-    result = self._root + super().__str__()
+    result = self._lead + super().__str__()
     if self._drive_root and len(self.data) == 1 and result.endswith(':'): result += '/'
     return result
 
@@ -314,20 +315,20 @@ class y2path(y2list):
 
   def __getattr__(self, name):
     if name.startswith('__') or 'data' not in self.__dict__: raise AttributeError(name)
-    return getattr(Path(self), name)
+    return getattr(pathlib.Path(self), name)
 
   def copy(self, *args, **kwargs):
     if not args and not kwargs: return super().copy()
-    return Path(self).copy(*args, **kwargs)
+    return pathlib.Path(self).copy(*args, **kwargs)
 
   @classmethod
-  def cwd(cls): return cls(Path.cwd())
+  def cwd(cls): return cls(pathlib.Path.cwd())
 
   @classmethod
-  def home(cls): return cls(Path.home())
+  def home(cls): return cls(pathlib.Path.home())
 
   @classmethod
-  def from_uri(cls, uri): return cls(Path.from_uri(uri))
+  def from_uri(cls, uri): return cls(pathlib.Path.from_uri(uri))
 
   def __truediv__(self, other: str | y2path) -> y2path:
     return y2path(self, other)
@@ -335,6 +336,31 @@ class y2path(y2list):
 
 class y2topic(y2path):
   def is_wildcard(self) -> bool: return bool(set(self.data) & {"#", "+"})
+
+
+class _cached:
+  """A pathlib cache slot that holds only while the segments it was computed from are unchanged."""
+  def __set_name__(self, owner, name): self.name = name
+  def __get__(self, o, t=None):
+    if o is None: return self
+    key, value = o.__dict__.get(self.name, (None, None))
+    if key != str(o): raise AttributeError(self.name)
+    return value
+  def __set__(self, o, v): o.__dict__[self.name] = (str(o), v)
+
+
+class Path(y2path, pathlib.Path):
+  """A file system path: y2path's segments and operators, everything else from pathlib.Path."""
+  _drv, _root, _tail_cached, _str, _parts_normcase_cached, _hash, _info = (_cached() for _ in range(7))
+  _raw_paths = property(lambda self: [str(self)])
+  _str_normcase = property(lambda self: pathlib.PurePath(self)._str_normcase)
+
+  def __getattr__(self, name): raise AttributeError(name)
+  def __truediv__(self, other: str | y2path) -> Path: return type(self)(self, other)
+  def __eq__(self, other): return pathlib.Path(self) == other if isinstance(other, PurePath) and not isinstance(other, y2path) else y2path.__eq__(self, other)
+  __hash__ = y2path.__hash__
+
+  def copy(self, *args, **kwargs): return y2path.copy(self) if not args and not kwargs else pathlib.Path.copy(self, *args, **kwargs)
 
 
 class y2uri:
@@ -597,7 +623,7 @@ def dict_sanitize(data: dict | list, sort_keys=False) -> dict | list:
 def _tuple_representer(dumper: Dumper, data: tuple) -> Node:
   return dumper.represent_dict(dict(enumerate(data)))
 
-def dict_to_yml(filename: str | Path, data=None, sort_keys=False):
+def dict_to_yml(filename: str | pathlib.Path, data=None, sort_keys=False):
   class IndentedListDumper(yaml.Dumper):
     def increase_indent(self, flow=False, indentless=False):
       return super(IndentedListDumper, self).increase_indent(flow, False)
@@ -622,9 +648,9 @@ YML_BARE_INCLUDE = re.compile(r"^!include\s+\S.*$", re.MULTILINE)
 YML_BARE_KEY = '__include_'
 
 
-def dict_from_yml(filename: str | Path, /, **context) -> dict:
+def dict_from_yml(filename: str | pathlib.Path, /, **context) -> dict:
   filename = full_path(filename)
-  dir_stack: list[Path] = [filename.parent]
+  dir_stack: list[pathlib.Path] = [filename.parent]
   bare_seq = iter(range(1 << 30))
 
   class YmlLoader(FullLoader): pass
@@ -646,7 +672,7 @@ def dict_from_yml(filename: str | Path, /, **context) -> dict:
 
   def yml_load(text: str) -> Any: return yml_merged(yaml.load(yml_keyed(text), Loader=YmlLoader))
 
-  def yml_text(fn: Path) -> str:                                                           # a `.j2` document is rendered
+  def yml_text(fn: pathlib.Path) -> str:                                                   # a `.j2` document is rendered
     if fn.suffix.lower() == '.j2': return jinja_document(fn, **context)                    # before YAML reads it, so its
     with open(fn, encoding='utf-8') as f: return f.read()                                  # macros write the document
 
@@ -674,7 +700,7 @@ def dict_from_yml(filename: str | Path, /, **context) -> dict:
   # with open(filename, encoding='utf-8') as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
 
 
-def dict_to_json(filename: str | Path, data=None, indent=2):
+def dict_to_json(filename: str | pathlib.Path, data=None, indent=2):
   assert filename
   if not data: return
   with open(filename, 'w', encoding='utf-8') as f:
@@ -684,7 +710,7 @@ def dict_to_json(filename: str | Path, data=None, indent=2):
       with open(str(filename)+'_error.txt', 'w', encoding='utf-8') as ferr: ferr.write(error)
 
 
-def dict_from_json(filename: str | Path):
+def dict_from_json(filename: str | pathlib.Path):
   with open(filename, encoding='utf-8') as f: return json.load(f)
 
 ## _________Code below has deviated from the golden rule                                                  
@@ -762,7 +788,7 @@ class JinjaDocument(SandboxedEnvironment):
   the template so a document can import macros and read the facts it applies them to.
   """
 
-  def __init__(self, search_path: Path, **options):
+  def __init__(self, search_path: pathlib.Path, **options):
     super().__init__(loader=FileSystemLoader(str(search_path)), undefined=StrictUndefined, autoescape=False,
                      trim_blocks=True, lstrip_blocks=True, keep_trailing_newline=True, **options)
     self.filters.update(jinja_helpers())
@@ -788,7 +814,7 @@ def jinja_template(template: str, /, **data) -> Any:
   return value
 
 
-def jinja_document(filename: str | Path, /, **data) -> str:
+def jinja_document(filename: str | pathlib.Path, /, **data) -> str:
   """Render a template file to text, with its own directory as the search path."""
   filename = full_path(filename)
   return JinjaDocument(filename.parent).get_template(filename.name).render(**data)
@@ -1310,8 +1336,8 @@ class _PlainFormatter(logging.Formatter):
 _file_handlers: dict[str, logging.Handler] = {}
 
 
-def enable_file_logging(name: str | None = None, log_dir: str | Path | None = None,
-                        level: int = logging.DEBUG, log_file: str | None = None) -> Path:
+def enable_file_logging(name: str | None = None, log_dir: str | pathlib.Path | None = None,
+                        level: int = logging.DEBUG, log_file: str | None = None) -> pathlib.Path:
   """Mirror logs to an explicit `log_file`, or an explicit name + log_dir.
 
   Env passes its `log_file` when YAML declares one. No directory
@@ -1319,7 +1345,7 @@ def enable_file_logging(name: str | None = None, log_dir: str | Path | None = No
   """
   if log_dir is not None:
     if not name: raise ValueError('File logging with log_dir requires a name')
-    path = full_path(Path(log_dir) / f'{name}.log')
+    path = full_path(pathlib.Path(log_dir) / f'{name}.log')
   else:
     value = log_file
     if not isinstance(value, str) or not value.strip():
