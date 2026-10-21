@@ -1110,3 +1110,23 @@ def test_an_m365_address_names_its_tenant_service_site_and_drive():
     SharePointFileSystem._get_kwargs_from_urls('m365://karelin/sharepoint')
   with pytest.raises(ValueError, match='token'):
     SharePointFileSystem(tenant='karelin', service='sharepoint', site='sites/Suntrust', drive='Statements')
+
+
+def test_an_index_in_a_repository_is_left_out_of_it(tmp_path):
+  """An index written in a git work tree is in the repository's info/exclude, so git leaves it out, in a worktree too;
+  the repository's .gitignore is not touched."""
+  def git(*args, cwd=tmp_path / 'repo'):
+    return subprocess.run(['git', *args], cwd=cwd, check=True, capture_output=True, text=True).stdout
+  repo = tmp_path / 'repo'
+  repo.mkdir()
+  git('init', '-q')
+  (repo / 'note.md').write_text('Text', encoding='utf-8')
+  git('-c', 'user.name=t', '-c', 'user.email=t@t', 'add', 'note.md')
+  git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'note')
+  GppuFileSystem(repo).ls(recurse=True)
+  assert index(repo).is_file() and git('status', '--porcelain') == ''
+  assert not (repo / '.gitignore').exists()
+  git('worktree', 'add', '-q', str(tmp_path / 'tree'))
+  GppuFileSystem(tmp_path / 'tree').ls(recurse=True)
+  assert index(tmp_path / 'tree').is_file() and git('status', '--porcelain', cwd=tmp_path / 'tree') == ''
+  assert (repo / '.git' / 'info' / 'exclude').read_text(encoding='utf-8').splitlines().count(gppu.fs.GIT_EXCLUDE) == 1

@@ -911,6 +911,32 @@ CACHE = Path('C:/.cache') if os.name == 'nt' else Path.home() / '.cache'
 # records the index it makes, moves or removes.
 _INDEXES: dict[str, str | None] = {}
 
+# What git leaves out of a repository an index is written in: gppufs's index files and SQLite's companions to them.
+GIT_EXCLUDE = '*.gppufs.sqlite*'
+_EXCLUDED: set[str] = set()   # the folders whose indexes this process has seen to, in a repository or in none
+
+
+def _excluded_from_git(folder: str) -> None:
+  """An index written inside a git work tree is left out of that repository: `GIT_EXCLUDE` in the repository's own
+  info/exclude, which is the clone's and never committed, so the index stays beside its location and no .gitignore
+  changes. A worktree's or a submodule's .git is a file naming its git folder, whose commondir names the shared one."""
+  if folder in _EXCLUDED:
+    return
+  _EXCLUDED.add(folder)
+  top = next((p for p in (Path(folder), *Path(folder).parents) if (p / '.git').exists()), None)
+  if top is None:
+    return
+  git = top / '.git'
+  if git.is_file():
+    git = (top / git.read_text(encoding='utf-8').split(':', 1)[1].strip()).resolve()
+  if (common := git / 'commondir').is_file():
+    git = (git / common.read_text(encoding='utf-8').strip()).resolve()
+  exclude = git / 'info' / 'exclude'
+  if not exclude.is_file() or GIT_EXCLUDE not in exclude.read_text(encoding='utf-8').splitlines():
+    exclude.parent.mkdir(exist_ok=True)
+    with exclude.open('a', encoding='utf-8') as f:
+      f.write(f'\n{GIT_EXCLUDE}\n')
+
 
 def _scratch(prefix: str) -> tempfile.TemporaryDirectory:
   CACHE.mkdir(parents=True, exist_ok=True)
@@ -1234,6 +1260,8 @@ class GppuFileSystem(AbstractFileSystem):
             if 'database is locked' not in str(error):
               raise
           else:
+            if write:
+              _excluded_from_git(self._path(owner))
             if write and not exists:
               _INDEXES[self.fs.unstrip_protocol(self._path(owner))] = path   # gppufs made it: known without asking the store
             with database:
