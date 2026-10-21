@@ -24,7 +24,6 @@ A handler reads the path it is given and nothing else: no index, no location, no
 """
 from __future__ import annotations
 
-import asyncio
 import csv
 import html
 import json
@@ -168,6 +167,8 @@ class Handler:
         name = cls.__name__.removesuffix("Handler").casefold()
         if "subtype" not in cls.__dict__:
             cls.subtype = None if cls is top else name
+        if "parse" in cls.__dict__:
+            cls.parse = classmethod(sync(cls.__dict__["parse"].__func__))
 
     @classmethod
     def identify(cls, path: Path, stat: os.stat_result) -> bool:
@@ -179,10 +180,10 @@ class Handler:
     @sync
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         """The path as a Linked Data record: its size and modified time as its stat gives them. A handler's parse adds
-        to its type's; what it reads, it reads in a thread. Awaited inside an event loop, returned directly outside
-        one."""
+        to its type's; Handler makes every handler's parse gppu's sync, awaited inside an event loop and returned
+        directly outside one."""
         path = full_path(path)
-        stat = await asyncio.to_thread(path.stat, follow_symlinks=False)
+        stat = path.stat(follow_symlinks=False)
         return {"type": cls.type, "subtype": cls.subtype, "name": path.name or str(path), "span": None,
                 "data": {"size": stat.st_size, "modified": datetime.fromtimestamp(stat.st_mtime, timezone.utc)},
                 "meta": {"source": str(path)}}
@@ -226,11 +227,10 @@ class IgnoredHandler(Handler):
         return cls.reason(path, stat) is not None
 
     @classmethod
-    @sync
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
         path = full_path(path)
-        record["data"]["reason"] = cls.reason(path, await asyncio.to_thread(path.stat, follow_symlinks=False))
+        record["data"]["reason"] = cls.reason(path, path.stat(follow_symlinks=False))
         return record
 
     @classmethod
@@ -265,10 +265,9 @@ class SymlinkHandler(Handler):
         return stat_module.S_ISLNK(stat.st_mode)
 
     @classmethod
-    @sync
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
-        record["data"]["target"] = await asyncio.to_thread(os.readlink, path)
+        record["data"]["target"] = os.readlink(path)
         return record
 
 
@@ -281,10 +280,9 @@ class JunctionHandler(Handler):
         return getattr(stat, "st_reparse_tag", 0) == getattr(stat_module, "IO_REPARSE_TAG_MOUNT_POINT", None)
 
     @classmethod
-    @sync
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
-        record["data"]["target"] = await asyncio.to_thread(os.readlink, path)
+        record["data"]["target"] = os.readlink(path)
         return record
 
 
@@ -300,11 +298,13 @@ class FolderHandler(Handler):
         return stat_module.S_ISDIR(stat.st_mode)
 
     @classmethod
-    @sync
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
         members, files, folders = [], [], 0
-        for member, stat in await asyncio.to_thread(cls._listing, full_path(path)):
+        path = full_path(path)
+        with os.scandir(path) as entries:
+            listing = [(path / entry.name, entry.stat(follow_symlinks=False)) for entry in entries]
+        for member, stat in listing:
             handler = await probe(member, stat)
             members.append(await handler.parse(member))
             if stat_module.S_ISDIR(stat.st_mode):
@@ -316,12 +316,6 @@ class FolderHandler(Handler):
                                        if (time := cls.valid_time(datetime.fromtimestamp(stat.st_mtime, timezone.utc)))])
         record["members"] = members
         return record
-
-    @staticmethod
-    def _listing(path: Path) -> list[tuple[Path, os.stat_result]]:
-        """What the folder holds: each member's path and the stat the listing gives it."""
-        with os.scandir(path) as entries:
-            return [(path / entry.name, entry.stat(follow_symlinks=False)) for entry in entries]
 
 
 class FileHandler(Handler):
@@ -342,18 +336,14 @@ class SqliteHandler(FileHandler):
     patterns = ("*.sqlite", "*.sqlite3", "*.db")
 
     @classmethod
-    @sync
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
-        record["data"]["tables"] = await asyncio.to_thread(cls._tables, full_path(path))
-        return record
-
-    @staticmethod
-    def _tables(path: Path) -> dict[str, list[str]]:
-        with closing(sqlite3.connect(path.as_uri() + "?mode=ro&immutable=1", uri=True)) as database:
+        with closing(sqlite3.connect(full_path(path).as_uri() + "?mode=ro&immutable=1", uri=True)) as database:
             names = [name for (name,) in database.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
-            return {name: [row[1] for row in database.execute(f'PRAGMA table_info("{name}")')] for name in names}
+            record["data"]["tables"] = {name: [row[1] for row in database.execute(f'PRAGMA table_info("{name}")')]
+                                        for name in names}
+        return record
 
 
 class MarkdownHandler(FileHandler):
@@ -377,11 +367,10 @@ class MarkdownHandler(FileHandler):
     patterns = ("*.md",)
 
     @classmethod
-    @sync
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
         path = full_path(path)
-        frontmatter = await asyncio.to_thread(cls._frontmatter, path)
+        frontmatter = cls._frontmatter(path)
         name, title = frontmatter.get("name", frontmatter.get("title")), frontmatter.get("title", frontmatter.get("name"))
         tags = frontmatter.get("tags")
         tags = [] if tags is None else tags if isinstance(tags, list) else [tags]
@@ -441,10 +430,10 @@ class CSVHandler(FileHandler):
     patterns = ("*.csv",)
 
     @classmethod
-    @sync
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
-        rows = await asyncio.to_thread(cls._rows, full_path(path))
+        with full_path(path).open(encoding="utf-8-sig", newline="") as stream:
+            rows = [tuple(row) for row in csv.reader(stream, strict=True)]
         header, rows = (rows[0], rows[1:]) if rows else ((), [])
         keys = {key.casefold() for key in cls.time_keys}
         columns = [index for index, name in enumerate(header) if name.strip().casefold() in keys]
@@ -452,11 +441,6 @@ class CSVHandler(FileHandler):
         record["span"] = cls.spanning([time for row in rows for index in columns
                                        if index < len(row) and (time := cls._time(row[index])) is not None])
         return record
-
-    @staticmethod
-    def _rows(path: Path) -> list[tuple[str, ...]]:
-        with path.open(encoding="utf-8-sig", newline="") as stream:
-            return [tuple(row) for row in csv.reader(stream, strict=True)]
 
     @classmethod
     def _time(cls, value: str) -> datetime | None:
@@ -495,10 +479,9 @@ class LogHandler(FileHandler):
     patterns = ("*.log",)
 
     @classmethod
-    @sync
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
-        rows = (await asyncio.to_thread(full_path(path).read_text, encoding="utf-8-sig")).splitlines()
+        rows = full_path(path).read_text(encoding="utf-8-sig").splitlines()
         record["data"]["rows"] = len(rows)
         record["span"] = cls.spanning([time for row in rows if (time := cls._time(row)) is not None])
         return record
@@ -524,7 +507,6 @@ class EmailHandler(FileHandler):
     patterns = ("*.eml", "*.msg")
 
     @classmethod
-    @sync
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
         stamp, separator, rest = full_path(path).stem.partition(" - ")
@@ -609,11 +591,10 @@ class SessionHandler(FileHandler):
         return super().identify(path, stat) and stat.st_size > 0
 
     @classmethod
-    @sync
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
         path = full_path(path)
-        messages = await asyncio.to_thread(cls._messages, path)
+        messages = cls._messages(path)
         harness = cls._harness(messages[:SNIFF])
         if harness is None:
             raise ValueError(f"{path}: its messages name no harness")
@@ -1495,7 +1476,6 @@ class SessionFolderHandler(FolderHandler):
                                                        or SessionHandler._agy_session_folder(path))
 
     @classmethod
-    @sync
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
         path = full_path(path)
@@ -1530,12 +1510,11 @@ HANDLERS: list[type[Handler]] = [
 async def probe(path: str | Path, stat: os.stat_result | None = None) -> type[Handler]:
     """The handler to call for a path whose type is not known: the most specific of HANDLERS that identifies it, one
     no other identifying handler is a subtype of; of two alike, the first. A folder probes each member with the stat
-    its listing gives it; a path probed alone is stat'ed once, in a thread, since on a file share a stat alone can
-    take seconds. The rest is the name matched against the handlers' patterns. Awaited inside an event loop, returned
+    its listing gives it; a path probed alone is stat'ed once. The rest is the name matched against the handlers' patterns. Awaited inside an event loop, returned
     directly outside one. The path is taken as given, a link as the link."""
     path = Path(path)
     if stat is None:
-        stat = await asyncio.to_thread(path.stat, follow_symlinks=False)
+        stat = path.stat(follow_symlinks=False)
     found = [handler for handler in HANDLERS if handler.identify(path, stat)]
     specific = [handler for handler in found if not any(other is not handler and issubclass(other, handler) for other in found)]
     if not specific:
