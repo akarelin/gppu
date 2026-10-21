@@ -6771,6 +6771,24 @@ class GppuFileSystem(AbstractFileSystem):
     extra['probed_at'] = None
     return {**item, 'name': self._uri(key), 'gppu': extra}
 
+  def _probed(self, key: str) -> Record:
+    """One entry of this host's file system identified by probe, nothing read: the handlers that read it are the
+    one probe names, an archive's and a configured location's."""
+    path = Path(self._path(key))
+    probed = handlers.probe(path)
+    folder = probed.subtype in (handlers.FolderHandler.subtype, handlers.SessionFolderHandler.subtype)
+    names = (probed.subtype or probed.type,)
+    if path.name.casefold().endswith(ArchiveHandler.extensions):
+      names += ('archive',)
+    located = self._handlers.located(path)
+    if located is not None:
+      names += ('location',)
+    return Record(path=path, is_folder=folder, size=0 if folder else probed.meta.get('size', 0),
+                  modified_at=probed.updated, handlers=names,
+                  probes=() if located is None else (
+                    Probe(handler='location', stats=None, obj=located, metadata=located.metadata),),
+                  target=Path(probed.data['target']) if 'target' in probed.data else None)
+
   def _store(self, key: str, rows: dict[str, tuple[dict, list | None]], listing: list[dict] | None) -> None:
     """Add identified rows the index does not hold yet and record the folder's live child listing.
 
@@ -6810,8 +6828,7 @@ class GppuFileSystem(AbstractFileSystem):
     """Index one entry from its native attributes and matching handlers, without probing."""
     path = self._path(key)
     item = self.fs.info(path)
-    record = (self._handlers.record(Path(path)) if isinstance(self.fs, LocalFileSystem)
-              else self._listed_record(key, item))
+    record = self._probed(key) if isinstance(self.fs, LocalFileSystem) else self._listed_record(key, item)
     self._store(key, {key: (self._identified_row(key, item, record), None)}, None)
 
   def _unlocated(self, key: str) -> bool:
@@ -6850,7 +6867,7 @@ class GppuFileSystem(AbstractFileSystem):
         self._forget(child_key)   # the stored row predates the location; an insert alone would keep it
       if local:
         item = self.fs.info(name)  # A directory scan reports no inode on Windows; rename recovery needs it.
-        record = self._handlers.record(Path(self._path(child_key)))
+        record = self._probed(child_key)
       else:
         item = entry            # a store that lists enough said it all once; asking again is a call per entry
         record = self._listed_record(child_key, item)
@@ -6867,9 +6884,8 @@ class GppuFileSystem(AbstractFileSystem):
 
     Awaited inside an event loop, called plainly outside one; the reading runs
     in a worker thread either way. A physical entry the index has not seen is
-    identified, not probed. A file whose details are asked for is probed once,
-    inside an archive as well; ``refresh=True`` probes again. A folder's totals
-    come from the last refresh of that folder.
+    identified by probe, nothing read; ``refresh=True`` parses it. A folder's
+    totals come from the last refresh of that folder.
     """
     return await asyncio.to_thread(self.info_sync, path, refresh)
 
@@ -6901,11 +6917,7 @@ class GppuFileSystem(AbstractFileSystem):
         cached = self._stored(key)
       if cached is None:
         raise FileNotFoundError(self._uri(key))
-      metadata = cached[0]
-      if metadata['type'] != 'directory' and not metadata['gppu'].get('probed', True):
-        self._live(key)
-        metadata = self._stored(key)[0]
-      return metadata
+      return cached[0]
 
   @sync
   async def ls(self, path: str | Path | None = None, detail: bool = True,

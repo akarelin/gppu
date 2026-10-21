@@ -162,7 +162,10 @@ class HandlerBrowser(TUIApp):
   @work(exclusive=True, group='info')
   async def show_info(self, entry: TreeEntry) -> None:
     try:
-      self.show_metadata(await self.gppufs.info(self.address(entry)))
+      metadata = await self.gppufs.info(self.address(entry))
+      if metadata['type'] != 'directory' and not metadata['gppu']['probed']:
+        metadata = await self.gppufs.info(self.address(entry), refresh=True)  # a file selected is a file parsed
+      self.show_metadata(metadata)
       self.query_one('#status', Static).update(self.current['name'])
     except Exception as error:
       Error(error)
