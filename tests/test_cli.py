@@ -1,6 +1,4 @@
 """CliApp: the command line overrides keys of the configuration."""
-import pytest
-
 from gppu import CliApp, Env
 
 
@@ -19,14 +17,9 @@ def test_the_command_line_overrides_keys():
   assert Report.cli(['--days', '7', '--dry_run', 'true', '--logs', '[b, c]']) == {'days': '7', 'dry_run': 'true', 'logs': '[b, c]'}
 
 
-def test_a_key_needs_a_value():
-  Env.from_dict({})
-  with pytest.raises(SystemExit): Report.cli(['--days'])
-  with pytest.raises(SystemExit): Report.cli(['--days', '--dry_run'])
-
-
-def test_env_takes_the_command_line_and_leaves_other_arguments():
+def test_env_takes_pairs_and_flags_and_leaves_the_programs_arguments():
   Env.from_dict({'chrome': {'profile': 'Default'}, 'days': 1})
-  Env.from_argv(['mount', 'Archive*', '--chrome/profile', 'Work', '--days', '7'])
-  assert Env.glob('chrome/profile') == 'Work' and Env.glob('days') == '7' and 'mount' not in Env.data
+  Env.from_argv(['mount', 'Archive*', '--chrome/profile', 'Work', '--days', '7', '--verbose'])
+  assert Env.glob('chrome/profile') == 'Work' and Env.glob('days') == '7' and Env.glob('verbose') is True
+  assert not {'mount', 'Archive*'} & Env.data.keys()
 

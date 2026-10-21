@@ -20,11 +20,11 @@ from abc import abstractmethod
 from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
 from copy import deepcopy
-from pathlib import Path
+
 from string import Template
 from typing import Any, Optional, final
 
-from .gppu import (TRACE_RULES, Debug, Dump, Info, _DC, _Env, _Logger, _mixin, deepget, deepget_dict, deepget_float,
+from .gppu import (TRACE_RULES, Debug, Dump, Info, Path, _DC, _Env, _Logger, _mixin, deepget, deepget_dict, deepget_float,
                    deepget_int, deepget_list, dict_from_yml, enable_file_logging, sync, y2path)
 
 _trace_mro = False
@@ -126,15 +126,17 @@ class Env(_Env):
 
   @staticmethod
   def from_argv(argv: list[str]) -> None:
-    """The command line over the configuration: each ``--key value`` pair sets that key, a slash path for a nested
-    one, as a string. Other arguments are the program's own."""
-    args = iter(argv)
-    for arg in args:
+    """The command line over the configuration: ``--key value`` sets that key to the string, ``--verbose`` with no
+    value after it sets ``verbose`` to True, and a slash path names a nested key. Arguments that are not a key or its
+    value are the program's own."""
+    i = 0
+    while i < len(argv):
+      arg, i = argv[i], i + 1
       if not arg.startswith('--') or len(arg) == 2: continue
-      value = next(args, None)
-      if value is None or value.startswith('--'): raise SystemExit(f'{arg} needs a value: --key value')
+      name, value = arg[2:], True
+      if i < len(argv) and not argv[i].startswith('--'): value, i = argv[i], i + 1
       node = Env.data
-      *parents, key = y2path(arg[2:])
+      *parents, key = y2path(name)
       for parent in parents: node = node.setdefault(parent, {})
       node[key] = value
 
