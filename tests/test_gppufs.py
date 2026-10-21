@@ -341,7 +341,8 @@ def test_nonlocal_fsspec_location_keeps_sqlite_beside_source(tmp_path, monkeypat
   native.makedirs(root)
   native.pipe_file(root + '/note.md', b'---\ntitle: Remote\n---\nText')
   fs = GppuFileSystem('memory://' + root)
-  before = fs.ls()
+  assert 'title' not in fs.ls()[0]['gppu']['record']['data']   # a listing identifies; it fetches nothing
+  before = fs.ls(refresh=True)
   assert before[0]['gppu']['record']['data']['title'] == 'Remote'
   assert native.cat_file(root + '/.' + tmp_path.name + '.gppufs.sqlite').startswith(b'SQLite format 3')
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
@@ -369,7 +370,8 @@ def test_nested_archives_retain_addresses_after_folder_rename(tmp_path, monkeypa
   with zipfile.ZipFile(old / 'outer.zip', 'w') as archive:
     archive.writestr('inner.zip', nested.getvalue())
   fs = GppuFileSystem(tmp_path)
-  before = fs.ls(recurse=True)
+  assert [row['gppu']['name'] for row in fs.ls(recurse=True)] == ['old', 'outer.zip']   # a recursion never enters an archive
+  before = fs.ls(recurse=True) + fs.ls('old/outer.zip') + fs.ls('old/outer.zip/inner.zip')
   assert [row['gppu']['name'] for row in before] == ['old', 'outer.zip', 'inner.zip', 'note.md']
   assert [row['name'] for row in before] == [fs.location + '/' + path for path in
     ('old', 'old/outer.zip', 'old/outer.zip/inner.zip', 'old/outer.zip/inner.zip/note.md')]
@@ -378,7 +380,7 @@ def test_nested_archives_retain_addresses_after_folder_rename(tmp_path, monkeypa
   new = tmp_path / 'new'
   rename(old, new, tmp_path)
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
-  after = fs.ls(recurse=True)
+  after = fs.ls(recurse=True) + fs.ls('new/outer.zip') + fs.ls('new/outer.zip/inner.zip')
   assert all('/old/' not in row['name'] for row in after)
   assert [row['gppu']['name'] for row in after] == ['new', 'outer.zip', 'inner.zip', 'note.md']
   assert after[-1]['name'] == fs.location + '/new/outer.zip/inner.zip/note.md'
@@ -448,7 +450,8 @@ def test_nested_archive_uris_read_without_prior_listing(tmp_path, provider):
   uri = fs.location + '/outer.zip/inside/inner.zip/notes/note.md'
   assert fs.cat_file(uri) == content
   assert fs.cat_file(fs.location + '/outer.zip/inside/inner.zip') == inner.getvalue()
-  detail = fs.info(uri)
+  assert fs.info(uri)['gppu']['handlers'] == ['markdown']   # identified from its archives' listings, nothing read
+  detail = fs.info(uri, refresh=True)
   assert detail['name'] == uri
   assert detail['gppu']['record']['data']['title'] == 'Nested direct read'
   assert fs.info(detail['gppu']['parent'])['name'] == uri.rsplit('/', 1)[0]
@@ -766,7 +769,7 @@ def test_a_store_that_refuses_the_index_is_still_read(tmp_path, monkeypatch):
   native.pipe_file(root + '/note.md', b'---\ntitle: Read only\n---\nText')
   monkeypatch.setattr(MemoryFileSystem, 'pipe_file', refuse)
   fs = GppuFileSystem('memory://' + root)
-  rows = fs.ls()
+  rows = fs.ls(refresh=True)
   assert [row['gppu']['name'] for row in rows] == ['note.md']
   assert rows[0]['gppu']['record']['data']['title'] == 'Read only'
   assert fs._cacheless is True

@@ -80,7 +80,6 @@ from fsspec import open as open_uri, register_implementation
 from fsspec.archive import AbstractArchiveFileSystem
 from fsspec.core import url_to_fs
 from fsspec.implementations.local import LocalFileSystem
-from fsspec.implementations.tar import TarFileSystem
 from fsspec.spec import AbstractFileSystem
 from fsspec.utils import stringify_path
 
@@ -809,8 +808,8 @@ def _metadata_text(value: Any) -> str | list[datetime]:
 
 class _RarFileSystem(AbstractArchiveFileSystem):
   """A RAR archive through fsspec's archive interface, read by the installed RARLAB rar or unrar: listed from its
-  technical listing, and extracted whole, in one command, the first time a member is opened, since a RAR is stored
-  solid. A password-protected or unreadable archive raises."""
+  technical listing, and a member extracted alone when it is opened, the one before it removed. An archive on this
+  host is read in place. A password-protected or unreadable archive raises."""
 
   protocol = 'gppu-rar'
   cachable = False
@@ -818,13 +817,16 @@ class _RarFileSystem(AbstractArchiveFileSystem):
 
   def __init__(self, fo: str, target_protocol=None, target_options=None, **kwargs):
     super().__init__(**kwargs)
-    self._scratch = tempfile.TemporaryDirectory(prefix='gppufs-rar-')
-    self._archive = Path(self._scratch.name) / 'archive.rar'
-    options = {} if target_options is None else target_options
-    with open_uri(fo, protocol=target_protocol, **options) as source, self._archive.open('wb') as target:
-      shutil.copyfileobj(source, target)
+    self._scratch = _scratch('gppufs-rar-')
+    if target_protocol in (None, 'file', 'local') and Path(fo).is_file():
+      self._archive = Path(fo)   # on this host, a mounted share's among it: read where it is, never copied
+    else:
+      self._archive = Path(self._scratch.name) / 'archive.rar'
+      options = {} if target_options is None else target_options
+      with open_uri(fo, protocol=target_protocol, **options) as source, self._archive.open('wb') as target:
+        shutil.copyfileobj(source, target)
     self.dir_cache = self._listing()
-    self._members: Path | None = None
+    self._member: Path | None = None
 
   @staticmethod
   def executable() -> Path:
@@ -858,8 +860,10 @@ class _RarFileSystem(AbstractArchiveFileSystem):
       if entries:
         entries[-1][key] = value
     listing: dict[str, dict] = {}
+    self._names: dict[str, str] = {}   # a member's path, as fsspec names it, to the name the archive gives it
     for entry in entries:
       name = PurePosixPath(entry['Name'].lstrip('/').replace('\\', '/'))
+      self._names[name.as_posix()] = entry['Name']
       if name.is_absolute() or '..' in name.parts or (name.parts and name.parts[0].endswith(':')):
         raise ValueError(f"unsafe path inside archive: {entry['Name']}")
       folder = entry['Type'] == 'Directory'
@@ -878,12 +882,12 @@ class _RarFileSystem(AbstractArchiveFileSystem):
   def _open(self, path, mode='rb', **kwargs):
     if mode != 'rb':
       raise NotImplementedError('RAR listings are read-only')
-    if self._members is None:
-      members = Path(self._scratch.name) / 'members'
-      subprocess.run([str(self.executable()), 'x', '-y', '-inul', '-p-', str(self._archive), str(members) + os.sep],
-                     stdin=subprocess.DEVNULL, capture_output=True, check=True, timeout=self.timeout)
-      self._members = members
-    return (self._members / PurePosixPath(path)).open('rb')
+    if self._member is not None:
+      shutil.rmtree(self._member, ignore_errors=True)   # the member opened before; what was read of it is the caller's
+    self._member = Path(tempfile.mkdtemp(dir=self._scratch.name))
+    subprocess.run([str(self.executable()), 'x', '-y', '-inul', '-p-', str(self._archive), self._names[PurePosixPath(path).as_posix()],
+                    str(self._member) + os.sep], stdin=subprocess.DEVNULL, capture_output=True, check=True, timeout=self.timeout)
+    return (self._member / PurePosixPath(path)).open('rb')
 
   def close(self):
     self._scratch.cleanup()
@@ -930,12 +934,29 @@ class GppuIndex(Protocol):
     """
 
 
-def _probe_name(name: str, directory: bool) -> handlers.Record:
-  """What probe says of an entry known only by its name and whether it is a folder, from a stand-in of it."""
-  with tempfile.TemporaryDirectory(prefix='gppufs-name-') as scratch:
-    stand_in = Path(scratch) / (''.join('_' if letter in UNSAFE else letter for letter in name).rstrip(' .') or 'entry')
-    stand_in.mkdir() if directory else stand_in.write_bytes(b'\0')
-    return handlers.probe(stand_in)
+# Where gppufs and the walk put what they must hold for a moment: the cache, never the system's temporary folder.
+CACHE = Path('C:/.cache') if os.name == 'nt' else Path.home() / '.cache'
+
+
+def _scratch(prefix: str) -> tempfile.TemporaryDirectory:
+  CACHE.mkdir(parents=True, exist_ok=True)
+  return tempfile.TemporaryDirectory(prefix=prefix, dir=CACHE)
+
+
+def _probe_name(name: str, directory: bool, size: int | None = None) -> handlers.Record:
+  """What probe says of an entry known only by its name, whether it is a folder and its size, from a stand-in of it that
+  is gone when probe has answered; nothing of the entry is read."""
+  spelled = ''.join('_' if letter in UNSAFE else letter for letter in name).rstrip(' .') or 'entry'
+  if len(spelled) > NAME_LIMIT:
+    stem, dot, suffix = spelled.rpartition('.')
+    spelled = spelled[:NAME_LIMIT - len(suffix) - 1] + dot + suffix if dot else spelled[:NAME_LIMIT]
+  with _scratch('gppufs-name-') as scratch:
+    stand_in = Path(scratch) / spelled
+    stand_in.mkdir() if directory else stand_in.write_bytes(b'\0' if size else b'')   # probe names a handler only for a file that holds something
+    record = handlers.probe(stand_in)
+  if not directory:
+    record.meta['size'] = int(size or 0)
+  return record
 
 
 class GppuFileSystem(AbstractFileSystem):
@@ -990,9 +1011,7 @@ class GppuFileSystem(AbstractFileSystem):
     self._index = index              # the index that answers first; the file beside the location is a cache
     self._cacheless = False          # set when the store refuses the index it would keep beside itself
     self._memory: dict[str, sqlite3.Connection] = {}   # a remote store's index, held for this instance
-    self._scratch: tempfile.TemporaryDirectory | None = None   # where a listed remote entry is asked about
     self._indexes: dict[str, str | None] = {}   # folder -> the index it holds, asked of the store once
-    self._standins: dict[str, str] = {}         # folder -> its slot among the listed entries asked about
     self._locations = dict(locations) if locations else {}   # folder -> the location that is there
     self._database_path(self.root)  # Validate the required location name.
 
@@ -1457,7 +1476,8 @@ class GppuFileSystem(AbstractFileSystem):
     return native
 
   def _live(self, key: str, *, container: bool = False) -> None:
-    uri = self._uri(key)
+    """Parse what is at and below key, asked for with refresh=True: on this host in place; on any other store, or in
+    an archive, each file a handler reads fetched alone into the cache, read and removed, nothing else fetched."""
     archive_metadata = self._stored(key)[0] if container else None
     with self._filesystem(key, container=container) as (fs, source):
       fs.invalidate_cache()
@@ -1465,31 +1485,48 @@ class GppuFileSystem(AbstractFileSystem):
       if isinstance(fs, LocalFileSystem):
         self._parse(key, Path(source), native, source)
       else:
-        with tempfile.TemporaryDirectory(prefix='gppufs-') as scratch:
-          base = self._extract(uri, fs, source, native, Path(scratch))
-          self._parse(key, base, native, source, in_archive=fs is not self.fs, archive_metadata=archive_metadata)
+        self._parse_listed(key, fs, native, source, in_archive=fs is not self.fs, archive_metadata=archive_metadata)
 
-  def _extract(self, uri: str, fs: AbstractFileSystem, source: str, native: dict[str, dict], scratch: Path) -> Path:
-    """Write the inventoried entries below ``source`` under ``scratch`` and return their base folder.
+  def _parse_listed(self, key: str, fs: AbstractFileSystem, native: dict[str, dict], source: str, *,
+                    in_archive: bool = False, archive_metadata: dict | None = None) -> None:
+    """Parse a store's entries from its inventory: each identified by probe of its name, a file a handler reads
+    fetched alone into the cache, parsed and removed. A folder is not read; its totals are what is below it."""
+    rows: dict[str, tuple[dict, list[str] | None]] = {}
+    now = datetime.now().astimezone()
+    base = PurePosixPath(source)
+    below: dict[str, list[str]] = {}
+    for name in native:
+      if name != source:
+        below.setdefault(str(PurePosixPath(name).parent) if str(PurePosixPath(name).parent) != '.' else '', []).append(name)
 
-    A tar is read in archive order: its compressed stream cannot seek back, so
-    members fetched out of order decompress the archive again from the start.
-    """
-    base = scratch / (PurePosixPath(source).name or 'archive')
-    items = list(native.items())
-    if isinstance(fs, TarFileSystem):
-      items.sort(key=lambda item: fs.index[item[0]][1] if item[0] in fs.index else -1)
-    for path, item in items:
-      relative = PurePosixPath(path).relative_to(PurePosixPath(source))
-      if '..' in relative.parts:
-        raise ValueError(f'{uri}: unsafe member {path}')
-      target = base / relative
-      if item['type'] == 'directory':
-        target.mkdir(parents=True, exist_ok=True)
-      else:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        fs.get_file(path, str(target))
-    return base
+    def read(name: str) -> tuple[str, dict]:
+      item = native[name]
+      relative = '.' if name == source else PurePosixPath(name).relative_to(base).as_posix()
+      address = self._member_address(key, relative)
+      directory = item['type'] == 'directory'
+      record = _probe_name(PurePosixPath(name).name or 'location', directory, item.get('size'))
+      handler, unread = handlers.HANDLERS.get((record.type, record.subtype)), None
+      if not directory and handler not in (None, handlers.FileHandler):
+        with _scratch('gppufs-file-') as scratch:
+          copy = Path(scratch) / (''.join('_' if letter in UNSAFE else letter for letter in PurePosixPath(name).name) or 'entry')
+          try:
+            fs.get_file(name, str(copy))
+            record = handler.parse(copy)
+            record.meta['size'] = int(item.get('size') or 0)
+          except Exception as error:   # the parse records what it could not read and goes on
+            unread = f'{handler.__name__}: {type(error).__name__}: {error}'
+            Warn(f'{self._uri(address)}: {unread}')
+      children = [read(child) for child in sorted(below.get(name, ()), key=lambda child: (
+        native[child]['type'] != 'directory', child.casefold()))] if directory else []
+      row = self._row(address, item, record, Path(PurePosixPath(name).name or 'location'), probed_at=now, unread=unread,
+                      children=[child for _, child in children] if directory else None)
+      if name == source and archive_metadata is not None:
+        row = archive_metadata
+      rows[address] = row, [child_address for child_address, _ in children] if directory else None
+      return address, row
+
+    read(source)
+    self._save(rows, key, in_archive=in_archive)
 
   @staticmethod
   def _member_address(key: str, relative: str) -> str:
@@ -1497,6 +1534,22 @@ class GppuFileSystem(AbstractFileSystem):
     if relative == '.':
       return key
     return str(PurePosixPath(key) / relative)
+
+  def _identify_inside(self, key: str) -> None:
+    """Identify the archives on the way to an entry inside one, outermost first, each from its listing; no member
+    is read."""
+    parts = PurePosixPath(key).parts
+    for n in range(1, len(parts) + 1):
+      archive = PurePosixPath(*parts[:n]).as_posix()
+      if not archive.casefold().endswith(handlers.ARCHIVES):
+        continue
+      if self._stored(archive) is None and self._archive_parent(archive) is None:
+        self._identify_entry(archive)   # the physical archive, on the store itself
+      stored = self._stored(archive)
+      if stored is None or 'archive' not in stored[0]['gppu']['handlers']:
+        return   # a folder named like an archive, or nothing there; the lookup answers that
+      if stored[1] is None:
+        self._identify_members(archive)
 
   def _identify_members(self, key: str) -> None:
     """Identify an archive's members from its listing, by probe from stand-ins of their names; no member is read."""
@@ -1511,7 +1564,7 @@ class GppuFileSystem(AbstractFileSystem):
         continue
       address = self._member_address(key, relative)
       item = native[name]
-      record = self._listed(address, item)
+      record = _probe_name(PurePosixPath(name).name, item['type'] == 'directory', item.get('size'))
       rows[address] = self._row(address, item, record, Path(PurePosixPath(name).name)), \
         [] if item['type'] == 'directory' else None
       parent = self._member_address(key, PurePosixPath(relative).parent.as_posix())
@@ -1576,55 +1629,15 @@ class GppuFileSystem(AbstractFileSystem):
     raise ValueError(f'{key}: unsupported archive')
 
   def _identifiable(self, key: str) -> bool:
-    """Physical local entries are listed and identified live, and so is a store whose listing says enough.
-
-    A store that sets ``listing_is_enough`` gives a name, a type and a size for every entry it
-    lists, which is what identification asks about. Without it a remote folder is read through
-    ``_live``, which fetches everything below it before a handler runs; for a SharePoint library
-    that is the whole library fetched in order to list one folder. Archive members are read
-    through ``_identify_members``.
-    """
-    return self._archive_parent(key) is None and (isinstance(self.fs, LocalFileSystem)
-                                or getattr(self.fs, 'listing_is_enough', False))
-
-  def _stand_in(self, key: str, item: dict) -> Path:
-    """The name and type of a remote entry, put where the handlers can be asked about it.
-
-    Identification asks what a name and a type are, and a store that lists enough answers both
-    without its bytes. The question is put to the handlers exactly as it is put for a local path,
-    so what a remote entry is identified as cannot drift from what a local one is, and only a file
-    that is actually probed is ever fetched.
-    """
-    if self._scratch is None:
-      self._scratch = tempfile.TemporaryDirectory(prefix='gppufs-listing-')
-    name = PurePosixPath(key).name if key != '.' else PurePosixPath(self.root).name or 'location'
-    parent = PurePosixPath(key).parent.as_posix()
-    if parent not in self._standins:
-      self._standins[parent] = str(len(self._standins))
-    # A store can hold a name this host cannot spell — a trailing space or dot, a reserved character,
-    # a path longer than this filesystem allows. The stand-in keeps the name as far as the host
-    # permits, because a handler reads a span out of a filename, and each folder gets a slot of its
-    # own so two entries of the same name in different folders do not become one.
-    stem, dot, suffix = name.rpartition('.')
-    spelled = ''.join('_' if letter in UNSAFE else letter for letter in name).rstrip(' .')
-    if not spelled:
-      spelled = 'entry'
-    if len(spelled) > NAME_LIMIT:
-      spelled = spelled[:NAME_LIMIT - len(suffix) - 1] + dot + suffix if dot else spelled[:NAME_LIMIT]
-    target = Path(self._scratch.name) / self._standins[parent] / spelled
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if item['type'] == 'directory':
-      target.mkdir(exist_ok=True)
-    elif not target.exists():
-      target.write_bytes(b'\0' if item.get('size') else b'')   # probe names a file's handler only when it holds something
-    return target
+    """Every entry not inside an archive is identified from its listing, nothing fetched: on this host by probe, on
+    any other store by probe of its name. An archive's members are identified from the archive's listing
+    (`_identify_members`)."""
+    return self._archive_parent(key) is None
 
   def _listed(self, key: str, item: dict) -> handlers.Record:
-    """One entry of a store that lists enough, identified by probe from its stand-in, its size as the store lists it."""
-    record = handlers.probe(self._stand_in(key, item))
-    if item['type'] != 'directory':
-      record.meta['size'] = int(item.get('size') or 0)
-    return record
+    """One entry of a store that is not this host's, identified by probe from its name, type and size as listed."""
+    name = PurePosixPath(key).name if key != '.' else PurePosixPath(self.root).name or 'location'
+    return _probe_name(name, item['type'] == 'directory', item.get('size'))
 
   @staticmethod
   def _folder(record: handlers.Record) -> bool:
@@ -1812,7 +1825,10 @@ class GppuFileSystem(AbstractFileSystem):
       if cached is None and not refresh and self._identifiable(key):
         self._identify_entry(key)
         cached = self._stored(key)
-      if cached is None:
+      elif cached is None and not refresh:
+        self._identify_inside(key)   # a member is known from its archives' listings
+        cached = self._stored(key)
+      if cached is None and refresh:
         self._live(key)
         cached = self._stored(key)
       if cached is None:
@@ -1825,10 +1841,11 @@ class GppuFileSystem(AbstractFileSystem):
     """List entries, optionally descending, from the live folder and the colocated SQLite index.
 
     Awaited inside an event loop, called plainly outside one, as gppu's sync makes it.
-    Every entry the listing finds is identified.
-    Entries already indexed keep their indexed metadata. ``refresh=True``
-    probes the folder and everything below it. Entering an archive lists its
-    members identified, like a folder; refreshing the archive probes them.
+    Every entry the listing finds is identified, nothing read. Entries already
+    indexed keep their indexed metadata. ``refresh=True`` parses the folder and
+    everything below it. An archive is entered only when it is listed itself,
+    never by a recursion; its members are identified from its listing, and
+    refreshing the archive parses them one at a time.
     """
     return self.ls_sync(path, detail, recurse, refresh, live)
 
@@ -1865,7 +1882,7 @@ class GppuFileSystem(AbstractFileSystem):
           current, children = self._stored(key)
         children = self._reconcile(key, children or [])
       elif children is None:
-        self._live(key)
+        self._identify_inside(key)   # a folder in an archive is known from its archives' listings
         current, children = self._stored(key)
       elif not archive and self._folder_renames(key, children):
         current, children = self._stored(key)
@@ -1875,9 +1892,8 @@ class GppuFileSystem(AbstractFileSystem):
         if cached is None:
           continue
         row = cached[0]
-        if recurse and row['gppu']['is_container']:
+        if recurse and row['gppu']['type'] == 'folder':   # a recursion enters folders, never an archive
           below = self.ls_sync(row['name'], recurse=True, live=live)
-          row = self._stored(child['path'])[0]  # Entering an archive probes it; report the probed row.
           result.append(row)
           result.extend(below)
         else:
@@ -2804,7 +2820,6 @@ class GppuCatalog(AbstractFileSystem):
 # region indexing
 
 LEVELS = ('refresh', 'files', 'handlers', 'archives')
-CACHE = Path('C:/.cache') if os.name == 'nt' else Path.home() / '.cache'
 FOLDER_CLASSES = {'.git': '.git', '.svn': '.git', '__pycache__': 'py_cache',
   '.venv': 'py_cache', 'venv': 'py_cache', 'node_modules': 'npm_cache',
   '.idea': 'ide_config', '.vscode': 'ide_config'}
@@ -2880,11 +2895,28 @@ def _read(path: Path, parse: bool) -> tuple[handlers.Record, str | None]:
     return record, f'{handler.__name__}: {type(error).__name__}: {error}'
 
 
-def _archive(path: Path):
-  """The fsspec file system of an archive on this host, as gppufs opens one."""
+@contextmanager
+def _archive(path: Path) -> Iterator[AbstractFileSystem]:
+  """The fsspec file system of an archive on this host, as gppufs opens one, the archive closed when it is done."""
   name = path.name.casefold()
-  scheme = 'zip' if name.endswith('.zip') else 'tar' if name.endswith('.tar.gz') else 'gppu-rar'
-  return url_to_fs(f'{scheme}://::{path.as_posix()}', skip_instance_cache=True)[0]
+  if name.endswith('.rar'):
+    archive = _RarFileSystem(str(path))
+    try:
+      yield archive
+    finally:
+      archive.close()
+    return
+  with path.open('rb') as handle:
+    if name.endswith('.zip'):
+      from fsspec.implementations.zip import ZipFileSystem
+      archive = ZipFileSystem(fo=handle, skip_instance_cache=True)
+    else:
+      from fsspec.implementations.tar import TarFileSystem
+      archive = TarFileSystem(fo=handle, compression='gzip', skip_instance_cache=True)
+    try:
+      yield archive
+    finally:
+      archive.close()
 
 
 def walk_files(root: Path, path: str, level: str, recursive: bool,
@@ -2895,39 +2927,19 @@ def walk_files(root: Path, path: str, level: str, recursive: bool,
   ignored are boundaries, not entered; an ignored file is not listed."""
   boundaries = _selection(path, level, boundaries)
   parse = level in ('handlers', 'archives')
-  scratch = None
-
-  def room() -> Path:
-    """A new empty folder in the walk's scratch."""
-    nonlocal scratch
-    if scratch is None:
-      CACHE.mkdir(parents=True, exist_ok=True)
-      scratch = tempfile.TemporaryDirectory(prefix='container-index-', dir=CACHE)
-    folder = Path(scratch.name) / str(len(list(Path(scratch.name).iterdir())))
-    folder.mkdir()
-    return folder
 
   def members(fs, under: str) -> Iterator[tuple[dict, list[dict]]]:
-    """An archive's members, listed once with no bytes read and identified by probe from stand-ins of their names;
-    the members a handler reads, nested archives among them, extracted once and read from their copies."""
+    """An archive's members, listed once with no bytes read and identified by probe of their names; a member a
+    handler reads is fetched alone into the cache when the walk reaches it, read and removed, and a nested archive
+    is held only while it is walked."""
     listing = {item['name'].rstrip('/'): item for item in fs.find('', withdirs=True, detail=True).values()}
-    stand_ins, copies = room(), room()
-    identified: dict[str, handlers.Record] = {}
-    for member, item in listing.items():
-      stand_in = stand_ins / member
-      stand_in.parent.mkdir(parents=True, exist_ok=True)
-      if item['type'] == 'directory':
-        stand_in.mkdir(exist_ok=True)
-      else:
-        stand_in.write_bytes(b'\0' if item.get('size') else b'')   # probe names a file's handler only when it holds something
-      identified[member] = handlers.probe(stand_in)
-    wanted = [member for member, record in identified.items() if listing[member]['type'] != 'directory' and (
-      member.casefold().endswith(handlers.ARCHIVES)
-      or handlers.HANDLERS.get((record.type, record.subtype)) not in (None, handlers.FileHandler))]
-    for member in wanted:
-      copy = copies / member
-      copy.parent.mkdir(parents=True, exist_ok=True)
-      fs.get_file(member, str(copy))
+    identified = {member: _probe_name(PurePosixPath(member).name, item['type'] == 'directory', item.get('size'))
+                  for member, item in listing.items()}
+
+    def wanted(member: str) -> bool:
+      record = identified[member]
+      return listing[member]['type'] != 'directory' and (member.casefold().endswith(handlers.ARCHIVES)
+        or handlers.HANDLERS.get((record.type, record.subtype)) not in (None, handlers.FileHandler))
 
     def folder(prefix: str, under: str) -> Iterator[tuple[dict, list[dict]]]:
       rows, descend, nested = [], [], []
@@ -2938,26 +2950,38 @@ def walk_files(root: Path, path: str, level: str, recursive: bool,
         kind = 'directory' if item['type'] == 'directory' else 'file'
         if kind == 'file' and (level == 'refresh' or record.subtype == 'ignored'):
           continue
-        if member in wanted:
-          record, unread = _read(copies / member, parse)
+        archive = kind == 'file' and member.casefold().endswith(handlers.ARCHIVES)
+        if wanted(member) and not archive:
+          with _scratch('container-index-') as scratch:
+            copy = Path(scratch) / PurePosixPath(member).name
+            try:
+              fs.get_file(member, str(copy))
+            except Exception as error:   # a member that cannot be extracted is said, and the walk goes on
+              unread = f'extract: {type(error).__name__}: {error}'
+            else:
+              record, unread = _read(copy, parse)
         row = _walked(name, kind, item.get('size'), GppuFileSystem._modified(item), record, unread)
         if kind == 'directory':
           if PurePosixPath(member).name in FOLDER_CLASSES or record.subtype == 'ignored':
             row['boundary'] = FOLDER_CLASSES.get(PurePosixPath(member).name, 'Ignored')
           elif recursive:
             descend.append((member, name))
-        elif 'archive' in row['handlers']:
-          nested.append((copies / member, name, row))
+        elif archive:
+          nested.append((member, name, row))
         rows.append(row)
       found = []
-      for copy, name, row in nested:
-        try:
-          found.append(list(members(_archive(copy), name)))
-        except Exception as error:   # an archive read failure remains file evidence, never a successful enumeration
-          row['unread'] = [*row.get('unread', []), f'archive: {type(error).__name__}: {error}']
+      for member, name, row in nested:   # read whole before this folder is answered, held only while it is read
+        with _scratch('container-index-') as scratch:
+          copy = Path(scratch) / PurePosixPath(member).name
+          try:
+            fs.get_file(member, str(copy))
+            with _archive(copy) as inner:
+              found.append(list(members(inner, name)))
+          except Exception as error:   # an archive read failure remains file evidence, never a successful enumeration
+            row['unread'] = [*row.get('unread', []), f'archive: {type(error).__name__}: {error}']
       yield {'name': under, 'type': 'directory', 'size': 0}, rows
-      for found_listing in found:
-        yield from found_listing
+      for listing_below in found:
+        yield from listing_below
       for member, name in descend:
         yield from folder(member, name)
 
@@ -2994,14 +3018,15 @@ def walk_files(root: Path, path: str, level: str, recursive: bool,
         archives.append((entry, name, row))
       rows.append(row)
     found = []
-    for entry, name, row in archives:
+    for entry, name, row in archives:   # read whole before this folder is answered
       try:
-        found.append(list(members(_archive(entry), name)))
+        with _archive(entry) as archive:
+          found.append(list(members(archive, name)))
       except Exception as error:   # an archive read failure remains file evidence, never a successful enumeration
         row['unread'] = [*row.get('unread', []), f'archive: {type(error).__name__}: {error}']
     yield {'name': under, 'type': 'directory', 'size': 0}, rows
-    for listing in found:
-      yield from listing
+    for listing_below in found:
+      yield from listing_below
     for entry, name in descend:
       yield from visit(entry, name)
 
@@ -3015,10 +3040,6 @@ def walk_files(root: Path, path: str, level: str, recursive: bool,
     raise PermissionError(f'{path}: selected directory is excluded by the ignore rules')
   if not GppuFileSystem._folder(record):
     raise NotADirectoryError(str(selected))
-  try:
-    yield from visit(selected, path)
-  finally:
-    if scratch is not None:
-      scratch.cleanup()
+  yield from visit(selected, path)
 
 # endregion
