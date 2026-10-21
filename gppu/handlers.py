@@ -1,24 +1,23 @@
 """Handlers: a universal way to get information about a file or a folder.
 
-There is a handler for every type of data, and probe, which knows every handler there is (HANDLERS) and, given a
-path, a file's or a folder's, whose type is not known in advance, which handler to call:
+There is a handler for every type of data, and probe, which, given a path, a file's or a folder's, whose type is
+not known in advance, says which handler to call:
 
     handler = probe('D:/Dev/gppu/README.md')            # MarkdownHandler; await probe(...) in an event loop
     record = handler.parse('D:/Dev/gppu/README.md')     # await handler.parse(...) in an event loop
 
-A handler is a class of class methods. `identify(path, stat)` says whether the path is of its type: a file's name
-matches one of its `patterns`, and a folder, a symlink or a junction is told by the stat. Probing a path is its
-name and one stat, the one a folder's listing already gives its members, and nothing more. probe and parse are asynchronous, awaited inside an event loop and returned directly outside one.
-`parse(path)` reads the path into a record, what
-Linked Data holds of the thing: its type, subtype, name, span, data and, in meta, the path it was read from; a
-session's record also has its messages. A subtype is a subclass of its type: it identifies a path only where its
-type does, and its parse adds to its type's. probe returns the most specific handler that identifies the path. A
-program adds a handler by subclassing and appending it to HANDLERS:
+Probing a path is its stat, the one info or a folder's listing has already taken, and its path matched against one
+table of patterns, FOLDERS for a folder and FILES for a file; nothing is read. A handler is a class of class methods:
+`info(path, stat)` is the record from the stat alone, and `parse(path)` reads the path into a record, what Linked
+Data holds of the thing: its type, subtype, name, span, data and, in meta, the path it was read from; a session's
+record also has its messages. A subtype is a subclass of its type, and its parse adds to its type's. probe and parse
+are asynchronous, awaited inside an event loop and returned directly outside one. A program adds a handler by
+subclassing and adding its pattern:
 
     class BillingCSVHandler(CSVHandler):
         time_keys = (*CSVHandler.time_keys, 'billed_at')
 
-    HANDLERS.append(BillingCSVHandler)
+    FILES.insert(0, (re.compile(r'(?:^|/)billing[^/]*\\.csv$', re.I), BillingCSVHandler))
 
 A handler reads the path it is given and nothing else: no index, no location, no fsspec. A read that fails raises.
 """
@@ -65,6 +64,8 @@ IGNORED_FOLDER_PATTERNS = (
     "System Volume Information", "OneDriveTemp", "Cache", ".cache",
 )
 WINDOWS_SYSTEM = 4
+# Windows' FILE_ATTRIBUTE_OFFLINE and FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS: a file whose bytes are not on this host.
+OFFLINE = 0x1000 | 0x400000
 Harness = Literal[
     "chatgpt",
     "cx",
@@ -158,24 +159,18 @@ class Handler:
 
     type: str
     subtype: str | None = None
-    patterns: tuple[str, ...] = ()
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         top = next(base for base in reversed(cls.__mro__) if issubclass(base, Handler) and base is not Handler)
-        if "type" not in cls.__dict__:
+        names_type = "type" in cls.__dict__
+        if not names_type:
             cls.type = top.type if "type" in top.__dict__ else top.__name__.removesuffix("Handler").casefold()
         name = cls.__name__.removesuffix("Handler").casefold()
         if "subtype" not in cls.__dict__:
-            cls.subtype = None if cls is top or "type" in cls.__dict__ else name
+            cls.subtype = None if cls is top or names_type else name
         if "parse" in cls.__dict__:
             cls.parse = classmethod(sync(cls.__dict__["parse"].__func__))
-
-    @classmethod
-    def identify(cls, path: Path, stat: os.stat_result) -> bool:
-        """Whether the path is of this handler's type: its name matches one of the handler's patterns, ignoring case;
-        a handler with none takes anything that is there."""
-        return not cls.patterns or any(fnmatch.fnmatch(path.name.casefold(), pattern) for pattern in cls.patterns)
 
     @classmethod
     def info(cls, path: str | Path, stat: os.stat_result | None = None) -> dict[str, Any]:
@@ -232,10 +227,6 @@ class IgnoredHandler(Handler):
     folder_patterns = IGNORED_FOLDER_PATTERNS
 
     @classmethod
-    def identify(cls, path: Path, stat: os.stat_result) -> bool:
-        return cls.reason(path, stat) is not None
-
-    @classmethod
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
         path = Path(path).absolute()
@@ -270,10 +261,6 @@ class SymlinkHandler(Handler):
     the target."""
 
     @classmethod
-    def identify(cls, path: Path, stat: os.stat_result) -> bool:
-        return stat_module.S_ISLNK(stat.st_mode)
-
-    @classmethod
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
         record["data"]["target"] = os.readlink(path)
@@ -283,10 +270,6 @@ class SymlinkHandler(Handler):
 class JunctionHandler(Handler):
     """A Windows junction, as stat gives it, and the folder it points to; what is there is the target's own, probed
     at the target."""
-
-    @classmethod
-    def identify(cls, path: Path, stat: os.stat_result) -> bool:
-        return getattr(stat, "st_reparse_tag", 0) == getattr(stat_module, "IO_REPARSE_TAG_MOUNT_POINT", None)
 
     @classmethod
     async def parse(cls, path: str | Path) -> dict[str, Any]:
@@ -301,10 +284,6 @@ class FolderHandler(Handler):
     files, folders and bytes it directly holds, and its span is its files'. A subfolder's modified time is when
     something was added to it, so the span is its files' alone.
     """
-
-    @classmethod
-    def identify(cls, path: Path, stat: os.stat_result) -> bool:
-        return stat_module.S_ISDIR(stat.st_mode)
 
     @classmethod
     async def parse(cls, path: str | Path) -> dict[str, Any]:
@@ -330,9 +309,10 @@ class FolderHandler(Handler):
 class FileHandler(Handler):
     """A file of a type no more specific handler identifies: its size and modified time."""
 
-    @classmethod
-    def identify(cls, path: Path, stat: os.stat_result) -> bool:
-        return stat_module.S_ISREG(stat.st_mode) and super().identify(path, stat)
+
+class OfflineHandler(FileHandler):
+    """A file whose bytes are not on this host, a OneDrive or Synology Drive placeholder: its size and modified time.
+    Nothing is read, since a read would fetch it."""
 
 
 class SqliteHandler(FileHandler):
@@ -341,8 +321,6 @@ class SqliteHandler(FileHandler):
     It is opened immutable, so SQLite writes no -wal or -shm beside it, and no row is read: what is in the
     tables is the file's content, not what the file is.
     """
-
-    patterns = ("*.sqlite", "*.sqlite3", "*.db")
 
     @classmethod
     async def parse(cls, path: str | Path) -> dict[str, Any]:
@@ -372,8 +350,6 @@ class MarkdownHandler(FileHandler):
         first: [(tag, pattern) for tag, pattern in resolvers if tag != "tag:yaml.org,2002:timestamp"]
         for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
     }
-
-    patterns = ("*.md",)
 
     @classmethod
     async def parse(cls, path: str | Path) -> dict[str, Any]:
@@ -436,8 +412,6 @@ class CSVHandler(FileHandler):
     time_keys = TIME_KEYS
     time_formats: tuple[str, ...] = ()
 
-    patterns = ("*.csv",)
-
     @classmethod
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
@@ -485,8 +459,6 @@ class LogHandler(FileHandler):
     offset is in MY_TZ; placeholders and future times do not count.
     """
 
-    patterns = ("*.log",)
-
     @classmethod
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
@@ -512,8 +484,6 @@ class EmailHandler(FileHandler):
     the separator. A name outside the convention says nothing, and the record has no timestamp, subject,
     party or collision.
     """
-
-    patterns = ("*.eml", "*.msg")
 
     @classmethod
     async def parse(cls, path: str | Path) -> dict[str, Any]:
@@ -591,13 +561,6 @@ class SessionHandler(FileHandler):
     TURNS = {"cx": "_codex_turns", "copilot": "_copilot_turns", "gemini": "_gemini_turns",
              "cc": "_claude_code_turns", "openclaw": "_openclaw_turns", "agy": "_agy_turns",
              "hermes": "_hermes_turns"}
-
-    patterns = ("*.jsonl",)
-
-    @classmethod
-    def identify(cls, path: Path, stat: os.stat_result) -> bool:
-        """A .jsonl that is not empty; a harness that has only just made its file has written nothing yet."""
-        return super().identify(path, stat) and stat.st_size > 0
 
     @classmethod
     async def parse(cls, path: str | Path) -> dict[str, Any]:
@@ -1482,11 +1445,6 @@ class SessionFolderHandler(FolderHandler):
     """
 
     @classmethod
-    def identify(cls, path: Path, stat: os.stat_result) -> bool:
-        return super().identify(path, stat) and (SessionHandler._home_harness(path) is not None
-                                                       or SessionHandler._agy_session_folder(path))
-
-    @classmethod
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
         path = Path(path).absolute()
@@ -1510,25 +1468,56 @@ class SessionFolderHandler(FolderHandler):
             yield from cls._sessions(member)
 
 
-# The handlers probe knows, every type and subtype there is; a program adds its own by appending it.
-HANDLERS: list[type[Handler]] = [
-    IgnoredHandler, SymlinkHandler, JunctionHandler, FolderHandler, SessionFolderHandler, FileHandler, SqliteHandler, MarkdownHandler, CSVHandler,
-    LogHandler, EmailHandler, SessionHandler,
+def _names(*patterns: str, case: bool = False) -> re.Pattern[str]:
+    """The last part of a path matching one of patterns, * and ? within that part; ignoring case unless case is set."""
+    parts = (re.escape(pattern).replace(r"\*", "[^/]*").replace(r"\?", "[^/]") for pattern in patterns)
+    return re.compile(r"(?:^|/)(?:" + "|".join(parts) + r")$", 0 if case else re.I)
+
+
+# What probe matches a path against, a folder's in FOLDERS and a file's in FILES: the first pattern that matches it
+# names its handler, and a path none matches is a folder or a file. A program adds a handler by adding its pattern.
+FOLDERS: list[tuple[re.Pattern[str], type[Handler]]] = [
+    (_names(*IGNORED_NAME_PATTERNS, *IGNORED_FOLDER_PATTERNS, case=True), IgnoredHandler),
+    (re.compile(r"(?:^|/)\.hermes$"), SessionFolderHandler),
+    (re.compile(r"(?:^|/)\.gemini/antigravity(?:-cli)?$"), SessionFolderHandler),
+    (re.compile(r"(?:^|/)\.gemini/antigravity-cli/brain/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I),
+     SessionFolderHandler),
+]
+FILES: list[tuple[re.Pattern[str], type[Handler]]] = [
+    (_names(*IGNORED_NAME_PATTERNS, case=True), IgnoredHandler),
+    (_names("*.sqlite", "*.sqlite3", "*.db"), SqliteHandler),
+    (_names("*.md"), MarkdownHandler),
+    (_names("*.csv"), CSVHandler),
+    (_names("*.log"), LogHandler),
+    (_names("*.eml", "*.msg"), EmailHandler),
+    (_names("*.jsonl"), SessionHandler),
 ]
 
 
 @sync
 async def probe(path: str | Path, stat: os.stat_result | None = None) -> type[Handler]:
-    """The handler to call for a path, a file's or a folder's, whose type is not known: the most specific of HANDLERS
-    that identifies it, one no other identifying handler is a subtype of; of two alike, the first. Probing is the
-    path's name matched against the handlers' patterns and the kind its stat gives; nothing is read. A folder's
-    listing gives each member's stat; a path probed alone is stat'ed once. The path is taken as given, a link as the
-    link. Awaited inside an event loop, returned directly outside one."""
+    """The handler to call for a path, a file's or a folder's, whose type is not known. The stat says a link, a
+    junction, an offline file, a Windows system folder, which is ignored, and whether the path is a folder or a file;
+    then the first pattern of FOLDERS or FILES its path matches names the handler. A .jsonl with nothing in it yet,
+    one a harness has only just made, is a file. Nothing is read. A folder's listing gives each member's stat, as info
+    gives its own; a path probed alone is stat'ed once. The path is taken as given, a link as the link. Awaited inside
+    an event loop, returned directly outside one."""
     path = Path(path).absolute()
     if stat is None:
         stat = path.stat(follow_symlinks=False)
-    found = [handler for handler in HANDLERS if handler.identify(path, stat)]
-    specific = [handler for handler in found if not any(other is not handler and issubclass(other, handler) for other in found)]
-    if not specific:
-        raise ValueError(f"{path}: no handler identifies it")
-    return specific[0]
+    attributes = getattr(stat, "st_file_attributes", 0)
+    if stat_module.S_ISLNK(stat.st_mode):
+        return SymlinkHandler
+    if getattr(stat, "st_reparse_tag", 0) == getattr(stat_module, "IO_REPARSE_TAG_MOUNT_POINT", None):
+        return JunctionHandler
+    folder = stat_module.S_ISDIR(stat.st_mode)
+    if not folder and not stat_module.S_ISREG(stat.st_mode):
+        raise ValueError(f"{path}: neither a folder nor a file")
+    if attributes & OFFLINE:
+        return OfflineHandler
+    if folder and attributes & WINDOWS_SYSTEM and path.name:
+        return IgnoredHandler
+    name = path.as_posix()
+    handler = next((handler for pattern, handler in (FOLDERS if folder else FILES) if pattern.search(name)),
+                   FolderHandler if folder else FileHandler)
+    return FileHandler if handler is SessionHandler and not stat.st_size else handler
