@@ -1,18 +1,18 @@
 """Handlers: a universal way to get information about a file or a folder.
 
 There is a handler for every type of data, and probe, which knows every handler there is (HANDLERS) and, given a
-folder, which handler to call for each thing it holds, whose type is not known in advance:
+path, a file's or a folder's, whose type is not known in advance, which handler to call:
 
-    for member, stat, handler in probe('D:/Dev/gppu'):  # await probe(...) in an event loop
-        record = handler.parse(member)                  # await handler.parse(...) in an event loop
+    handler = probe('D:/Dev/gppu/README.md')            # MarkdownHandler; await probe(...) in an event loop
+    record = handler.parse('D:/Dev/gppu/README.md')     # await handler.parse(...) in an event loop
 
 A handler is a class of class methods. `identify(path, stat)` says whether the path is of its type: a file's name
-matches one of its `patterns`, and a folder, a symlink or a junction is told by the stat the folder's listing gives.
-Probing a folder is that listing and nothing more. probe and parse are asynchronous, awaited inside an event loop and returned directly outside one.
+matches one of its `patterns`, and a folder, a symlink or a junction is told by the stat. Probing a path is its
+name and one stat, the one a folder's listing already gives its members, and nothing more. probe and parse are asynchronous, awaited inside an event loop and returned directly outside one.
 `parse(path)` reads the path into a record, what
 Linked Data holds of the thing: its type, subtype, name, span, data and, in meta, the path it was read from; a
 session's record also has its messages. A subtype is a subclass of its type: it identifies a path only where its
-type does, and its parse adds to its type's. probe gives each member the most specific handler that identifies it. A
+type does, and its parse adds to its type's. probe returns the most specific handler that identifies the path. A
 program adds a handler by subclassing and appending it to HANDLERS:
 
     class BillingCSVHandler(CSVHandler):
@@ -42,7 +42,7 @@ from uuid import UUID, uuid5
 
 import yaml
 
-from .gppu import MY_TZ, Path, full_path, sync
+from .gppu import MY_TZ, Path, sync
 
 # Times tools write in place of a time: Windows FILETIME zero, Unix epoch zero, DOS zero, and the constant
 # Android build tools stamp on every APK member. Anything at or before DOS zero is not a time either.
@@ -152,7 +152,8 @@ class Handler:
     """The base of every handler: a file or a folder, its size and when it was modified.
 
     `type` is the class below Handler a handler descends from, file, folder or ignored, unless the handler names
-    its own; `subtype` is the handler's own name, markdown for MarkdownHandler, None for a type itself.
+    its own; `subtype` is the handler's own name, markdown for MarkdownHandler, None for a type itself, one that
+    names its type as SessionHandler does.
     """
 
     type: str
@@ -166,7 +167,7 @@ class Handler:
             cls.type = top.type if "type" in top.__dict__ else top.__name__.removesuffix("Handler").casefold()
         name = cls.__name__.removesuffix("Handler").casefold()
         if "subtype" not in cls.__dict__:
-            cls.subtype = None if cls is top else name
+            cls.subtype = None if cls is top or "type" in cls.__dict__ else name
         if "parse" in cls.__dict__:
             cls.parse = classmethod(sync(cls.__dict__["parse"].__func__))
 
@@ -177,16 +178,24 @@ class Handler:
         return not cls.patterns or any(fnmatch.fnmatch(path.name.casefold(), pattern) for pattern in cls.patterns)
 
     @classmethod
-    @sync
-    async def parse(cls, path: str | Path) -> dict[str, Any]:
-        """The path as a Linked Data record: its size and modified time as its stat gives them. A handler's parse adds
-        to its type's; Handler makes every handler's parse gppu's sync, awaited inside an event loop and returned
-        directly outside one."""
-        path = full_path(path)
-        stat = path.stat(follow_symlinks=False)
+    def info(cls, path: str | Path, stat: os.stat_result | None = None) -> dict[str, Any]:
+        """The path as a Linked Data record from its stat alone, the file system's info: its type and subtype, its
+        size and modified time as stat gives them; nothing is read. A folder's listing gives each member's stat; a
+        path alone is stat'ed once."""
+        path = Path(path).absolute()
+        if stat is None:
+            stat = path.stat(follow_symlinks=False)
         return {"type": cls.type, "subtype": cls.subtype, "name": path.name or str(path), "span": None,
                 "data": {"size": stat.st_size, "modified": datetime.fromtimestamp(stat.st_mtime, timezone.utc)},
                 "meta": {"source": str(path)}}
+
+    @classmethod
+    @sync
+    async def parse(cls, path: str | Path) -> dict[str, Any]:
+        """The path as a Linked Data record: its info, and what the handler reads. A handler's parse adds to its
+        type's; Handler makes every handler's parse gppu's sync, awaited inside an event loop and returned directly
+        outside one."""
+        return cls.info(path)
 
     @staticmethod
     def valid_time(value: datetime | None) -> datetime | None:
@@ -229,7 +238,7 @@ class IgnoredHandler(Handler):
     @classmethod
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
-        path = full_path(path)
+        path = Path(path).absolute()
         record["data"]["reason"] = cls.reason(path, path.stat(follow_symlinks=False))
         return record
 
@@ -287,7 +296,8 @@ class JunctionHandler(Handler):
 
 
 class FolderHandler(Handler):
-    """A folder: a loop over its members. probe lists them and gives each its handler, which parses it, so a member folder loops over its own. Its members' records are its members; its data counts the
+    """A folder: a loop over its members. Each member is probed with the stat the folder's listing gives it and parsed
+    by its handler, so a member folder loops over its own. Its members' records are its members; its data counts the
     files, folders and bytes it directly holds, and its span is its files'. A subfolder's modified time is when
     something was added to it, so the span is its files' alone.
     """
@@ -300,7 +310,11 @@ class FolderHandler(Handler):
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
         members, files, folders = [], [], 0
-        for member, stat, handler in await probe(path):
+        path = Path(path).absolute()
+        with os.scandir(path) as entries:
+            listing = [(path / entry.name, entry.stat(follow_symlinks=False)) for entry in entries]
+        for member, stat in listing:
+            handler = await probe(member, stat)
             members.append(await handler.parse(member))
             if stat_module.S_ISDIR(stat.st_mode):
                 folders += 1
@@ -333,7 +347,7 @@ class SqliteHandler(FileHandler):
     @classmethod
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
-        with closing(sqlite3.connect(full_path(path).as_uri() + "?mode=ro&immutable=1", uri=True)) as database:
+        with closing(sqlite3.connect(Path(path).absolute().as_uri() + "?mode=ro&immutable=1", uri=True)) as database:
             names = [name for (name,) in database.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
             record["data"]["tables"] = {name: [row[1] for row in database.execute(f'PRAGMA table_info("{name}")')]
@@ -364,7 +378,7 @@ class MarkdownHandler(FileHandler):
     @classmethod
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
-        path = full_path(path)
+        path = Path(path).absolute()
         frontmatter = cls._frontmatter(path)
         name, title = frontmatter.get("name", frontmatter.get("title")), frontmatter.get("title", frontmatter.get("name"))
         tags = frontmatter.get("tags")
@@ -427,7 +441,7 @@ class CSVHandler(FileHandler):
     @classmethod
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
-        with full_path(path).open(encoding="utf-8-sig", newline="") as stream:
+        with Path(path).absolute().open(encoding="utf-8-sig", newline="") as stream:
             rows = [tuple(row) for row in csv.reader(stream, strict=True)]
         header, rows = (rows[0], rows[1:]) if rows else ((), [])
         keys = {key.casefold() for key in cls.time_keys}
@@ -476,7 +490,7 @@ class LogHandler(FileHandler):
     @classmethod
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
-        rows = full_path(path).read_text(encoding="utf-8-sig").splitlines()
+        rows = Path(path).absolute().read_text(encoding="utf-8-sig").splitlines()
         record["data"]["rows"] = len(rows)
         record["span"] = cls.spanning([time for row in rows if (time := cls._time(row)) is not None])
         return record
@@ -504,7 +518,7 @@ class EmailHandler(FileHandler):
     @classmethod
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
-        stamp, separator, rest = full_path(path).stem.partition(" - ")
+        stamp, separator, rest = Path(path).absolute().stem.partition(" - ")
         content, separator2, party = rest.rpartition(" - ")
         if not (separator and separator2):
             return record
@@ -547,7 +561,7 @@ class SessionHandler(FileHandler):
     * Codex (cx): type is session_meta, turn_context, event_msg or response_item, with an object payload.
     * Copilot: a VS Code append log opening with sessionId, requests and responderUsername GitHub Copilot.
     * Gemini CLI: a header with sessionId, projectHash and startTime.
-    * Claude Code (cc): a string sessionId, uuid or parentUuid, or type teleported-from.
+    * Claude Code (cc): a type and a string sessionId, uuid or parentUuid, or type teleported-from.
     * OpenClaw: a string modelId.
     * Agy: USER_INPUT from USER_EXPLICIT or PLANNER_RESPONSE from MODEL, with a string created_at.
     * Hermes: role session_meta with a string session_id.
@@ -588,7 +602,7 @@ class SessionHandler(FileHandler):
     @classmethod
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
-        path = full_path(path)
+        path = Path(path).absolute()
         messages = cls._messages(path)
         harness = cls._harness(messages[:SNIFF])
         if harness is None:
@@ -904,13 +918,15 @@ class SessionHandler(FileHandler):
 
     @staticmethod
     def _is_claude_code(messages: tuple[Mapping[str, Any], ...]) -> bool:
-        """Recognize Claude Code session identifiers and message types."""
+        """Recognize Claude Code session messages: each has a type, and a sessionId, a uuid or a parentUuid, or is
+        teleported-from. Claude Code's prompt history, history.jsonl, has a sessionId and no type."""
 
         return any(
-            isinstance(message.get("sessionId"), str)
-            or message.get("type") == "teleported-from"
-            or isinstance(message.get("uuid"), str)
-            or isinstance(message.get("parentUuid"), str)
+            message.get("type") == "teleported-from"
+            or isinstance(message.get("type"), str)
+            and (isinstance(message.get("sessionId"), str)
+                 or isinstance(message.get("uuid"), str)
+                 or isinstance(message.get("parentUuid"), str))
             for message in messages
         )
 
@@ -1473,7 +1489,7 @@ class SessionFolderHandler(FolderHandler):
     @classmethod
     async def parse(cls, path: str | Path) -> dict[str, Any]:
         record = await super().parse(path)
-        path = full_path(path)
+        path = Path(path).absolute()
         sessions = list(cls._sessions(record))
         harnesses = SessionHandler._uniq([session["subtype"] for session in sessions] + [SessionHandler._home_harness(path)])
         if len(harnesses) != 1:
@@ -1502,19 +1518,17 @@ HANDLERS: list[type[Handler]] = [
 
 
 @sync
-async def probe(folder: str | Path) -> list[tuple[Path, os.stat_result, type[Handler]]]:
-    """What a folder holds and the handler to call for each: every member, the stat the folder's listing gives it, and
-    the most specific of HANDLERS that identifies it, one no other identifying handler is a subtype of; of two alike,
-    the first. Probing is the listing and each name matched against the handlers' patterns; nothing is read. A member
-    is taken as given, a link as the link. Awaited inside an event loop, returned directly outside one."""
-    folder = full_path(folder)
-    with os.scandir(folder) as entries:
-        listing = [(folder / entry.name, entry.stat(follow_symlinks=False)) for entry in entries]
-    members = []
-    for member, stat in listing:
-        found = [handler for handler in HANDLERS if handler.identify(member, stat)]
-        specific = [handler for handler in found if not any(other is not handler and issubclass(other, handler) for other in found)]
-        if not specific:
-            raise ValueError(f"{member}: no handler identifies it")
-        members.append((member, stat, specific[0]))
-    return members
+async def probe(path: str | Path, stat: os.stat_result | None = None) -> type[Handler]:
+    """The handler to call for a path, a file's or a folder's, whose type is not known: the most specific of HANDLERS
+    that identifies it, one no other identifying handler is a subtype of; of two alike, the first. Probing is the
+    path's name matched against the handlers' patterns and the kind its stat gives; nothing is read. A folder's
+    listing gives each member's stat; a path probed alone is stat'ed once. The path is taken as given, a link as the
+    link. Awaited inside an event loop, returned directly outside one."""
+    path = Path(path).absolute()
+    if stat is None:
+        stat = path.stat(follow_symlinks=False)
+    found = [handler for handler in HANDLERS if handler.identify(path, stat)]
+    specific = [handler for handler in found if not any(other is not handler and issubclass(other, handler) for other in found)]
+    if not specific:
+        raise ValueError(f"{path}: no handler identifies it")
+    return specific[0]

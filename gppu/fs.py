@@ -96,6 +96,7 @@ from fsspec.utils import stringify_path
 
 from .gppu import MY_TZ, TimeSpan, OSType, TemplateSet, detect_os, full_path, sync, y2path, y2uri
 from .gppu import Env, _Base
+from . import handlers
 
 
 # region providers
@@ -288,15 +289,12 @@ class Container:
     yield from self.provider.walk(self.uri, path, level=level, recursive=recursive, boundaries=boundaries)
 
   def info(self, path: y2path | str = '') -> dict[str, Any]:
-    """What is known about path without reading its content: type, size, times, span and what the handlers found.
+    """The record of path, as its Provider gives it.
 
     Args:
       path (y2path | str): Relative object path; empty selects the Container root.
-
-    Returns:
-      dict: Provider and handler metadata for the object, with name set to the supplied relative path. Content is not included; available metadata depends on the Provider.
     """
-    return self.provider.info(self._uri(path)) | {'name': str(path)}
+    return self.provider.info(self._uri(path))
 
   def open(self, path: y2path | str, mode: str = 'rb') -> BinaryIO:
     """The bytes at path. Caller: admin_ui.
@@ -686,8 +684,10 @@ class FileSystem(Provider):
     return rows
 
   def info(self, uri: y2uri) -> dict[str, Any]:
-    """What the handlers found at uri: type, size, times, span and each handler's metadata under its name."""
-    return _MetadataHandlers().probe_sync(self.local(uri), recursive=False)[0].metadata
+    """The record of the path at uri from its stat: probe gives its handler, and the handler its info; nothing is read."""
+    path = self.local(uri)
+    stat = path.stat(follow_symlinks=False)
+    return handlers.probe(path, stat).info(path, stat)
 
   def open(self, uri: y2uri, mode: str = 'rb') -> BinaryIO:
     if mode not in ('rb', 'r'):
