@@ -4,6 +4,6 @@
 
 `Env.from_env(name, app_path)` loads the app's configuration: `<name>.yaml`, or `config.yaml`, found walking up from `app_path`, with its `!include`s. `Env.glob(path)`, `glob_int`, `glob_list` and `glob_dict` read it by a slash path, a string or a `y2path`.
 
-Every object built on `_Config` (every `_Base` and `App`) copies the configuration into its `_my` when it is built, and reads it with `self.my(path)`. An `App` loads `Env` when it is constructed and `Env` is not loaded yet.
+Every object built on `_Base`, the apps among them, copies the configuration into its `_my` when it is built, and reads it with `self.my(path)`; the first read of the configuration loads Env when nothing has yet.
 
 One `Env` holds one app's configuration. Several apps sharing one environment, each with its own section, is y2's, not gppu's; the TUI launcher starts each app as its own process, which loads its own `Env`.
