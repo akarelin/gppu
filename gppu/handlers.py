@@ -1,23 +1,26 @@
 """Handlers: a universal way to get information about a file or a folder.
 
-There is a handler for every type of data, and probe, which, given a path, a file's or a folder's, whose type is
-not known in advance, says which handler to call:
+There is a handler for every type of data that is read, and probe, which, given a path, a file's or a folder's,
+whose type is not known in advance, gives what info gives of it, its record from its stat and its name; the record's
+type and subtype say which handler reads it:
 
-    handler = probe('D:/Dev/gppu/README.md')            # MarkdownHandler; await probe(...) in an event loop
-    record = handler.parse('D:/Dev/gppu/README.md')     # await handler.parse(...) in an event loop
+    record = probe('D:/Dev/gppu/README.md')                  # await probe(...) in an event loop
+    handler = HANDLERS[record['type'], record['subtype']]    # MarkdownHandler
+    record = handler.parse('D:/Dev/gppu/README.md')          # await handler.parse(...) in an event loop
 
-Probing a path is its stat, the one info or a folder's listing has already taken, and its path matched against one
-table of patterns, FOLDERS for a folder and FILES for a file; nothing is read. A handler is a class of class methods:
-`info(path, stat)` is the record from the stat alone, and `parse(path)` reads the path into a record, what Linked
-Data holds of the thing: its type, subtype, name, span, data and, in meta, the path it was read from; a session's
-record also has its messages. A subtype is a subclass of its type, and its parse adds to its type's. probe and parse
-are asynchronous, awaited inside an event loop and returned directly outside one. A program adds a handler by
-subclassing and adding its pattern:
+Nothing is read in probing: the stat is the one info or a folder's listing has already taken, and a file's handler
+is its suffix's in SUFFIXES. A link, a junction, an ignored path and an offline file are what probe gives; no handler
+reads them. A handler is a class of class methods, and `parse(path)` reads the path into a record, what Linked Data
+holds of the thing: its type, subtype, name, span, data and, in meta, the path it was read from; each handler says
+what it returns. A subtype is a subclass of its type, and its parse adds to its type's. probe and parse are
+asynchronous, awaited inside an event loop and returned directly outside one. A program adds a handler by
+subclassing and adding its suffix:
 
-    class BillingCSVHandler(CSVHandler):
-        time_keys = (*CSVHandler.time_keys, 'billed_at')
+    class TSVHandler(CSVHandler):
+        ...
 
-    FILES.insert(0, (re.compile(r'(?:^|/)billing[^/]*\\.csv$', re.I), BillingCSVHandler))
+    SUFFIXES['.tsv'] = TSVHandler
+    HANDLERS[TSVHandler.type, TSVHandler.subtype] = TSVHandler
 
 A handler reads the path it is given and nothing else: no index, no location, no fsspec. A read that fails raises.
 """
@@ -26,7 +29,6 @@ from __future__ import annotations
 import csv
 import html
 import json
-import fnmatch
 import os
 import re
 import sqlite3
@@ -57,8 +59,10 @@ TIME_KEYS = ("timestamp", "ts", "started_at", "session_start", "time", "created_
 LOG_TIMESTAMP = re.compile(
     r"^\s*[\[(]?(?P<timestamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)"
 )
-IGNORED_NAME_PATTERNS = ("*.tmp", "*.bak", "*.swp", "~$*", "Thumbs.db", ".DS_Store", "desktop.ini")
-IGNORED_FOLDER_PATTERNS = (
+IGNORED_SUFFIXES = (".tmp", ".bak", ".swp")
+IGNORED_PREFIX = "~$"
+IGNORED_NAMES = ("Thumbs.db", ".DS_Store", "desktop.ini")
+IGNORED_FOLDERS = (
     ".git", ".svn", "__pycache__", ".venv", "venv", "node_modules", ".idea", ".vscode",
     ".SynologyWorking Directory", ".SynologyWorkingDirectory", "$RECYCLE.BIN", "RECYCLE.BIN",
     "System Volume Information", "OneDriveTemp", "Cache", ".cache",
@@ -150,11 +154,11 @@ SESSION_UID = re.compile(
 
 
 class Handler:
-    """The base of every handler: a file or a folder, its size and when it was modified.
+    """The base of every handler: a handler reads a file or a folder, and its parse is what it reads.
 
-    `type` is the class below Handler a handler descends from, file, folder or ignored, unless the handler names
-    its own; `subtype` is the handler's own name, markdown for MarkdownHandler, None for a type itself, one that
-    names its type as SessionHandler does.
+    `type` is the class below Handler a handler descends from, file or folder, unless the handler names its own;
+    `subtype` is the handler's own name, markdown for MarkdownHandler, None for a type itself, one that names its type
+    as SessionHandler does.
     """
 
     type: str
@@ -173,24 +177,17 @@ class Handler:
             cls.parse = classmethod(sync(cls.__dict__["parse"].__func__))
 
     @classmethod
-    def info(cls, path: str | Path, stat: os.stat_result | None = None) -> dict[str, Any]:
-        """The path as a Linked Data record from its stat alone, the file system's info: its type and subtype, its
-        size and modified time as stat gives them; nothing is read. A folder's listing gives each member's stat; a
-        path alone is stat'ed once."""
-        path = Path(path).absolute()
-        if stat is None:
-            stat = path.stat(follow_symlinks=False)
-        return {"type": cls.type, "subtype": cls.subtype, "name": path.name or str(path), "span": None,
-                "data": {"size": stat.st_size, "modified": datetime.fromtimestamp(stat.st_mtime, timezone.utc)},
-                "meta": {"source": str(path)}}
-
-    @classmethod
     @sync
     async def parse(cls, path: str | Path) -> dict[str, Any]:
-        """The path as a Linked Data record: its info, and what the handler reads. A handler's parse adds to its
-        type's; Handler makes every handler's parse gppu's sync, awaited inside an event loop and returned directly
-        outside one."""
-        return cls.info(path)
+        """The record of the path: what probe gives, with the handler's type and subtype, and what the handler
+        reads. A handler's parse adds to its type's; Handler makes every handler's parse gppu's sync, awaited inside
+        an event loop and returned directly outside one.
+
+        Returns: type, subtype, name the path's name, span None, data.size and data.modified as stat gives them,
+        meta.source the path."""
+        record = await probe(path)
+        record["type"], record["subtype"] = cls.type, cls.subtype
+        return record
 
     @staticmethod
     def valid_time(value: datetime | None) -> datetime | None:
@@ -215,74 +212,14 @@ class Handler:
         return {"start": min(times), "end": max(times)} if times else None
 
 
-class IgnoredHandler(Handler):
-    """A file or a folder an ignore rule names; a walk shows it and never descends into it.
-
-    The rules are FileIndexer's global ones. A folder is not ignored for starting with a dot or for being
-    hidden: the named list is the whole rule. A Windows folder with the system attribute is ignored; a
-    filesystem root, which has no name, never is.
-    """
-
-    name_patterns = IGNORED_NAME_PATTERNS
-    folder_patterns = IGNORED_FOLDER_PATTERNS
-
-    @classmethod
-    async def parse(cls, path: str | Path) -> dict[str, Any]:
-        record = await super().parse(path)
-        path = Path(path).absolute()
-        record["data"]["reason"] = cls.reason(path, path.stat(follow_symlinks=False))
-        return record
-
-    @classmethod
-    def reason(cls, path: Path, stat: os.stat_result) -> str | None:
-        """The rule that names this path, or None."""
-        if not path.name:
-            return None
-        folder = stat_module.S_ISDIR(stat.st_mode)
-        if not folder and not stat_module.S_ISREG(stat.st_mode):
-            return None
-        if pattern := cls.match(path.name, cls.name_patterns):
-            return f"name:{pattern}"
-        if not folder:
-            return None
-        if pattern := cls.match(path.name, cls.folder_patterns):
-            return f"folder:{pattern}"
-        if getattr(stat, "st_file_attributes", 0) & WINDOWS_SYSTEM:
-            return "folder:FILE_ATTRIBUTE_SYSTEM"
-        return None
-
-    @staticmethod
-    def match(name: str, patterns: tuple[str, ...]) -> str | None:
-        return next((pattern for pattern in patterns if fnmatch.fnmatchcase(name, pattern)), None)
-
-
-class SymlinkHandler(Handler):
-    """A symbolic link, as stat gives it, and the path it points to; what is there is the target's own, probed at
-    the target."""
-
-    @classmethod
-    async def parse(cls, path: str | Path) -> dict[str, Any]:
-        record = await super().parse(path)
-        record["data"]["target"] = os.readlink(path)
-        return record
-
-
-class JunctionHandler(Handler):
-    """A Windows junction, as stat gives it, and the folder it points to; what is there is the target's own, probed
-    at the target."""
-
-    @classmethod
-    async def parse(cls, path: str | Path) -> dict[str, Any]:
-        record = await super().parse(path)
-        record["data"]["target"] = os.readlink(path)
-        return record
-
-
 class FolderHandler(Handler):
-    """A folder: a loop over its members. Each member is probed with the stat the folder's listing gives it and parsed
-    by its handler, so a member folder loops over its own. Its members' records are its members; its data counts the
-    files, folders and bytes it directly holds, and its span is its files'. A subfolder's modified time is when
-    something was added to it, so the span is its files' alone.
+    """A folder: a loop over its members. Each member is probed with the stat the folder's listing gives it, and one
+    a handler reads is parsed by it, so a member folder loops over its own; an ignored member, a link, a junction or
+    an offline file is what probe gives. A subfolder's modified time is when something was added to it, so the span
+    is its files' alone.
+
+    Returns: Handler's record, with data.files, data.folders and data.bytes, what the folder directly holds; span from
+    its files' earliest modified time to their latest; members, each member's record.
     """
 
     @classmethod
@@ -293,8 +230,9 @@ class FolderHandler(Handler):
         with os.scandir(path) as entries:
             listing = [(path / entry.name, entry.stat(follow_symlinks=False)) for entry in entries]
         for member, stat in listing:
-            handler = await probe(member, stat)
-            members.append(await handler.parse(member))
+            found = await probe(member, stat)
+            handler = HANDLERS.get((found["type"], found["subtype"]))
+            members.append(found if handler is None else await handler.parse(member))
             if stat_module.S_ISDIR(stat.st_mode):
                 folders += 1
             else:
@@ -307,12 +245,10 @@ class FolderHandler(Handler):
 
 
 class FileHandler(Handler):
-    """A file of a type no more specific handler identifies: its size and modified time."""
+    """A file of a type no more specific handler reads.
 
-
-class OfflineHandler(FileHandler):
-    """A file whose bytes are not on this host, a OneDrive or Synology Drive placeholder: its size and modified time.
-    Nothing is read, since a read would fetch it."""
+    Returns: Handler's record.
+    """
 
 
 class SqliteHandler(FileHandler):
@@ -320,6 +256,9 @@ class SqliteHandler(FileHandler):
 
     It is opened immutable, so SQLite writes no -wal or -shm beside it, and no row is read: what is in the
     tables is the file's content, not what the file is.
+
+    Returns: Handler's record, with data.tables, each table's name and the names of its columns in order, the
+    tables in name order and SQLite's own left out.
     """
 
     @classmethod
@@ -341,6 +280,9 @@ class MarkdownHandler(FileHandler):
     frontmatter's name, then its title, then the file's stem; data.title is its title, then its name, then the
     stem. data.tags is a list or one value. The span is created to updated, both required; a date starts at
     midnight, a time without an offset is in MY_TZ.
+
+    Returns: Handler's record, with name; data.title, data.tags, a list of strings, and data.frontmatter, the whole
+    mapping, {} when there is none; span from created to updated, or None.
     """
 
     class _Loader(yaml.SafeLoader):
@@ -407,6 +349,9 @@ class CSVHandler(FileHandler):
     case, is one of time_keys; its values are ISO dates or times, Unix seconds above 1,000,000,000 or
     milliseconds above 10,000,000,000, or one of a subclass's time_formats for strptime. A time without an
     offset is in MY_TZ; placeholders and future times do not count.
+
+    Returns: Handler's record, with data.header, the first row's names, and data.rows, how many rows follow it; span
+    from the earliest time in the time columns to the latest, or None.
     """
 
     time_keys = TIME_KEYS
@@ -457,6 +402,9 @@ class LogHandler(FileHandler):
     A row's time comes after optional whitespace and one optional [ or (, as YYYY-MM-DD, T or a space,
     HH:MM:SS, an optional fraction after a dot or a comma, and an optional Z or offset. A time without an
     offset is in MY_TZ; placeholders and future times do not count.
+
+    Returns: Handler's record, with data.rows, how many lines it has; span from the earliest time that begins a line
+    to the latest, or None.
     """
 
     @classmethod
@@ -483,6 +431,9 @@ class EmailHandler(FileHandler):
     The message itself is not read. The time is in MY_TZ; splitting from the right lets the subject hold
     the separator. A name outside the convention says nothing, and the record has no timestamp, subject,
     party or collision.
+
+    Returns: Handler's record, with data.timestamp, data.subject, data.party and data.collision, each where the name
+    gives it; span the timestamp, or None.
     """
 
     @classmethod
@@ -525,7 +476,7 @@ class SessionTurn:
 class SessionHandler(FileHandler):
     """A native session: a .jsonl a harness wrote, its first eight messages saying which harness.
 
-    Probing takes a .jsonl that is not empty; the harness is told by its messages when it is parsed, never by the
+    Probing takes a .jsonl that is not empty by its suffix; the harness is told by its messages when it is parsed, never by the
     file's name or folder:
 
     * Codex (cx): type is session_meta, turn_context, event_msg or response_item, with an object payload.
@@ -545,6 +496,11 @@ class SessionHandler(FileHandler):
     harness gives, the span from the first time in its messages to the last, and the models named anywhere in them.
     data.turns counts its turns, and data.normalized_name is the file's name from its start, turns, duration and the
     first line a person typed.
+
+    Returns: Handler's record, with subtype the harness; uid; name; span; data.subagent, data.sidechain_only,
+    data.turns, data.normalized_name and data.models, and for cc and cx data.title, data.topic and data.cwd where the
+    session gives them; meta.parent_uid where it names one; messages, every message as a session message record:
+    type session_message, subtype, ts, name, data the message as the harness wrote it, meta.uid and meta.line.
     """
 
     type = "session"
@@ -1437,11 +1393,14 @@ class SessionHandler(FileHandler):
 
 
 class SessionFolderHandler(FolderHandler):
-    """A harness's session folder: a Hermes home (state.db), an Agy home (antigravity_state.pbtxt or
-    jetski_state.pbtxt), or an Agy session folder named by its UUID with a transcript under
-    .system_generated/logs. It is a folder, so its members are parsed as any folder's; its sessions are the session
+    """A harness's session folder, which probe tells by its path: a Hermes home, .hermes; an Agy home,
+    .gemini/antigravity or .gemini/antigravity-cli, with antigravity_state.pbtxt or jetski_state.pbtxt; or an Agy
+    session folder in .gemini/antigravity-cli/brain. It is a folder, so its members are parsed as any folder's; its sessions are the session
     records among them at any depth, all of one harness: their harness, their uid when they agree on one, how many
     there are and their span are its data.
+
+    Returns: FolderHandler's record, with subtype sessionfolder; data.harness, data.sessions, how many, and data.uid
+    where they agree on one; span from the first of its sessions to the last.
     """
 
     @classmethod
@@ -1468,56 +1427,78 @@ class SessionFolderHandler(FolderHandler):
             yield from cls._sessions(member)
 
 
-def _names(*patterns: str, case: bool = False) -> re.Pattern[str]:
-    """The last part of a path matching one of patterns, * and ? within that part; ignoring case unless case is set."""
-    parts = (re.escape(pattern).replace(r"\*", "[^/]*").replace(r"\?", "[^/]") for pattern in patterns)
-    return re.compile(r"(?:^|/)(?:" + "|".join(parts) + r")$", 0 if case else re.I)
+# A file's handler by its suffix; a program adds a handler by adding its suffix.
+SUFFIXES: dict[str, type[Handler]] = {
+    ".sqlite": SqliteHandler, ".sqlite3": SqliteHandler, ".db": SqliteHandler, ".md": MarkdownHandler,
+    ".csv": CSVHandler, ".log": LogHandler, ".eml": EmailHandler, ".msg": EmailHandler, ".jsonl": SessionHandler,
+}
+# The handler that reads a record of a type and subtype; a path of any other, such as one ignored, is what probe gives.
+HANDLERS: dict[tuple[str, str | None], type[Handler]] = {
+    (handler.type, handler.subtype): handler
+    for handler in (FolderHandler, SessionFolderHandler, FileHandler, *SUFFIXES.values())
+}
 
 
-# What probe matches a path against, a folder's in FOLDERS and a file's in FILES: the first pattern that matches it
-# names its handler, and a path none matches is a folder or a file. A program adds a handler by adding its pattern.
-FOLDERS: list[tuple[re.Pattern[str], type[Handler]]] = [
-    (_names(*IGNORED_NAME_PATTERNS, *IGNORED_FOLDER_PATTERNS, case=True), IgnoredHandler),
-    (re.compile(r"(?:^|/)\.hermes$"), SessionFolderHandler),
-    (re.compile(r"(?:^|/)\.gemini/antigravity(?:-cli)?$"), SessionFolderHandler),
-    (re.compile(r"(?:^|/)\.gemini/antigravity-cli/brain/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I),
-     SessionFolderHandler),
-]
-FILES: list[tuple[re.Pattern[str], type[Handler]]] = [
-    (_names(*IGNORED_NAME_PATTERNS, case=True), IgnoredHandler),
-    (_names("*.sqlite", "*.sqlite3", "*.db"), SqliteHandler),
-    (_names("*.md"), MarkdownHandler),
-    (_names("*.csv"), CSVHandler),
-    (_names("*.log"), LogHandler),
-    (_names("*.eml", "*.msg"), EmailHandler),
-    (_names("*.jsonl"), SessionHandler),
-]
+def ignored(path: Path, stat: os.stat_result) -> str | None:
+    """The ignore rule that names a file or a folder, or None: its name, its suffix or its prefix, a folder's name, or a
+    Windows folder's system attribute. The rules are FileIndexer's global ones; a folder is not ignored for starting
+    with a dot or for being hidden. A filesystem root, which has no name, is never ignored."""
+    name, folder = path.name, stat_module.S_ISDIR(stat.st_mode)
+    if not name:
+        return None
+    if name in IGNORED_NAMES:
+        return f"name:{name}"
+    if path.suffix in IGNORED_SUFFIXES:
+        return f"name:*{path.suffix}"
+    if name.startswith(IGNORED_PREFIX):
+        return f"name:{IGNORED_PREFIX}*"
+    if folder and name in IGNORED_FOLDERS:
+        return f"folder:{name}"
+    if folder and getattr(stat, "st_file_attributes", 0) & WINDOWS_SYSTEM:
+        return "folder:FILE_ATTRIBUTE_SYSTEM"
+    return None
 
 
 @sync
-async def probe(path: str | Path, stat: os.stat_result | None = None) -> type[Handler]:
-    """The handler to call for a path, a file's or a folder's, whose type is not known. The stat says a link, a
-    junction, an offline file, a Windows system folder, which is ignored, and whether the path is a folder or a file;
-    then the first pattern of FOLDERS or FILES its path matches names the handler. A .jsonl with nothing in it yet,
-    one a harness has only just made, is a file. Nothing is read. A folder's listing gives each member's stat, as info
-    gives its own; a path probed alone is stat'ed once. The path is taken as given, a link as the link. Awaited inside
-    an event loop, returned directly outside one."""
+async def probe(path: str | Path, stat: os.stat_result | None = None) -> dict[str, Any]:
+    """What info gives of a path, a file's or a folder's, from its stat and its name, nothing read: its record, the
+    type and subtype telling which handler reads it.
+
+    The stat says a link, a junction, an offline file, and a folder or a file; the name says what is ignored, a
+    harness's session folder, and a file's handler by its suffix. A .jsonl with nothing in it yet, one a harness has
+    only just made, is a file. A folder's listing gives each member's stat, as info gives its own; a path probed alone
+    is stat'ed once. The path is taken as given, a link as the link. Awaited inside an event loop, returned directly
+    outside one.
+
+    Returns: type and subtype: symlink or junction, with data.target, the path it points to; ignored, with
+    data.reason, the rule; file and offline, a file whose bytes are not on this host; else a handler's, folder, its
+    session folder, file or a file's by its suffix. name the path's name, span None, data.size and data.modified as
+    stat gives them, meta.source the path."""
     path = Path(path).absolute()
     if stat is None:
         stat = path.stat(follow_symlinks=False)
-    attributes = getattr(stat, "st_file_attributes", 0)
-    if stat_module.S_ISLNK(stat.st_mode):
-        return SymlinkHandler
-    if getattr(stat, "st_reparse_tag", 0) == getattr(stat_module, "IO_REPARSE_TAG_MOUNT_POINT", None):
-        return JunctionHandler
+    record = {"type": None, "subtype": None, "name": path.name or str(path), "span": None,
+              "data": {"size": stat.st_size, "modified": datetime.fromtimestamp(stat.st_mtime, timezone.utc)},
+              "meta": {"source": str(path)}}
     folder = stat_module.S_ISDIR(stat.st_mode)
-    if not folder and not stat_module.S_ISREG(stat.st_mode):
+    if stat_module.S_ISLNK(stat.st_mode):
+        record["type"], record["data"]["target"] = "symlink", os.readlink(path)
+    elif getattr(stat, "st_reparse_tag", 0) == getattr(stat_module, "IO_REPARSE_TAG_MOUNT_POINT", None):
+        record["type"], record["data"]["target"] = "junction", os.readlink(path)
+    elif not folder and not stat_module.S_ISREG(stat.st_mode):
         raise ValueError(f"{path}: neither a folder nor a file")
-    if attributes & OFFLINE:
-        return OfflineHandler
-    if folder and attributes & WINDOWS_SYSTEM and path.name:
-        return IgnoredHandler
-    name = path.as_posix()
-    handler = next((handler for pattern, handler in (FOLDERS if folder else FILES) if pattern.search(name)),
-                   FolderHandler if folder else FileHandler)
-    return FileHandler if handler is SessionHandler and not stat.st_size else handler
+    elif getattr(stat, "st_file_attributes", 0) & OFFLINE:
+        record["type"], record["subtype"] = "file", "offline"
+    elif reason := ignored(path, stat):
+        record["type"], record["data"]["reason"] = "ignored", reason
+    elif folder:
+        parent = path.parent
+        harness = (path.name == ".hermes" or parent.name == ".gemini" and path.name in ("antigravity", "antigravity-cli")
+                   or parent.name == "brain" and parent.parent.name == "antigravity-cli")
+        handler = SessionFolderHandler if harness else FolderHandler
+        record["type"], record["subtype"] = handler.type, handler.subtype
+    else:
+        handler = SUFFIXES.get(path.suffix.casefold(), FileHandler)
+        handler = FileHandler if handler is SessionHandler and not stat.st_size else handler
+        record["type"], record["subtype"] = handler.type, handler.subtype
+    return record

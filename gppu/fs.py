@@ -684,10 +684,8 @@ class FileSystem(Provider):
     return rows
 
   def info(self, uri: y2uri) -> dict[str, Any]:
-    """The record of the path at uri from its stat: probe gives its handler, and the handler its info; nothing is read."""
-    path = self.local(uri)
-    stat = path.stat(follow_symlinks=False)
-    return handlers.probe(path, stat).info(path, stat)
+    """The record of the path at uri, as probe gives it from its stat and its name; nothing is read."""
+    return handlers.probe(self.local(uri))
 
   def open(self, uri: y2uri, mode: str = 'rb') -> BinaryIO:
     if mode not in ('rb', 'r'):
