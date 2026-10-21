@@ -272,14 +272,29 @@ class IgnoredHandler(Handler):
         return next((pattern for pattern in patterns if fnmatch.fnmatchcase(name, pattern)), None)
 
 
-class LinkHandler(Handler):
-    """A symbolic link or a Windows junction, as stat gives it, and the path it points to; what is there is the
-    target's own, probed at the target."""
+class SymlinkHandler(Handler):
+    """A symbolic link, as stat gives it, and the path it points to; what is there is the target's own, probed at
+    the target."""
 
     @classmethod
     def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
-        return (stat_module.S_ISLNK(stat.st_mode)
-                or getattr(stat, "st_reparse_tag", 0) == getattr(stat_module, "IO_REPARSE_TAG_MOUNT_POINT", None))
+        return stat_module.S_ISLNK(stat.st_mode)
+
+    @classmethod
+    @sync
+    async def parse(cls, path: str | Path) -> dict[str, Any]:
+        record = await super().parse(path)
+        record["data"]["target"] = await asyncio.to_thread(os.readlink, path)
+        return record
+
+
+class JunctionHandler(Handler):
+    """A Windows junction, as stat gives it, and the folder it points to; what is there is the target's own, probed
+    at the target."""
+
+    @classmethod
+    def identify(cls, path: Path, stat: os.stat_result, head: Head) -> bool:
+        return getattr(stat, "st_reparse_tag", 0) == getattr(stat_module, "IO_REPARSE_TAG_MOUNT_POINT", None)
 
     @classmethod
     @sync
@@ -582,8 +597,8 @@ class SessionHandler(FileHandler):
     * Agy: USER_INPUT from USER_EXPLICIT or PLANNER_RESPONSE from MODEL, with a string created_at.
     * Hermes: role session_meta with a string session_id.
 
-    Its record is a session, its subtype the harness, and its lines every object of the file, in order; a blank,
-    truncated or non-object line is skipped. The lines of cc and cx are read as Linked Data reads them (parse_lines): the
+    Its record is a session, its subtype the harness. Every object of the file is read; a blank, truncated or
+    non-object line is skipped. The lines of cc and cx are read as Linked Data reads them (parse_lines): the
     uid, the name, the span from the first message to the last, data.title, topic, cwd and models, meta.parent_uid,
     and the record's messages. For the other harnesses the record has the uid its harness gives, the span from
     the first record time to the last, the models named anywhere in its lines, and no messages. data.normalized_name is the file's name from its start,
@@ -631,7 +646,6 @@ class SessionHandler(FileHandler):
         record["subtype"], record["uid"], record["name"], record["span"] = harness, uid, cls._topic(turns) or uid, span
         record["data"].update(subagent=subagent, sidechain_only=sidechain and not mainline, turns=len(turns),
                               normalized_name=cls.normalized_name(path, uid, turns, span))
-        record["lines"] = list(records)
         if parent_uid:
             record["meta"]["parent_uid"] = parent_uid
         if harness in ("cc", "cx"):
@@ -1490,8 +1504,8 @@ class SessionHandler(FileHandler):
 class SessionFolderHandler(FolderHandler):
     """A harness's session folder: a Hermes home (state.db), an Agy home (antigravity_state.pbtxt or
     jetski_state.pbtxt), or an Agy session folder named by its UUID with a transcript under
-    .system_generated/logs. Its sessions are every session file below it, all of one harness; its record has
-    their records as its sessions.
+    .system_generated/logs. Its sessions are every session file below it, all of one harness: their harness, their
+    uid when they agree on one, how many there are and their span are its data.
     """
 
     @classmethod
@@ -1516,13 +1530,12 @@ class SessionFolderHandler(FolderHandler):
         if len(uids) == 1:
             record["data"]["uid"] = uids.pop()
         record["span"] = cls.spanning([time for session in sessions if session["span"] for time in session["span"].values()])
-        record["sessions"] = sessions
         return record
 
 
 # The handlers probe knows, every type and subtype there is; a program adds its own by appending it.
 HANDLERS: list[type[Handler]] = [
-    IgnoredHandler, LinkHandler, FolderHandler, SessionFolderHandler, FileHandler, SqliteHandler, MarkdownHandler, CSVHandler,
+    IgnoredHandler, SymlinkHandler, JunctionHandler, FolderHandler, SessionFolderHandler, FileHandler, SqliteHandler, MarkdownHandler, CSVHandler,
     LogHandler, EmailHandler, SessionHandler,
 ]
 
