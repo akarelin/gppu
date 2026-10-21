@@ -24,6 +24,7 @@ def on(monkeypatch):
     monkeypatch.setattr(Env, 'host', host)
     monkeypatch.setattr(Env, 'platform', platform)
     Env.from_env(name='locations', app_path=EXAMPLE)
+    State.reset()   # the same configuration seen from another host
   return here
 
 
@@ -83,7 +84,7 @@ def test_refs_merge_across_stacked_templates():
 # endregion
 
 
-# region State: tables constructed from the example configuration
+# region Startup: State, the tables constructed while the configuration loads
 def test_every_table_is_constructed_and_registered(on):
   on('alex-laptop', 'windows')
   assert set(State.tables) == {'resources', 'connections', 'hosts', 'locations', 'entities', 'sources'}
@@ -122,6 +123,73 @@ def test_a_location_knows_its_addresses_and_its_place_here(on):
 def test_places_follow_the_rules_per_platform(on):
   on('seven', 'debian')
   assert State.locations['sd-lake']['local'] == '/mnt/S1/SD.Lake'
+  assert State.locations['sd-agents']['local'] == '/mnt/S1/SD.agents'
+  assert State.locations['public']['local'] == '/mnt/Public'
+  assert 'local' not in State.locations['yellow-config']              # seven is not connected to yellow
+  assert 'local' not in State.locations['obsidian']
+  on('alex-mac', 'macos')
+  assert State.locations['public']['local'] == '/Volumes/Public'
+  on('alex-pc', 'wsl')
+  assert State.locations['sd-lake']['local'] == '/mnt/d/SD.Lake'
+  on('trix', 'debian')
+  assert State.locations['sd-agents']['local'] == '/home/alex/SD.agents'   # the row's own place for one host
+  on('iot', 'debian')
+  assert State.locations['yellow-config']['local'] == '/mnt/yellow/config'
+
+
+def test_a_namespace_is_its_own_scheme_and_what_is_in_it_follows(on):
+  on('alex-laptop', 'windows')
+  assert State.locations['lake']['canonical'] == 'lake://' and State.locations['lake']['local'] == 'D:/TextLake'
+  assert State.locations['karelin-contacts']['canonical'] == 'm365://karelin/alex/contacts'   # served at the root of the service
+  assert State.locations['karelin-contacts']['mirrors'] == ['lake://M365/karelin/users/alex@karelin.com/contacts']
+  assert State.locations['karelin-contact-photos']['canonical'] == 'm365://karelin/alex/onedrive/Documents/Contact Photos'
+
+
+def test_a_location_inside_another_is_where_that_one_is(on):
+  on('alex-laptop', 'windows')
+  assert State.locations['karelin-contacts']['inside'] == 'lake'
+  assert State.locations['karelin-contacts']['local'] == 'D:/TextLake/M365/karelin/users/alex@karelin.com/contacts'
+  on('trix', 'debian')
+  assert State.locations['karelin-contacts']['local'] == '/mnt/S1/Lake/text/M365/karelin/users/alex@karelin.com/contacts'
+  assert 'local' not in State.locations['karelin-contact-photos']    # trix has no OneDrive client
+
+
+def test_a_source_is_a_location_and_what_is_in_it(on):
+  on('alex-laptop', 'windows')
+  source = State.sources['karelin-contacts']
+  assert source['address'] == 'm365://karelin/alex/contacts' and source['provides'] == 'contacts'
+  assert source['local'] == 'D:/TextLake/M365/karelin/users/alex@karelin.com/contacts'
+  assert State.sources['karelin-contact-photos']['local'] == 'D:/OneDrive - Karelin/Contact Photos'
+
+
+def test_a_configuration_without_tables_has_no_rules():
+  Env.from_dict({'a': {'b': 1}})
+  assert Env.glob('a/b') == 1
+  with pytest.raises(AttributeError): Env.locations
+
+
+def test_a_dangling_reference_fails_the_load(tmp_path):
+  (tmp_path / 'config.yaml').write_text(
+    "connections:\n  templates: {box: {}}\n  s1: {template: box}\n"
+    "locations:\n  templates:\n    location: {refs: {'smb/*': connections}}\n"
+    "  lake: {template: location, smb/s3: Lake}\n", encoding='utf-8')
+  Env.from_env(name='app', app_path=tmp_path)
+  with pytest.raises(KeyError, match="lake: smb/\\* names 's3', which is not in connections"):
+    State.tables
+
+
+def test_a_service_registers(tmp_path):
+  (tmp_path / 'config.yaml').write_text(
+    "boxes:\n  templates: {nas: {service: true}}\n  s1: {template: nas}\n  s9: {}\n", encoding='utf-8')
+  Env.from_env(name='app', app_path=tmp_path)
+  assert list(State.services) == ['s1'] and State.services['s1'] is State.boxes['s1']
+# endregion
+
+
+# region Runtime: code calls a table's macros and renders its named templates
+def test_code_asks_a_place_for_any_host(on):
+  on('seven', 'debian')
+  assert State.locations['sd-lake']['local'] == '/mnt/S1/SD.Lake'
   assert State.locations['public']['local'] == '/mnt/Public' and Env.locations.place('public', 'alex-mac', 'macos') == '/Volumes/Public'
   assert 'local' not in State.locations['yellow-config']              # seven is not connected to yellow
   assert 'local' not in State.locations['obsidian']
@@ -143,15 +211,7 @@ def test_an_address_resolves_to_a_path_on_this_host(on):
   assert Env.locations.uri('sd-lake', 'sd') == 'sd://SD.Lake' and Env.locations.uri('public', 'sd') is None
 
 
-def test_a_namespace_is_its_own_scheme_and_what_is_in_it_follows(on):
-  on('alex-laptop', 'windows')
-  assert State.locations['lake']['canonical'] == 'lake://' and State.locations['lake']['local'] == 'D:/TextLake'
-  assert State.locations['karelin-contacts']['canonical'] == 'm365://karelin/alex/contacts'   # served at the root of the service
-  assert State.locations['karelin-contacts']['mirrors'] == ['lake://M365/karelin/users/alex@karelin.com/contacts']
-  assert State.locations['karelin-contact-photos']['canonical'] == 'm365://karelin/alex/onedrive/Documents/Contact Photos'
-
-
-def test_a_location_inside_another_is_where_that_one_is(on):
+def test_code_asks_where_a_location_inside_another_is(on):
   on('alex-laptop', 'windows')
   assert State.locations['karelin-contacts']['inside'] == 'lake'
   assert Env.locations.place('karelin-contacts') == 'D:/TextLake/M365/karelin/users/alex@karelin.com/contacts'
@@ -182,39 +242,8 @@ def test_an_entity_kind_names_the_grammars_of_its_permalink_and_document(on):
   assert rules.slug_for({'displayName': 'A&Z Air Conditioning'}) == 'a-z-air-conditioning'
 
 
-def test_a_source_is_a_location_and_what_is_in_it(on):
-  on('alex-laptop', 'windows')
-  source = State.sources['karelin-contacts']
-  assert source['address'] == 'm365://karelin/alex/contacts' and source['provides'] == 'contacts'
-  assert source['local'] == 'D:/TextLake/M365/karelin/users/alex@karelin.com/contacts'
-  assert State.sources['karelin-contact-photos']['local'] == 'D:/OneDrive - Karelin/Contact Photos'
-
-
 def test_a_command_runs_on_a_host_as_its_platform_says(on):
   on('alex-laptop', 'windows')
   assert Env.hosts.ssh('seven', 'debian') == ['ssh', '-p', '22', 'alex@7.c.karel.in', 'bash', '-s']
   assert Env.hosts.ssh('alex-pc', 'windows')[:4] == ['ssh', '-p', '22222', 'administrator@alex-pc.c.karel.in']
-
-
-def test_a_configuration_without_tables_has_no_rules():
-  Env.from_dict({'a': {'b': 1}})
-  assert Env.glob('a/b') == 1
-  with pytest.raises(AttributeError): Env.locations
-
-
-def test_a_dangling_reference_fails_the_load(tmp_path):
-  (tmp_path / 'config.yaml').write_text(
-    "connections:\n  templates: {box: {}}\n  s1: {template: box}\n"
-    "locations:\n  templates:\n    location: {refs: {'smb/*': connections}}\n"
-    "  lake: {template: location, smb/s3: Lake}\n", encoding='utf-8')
-  Env.from_env(name='app', app_path=tmp_path)
-  with pytest.raises(KeyError, match="lake: smb/\\* names 's3', which is not in connections"):
-    State.tables
-
-
-def test_a_service_registers(tmp_path):
-  (tmp_path / 'config.yaml').write_text(
-    "boxes:\n  templates: {nas: {service: true}}\n  s1: {template: nas}\n  s9: {}\n", encoding='utf-8')
-  Env.from_env(name='app', app_path=tmp_path)
-  assert list(State.services) == ['s1'] and State.services['s1'] is State.boxes['s1']
 # endregion

@@ -799,7 +799,17 @@ def jinja_document(filename: str | pathlib.Path, /, **data) -> str:
 class TemplateSet:
   """The macros, generators and templates of one configuration, compiled once.
 
-  A template generates the dict an object is built from, at startup only. A row names
+  The configuration's Jinja is of two kinds, evaluated at different times:
+
+  - Startup: templates, generators, behaviors and refs, evaluated once while the
+    configuration loads (`resolve`). What they compute is the row's data.
+  - Runtime: the named templates of the `*_templates` blocks (`render_template`) and
+    the macros code calls (`Env.<table>.<macro>(...)`), evaluated when code asks,
+    with what it knows then.
+
+  A macro is a function either kind may call.
+
+  Startup. A template generates the dict an object is built from. A row names
   the template it is an instance of — one name, or a list applied in order — and
   carries only what differs. A template value written in Jinja renders against the
   merged row, so the template says in one place what it computes; a value the row
@@ -816,17 +826,17 @@ class TemplateSet:
   merge and so is the only thing that can rewrite a key the row itself carries. A row
   un-inherits a key its template carries by setting it to null.
 
-  A `*_templates` block holds named templates that render later — the grammar of an
-  address, the payload of a command — with what a rule knows then:
-  `render_template(name, **values)`. A row names one; it is data until rendered. The
-  blocks are the configuration's, not one table's, so any rule may render any of them.
-
   A template declares what its rows reference with `refs`, field to table:
   `{connections: connections}` says the field's value (or each of its values, or each
   of its keys) is a row of the `connections` table; `{'smb/*': connections}` says every
   key of the row shaped `smb/<name>` references one. A table is a mapping at a slash
   path of the context, or a list of such paths. A reference nothing answers fails the
   resolution naming row, field and value.
+
+  Runtime. A `*_templates` block holds named templates that render later — the grammar of an
+  address, the payload of a command — with what a rule knows then:
+  `render_template(name, **values)`. A row names one; it is data until rendered. The
+  blocks are the configuration's, not one table's, so any rule may render any of them.
   """
 
   RESERVED = ('template', 'generator', 'behavior', 'refs')
@@ -851,12 +861,14 @@ class TemplateSet:
     self.generators = {name: self.environment.from_string(source)
                        for name, source in (generators or {}).items()}
 
+  # -- runtime: what code evaluates when it asks ----------------------------------------
   def render_template(self, name: str, /, **values) -> Any:
     """A named template of the table, rendered with these values: the grammar a row names,
     filled in later by a rule with what it knows then."""
     if name not in self.named: raise KeyError(f'no named template {name!r}')
     return self.environment.get_template(name).render(values)
 
+  # -- startup: what the configuration evaluates while it loads ---------------------------
   def _computed(self, name: str, values: dict) -> dict:
     if name not in self.generators: raise KeyError(f'no generator named {name!r}')
     computed = self.generators[name].render(values)

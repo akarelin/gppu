@@ -20,7 +20,9 @@ browse:
   addresses: [sd://SD.Lake/inbox]
 ```
 
-## Tables and rows
+## Startup: tables and rows
+
+The configuration's Jinja is of two kinds, evaluated at different times. What follows here is evaluated once, at startup, while the configuration loads; what it computes is the rows' data. The next section is what code evaluates at runtime.
 
 A key of the configuration that carries `templates` is a table. Every other mapping under it is a row keyed by its uid; `macros` and `generators` beside them belong to the table, and a `*_templates` block of named templates to the whole configuration. Tables are constructed in the order the configuration lists them, and a table constructed later sees an earlier one resolved, so a location's rules may read what a connection's template computed.
 
@@ -43,7 +45,7 @@ class Browse(App):
 
 `State.locations`, `State.hosts`, `State.connections` — one attribute per table, uid to object. Lookups go through `Env.glob(path)`, `glob_list`, `glob_dict`. A query is a Jinja filter in a template or a comprehension over a table, not a method.
 
-## The configuration answers
+## Runtime: the configuration answers
 
 What a utility used to compute for itself is a rule of the configuration — a macro of a table — reached as `Env.<table>.<rule>(...)`. gppu knows no rule by name; a rule that wants this host and platform says so in its own signature, `{% macro place(uid, host=Env.host, platform=Env.platform) %}`. The locations table of the reference configuration defines `place`, `folder`, `uri`, `location_of` and `local_of`; the hosts table defines `ssh(host, platform)`. A rule that says nothing answers `None`.
 

@@ -94,8 +94,8 @@ def _config_changes(before: dict, after: dict, prefix: str = '') -> frozenset[st
   return frozenset(changed)
 
 
-class _Tables(type):
-  def __getattr__(cls, table: str):   # Env.<table>.<rule>(...) is a macro of that table
+class _Tables(type):   # runtime: code calls a table's macro as Env.<table>.<macro>(...)
+  def __getattr__(cls, table: str):
     if table in State.templates: return _Rules(table, State.templates[table])
     raise AttributeError(f'no table named {table!r}')
 
@@ -393,7 +393,7 @@ class _State:
     return {uid: row for uid, row in Env.glob_dict(table).items() if not is_table_key(uid) and isinstance(row, dict)}
 
   def load(self) -> None:
-    """Construct every table of the loaded configuration."""
+    """Startup: construct every table of the loaded configuration."""
     self.reset()
     self.stale = False
     names = [name for name, content in Env.data.items() if isinstance(content, dict) and 'templates' in content]
