@@ -6001,6 +6001,14 @@ class GppuIndex(Protocol):
     """
 
 
+def _probe_name(name: str, directory: bool) -> handlers.Record:
+  """What probe says of an entry known only by its name and whether it is a folder, from a stand-in of it."""
+  with tempfile.TemporaryDirectory(prefix='gppufs-name-') as scratch:
+    stand_in = Path(scratch) / (''.join('_' if letter in UNSAFE else letter for letter in name).rstrip(' .') or 'entry')
+    stand_in.mkdir() if directory else stand_in.write_bytes(b'\0')
+    return handlers.probe(stand_in)
+
+
 # What probe gives that counts as ignored in a folder's totals: an ignored path, an offline file, a junction and a symlink.
 IGNORED = ('ignored', 'offline', 'junction', 'symlink')
 
@@ -6061,8 +6069,19 @@ class GppuFileSystem(AbstractFileSystem):
     self._indexes: dict[str, str | None] = {}   # folder -> the index it holds, asked of the store once
     self._standins: dict[str, str] = {}         # folder -> its slot among the listed entries asked about
     self._locations = dict(locations) if locations else {}   # folder -> the location that is there
-    self._handlers = _MetadataHandlers({"locations": self._locations})
     self._database_path(self.root)  # Validate the required location name.
+
+  def _location_of(self, path: Path) -> dict[str, str] | None:
+    """Which configured location a path on this host is, or is inside: its location, canonical address, the path's
+    address and its folder in it, the deepest location containing it winning; None when none does."""
+    here = full_path(path).as_posix()
+    base = max((folder for folder in self._locations if here == folder or here.startswith(folder.rstrip('/') + '/')),
+               key=len, default=None)
+    if base is None:
+      return None
+    row, folder = self._locations[base], '' if here == base else here[len(base.rstrip('/')) + 1:]
+    return {'location': str(row['location']), 'canonical': str(row['canonical']),
+            'address': _address(str(row['canonical']), folder), 'folder': folder}
 
   def _database_path(self, folder: str) -> str:
     name = folder.rstrip('/').rsplit('/', 1)[-1].rstrip(':')
@@ -6318,8 +6337,6 @@ class GppuFileSystem(AbstractFileSystem):
     if row is None:
       return None
     metadata = json.loads(row[0])
-    self._metadata_paths(metadata['gppu'], lambda value:
-      value if '://' in value else self._uri(self._absolute(value, owner)))
     children = None if row[1] is None else [
       {**child, 'path': self._absolute(child['path'], owner)} for child in json.loads(row[1])]
     return self._addressed(key, metadata), children
@@ -6332,9 +6349,9 @@ class GppuFileSystem(AbstractFileSystem):
     uri to be named by, and an index keyed on that is an index for this host.
     """
     if self._locations:
-      located = self._handlers.located(Path(self._path(key)))
+      located = self._location_of(Path(self._path(key)))
       if located is not None:
-        return located.address
+        return located['address']
     return self._uri(key)
 
   def _for_index(self, key: str, metadata: dict) -> dict:
@@ -6344,8 +6361,6 @@ class GppuFileSystem(AbstractFileSystem):
     nothing owner-relative and nothing this process only can resolve may go into it.
     """
     value = json.loads(json.dumps(metadata, default=_metadata_text))
-    self._metadata_paths(value['gppu'], lambda item:
-      item if '://' in item else self._uri(item))
     return self._addressed(key, value)
 
   def _addressed(self, key: str, metadata: dict) -> dict:
@@ -6361,41 +6376,6 @@ class GppuFileSystem(AbstractFileSystem):
     parent = self._parent_key(key)
     metadata['gppu']['parent'] = self._uri(parent) if parent is not None else None
     return metadata
-
-  @staticmethod
-  def _metadata_paths(metadata: dict, convert: Callable) -> None:
-    """Rebase handler-owned paths without changing user frontmatter or text."""
-    for name in ('session', 'chatgpt', 'claude'):
-      if name not in metadata:
-        continue
-      section = metadata[name]
-      for item in (section, *section.get('sessions', ())):
-        # Exported session member paths are relative to their own location.
-        for field in (('location',) if item.get('location') is not None else ('path',)):
-          if field in item and item[field] is not None:
-            item[field] = convert(item[field])
-    if 'git' in metadata:
-      for field in ('root', 'metadata_path'):
-        if field in metadata['git']:
-          metadata['git'][field] = convert(metadata['git'][field])
-
-  def _record_from_metadata(metadata: dict) -> Record:
-    """Rehydrate statistics for the existing folder aggregation functions."""
-    value = metadata['gppu']
-    probes = []
-    for handler, stored in value['stats'].items():
-      stats = dict(stored)
-      if 'span' in stats and stats['span'] is not None:
-        stats['span'] = TimeSpan(start=stats['span'][0], end=stats['span'][1])
-      for field in ('span_start', 'span_end'):
-        if field in stats and stats[field] is not None:
-          stats[field] = datetime.fromisoformat(stats[field])
-      probes.append(Probe(handler, SimpleNamespace(**stats), None))
-    return Record(PurePosixPath(value['path']), value['type'] == 'folder',
-      value['size'], datetime.fromisoformat(value['modified_at']) if value['modified_at'] else None,
-      tuple(value['handlers']), probes=tuple(probes),
-      stats=None if value.get('files') is None else FileStats(value['files'], value['folders'], value['bytes'],
-        TimeSpan(start=value['span'][0], end=value['span'][1]) if value['span'] else None))
 
   def _save(self, rows: dict[str, tuple[dict, list[str] | None]], scope: str, *, in_archive: bool = False) -> None:
     def metadata_for(key):
@@ -6421,9 +6401,6 @@ class GppuFileSystem(AbstractFileSystem):
         metadata['gppu'].update(json.loads(json.dumps(
           self._totals(metadata['gppu'], [metadata_for(item) for item in children]), default=_metadata_text)))
         del metadata['gppu']['name'], metadata['gppu']['parent']
-        self._metadata_paths(metadata['gppu'], lambda item:
-          self._key(item) if item == self.location or
-          item.startswith(self.location.rstrip('/') + '/') else item)
         rows[key] = metadata, children
         child = key
 
@@ -6445,8 +6422,6 @@ class GppuFileSystem(AbstractFileSystem):
       value = json.loads(json.dumps(metadata, default=_metadata_text))
       value['name'] = self._relative(key, owner)
       value['gppu']['path'] = value['name']
-      self._metadata_paths(value['gppu'], lambda item:
-        item if '://' in item else self._relative(item, owner))
       grouped[owner].append((self._relative(key, owner), json.dumps(value, default=_metadata_text),
         None if listing is None else json.dumps([
           {**child, 'path': self._relative(child['path'], owner)} for child in listing])))
@@ -6503,9 +6478,6 @@ class GppuFileSystem(AbstractFileSystem):
           value = json.loads(metadata)
           value['name'] = renamed
           value['gppu']['path'] = renamed
-          self._metadata_paths(value['gppu'], lambda item:
-            item if '://' in item else
-            self._relative(self._renamed_key(self._absolute(item, owner), old, new), owner))
           database.execute('UPDATE gppufs_entries SET path=?, metadata=?, children=? WHERE path=?',
             (renamed, json.dumps(value), members, path))
       changed = True
@@ -6531,14 +6503,14 @@ class GppuFileSystem(AbstractFileSystem):
       if isinstance(fs, AbstractArchiveFileSystem) and root in ('', '/') else fs.info(root)}
     if native[root]['type'] != 'directory' or native[root].get('islink'):
       return native
-    if IgnoredHandler.member_reason(PurePosixPath(root), True):
+    if _probe_name(PurePosixPath(root).name, True).subtype == 'ignored':
       return native
     for _, directories, files in fs.walk(root, detail=True, on_error='raise'):
       for item in (*directories.values(), *files.values()):
         if not self._index_name.fullmatch(PurePosixPath(item['name']).name):
           native[item['name'].rstrip('/')] = fs.info(item['name'])
       for name in tuple(directories):
-        if IgnoredHandler.member_reason(PurePosixPath(name), True) or directories[name].get('islink'):
+        if _probe_name(PurePosixPath(name).name, True).subtype == 'ignored' or directories[name].get('islink'):
           del directories[name]
     return native
 
@@ -6757,14 +6729,14 @@ class GppuFileSystem(AbstractFileSystem):
     names = [record.subtype or record.type]
     if path.name.casefold().endswith(handlers.ARCHIVES):
       names.append('archive')
-    located = self._handlers.located(path) if isinstance(self.fs, LocalFileSystem) else None
+    located = self._location_of(path) if isinstance(self.fs, LocalFileSystem) else None
     if located is not None:
       names.append('location')
     gppu = {'path': str(path), 'type': 'folder' if folder else 'file',
             'size': 0 if folder else int(record.meta.get('size', 0)), 'modified_at': self._modified(item),
             'handlers': names, 'record': vars(record)}
     if located is not None:
-      gppu['location'] = located.metadata
+      gppu['location'] = located
     if unread is not None:
       gppu['unread'] = unread
     gppu = json.loads(json.dumps(gppu, default=_metadata_text))
@@ -6825,7 +6797,7 @@ class GppuFileSystem(AbstractFileSystem):
     out of date the moment the configuration names the place. Such a row is identified
     again; every other stored row is kept.
     """
-    if not self._locations or not self._handlers.located(Path(self._path(key))):
+    if not self._locations or not self._location_of(Path(self._path(key))):
       return False
     stored = self._stored(key)
     return stored is not None and 'location' not in stored[0]['gppu']
@@ -7103,8 +7075,6 @@ class GppuFileSystem(AbstractFileSystem):
         value = json.loads(metadata)
         value['name'] = moved
         value['gppu']['path'] = moved
-        self._metadata_paths(value['gppu'], lambda item:
-          there + item[len(here):] if item == here or item.startswith(here + '/') else item)
         listing = children if children is None else json.dumps([
           {**child, 'path': there + child['path'][len(here):]
            if child['path'] == here or child['path'].startswith(here + '/') else child['path']}
