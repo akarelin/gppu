@@ -16,7 +16,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from enum import IntEnum
 from collections.abc import Sequence
-from typing import Annotated, Any, ClassVar, Literal, Self, TypeVar, Union
+from typing import Annotated, Any, ClassVar, Self, TypeVar, Union
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -531,54 +531,6 @@ async def types(db: Db):
     return (await db.exec(select(RecordType).order_by(RecordType.id))).all()
 
 
-# ++     What controls read: a field's values, a tree a level at a time, a record's parents, the records linked to it, its neighbourhood
-
-class Value(SQLModel):
-    """A value a field holds, and how many records hold it."""
-    value: Any = Field(description='The value; null for the records that hold none.')
-    records: int = Field(description='How many of the records found hold it.')
-
-
-VALUED = ('type', 'subtype', 'status', 'name', 'parent_id')   # the columns whose values a control offers; a key inside data or meta is reached by its path
-
-
-@router.get('/records/values', response_model=list[Value], tags=['record'], summary="List a field's values")
-async def values(db: Db, field: str, type: Type | None = None, conditions: QueryParams = Depends()):
-    """The values `field` holds among the records `type`, `filters` and `search` find (as in record search), each with how many
-    records hold it, most first: what a dropdown, a selector or a filter offers. `field` is a column, `type`, `subtype`, `status`,
-    `name` or `parent_id`, or a key inside data or meta by its path, `data.kind`. A `list`: more values than a list sends are refused."""
-    query = Record.build_query(conditions)
-    found = (query.where(Record.type == type) if type else query).order_by(None).subquery()
-    if INSIDE.fullmatch(field):
-        value = inside(found.c, field)
-    elif field in VALUED:
-        value = found.c[field]
-    else:
-        raise HTTPException(422, f"a field is {', '.join(VALUED)} or a key inside data or meta, data.kind; not {field}")
-    counted = select(value.label('value'), func.count().label('records')).group_by(value)
-    if (n := (await db.exec(select(func.count()).select_from(counted.subquery()))).one()) > LIST:
-        raise HTTPException(422, f'{field} holds {n} values, more than a list sends ({LIST}): search the records')
-    return [Value(value=v, records=c) for v, c in (await db.exec(counted.order_by(func.count().desc(), value))).all()]
-
-
-class Held(SQLModel):
-    """A record in a tree, and how many records it holds, so a tree control knows which to offer to open."""
-    record: Record = Field(description='The record.')
-    holds: int = Field(description='How many records it holds: those whose parent it is.')
-
-
-async def holding(db: AsyncSession, rows: list) -> list[Held]:
-    counts = dict((await db.exec(select(Record.parent_id, func.count()).where(Record.parent_id.in_([r.id for r in rows])).group_by(Record.parent_id))).all()) if rows else {}
-    return [Held(record=r, holds=counts.get(r.id, 0)) for r in rows]
-
-
-@router.get('/records/tree', response_model=list[Held], tags=['record'], summary="List a type's roots")
-async def roots(db: Db, type: Type):
-    """The records of a `type` that are in no container, by name, each with how many records it holds: the top of a tree control.
-    A `list`."""
-    return await holding(db, await Record.list(db, Record.type == type, Record.parent_id.is_(None), order=(Record.name, Record.id), what=f'{type.name.lower()}s are roots'))
-
-
 @router.get('/records/{id}/records', response_model=list[Record], tags=['record'], summary="List a record's children")
 async def record_list(db: Db, id: UUID, type: Type | None = None):
     """`list`, a simple select of like records (# Universals, Operations): the records whose parent it is, of one `type` or of
@@ -587,80 +539,13 @@ async def record_list(db: Db, id: UUID, type: Type | None = None):
     return await Record.list(db, Record.parent_id == id, *([Record.type == type] if type else []), order=(Record.created,), what=f'records are under {id}')
 
 
-@router.get('/records/{id}/tree', response_model=list[Held], tags=['record'], summary="List a record's children for a tree")
-async def record_tree(db: Db, id: UUID, type: Type | None = None):
-    """The records whose parent it is, of one `type` or of every type, by name, each with how many records it holds: a level of a
-    tree control, opened a level at a time. A `list`."""
-    return await holding(db, await Record.list(db, Record.parent_id == id, *([Record.type == type] if type else []), order=(Record.name, Record.id), what=f'records are under {id}'))
-
-
-@router.get('/records/{id}/parents', response_model=list[Record], tags=['record'], summary="Read a record's parents")
-async def record_parents(db: Db, id: UUID):
-    """Up the containers it is in: its parent first, then that one's, to the top; what a breadcrumb draws. 404 when there is no
-    such record."""
-    chain, seen, row = [], {id}, await Record.read(db, id)
-    while row.parent_id and row.parent_id not in seen and (row := await db.get(Record, row.parent_id)):
-        seen.add(row.id)
-        chain.append(row)
-    return chain
-
-
-async def records(db: AsyncSession, ids) -> dict[UUID, Record]:
-    """The records of these ids, by id."""
-    return {r.id: r for r in (await db.exec(select(Record).where(Record.id.in_(ids)))).all()}
-
-
-class Linked(SQLModel):
-    """A record at the other end of a node's link, with the link."""
-    link: Link = Field(description='The link.')
-    record: Record = Field(description='The node at its other end.')
-
-
-@router.get('/records/{id}/linked', response_model=list[Linked], tags=['link'], summary='List the records linked to a node')
-async def record_linked(db: Db, id: UUID, direction: Literal['from', 'to'] | None = None, subtype: str | None = None, type: Type | None = None):
-    """The nodes at the other end of its links, each with its link, in the order the links were made: `direction` `from`, the links
-    it starts, `to`, those that end at it (a collection's members, the work collected into a project), both when left out; `subtype`
-    the links' subtype, an empty one (`subtype=`) the links that have none; `type` the type of the records at the other end. A `list`."""
-    ends = {'from': [Link.from_id == id], 'to': [Link.to_id == id]}.get(direction, [or_(Link.from_id == id, Link.to_id == id)])
-    which = [] if subtype is None else [Link.subtype.is_(None)] if subtype == '' else [Link.subtype == subtype]
-    links = await Link.list(db, *ends, *which, order=(Link.created, Link.id), what=f'links are at {id}')
-    other = {l.id: l.to_id if l.from_id == id else l.from_id for l in links}
-    found = await records(db, set(other.values()))
-    return [Linked(link=l, record=found[other[l.id]]) for l in links if other[l.id] in found and (type is None or found[other[l.id]].type == type)]
-
-
-class Graph(SQLModel):
-    """Nodes and the links between them."""
-    nodes: list[Record] = Field(description='The nodes.')
-    links: list[Link] = Field(description='The links between them.')
-
-
-@router.get('/records/{id}/graph', response_model=Graph, tags=['link'], summary="Read a node's neighbourhood")
-async def record_graph(db: Db, id: UUID, depth: int = Query(1, ge=1, le=3, description='How many links away from it.')):
-    """The node, the nodes up to `depth` links away from it and the links between them: what a graph control draws around a record.
-    Refused, with their count, when they are more than a list sends."""
-    await Record.read(db, id)   # every type is a record
-    seen, frontier, links = {id}, {id}, {}
-    for _ in range(depth):
-        if not frontier:
-            break
-        for l in (await db.exec(select(Link).where(or_(Link.from_id.in_(frontier), Link.to_id.in_(frontier))))).all():
-            links[l.id] = l
-        reached = {e for l in links.values() for e in (l.from_id, l.to_id)}
-        frontier, seen = reached - seen, seen | reached
-        if len(seen) > LIST or len(links) > LIST:
-            raise HTTPException(422, f'{len(seen)} nodes and {len(links)} links within {depth} of {id}, more than a list sends ({LIST}): ask for fewer links away')
-    found = await records(db, seen)
-    return Graph(nodes=list(found.values()), links=list(links.values()))
-
-
 @router.get('/records/{id}/links', response_model=Page[Link], tags=['link'], summary="Search a node's links")
 async def record_links(db: Db, id: UUID, conditions: QueryParams = Depends(), params: Params = Depends()):
     """From it and to it; `filters`, `sort`, `search` and paging as in record search."""
     return await Link.search(db, params, or_(Link.from_id == id, Link.to_id == id), conditions=conditions)
 
 
-router.include_router(typed('/records', Fields, 'record', Record, Node, Collection, View, Event, Message, Activity, Link))   # after /records/values and /records/tree, which /records/{id} would take
+router.include_router(typed('/records', Fields, 'record', Record, Node, Collection, View, Event, Message, Activity, Link))
 router.include_router(typed('/links', _Link, 'link', Link))
 
 
