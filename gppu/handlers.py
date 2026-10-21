@@ -4,15 +4,15 @@ There is a handler for every type of data that is read, and probe, which, given 
 whose type is not known in advance, gives what info gives of it, its record from its stat and its name; the record's
 type and subtype say which handler reads it:
 
-    record = probe('D:/Dev/gppu/README.md')                  # await probe(...) in an event loop
+    record = probe('D:/Dev/gppu/README.md')
     handler = HANDLERS[record.type, record.subtype]          # MarkdownHandler
-    record = handler.parse('D:/Dev/gppu/README.md')          # await handler.parse(...) in an event loop
+    record = handler.parse('D:/Dev/gppu/README.md')
 
 Probing starts from the path's stat, and nothing is read: a file's handler is its suffix's in SUFFIXES. A link, a junction, an ignored path and an offline file are what probe gives; no handler
 reads them. A handler is a class of class methods, and `parse(path)` reads the path into a Record, what Linked Data
-holds of the thing: its type, subtype, name, created, updated, span, data, meta, and the records it holds;
-each handler says what it returns. A subtype is a subclass of its type, and its parse adds to its type's. probe and parse are
-asynchronous, awaited inside an event loop and returned directly outside one. A program adds a handler by
+holds of the thing, or a type of Linked Data's built on it, an Activity with a span or a Session; each handler says
+what it returns. A subtype is a subclass of its type, and its parse adds to its type's. probe and parse are plain
+functions. A program adds a handler by
 subclassing and adding its suffix:
 
     class TSVHandler(CSVHandler):
@@ -42,7 +42,7 @@ from uuid import UUID, uuid5
 
 import yaml
 
-from .gppu import Path, TimeSpan, sync
+from .gppu import Path, TimeSpan
 
 # Times tools write in place of a time: Windows FILETIME zero, Unix epoch zero, DOS zero, and the constant
 # Android build tools stamp on every APK member. Anything at or before DOS zero is not a time either.
@@ -128,6 +128,7 @@ ENVELOPE = re.compile(r"\A.*?^##\s*My request for Codex:[^\S\n]*$", re.S | re.M)
 REALTIME_INPUT = re.compile(
     r"<realtime_delegation>\s*<input>(.*?)</input>", re.I | re.S
 )
+AGY_CHUNKS = ".system_generated/logs/chunks"
 HOMES: dict[Harness, tuple[str, ...]] = {
     "hermes": ("state.db",),
     "agy": ("antigravity_state.pbtxt", "jetski_state.pbtxt"),
@@ -155,32 +156,48 @@ SESSION_UID = re.compile(
 
 @dataclass
 class Record:
-    """A record as Linked Data holds it: gppu.ld's _Record without what Postgres fills, its id, created, updated and the
-    code of its type, kept to that one shape on purpose; handlers import neither Postgres nor gppu.ld. A file's
-    `created` and `updated` are its own, as stat gives them, `created` only where the stat has a birth time. `type` is the
-    handler's type and `subtype` its own; `uid` is a session's own id in its harness, as Linked Data's sessions hold it;
-    `ts` is when a message happened and `span` when a thing went on; `contents` are the records it holds, a folder's
-    and a session's, which Linked Data gives a parent_id instead."""
+    """A record as Linked Data's spec has it (record 01) and gppu.ld holds it: id, type, subtype, status, name, data,
+    meta, created, updated and parent_id. Handlers import neither Postgres nor gppu.ld, so this is its shape without
+    the store; a record read from disk has no id until it is stored, so nothing read carries a parent_id."""
 
+    id: UUID | None = None
     type: str | None = None
     subtype: str | None = None
+    status: str | None = None
     name: str | None = None
-    created: datetime | None = None
-    updated: datetime | None = None
-    uid: str | None = None
-    ts: datetime | None = None
-    span: TimeSpan | None = None
     data: dict[str, Any] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
-    contents: list[Record] = field(default_factory=list)
+    created: datetime | None = None
+    updated: datetime | None = None
+    parent_id: UUID | None = None
+
+
+@dataclass
+class Event(Record):
+    """Linked Data's event (event 10): a record of a thing that happened, with ts, when it happened."""
+
+    ts: datetime | None = None
+
+
+@dataclass
+class Activity(Record):
+    """Linked Data's activity (activity 11): a record of a span of time."""
+
+    span: TimeSpan | None = None
+
+
+@dataclass
+class Session(Activity):
+    """Linked Data's session (session 30): an activity with uid, the harness's own id for it."""
+
+    uid: str | None = None
 
 
 class Handler:
     """The base of every handler: a handler reads a file or a folder, and its parse is what it reads.
 
-    `type` is the class below Handler a handler descends from, file or folder, unless the handler names its own;
-    `subtype` is the handler's own name, markdown for MarkdownHandler, None for a type itself, one that names its type
-    as SessionHandler does.
+    `type` is one of Linked Data's types, fs_node for a file or a folder and session for a session, and a handler
+    has its base's; `subtype` is the handler's own name, markdown for MarkdownHandler, unless it names its own.
     """
 
     type: str
@@ -188,25 +205,16 @@ class Handler:
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
-        top = next(base for base in reversed(cls.__mro__) if issubclass(base, Handler) and base is not Handler)
-        names_type = "type" in cls.__dict__
-        if not names_type:
-            cls.type = top.type if "type" in top.__dict__ else top.__name__.removesuffix("Handler").casefold()
-        name = cls.__name__.removesuffix("Handler").casefold()
         if "subtype" not in cls.__dict__:
-            cls.subtype = None if cls is top or names_type else name
-        if "parse" in cls.__dict__:
-            cls.parse = classmethod(sync(cls.__dict__["parse"].__func__))
+            cls.subtype = cls.__name__.removesuffix("Handler").casefold()
 
     @classmethod
-    @sync
-    async def parse(cls, path: str | Path) -> Record:
+    def parse(cls, path: str | Path) -> Record:
         """The record of the path: what probe gives, with the handler's type and subtype, and what the handler
-        reads. A handler's parse adds to its type's; Handler makes every handler's parse gppu's sync, awaited inside
-        an event loop and returned directly outside one.
+        reads. A handler's parse adds to its type's.
 
         Returns: what probe gives, with the handler's type and subtype."""
-        record = await probe(path)
+        record = probe(path)
         record.type, record.subtype = cls.type, cls.subtype
         return record
 
@@ -258,25 +266,22 @@ class Handler:
 
 
 class FolderHandler(Handler):
-    """A folder: a loop over what it holds. Each is probed, and one a handler reads is parsed by it, so a folder in it
-    loops over its own; an ignored one, a link, a junction or an offline file is what probe gives. A subfolder's
-    modified time is when something was added to it, so the span is its files' alone.
+    """A folder and what it directly holds, each probed, nothing read. A subfolder's modified time is when something
+    was added to it, so the span is its files' alone; what a folder holds is listed by the file system.
 
-    Returns: Handler's record, with data.files, data.folders and data.bytes, the files, folders and bytes of the files
-    it directly holds, a link or a junction being neither; span from
-    its files' earliest updated time to their latest; contents, the record of each thing it holds.
+    Returns: an Activity, Handler's record with data.files, data.folders and data.bytes, the files, the folders and
+    the bytes of the files it directly holds, a link, a junction or an ignored one being neither; span from its files'
+    earliest updated time to their latest.
     """
 
+    type, subtype = "fs_node", "folder"
+
     @classmethod
-    async def parse(cls, path: str | Path) -> Record:
-        record = await super().parse(path)
-        path = Path(path).absolute()
-        for member in sorted(path.iterdir()):
-            found = await probe(member)
-            handler = HANDLERS.get((found.type, found.subtype))
-            record.contents.append(found if handler is None else await handler.parse(member))
-        files = [member for member in record.contents if "size" in member.meta]
-        folders = [member for member in record.contents if "folder" in (member.type, member.subtype)]
+    def parse(cls, path: str | Path) -> Activity:
+        record = Activity(**vars(super().parse(path)))
+        held = [probe(member) for member in Path(path).absolute().iterdir()]
+        files = [member for member in held if "size" in member.meta]
+        folders = [member for member in held if member.subtype in ("folder", "sessionfolder")]
         record.data.update(files=len(files), folders=len(folders), bytes=sum(member.meta["size"] for member in files))
         record.span = cls.spanning([time for member in files if (time := cls.valid_time(member.updated))])
         return record
@@ -287,6 +292,8 @@ class FileHandler(Handler):
 
     Returns: Handler's record.
     """
+
+    type, subtype = "fs_node", "file"
 
 
 class SqliteHandler(FileHandler):
@@ -300,8 +307,8 @@ class SqliteHandler(FileHandler):
     """
 
     @classmethod
-    async def parse(cls, path: str | Path) -> Record:
-        record = await super().parse(path)
+    def parse(cls, path: str | Path) -> Record:
+        record = super().parse(path)
         with closing(sqlite3.connect(Path(path).absolute().as_uri() + "?mode=ro&immutable=1", uri=True)) as database:
             names = [name for (name,) in database.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
@@ -319,7 +326,7 @@ class MarkdownHandler(FileHandler):
     stem. data.tags is a list or one value. The span is created to updated, both required; a date starts at
     midnight, a time without an offset is local.
 
-    Returns: Handler's record, with name; data.title, data.tags, a list of strings, and data.frontmatter, the whole
+    Returns: an Activity, Handler's record with name; data.title, data.tags, a list of strings, and data.frontmatter, the whole
     mapping, {} when there is none; span from created to updated, or None.
     """
 
@@ -332,8 +339,8 @@ class MarkdownHandler(FileHandler):
     }
 
     @classmethod
-    async def parse(cls, path: str | Path) -> Record:
-        record = await super().parse(path)
+    def parse(cls, path: str | Path) -> Activity:
+        record = Activity(**vars(super().parse(path)))
         path = Path(path).absolute()
         frontmatter = cls._frontmatter(path)
         name, title = frontmatter.get("name", frontmatter.get("title")), frontmatter.get("title", frontmatter.get("name"))
@@ -376,7 +383,7 @@ class CSVHandler(FileHandler):
     milliseconds above 10,000,000,000, or one of a subclass's time_formats for strptime. A time without an
     offset is local; placeholders and future times do not count.
 
-    Returns: Handler's record, with data.header, the first row's names, and data.rows, how many rows follow it; span
+    Returns: an Activity, Handler's record with data.header, the first row's names, and data.rows, how many rows follow it; span
     from the earliest time in the time columns to the latest, or None.
     """
 
@@ -384,8 +391,8 @@ class CSVHandler(FileHandler):
     time_formats: tuple[str, ...] = ()
 
     @classmethod
-    async def parse(cls, path: str | Path) -> Record:
-        record = await super().parse(path)
+    def parse(cls, path: str | Path) -> Activity:
+        record = Activity(**vars(super().parse(path)))
         with Path(path).absolute().open(encoding="utf-8-sig", newline="") as stream:
             rows = [tuple(row) for row in csv.reader(stream, strict=True)]
         header, rows = (rows[0], rows[1:]) if rows else ((), [])
@@ -418,12 +425,12 @@ class LogHandler(FileHandler):
     head that has a time and its end the first from its tail: it is read from both ends until each is found, LOG_BLOCK
     bytes at a time, and never whole unless no line has a time.
 
-    Returns: Handler's record, with span from the time of the first line that has one to the time of the last, or None.
+    Returns: an Activity, Handler's record with span from the time of the first line that has one to the time of the last, or None.
     """
 
     @classmethod
-    async def parse(cls, path: str | Path) -> Record:
-        record = await super().parse(path)
+    def parse(cls, path: str | Path) -> Activity:
+        record = Activity(**vars(super().parse(path)))
         with Path(path).absolute().open("rb") as stream:
             start = next((time for line in cls._head(stream) if (time := cls._line_time(line)) is not None), None)
             end = next((time for line in cls._tail(stream) if (time := cls._line_time(line)) is not None), None)
@@ -463,13 +470,13 @@ class EmailHandler(FileHandler):
     the separator. A name outside the convention says nothing, and the record has no timestamp, subject,
     party or collision.
 
-    Returns: Handler's record, with data.timestamp, data.subject, data.party and data.collision, each where the name
+    Returns: an Activity, Handler's record with data.timestamp, data.subject, data.party and data.collision, each where the name
     gives it; span the timestamp, or None.
     """
 
     @classmethod
-    async def parse(cls, path: str | Path) -> Record:
-        record = await super().parse(path)
+    def parse(cls, path: str | Path) -> Activity:
+        record = Activity(**vars(super().parse(path)))
         stamp, separator, rest = Path(path).absolute().stem.partition(" - ")
         content, separator2, party = rest.rpartition(" - ")
         if not (separator and separator2):
@@ -518,9 +525,9 @@ class SessionHandler(FileHandler):
     * Agy: USER_INPUT from USER_EXPLICIT or PLANNER_RESPONSE from MODEL, with a string created_at.
     * Hermes: role session_meta with a string session_id.
 
-    Its record is a session, its subtype the harness; a .jsonl whose messages name no harness raises. Its messages
-    are every message of the file, in order, as session messages in its contents; a blank, truncated or non-object line
-    of the file is skipped. A session message's subtype is user, agent, thinking, tool_use or tool_result as Linked Data reads
+    Its record is a session, its subtype the harness; a .jsonl whose messages name no harness raises. Its messages,
+    every message of the file in order, are what parse_messages gives; a blank, truncated or non-object line of the
+    file is skipped. A session message's subtype is user, agent, thinking, tool_use or tool_result as Linked Data reads
     the messages of cc and cx (parse_messages), else the type its harness gives it. For cc and cx the record has the
     uid, the name, the span from the first session message of Linked Data's subtypes to the last, data.title, topic,
     cwd and models, and meta.parent_uid, as Linked Data reads them. For the other harnesses it has the uid its
@@ -528,13 +535,12 @@ class SessionHandler(FileHandler):
     data.turns counts its turns, and data.normalized_name is the file's name from its start, turns, duration and the
     first line a person typed.
 
-    Returns: Handler's record, with subtype the harness; uid; name; span; data.subagent, data.sidechain_only,
-    data.turns, data.normalized_name and data.models, and for cc and cx data.title, data.topic and data.cwd where the
-    session gives them; meta.parent_uid where it names one; contents, every message as a session message record:
-    type session_message, subtype, ts, name, data the message as the harness wrote it, meta.uid and meta.line.
+    Returns: a Session, Handler's record with subtype the harness; uid; name; span; data.subagent,
+    data.sidechain_only, data.turns, data.normalized_name and data.models, and for cc and cx data.title, data.topic and
+    data.cwd where the session gives them; meta.parent_uid where it names one.
     """
 
-    type = "session"
+    type, subtype = "session", None
 
     RECOGNIZERS = (
         ("cx", "_is_codex"), ("copilot", "_is_copilot"), ("gemini", "_is_gemini"), ("cc", "_is_claude_code"),
@@ -550,8 +556,8 @@ class SessionHandler(FileHandler):
              "hermes": "_hermes_turns"}
 
     @classmethod
-    async def parse(cls, path: str | Path) -> Record:
-        record = await super().parse(path)
+    def parse(cls, path: str | Path) -> Session:
+        record = Session(**vars(super().parse(path)))
         path = Path(path).absolute()
         messages = cls._messages(path)
         harness = cls._harness(messages[:SNIFF])
@@ -574,7 +580,7 @@ class SessionHandler(FileHandler):
         if parent_uid:
             record.meta["parent_uid"] = parent_uid
         if harness in ("cc", "cx"):
-            session, session_messages = cls.parse_messages(harness, messages)
+            session, _ = cls.parse_messages(harness, messages)
             data = {"title": session["title"], "topic": session["topic"], "cwd": session["cwd"],
                     "models": sorted(session["models"]) or None}
             record.uid = session["uid"]
@@ -587,8 +593,6 @@ class SessionHandler(FileHandler):
                 record.meta["parent_uid"] = session["parent_uid"]
         else:
             record.data["models"] = list(cls._models(messages))
-            session_messages = [cls._session_message(None, message, n, cls._own_type(message), "") for n, message in enumerate(messages, 1)]
-        record.contents = session_messages
         return record
 
     @classmethod
@@ -616,7 +620,7 @@ class SessionHandler(FileHandler):
 
     @classmethod
     def parse_messages(cls, harness: str, messages: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...],
-                       offset: int = 0, uid: str | None = None) -> tuple[dict[str, Any], list[Record]]:
+                       offset: int = 0, uid: str | None = None) -> tuple[dict[str, Any], list[Event]]:
         """The session and its session messages from the messages a harness wrote: the whole file, or the messages
         after the offset ones read before, each numbered by its place in the file, counted from 1. Every message is a
         session message: user, agent, thinking, tool_use or tool_result as Linked Data reads them, else the type its
@@ -678,15 +682,16 @@ class SessionHandler(FileHandler):
 
     @classmethod
     def _session_message(cls, uid: str | None, message: Mapping[str, Any], n: int, subtype: str | None,
-                         text: str) -> Record:
-        """A session message as Linked Data holds it: its subtype, its time, its name the first line of its text, the
-        message as its data, and in meta its id in its harness and its place in the file."""
-        return Record(type="session_message", subtype=subtype,
-                      ts=datetime.fromisoformat(message["timestamp"]) if message.get("timestamp") else None,
-                      name=cls.first_line(text) or subtype, data=dict(message), meta={"uid": uid, "line": n})
+                         text: str) -> Event:
+        """A session message as Linked Data holds it (session_message 31), an event: its subtype, its time, its name
+        the first line of its text, the message as its data, and in meta its id in its harness and its place in the
+        file."""
+        return Event(type="session_message", subtype=subtype,
+                     ts=datetime.fromisoformat(message["timestamp"]) if message.get("timestamp") else None,
+                     name=cls.first_line(text) or subtype, data=dict(message), meta={"uid": uid, "line": n})
 
     @classmethod
-    def _claude_messages(cls, messages, offset: int, uid: str | None) -> tuple[dict[str, Any], list[Record]]:
+    def _claude_messages(cls, messages, offset: int, uid: str | None) -> tuple[dict[str, Any], list[Event]]:
         """A user or an assistant message has a subtype, its id its uuid. A subagent run's messages name the run,
         agentId, and the session that spawned it, sessionId. A message marked isMeta is not a prompt. An ai-title,
         agent-name or custom-title message names the session."""
@@ -720,7 +725,7 @@ class SessionHandler(FileHandler):
         return session, session_messages
 
     @classmethod
-    def _codex_messages(cls, messages, offset: int, uid: str | None) -> tuple[dict[str, Any], list[Record]]:
+    def _codex_messages(cls, messages, offset: int, uid: str | None) -> tuple[dict[str, Any], list[Event]]:
         """The first session_meta message names the session, its folder and the session that spawned it. A
         response_item of a message, a tool call or a tool's output has a subtype. Codex gives a message no id, so its
         id is made from the session's uid and its place. The AGENTS.md Codex reads into a session is not a prompt."""
@@ -1413,19 +1418,18 @@ class SessionHandler(FileHandler):
 class SessionFolderHandler(FolderHandler):
     """A harness's session folder, which probe tells by its path: a Hermes home, .hermes; an Agy home,
     .gemini/antigravity or .gemini/antigravity-cli, with antigravity_state.pbtxt or jetski_state.pbtxt; or an Agy
-    session folder in .gemini/antigravity-cli/brain. It is a folder, so its members are parsed as any folder's; its sessions are the session
-    records among them at any depth, all of one harness: their harness, their uid when they agree on one, how many
-    there are and their span are its data.
+    session folder in .gemini/antigravity-cli/brain. Its sessions are the session files below it at any depth, all of
+    one harness: their harness, their uid when they agree on one, how many there are and their span are its data.
 
-    Returns: FolderHandler's record, with subtype sessionfolder; data.harness, data.sessions, how many, and data.uid
+    Returns: FolderHandler's record, an Activity, with subtype sessionfolder; data.harness, data.sessions, how many, and data.uid
     where they agree on one; span from the first of its sessions to the last.
     """
 
     @classmethod
-    async def parse(cls, path: str | Path) -> Record:
-        record = await super().parse(path)
+    def parse(cls, path: str | Path) -> Activity:
+        record = super().parse(path)
         path = Path(path).absolute()
-        sessions = list(cls._sessions(record))
+        sessions = list(cls._sessions(path))
         harnesses = SessionHandler._uniq([session.subtype for session in sessions] + [SessionHandler._home_harness(path)])
         if len(harnesses) != 1:
             raise ValueError(f"{path}: a session folder holds one harness, not {harnesses}")
@@ -1437,13 +1441,15 @@ class SessionFolderHandler(FolderHandler):
         return record
 
     @classmethod
-    def _sessions(cls, record: Record) -> Iterator[Record]:
-        """The session records among what a folder holds, at any depth; a session's own contents are its messages."""
-        for member in record.contents:
-            if member.type == "session":
-                yield member
-            elif member.type == "folder":
+    def _sessions(cls, path: Path) -> Iterator[Session]:
+        """The sessions below a folder at any depth: each folder probed and descended, each session file parsed. Agy's
+        .system_generated/logs/chunks holds pieces of the transcripts beside it, cut mid-message, and is not entered."""
+        for member in sorted(path.iterdir()):
+            found = probe(member)
+            if found.subtype in ("folder", "sessionfolder") and not member.match(AGY_CHUNKS):
                 yield from cls._sessions(member)
+            elif found.type == "session":
+                yield SessionHandler.parse(member)
 
 
 # What probe reads off a path: a file's handler by its suffix, a folder's by its path; a program adds its own.
@@ -1487,15 +1493,14 @@ def ignored(path: Path, stat: os.stat_result) -> bool:
                                                or bool(getattr(stat, "st_file_attributes", 0) & WINDOWS_SYSTEM)))
 
 
-@sync
-async def probe(path: str | Path) -> Record:
+def probe(path: str | Path) -> Record:
     """What info gives of a path: its record from its stat and its name, nothing read. The stat says what the path
     is; a link or a junction is that and its target, an offline file is a file whose bytes are not on this host, and
     an ignored path is ignored. A folder's handler is the one FOLDERS gives its path, a file's the one SUFFIXES gives
-    its suffix. Awaited inside an event loop, returned directly outside one.
+    its suffix; an empty file, one a harness has only just made, is a file. Probe and parse are plain functions: nothing in them can be awaited.
 
-    Returns: type and subtype, which say the handler that reads it: symlink or junction, with data.target; file and
-    offline; ignored, with subtype folder or file; else the handler's. name the path's name; updated as stat gives
+    Returns: type and subtype, which say the handler that reads it: fs_node and symlink or junction, with
+    data.target; fs_node and offline; fs_node and ignored; else the handler's. name the path's name; updated as stat gives
     it, and created where the stat has a birth time, as Windows and macOS give and Linux does not; meta.size a file's
     size, a folder's being unknown until what it holds is counted."""
     path = Path(path).absolute()
@@ -1507,15 +1512,15 @@ async def probe(path: str | Path) -> Record:
         record.meta["size"] = stat.st_size
     match kind(stat):
         case "symlink" | "junction" as link:
-            record.type, record.data["target"] = link, os.readlink(path)
+            record.type, record.subtype, record.data["target"] = "fs_node", link, os.readlink(path)
         case "offline":
-            record.type, record.subtype = "file", "offline"
-        case found if ignored(path, stat):
-            record.type, record.subtype = "ignored", found
+            record.type, record.subtype = "fs_node", "offline"
+        case _ if ignored(path, stat):
+            record.type, record.subtype = "fs_node", "ignored"
         case "folder":
             handler = next((handler for pattern, handler in FOLDERS.items() if path.match(pattern)), FolderHandler)
             record.type, record.subtype = handler.type, handler.subtype
         case "file":
-            handler = SUFFIXES.get(path.suffix.casefold(), FileHandler)
+            handler = SUFFIXES.get(path.suffix.casefold(), FileHandler) if stat.st_size else FileHandler
             record.type, record.subtype = handler.type, handler.subtype
     return record
