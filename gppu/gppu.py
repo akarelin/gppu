@@ -1479,3 +1479,221 @@ class _DC(UserDict):
     for step in self._INIT_STEPS: step(self, **kw)
 
 # endregion
+
+
+# region Env: the configuration
+class Env(_Env):
+  data: dict[str, Any] = {}
+  initialized: bool = False
+
+  name: str = ''
+  app_path: Path
+
+  @staticmethod
+  def _load_dict(d: dict) -> None:
+    s = json.dumps(d)
+    data = json.loads(Template(s).safe_substitute())
+    if not isinstance(data, dict): raise TypeError('configuration must be a mapping')
+    if 'trace_rules' in data and not isinstance(data['trace_rules'], dict):
+      raise TypeError('trace_rules must be a mapping')
+    if 'log_file' in data and (not isinstance(data['log_file'], str) or not data['log_file'].strip()):
+      raise ValueError('File logging requires an explicit log_file in configuration')
+    if 'trace_rules' in Env.data and 'trace_rules' not in data: TRACE_RULES.clear()
+    if Env.initialized or Env.data: Env.reset(); Info('INFO', 'Environment', 'WRED', 'reset()')
+    Env.data = data
+    Env.initialized = True
+    if 'trace_rules' in Env.data:
+      rules = Env.glob('trace_rules')
+      if not isinstance(rules, dict): raise TypeError('trace_rules must be a mapping')
+      TRACE_RULES.clear()
+      TRACE_RULES.update(rules)
+    if 'log_file' in Env.data: enable_file_logging(log_file=Env.data['log_file'])
+
+  @staticmethod
+  def reset() -> None:
+    for handler in tuple(Env._file_handlers.values()):
+      Env._root.removeHandler(handler)
+      handler.close()
+    Env._file_handlers.clear()
+    Env.data = {}
+    Env.initialized = False
+
+  @staticmethod
+  def _data() -> dict:
+    """The configuration; a script that reads it first loads the default environment, from beside the script."""
+    if not Env.initialized: Env.from_env()
+    return Env.data
+
+  @staticmethod
+  def glob(path: str | y2path, default=None) -> Any: return Env._data() if path == '' else deepget(path, Env._data(), default=default)
+  @staticmethod
+  def glob_int(path: str | y2path, default: int = 0) -> int: return deepget_int(path, Env._data(), default=default)
+  @staticmethod
+  def glob_list(path: str | y2path, default=[]) -> list: return deepget_list(path, Env._data(), default=default)
+  @staticmethod
+  def glob_dict(path: str | y2path, default={}) -> dict: return Env._data() if path == '' else deepget_dict(path, Env._data(), default=default)
+  @staticmethod
+  @sync
+  async def dump():
+    Dump('Env.data', Env.data)
+    return await asyncio.sleep(0)  # Make it truly async
+
+  @staticmethod
+  def from_dict(d: dict) -> None:
+    """Initialize Env from a dict. A ``topology`` key (a yaml path) is loaded as
+    the base data; ``tunables`` (an inline dict) and the remaining keys override
+    it — mirroring Y2's Environment loader. Without ``topology`` the dict itself
+    is the data (back-compatible)."""
+    config = dict(d)
+    topology = config.pop('topology', None)
+    tunables = config.pop('tunables', None)
+    data = dict_from_yml(topology) if topology else {}
+    if isinstance(tunables, dict): data.update(tunables)
+    data.update(config)
+    Env._load_dict(data)
+
+  @staticmethod
+  def from_env(name: Optional[str] = None, app_path: Optional[Path] = None) -> None:
+    """Initialize Env from name + app_path, resolving config file and loading YAML."""
+    import __main__
+    Env._main_file = Path(getattr(__main__, '__file__', 'app')).resolve()
+    Env._main_dir = Env._main_file.parent
+
+    # Under PyInstaller __main__.__file__ resolves to __main__; use exe name instead
+    if name:
+      Env.name = name
+    elif getattr(sys, 'frozen', False):
+      Env.name = Path(sys.executable).stem
+    else:
+      Env.name = Env._main_file.stem
+    Env.app_path = Env._resolve_app_path(app_path)
+    Env.config_file = Env._config_file()
+
+    Env.init_logger(Env.name)
+
+    config_data = dict_from_yml(Env.config_file) if Env.config_file else {}
+    Env.from_dict(config_data)   # resolves a `topology:` key if the config has one
+    Env.from_argv(sys.argv[1:])
+
+  @staticmethod
+  def from_argv(argv: list[str]) -> None:
+    """The command line over the configuration: ``--key value`` sets that key to the string, ``--verbose`` with no
+    value after it sets ``verbose`` to True, and a slash path names a nested key. Arguments that are not a key or its
+    value are the program's own."""
+    i = 0
+    while i < len(argv):
+      arg, i = argv[i], i + 1
+      if not arg.startswith('--') or len(arg) == 2: continue
+      name, value = arg[2:], True
+      if i < len(argv) and not argv[i].startswith('--'): value, i = argv[i], i + 1
+      node = Env.data
+      *parents, key = y2path(name)
+      for parent in parents: node = node.setdefault(parent, {})
+      node[key] = value
+
+  @staticmethod
+  def _resolve_app_path(app_path: Optional[Path] = None) -> Path:
+    if not app_path: return Env._main_dir
+    if app_path.is_absolute(): return app_path
+    # Walk up from script location to find the relative path
+    parent = Env._main_dir
+    while parent != parent.parent:
+      candidate = parent / app_path
+      if candidate.exists(): return candidate
+      parent = parent.parent
+    return Env._main_dir / app_path
+
+  @staticmethod
+  def _config_file() -> Path | None:
+    """``<name>.yaml`` then ``config.yaml``, searched from ``app_path`` upward —
+    so a service in a subdir (e.g. /app/brultech) finds the suite's /app/config.yaml.
+    A program with none runs on the command line alone."""
+    stem = Path(Env.name).with_suffix('.yaml').name
+    names = (stem, 'config.yaml')
+    for parent in (Env.app_path, *Env.app_path.parents):
+      for name in names:
+        candidate = parent / name
+        if candidate.exists(): return candidate
+    return None
+
+# Global aliases for Env.glob* methods
+glob = Env.glob
+glob_int = Env.glob_int
+glob_list = Env.glob_list
+glob_dict = Env.glob_dict
+# endregion
+
+
+# region Configuration mixins
+class mixin_Config(_mixin):
+  _my: dict[str, Any] = {}
+
+  def _config_from_key(self, key: str) -> None: self._my.update(Env.glob_dict(key))
+  def _config_copy(self, other: mixin_Config) -> None: self._my = dict(other._my)
+  def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
+  def _config_from_env(self) -> None: self._my = deepcopy(Env.data)
+
+  def my(self, path: str | y2path, default=None) -> Any: return deepget(path, self._my, default=default)
+  def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self._my, default=default)
+  def my_float(self, path: str | y2path, default: float = float('nan')) -> float: return deepget_float(path, self._my, default=default)
+  def my_list(self, path: str | y2path, default: list = []) -> list: return deepget_list(path, self._my, default=default or [])
+  def my_dict(self, path: str | y2path, default: dict = {}) -> dict: return deepget_dict(path, self._my, default=default or {})
+
+
+class _Config(mixin_Config):
+  """``_my`` is a copy of Env, which loads the program's default environment on its first read, as for a script."""
+  _base_path: Path
+
+  def __init__(self, **kw) -> None:
+    super().__init__(**kw)
+    self._my = deepcopy(Env._data())
+    self._base_path = Path('.')
+
+  # def my_path(self, path) -> Path: return self._base_path / self.my(path)
+
+
+class _Base(_Logger, _Config): pass
+# endregion
+
+
+# region App
+class _App(_Base):
+  """Base class with logging and configuration; named after the program, as Env is, unless given a name."""
+
+  def __init__(self, name: str = '', **kw) -> None:
+    super().__init__(**kw)
+    self.name = name or Env.name
+
+
+class App(_App, _DC):
+  """An app with the data class: what it is constructed with is its data. It has no entry method and no steps;
+  construct it and call what the app defines. Read settings with ``self.my(...)``. See docs/app.md."""
+  pass
+
+
+class CliApp(_App):
+  """Runs ``main`` once. The command line is already over the configuration, as for every program, ``--since 3d``;
+  ``main`` is the action; what it returns is printed as JSON on stdout, logs go to stderr.
+
+  Usage::
+
+      from gppu import CliApp
+      class Archive(CliApp):
+        def main(self) -> dict:
+          since = self.my('since')
+      if __name__ == '__main__': Archive.cli()
+  """
+
+  def main(self) -> Any: raise NotImplementedError(f'{type(self).__name__} defines no main')
+
+  @classmethod
+  def cli(cls, argv: list[str] | None = None) -> Any:
+    """Start from the command line: build the app, then ``main``. ``argv`` stands in for the program's own."""
+    app = cls()
+    if argv is not None:
+      Env.from_argv(argv)
+      app._config_from_env()
+    result = app.main()
+    if result is not None: print(json.dumps(result, indent=2, default=str))
+    return result
+# endregion

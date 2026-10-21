@@ -95,7 +95,7 @@ from fsspec.spec import AbstractFileSystem
 from fsspec.utils import stringify_path
 
 from .gppu import MY_TZ, TimeSpan, OSType, TemplateSet, detect_os, full_path, sync, y2path, y2uri
-from .app import Env, _Base
+from .gppu import Env, _Base
 
 
 # region providers

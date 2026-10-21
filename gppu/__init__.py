@@ -7,16 +7,8 @@ data manipulation, and type safety utilities.
 
 from .fs import Collection, Container, DataObject, FileSystem, Location, Provider
 
-from .app import (
-    # App family
-    _App,
-    App,
-    CliApp,
-    AsyncApp,
-    APIApp,
-    mixin_Rest,
-
-    # Env and its configuration mixins
+from .gppu import (
+    # Env, its configuration mixins and the regular apps
     Env,
     glob,
     glob_int,
@@ -25,6 +17,16 @@ from .app import (
     mixin_Config,
     _Config,
     _Base,
+    _App,
+    App,
+    CliApp,
+)
+
+from .app import (
+    # apps with steps
+    AsyncApp,
+    APIApp,
+    mixin_Rest,
 
     # sync lifecycle (AppDaemon / Y2)
     _YMRO,

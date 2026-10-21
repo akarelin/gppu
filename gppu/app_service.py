@@ -14,7 +14,7 @@ from copy import deepcopy
 
 import yaml
 
-from .app import Env
+from .gppu import Env
 from .gppu import y2path, y2topic
 from .iot import MqttApp
 

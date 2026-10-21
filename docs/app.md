@@ -1,6 +1,6 @@
 # Apps
 
-An app is a class built on gppu's app classes in `gppu/app.py`. Building the object is what sets it up: by the time it exists, `Env` holds the configuration and the object's `_my` holds a copy of it. What the app does after that is its own methods.
+An app is a class built on gppu's app classes: `App` and `CliApp` in `gppu/gppu.py` with `Env`, the apps with steps in `gppu/app.py`. Building the object is what sets it up: by the time it exists, `Env` holds the configuration and the object's `_my` holds a copy of it. What the app does after that is its own methods.
 
 ## Configuration on construction
 

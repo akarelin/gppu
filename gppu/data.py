@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, ClassVar, Optional
 from contextlib import asynccontextmanager, contextmanager
 
-from .app import Env, _Base
+from .gppu import Env, _Base
 from .gppu import _DC
 
 
