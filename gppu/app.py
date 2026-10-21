@@ -34,7 +34,7 @@ class Env(_Env):
   data: dict[str, Any] = {}
   initialized: bool = False
 
-  name: str
+  name: str = ''
   app_path: Path
 
   @staticmethod
@@ -189,14 +189,12 @@ class mixin_Config(_mixin):
 
 
 class _Config(mixin_Config):
-  """Env is loaded by the time the object exists, from beside its class when it is not loaded yet; ``_my`` takes it."""
-  name: str = ''
+  """``_my`` is a copy of Env, which loads the program's default environment on its first read, as for a script."""
   _base_path: Path
 
   def __init__(self, **kw) -> None:
     super().__init__(**kw)
-    if not Env.initialized: Env.from_env(name=self.name, app_path=Path(inspect.getfile(type(self))).resolve().parent)
-    self._config_from_env()
+    self._my = deepcopy(Env._data())
     self._base_path = Path('.')
 
   # def my_path(self, path) -> Path: return self._base_path / self.my(path)
@@ -332,12 +330,11 @@ class mixin_Stepper(YStepper, _mixin): pass
 
 # region App
 class _App(_Base):
-  """Base class with logging and configuration, named after its file unless given a name."""
+  """Base class with logging and configuration; named after the program, as Env is, unless given a name."""
 
   def __init__(self, name: str = '', **kw) -> None:
-    self._app_file = Path(inspect.getfile(type(self))).resolve()
-    self.name = name or self._app_file.stem
     super().__init__(**kw)
+    self.name = name or Env.name
 
 
 class App(_App, _DC):
