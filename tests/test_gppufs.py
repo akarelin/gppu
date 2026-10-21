@@ -743,6 +743,29 @@ def test_info_identifies_again_a_row_from_before_the_location(tmp_path):
   assert [row['gppu']['location']['address'] for row in fs.ls(recurse=True)] == ['work://notes', 'work://notes/note.md']
 
 
+def test_an_ignored_file_is_neither_indexed_nor_listed(tmp_path):
+  """An ignored file is left out of the index and of listings, parsed or not, and one an earlier listing indexed is
+  dropped; info still says what it is. An ignored folder is listed and not entered."""
+  (tmp_path / 'note.md').write_text('Text', encoding='utf-8')
+  (tmp_path / '.DS_Store').write_bytes(b'\0')
+  (tmp_path / '__pycache__').mkdir()
+  (tmp_path / '__pycache__' / 'x.pyc').write_bytes(b'\0')
+  fs = GppuFileSystem(tmp_path)
+  assert [row['gppu']['name'] for row in fs.ls(recurse=True)] == ['__pycache__', 'note.md']
+  assert [row['gppu']['name'] for row in fs.ls(refresh=True)] == ['__pycache__', 'note.md']
+  assert fs.info('.DS_Store')['gppu']['handlers'] == ['ignored']
+  assert fs.info('.DS_Store', refresh=True)['gppu']['handlers'] == ['ignored']
+  assert fs.stored('.DS_Store') is None
+  path = tmp_path / '.DS_Store'
+  earlier = fs._row('.DS_Store', fs.fs.info(str(path)), gppu.handlers.probe(path), path)
+  fs._store('.', {'.DS_Store': (earlier, None)}, fs.stored()[1] + [{'path': '.DS_Store', 'type': 'file', 'ino': None}])
+  assert fs.stored('.DS_Store') is not None
+  assert [row['gppu']['name'] for row in fs.ls()] == ['__pycache__', 'note.md']
+  assert fs.stored('.DS_Store') is None
+  with sqlite3.connect(index(tmp_path)) as database:
+    assert {row[0] for row in database.execute('SELECT path FROM gppufs_entries')} == {'.', '__pycache__', 'note.md'}
+
+
 def test_a_folder_is_asked_once_whether_it_holds_an_index(tmp_path, monkeypatch):
   """On a share every ask is a round trip: a folder is asked once in a process whether it holds an index, not again for
   each entry below it, and the root is resolved once, not for each entry's location."""

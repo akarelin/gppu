@@ -12,7 +12,8 @@ Files:
 ``info`` identify an entry from its listing, by :func:`gppu.handlers.probe` on this host, and read nothing; ``refresh=True`` parses
 it with the handler :mod:`gppu.handlers` gives it, and a row carries the handler's Record under ``gppu.record``. A file a handler
 reads on a store other than this host is fetched into the cache, one at a time, and removed. An archive is opened only when it is
-listed itself; a recursion enters folders, never an ignored one, and an archive only when the index holds its listing.
+listed itself; a recursion enters folders, never an ignored one, and an archive only when the index holds its listing. An
+ignored file is neither indexed nor listed.
 
 Public I/O calls decorated with :func:`gppu.sync` return directly outside an event loop and are awaitable inside one; their
 ``*_sync`` methods run on the calling thread. All local paths are resolved by :func:`gppu.full_path`.
@@ -1337,8 +1338,8 @@ class GppuFileSystem(AbstractFileSystem):
       return cached[0]
 
     # Keep ancestor totals consistent with the refreshed subtree and cached siblings.
-    # Archive members do not change their physical archive's byte count.
-    if not in_archive:
+    # Archive members do not change their physical archive's byte count, and an ignored file parses to nothing.
+    if not in_archive and scope in rows:
       child = scope
       for parent in PurePosixPath(scope).parents:
         key = parent.as_posix()
@@ -1489,12 +1490,14 @@ class GppuFileSystem(AbstractFileSystem):
       if name != source:
         below.setdefault(str(PurePosixPath(name).parent) if str(PurePosixPath(name).parent) != '.' else '', []).append(name)
 
-    def read(name: str) -> tuple[str, dict]:
+    def read(name: str) -> tuple[str, dict] | None:
       item = native[name]
       relative = '.' if name == source else PurePosixPath(name).relative_to(base).as_posix()
       address = self._member_address(key, relative)
       directory = item['type'] == 'directory'
       record = _probe_name(PurePosixPath(name).name or 'location', directory, item.get('size'))
+      if self._unindexed(record, directory):
+        return None
       handler, unread = handlers.HANDLERS.get((record.type, record.subtype)), None
       if not directory and handler not in (None, handlers.FileHandler):
         with _scratch('gppufs-file-') as scratch:
@@ -1506,8 +1509,8 @@ class GppuFileSystem(AbstractFileSystem):
           except Exception as error:   # the parse records what it could not read and goes on
             unread = f'{handler.__name__}: {type(error).__name__}: {error}'
             Warn(f'{self._uri(address)}: {unread}')
-      children = [read(child) for child in sorted(below.get(name, ()), key=lambda child: (
-        native[child]['type'] != 'directory', child.casefold()))] if directory else []
+      children = [found for child in sorted(below.get(name, ()), key=lambda child: (
+        native[child]['type'] != 'directory', child.casefold())) if (found := read(child)) is not None] if directory else []
       row = self._row(address, item, record, Path(PurePosixPath(name).name or 'location'), probed_at=now, unread=unread,
                       children=[child for _, child in children] if directory else None)
       if name == source and archive_metadata is not None:
@@ -1555,6 +1558,8 @@ class GppuFileSystem(AbstractFileSystem):
       address = self._member_address(key, relative)
       item = native[name]
       record = _probe_name(PurePosixPath(name).name, item['type'] == 'directory', item.get('size'))
+      if self._unindexed(record, item['type'] == 'directory'):
+        continue
       rows[address] = self._row(address, item, record, Path(PurePosixPath(name).name)), \
         [] if item['type'] == 'directory' else None
       parent = self._member_address(key, PurePosixPath(relative).parent.as_posix())
@@ -1582,6 +1587,8 @@ class GppuFileSystem(AbstractFileSystem):
       item = native[name]
       address = self._member_address(key, relative)
       record, unread = handlers.probe(path), None
+      if self._unindexed(record, item['type'] == 'directory'):
+        return None
       handler = handlers.HANDLERS.get((record.type, record.subtype))
       if handler is not None and handler is not handlers.FolderHandler:
         try:
@@ -1728,12 +1735,23 @@ class GppuFileSystem(AbstractFileSystem):
       database.execute('UPDATE gppufs_entries SET children=? WHERE path=?', (json.dumps([
         {**entry, 'path': self._relative(entry['path'], owner)} for entry in listing]), self._relative(key, owner)))
 
-  def _identify_entry(self, key: str) -> None:
-    """Index one entry from its native attributes and matching handlers, without probing."""
+  @staticmethod
+  def _unindexed(record: handlers.Record, directory: bool) -> bool:
+    """Whether an entry is left out of the index and of listings: an ignored file. An ignored folder is listed, and a
+    recursion does not enter it, as FileIndexer's walk does."""
+    return record.subtype == 'ignored' and not directory
+
+  def _identify_entry(self, key: str) -> tuple[dict, None] | None:
+    """Index one entry from its native attributes and matching handlers, without probing, and give what the index holds
+    of it; an ignored file is identified and not indexed."""
     path = self._path(key)
     item = self.fs.info(path)
     record = handlers.probe(Path(path)) if isinstance(self.fs, LocalFileSystem) else self._listed(key, item)
-    self._store(key, {key: (self._row(key, item, record, Path(path)), None)}, None)
+    row = self._row(key, item, record, Path(path))
+    if self._unindexed(record, item['type'] == 'directory'):
+      return self._for_index(key, row), None
+    self._store(key, {key: (row, None)}, None)
+    return self._stored(key)
 
   def _unlocated(self, key: str) -> bool:
     """Whether the index holds this entry from before a configured location covered it.
@@ -1764,6 +1782,10 @@ class GppuFileSystem(AbstractFileSystem):
       if self._index_name.fullmatch(PurePosixPath(name).name):
         continue
       child_key = self._key(name)
+      stored = self._stored(child_key) if child_key in known else None
+      if stored is not None and stored[0]['type'] != 'directory' and 'ignored' in stored[0]['gppu']['handlers']:
+        self._forget(child_key)   # an ignored file an earlier listing indexed
+        continue
       if self._unlocated(child_key):
         self._forget(child_key)   # the stored row predates the location; an insert alone would keep it
       elif child_key in known:
@@ -1775,6 +1797,8 @@ class GppuFileSystem(AbstractFileSystem):
       else:
         item = entry            # a store that lists enough said it all once; asking again is a call per entry
         record = self._listed(child_key, item)
+      if self._unindexed(record, item['type'] == 'directory'):
+        continue
       rows[child_key] = self._row(child_key, item, record, Path(self._path(child_key))), None
       listing.append({'path': child_key, 'type': item['type'], 'ino': item.get('ino')})
     listing.sort(key=lambda entry: (entry['type'] != 'directory', entry['path'].casefold()))
@@ -1815,14 +1839,15 @@ class GppuFileSystem(AbstractFileSystem):
         if not refresh:
           cached = self._stored(key)
       if cached is None and not refresh and self._identifiable(key):
-        self._identify_entry(key)
-        cached = self._stored(key)
+        cached = self._identify_entry(key)
       elif cached is None and not refresh:
         self._identify_inside(key)   # a member is known from its archives' listings
         cached = self._stored(key)
       if cached is None and refresh:
         self._live(key)
         cached = self._stored(key)
+        if cached is None and self._identifiable(key):
+          cached = self._identify_entry(key)   # an ignored file: nothing is parsed or indexed of it, it is what probe says
       if cached is None:
         raise FileNotFoundError(self._uri(key))
       return cached[0]
