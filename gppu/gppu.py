@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pprint
+from turtle import st
 import yaml
 from yaml.dumper import Dumper
 from yaml.representer import SafeRepresenter
@@ -40,6 +41,8 @@ from string import Template
 from contextlib import contextmanager
 
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+from gppu.handlers import SessionFolderHandler
 try: _ver_full = _pkg_version('gppu')
 except PackageNotFoundError: _ver_full = '0.0.0'
 
@@ -96,6 +99,9 @@ def full_path(path: str | Path, base_dir: str | Path | None = None, *, strict: b
   if not result.is_absolute(): result = (Path.cwd() if base_dir is None else full_path(base_dir)) / result
   
   return result.resolve(strict=strict)
+
+
+
 # endregion
 
 # region Safe typecasting
@@ -333,6 +339,26 @@ class _cached:
   def __set__(self, o, v): o.__dict__[self.name] = (str(o), v)
 
 
+_PATH_CLASSIFICATOR = {
+  "ignored_suffixes": (".tmp", ".bak", ".swp"),
+  "ignored_prefixes": ("~$",),
+  "ignored_names": ("Thumbs.db", ".DS_Store", "desktop.ini"),
+  "ignored_folders": (
+    ".git", ".svn", "__pycache__", ".venv", "venv", "node_modules", ".idea", ".vscode",
+    ".SynologyWorking Directory", ".SynologyWorkingDirectory", "$RECYCLE.BIN", "RECYCLE.BIN",
+    "System Volume Information", "OneDriveTemp", "Cache", ".cache",
+  ),
+  "session_folders": (
+    ".hermes", ".gemini/antigravity", ".gemini/antigravity-cli",
+    ".gemini/antigravity-cli/brain/*",
+  ),
+  "suffix_handlers": {
+    ".sqlite": "SqliteHandler", ".sqlite3": "SqliteHandler", ".db": "SqliteHandler",
+    ".md": "MarkdownHandler", ".csv": "CSVHandler", ".log": "LogHandler",
+    ".eml": "EmailHandler", ".msg": "EmailHandler", ".jsonl": "SessionHandler",
+  },
+}
+
 class Path(y2path, pathlib.Path):
   """A file system path: y2path's segments and operators, everything else from pathlib.Path."""
   _drv, _root, _tail_cached, _str, _parts_normcase_cached, _hash, _info = (_cached() for _ in range(7))
@@ -344,6 +370,64 @@ class Path(y2path, pathlib.Path):
   __hash__ = y2path.__hash__
 
   def copy(self, *args, **kwargs): return y2path.copy(self) if not args and not kwargs else pathlib.Path.copy(self, *args, **kwargs)
+
+  def probe(self) -> dict:
+    """Filesystem attributes and content handler without reading contents."""
+    config = _PATH_CLASSIFICATOR
+    info = self.info
+    stat = self.stat(follow_symlinks=False)
+    attributes = getattr(stat, "st_file_attributes", 0)
+
+    result = {
+      "symlink": info.is_symlink(),
+      "junction": self.is_junction(),
+      "folder": info.is_dir(follow_symlinks=False),
+      "file": info.is_file(follow_symlinks=False),
+      "offline": bool(attributes & 0x5000),
+      "created": dt.fromtimestamp(stat.st_birthtime, timezone.utc) if hasattr(stat, "st_birthtime") else None,
+      "modified": dt.fromtimestamp(stat.st_mtime, timezone.utc),
+    }
+
+    result["ignored"] = bool(self.name) and (
+      self.suffix.casefold() in config["ignored_suffixes"]
+      or any(self.name.startswith(p) for p in config["ignored_prefixes"])
+      or self.name in config["ignored_names"]
+      or result["folder"] and (
+        self.name in config["ignored_folders"]
+        or bool(attributes & 0x4)
+      )
+    )
+
+    result["type"] = next(
+      (k for k in ("symlink", "junction", "folder", "file") if result[k]),
+      "other",
+    )
+    result["status"] = next(
+      (k for k in ("symlink", "junction", "offline", "ignored") if result[k]),
+      "normal",
+    )
+
+    handler = None
+    if result["status"] == "normal":
+      if result["folder"]:
+        handler = (
+          "SessionFolderHandler"
+          if any(self.match(p) for p in config["session_folders"])
+          else "FolderHandler"
+        )
+      elif result["file"]:
+        handler = (
+          config["suffix_handlers"].get(self.suffix.casefold(), "FileHandler")
+          if stat.st_size else "FileHandler"
+        )
+
+    result.update(
+      handler=handler,
+      size=stat.st_size if result["file"] else None,
+      target=self.readlink() if result["symlink"] or result["junction"] else None,
+      attributes=getattr(stat , "st_file_attributes", None),
+    )
+    return result
 
 
 class y2uri:
