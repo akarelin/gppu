@@ -1,18 +1,17 @@
-"""Persistent cache for status line data (JSONL incremental + git TTL)."""
+"""Persistent cache for status line data (transcripts by file signature + git TTL)."""
 
-import json
 import tempfile
 import time
 from collections import Counter
 
-from gppu import Warn
 from gppu.data import Cache
 from gppu.gppu import Path
+from gppu.handlers import Handler
 
 CACHE_DIR = Path(tempfile.gettempdir()) / "claude_statusline_cache"
-# Bump when the meaning of a cached count changes: entries accumulate from a byte
-# offset, so a parser fix cannot correct totals already stored under the old key.
-SCHEMA = "v2"
+# Bump when the meaning of a cached count changes. v3: whole-file counts by signature,
+# where v2 held totals accumulated from a byte offset.
+SCHEMA = "v3"
 
 _dc = Cache(str(CACHE_DIR), ttl=86400, backend='sqlite', skip_env='')
 
@@ -54,54 +53,47 @@ def _is_user_prompt(msg):
     return False
 
 
-def _parse_from_offset(path, offset):
-    """Parse JSONL from byte offset, return (tools_dict, counts_dict, meta_dict, new_offset)."""
+def _read(path):
+    """Counts of one whole transcript, read through gppu.handlers: (tools, counts, meta, subagent).
+
+    Lines that are not messages (system, compaction, meta) come from its records; prompts,
+    replies, tools, errors and tokens from its messages.
+    """
+    session = Handler(path)
     tools = Counter()
     counts = _new_counts()
     meta = _new_meta()
-    try:
-        # Transcripts are UTF-8; the platform default (cp1252 on Windows) raises
-        # mid-file, which aborts the parse without advancing the offset.
-        with open(path, encoding="utf-8", errors="replace") as f:
-            f.seek(offset)
-            for line in f:
-                try:
-                    e = json.loads(line)
-                except ValueError:
-                    continue
-                t = e.get("type")
-                if ts := e.get("timestamp", ""):
-                    meta["first_ts"] = meta["first_ts"] or ts
-                    meta["last_ts"] = ts
-                if t in ("user", "system") and e.get("isMeta") and not meta["version"]:
-                    meta.update(version=e.get("version", ""), cwd=e.get("cwd", ""), branch=e.get("gitBranch", ""))
-                if t == "user" and not e.get("isMeta") and _is_user_prompt(e.get("message")):
-                    counts["user"] += 1
-                elif t == "system":
-                    counts["system"] += 1
-                elif t == "assistant":
-                    counts["assistant"] += 1
-                    msg = e.get("message")
-                    if isinstance(msg, dict):
-                        for block in msg.get("content", []):
-                            if not isinstance(block, dict):
-                                continue
-                            if block.get("type") == "tool_use":
-                                tools[block.get("name", "?")] += 1
-                            elif block.get("type") == "text" and block.get("text", "").startswith(("Error:", "❌")):
-                                counts["errors"] += 1
-                        u = msg.get("usage", {})
-                        counts["input"] += u.get("input_tokens", 0)
-                        counts["output"] += u.get("output_tokens", 0)
-                        counts["cache_read"] += u.get("cache_read_input_tokens", 0)
-                        counts["cache_create"] += u.get("cache_creation_input_tokens", 0)
-                if e.get("subtype") == "compact_boundary":
-                    counts["compactions"] += 1
-            offset = f.tell()
-    except Exception as e:
-        # Declared recovery: keep what was read, leave the offset so the next render reads again.
-        Warn("transcript parse stopped", path, e)
-    return dict(tools), counts, meta, offset
+    for e in session.records:
+        t = e.get("type")
+        if ts := e.get("timestamp", ""):
+            meta["first_ts"] = meta["first_ts"] or ts
+            meta["last_ts"] = ts
+        if t in ("user", "system") and e.get("isMeta") and not meta["version"]:
+            meta.update(version=e.get("version", ""), cwd=e.get("cwd", ""), branch=e.get("gitBranch", ""))
+        if t == "system":
+            counts["system"] += 1
+        if e.get("subtype") == "compact_boundary":
+            counts["compactions"] += 1
+    for m in session.messages:
+        e = m["data"]
+        msg = e["message"]
+        # Not m["subtype"] == "user": a subagent's first line carries its prompt beside a
+        # tool result, which the handler calls a tool_result and the status line a prompt.
+        if e["type"] == "user" and not e.get("isMeta") and _is_user_prompt(msg):
+            counts["user"] += 1
+        elif e["type"] == "assistant":
+            counts["assistant"] += 1
+            for block in msg.get("content", []):
+                if block.get("type") == "tool_use":
+                    tools[block.get("name", "?")] += 1
+                elif block.get("type") == "text" and block.get("text", "").startswith(("Error:", "❌")):
+                    counts["errors"] += 1
+            u = msg.get("usage", {})
+            counts["input"] += u.get("input_tokens", 0)
+            counts["output"] += u.get("output_tokens", 0)
+            counts["cache_read"] += u.get("cache_read_input_tokens", 0)
+            counts["cache_create"] += u.get("cache_creation_input_tokens", 0)
+    return dict(tools), counts, meta, session.subagent
 
 
 def _merge_counts(a, b):
@@ -120,7 +112,7 @@ def _merge_meta(a, b):
 
 
 def transcript_stats_cached(path, ttl):
-    """Incrementally parse JSONL + subagents with caching.
+    """Read the transcript and its subagents through gppu.handlers, each file again only when it changed.
 
     Returns (Counter of tools, counts dict, meta dict, subagent_count).
     """
@@ -137,26 +129,27 @@ def transcript_stats_cached(path, ttl):
     subagents_dir = Path(path.removesuffix(".jsonl")) / "subagents"
     subagents = list(subagents_dir.glob("*.jsonl")) if subagents_dir.is_dir() else []
 
-    tools, counts, meta = Counter(), _new_counts(), _new_meta()
+    tools, counts, meta, spawned = Counter(), _new_counts(), _new_meta(), 0
     for fpath in [Path(path), *subagents]:
-        # Per-file offset entries: no expiration (ttl=0), invalidated by size check
+        # Per-file entries: no expiration (ttl=0), re-read whole when the file's signature changes.
+        # An empty file is one Claude Code has just created: nothing to read yet.
+        st = fpath.stat()
+        if not st.st_size:
+            continue
         file_key = f"jsonl:{SCHEMA}:{fpath}"
-        entry = _dc.get(file_key) or {"offset": 0, "tools": {}, "counts": _new_counts(), "meta": _new_meta()}
-        if entry["offset"] < fpath.stat().st_size:
-            new_tools, new_counts, new_meta, offset = _parse_from_offset(fpath, entry["offset"])
-            entry = {
-                "offset": offset,
-                "tools": dict(Counter(entry["tools"]) + Counter(new_tools)),
-                "counts": _merge_counts(entry["counts"], new_counts),
-                "meta": _merge_meta(entry["meta"], new_meta),
-            }
+        sig = [st.st_size, st.st_mtime_ns]
+        entry = _dc.get(file_key)
+        if not entry or entry["sig"] != sig:
+            new_tools, new_counts, new_meta, subagent = _read(fpath)
+            entry = {"sig": sig, "tools": new_tools, "counts": new_counts, "meta": new_meta, "subagent": subagent}
             _dc.set(file_key, entry, ttl=0)
         tools.update(entry["tools"])
         counts = _merge_counts(counts, entry["counts"])
         meta = _merge_meta(meta, entry["meta"])
+        spawned += entry["subagent"]
 
     _dc.set(session_key, {
         "ts": now, "tools": dict(tools), "counts": counts,
-        "meta": meta, "subagents": len(subagents),
+        "meta": meta, "subagents": spawned,
     }, ttl=0)
-    return tools, counts, meta, len(subagents)
+    return tools, counts, meta, spawned
