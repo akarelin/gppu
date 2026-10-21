@@ -157,7 +157,7 @@ SESSION_UID = re.compile(
 class Record:
     """A record as Linked Data holds it: gppu.ld's _Record without what Postgres fills, its id, created, updated and the
     code of its type, kept to that one shape on purpose; handlers import neither Postgres nor gppu.ld. A file's
-    `created` and `updated` are its own, as stat gives them. `type` is the
+    `created` and `updated` are its own, as stat gives them, `created` only where the stat has a birth time. `type` is the
     handler's type and `subtype` its own; `uid` is a session's own id in its harness, as Linked Data's sessions hold it;
     `ts` is when a message happened and `span` when a thing went on; `contents` are the records it holds, a folder's
     and a session's, which Linked Data gives a parent_id instead."""
@@ -205,7 +205,7 @@ class Handler:
         reads. A handler's parse adds to its type's; Handler makes every handler's parse gppu's sync, awaited inside
         an event loop and returned directly outside one.
 
-        Returns: type, subtype, name the path's name, created and updated as stat gives them, meta.size its size."""
+        Returns: what probe gives, with the handler's type and subtype."""
         record = await probe(path)
         record.type, record.subtype = cls.type, cls.subtype
         return record
@@ -262,7 +262,8 @@ class FolderHandler(Handler):
     loops over its own; an ignored one, a link, a junction or an offline file is what probe gives. A subfolder's
     modified time is when something was added to it, so the span is its files' alone.
 
-    Returns: Handler's record, with data.files, data.folders and data.bytes, what the folder directly holds; span from
+    Returns: Handler's record, with data.files, data.folders and data.bytes, the files, folders and bytes of the files
+    it directly holds, a link or a junction being neither; span from
     its files' earliest updated time to their latest; contents, the record of each thing it holds.
     """
 
@@ -274,9 +275,9 @@ class FolderHandler(Handler):
             found = await probe(member)
             handler = HANDLERS.get((found.type, found.subtype))
             record.contents.append(found if handler is None else await handler.parse(member))
-        files = [member for member in record.contents if "folder" not in (member.type, member.subtype)]
-        record.data.update(files=len(files), folders=len(record.contents) - len(files),
-                           bytes=sum(member.meta["size"] for member in files))
+        files = [member for member in record.contents if "size" in member.meta]
+        folders = [member for member in record.contents if "folder" in (member.type, member.subtype)]
+        record.data.update(files=len(files), folders=len(folders), bytes=sum(member.meta["size"] for member in files))
         record.span = cls.spanning([time for member in files if (time := cls.valid_time(member.updated))])
         return record
 
@@ -1494,13 +1495,16 @@ async def probe(path: str | Path) -> Record:
     its suffix. Awaited inside an event loop, returned directly outside one.
 
     Returns: type and subtype, which say the handler that reads it: symlink or junction, with data.target; file and
-    offline; ignored, with subtype folder or file; else the handler's. name the path's name; created and updated as
-    stat gives them; meta.size."""
+    offline; ignored, with subtype folder or file; else the handler's. name the path's name; updated as stat gives
+    it, and created where the stat has a birth time, as Windows and macOS give and Linux does not; meta.size a file's
+    size, a folder's being unknown until what it holds is counted."""
     path = Path(path).absolute()
     stat = path.stat(follow_symlinks=False)
-    record = Record(name=path.name or str(path), meta={"size": stat.st_size},
-                    created=datetime.fromtimestamp(getattr(stat, "st_birthtime", stat.st_ctime)).astimezone(),
-                    updated=datetime.fromtimestamp(stat.st_mtime).astimezone())
+    record = Record(name=path.name or str(path), updated=datetime.fromtimestamp(stat.st_mtime).astimezone())
+    if hasattr(stat, "st_birthtime"):
+        record.created = datetime.fromtimestamp(stat.st_birthtime).astimezone()
+    if kind(stat) in ("file", "offline"):
+        record.meta["size"] = stat.st_size
     match kind(stat):
         case "symlink" | "junction" as link:
             record.type, record.data["target"] = link, os.readlink(path)
