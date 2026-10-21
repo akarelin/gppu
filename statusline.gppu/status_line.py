@@ -1,0 +1,406 @@
+#!/usr/bin/env python3
+"""Claude Code 2-line status line, on gppu.
+
+Run it as the status line command; Claude Code writes its JSON to stdin:
+  python statusline.gppu/status_line.py < input.json
+
+build_stats() → {**stdin_data, enrichments} — raw merged dicts
+line1/line2: Jinja templates with pre-rendered widget values.
+Filters: c grad remaining sep tok ms ago time_left pct effort_icon counter_sum top_tools nonzero
+"""
+
+import json
+import socket
+import sys
+import time
+from collections import Counter
+from datetime import datetime, timezone
+from functools import cache
+
+from gppu import TColor, Env, Warn
+from gppu.gppu import Path, _colorize
+from jinja2 import Environment, Undefined
+
+from cache import cached, transcript_stats_cached
+from ov import ov_stats
+from stats import git_info
+from templates import (
+    CONTEXT_BAR_WIDTH, GIT_TTL, JSONL_TTL, OV_TTL, TEMPLATES, LINE1, LINE2, LINE2_INDENT,
+)
+
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+# ── Jinja filters ──────────────────────────────────────────────────────────
+
+def _ftok(n):
+    if not n:
+        return ""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}k"
+    return str(n)
+
+
+def _fms(ms):
+    if not ms or ms <= 0:
+        return ""
+    s = ms // 1000
+    m, s = divmod(s, 60)
+    if m < 60:
+        return f"{m}:{s:02d}"
+    h, m = divmod(m, 60)
+    return f"{h}:{m:02d}:{s:02d}"
+
+
+def _fago(val):
+    if not val:
+        return ""
+    if isinstance(val, str):
+        try:
+            dt = datetime.strptime(val.rstrip("Z").split(".")[0], "%Y-%m-%dT%H:%M:%S")
+        except ValueError as e:
+            Warn("unreadable timestamp", val, e)
+            return ""
+        val = time.time() - dt.replace(tzinfo=timezone.utc).timestamp()
+    s = int(val)
+    if s < 60:
+        return f"{s}s"
+    m = s // 60
+    if m < 60:
+        return f"{m}m"
+    h, m = divmod(m, 60)
+    if h < 24:
+        return f"{h}h{m:02d}m" if m else f"{h}h"
+    d, h = divmod(h, 24)
+    return f"{d}d{h}h" if h else f"{d}d"
+
+
+def _ftime_left(epoch):
+    """Whole time until an epoch: hours through 50h, then whole days."""
+    if not epoch:
+        return ""
+    try:
+        seconds = float(epoch) - time.time()
+    except (TypeError, ValueError):
+        return ""
+    if seconds <= 0:
+        return "0h"
+    hours = int(seconds // 3600)
+    if seconds > 50 * 3600:
+        return f"{hours // 24}d"
+    return f"{hours}h"
+
+
+def _fpct(val):
+    if val is None:
+        return ""
+    return str(int(float(val)))
+
+
+_EFFORT_ICONS = {
+    "disabled": "⊘",
+    "low": "·",
+    "medium": "○",
+    "high": "◔",
+    "xhigh": "●",
+    "max": "●",
+    "ultra": "●",
+}
+_EFFORT_COLORS = {
+    "xhigh": "38;5;37",
+    "ultra": "38;5;201",
+}
+
+
+def _feffort_icon(level):
+    if not level:
+        return ""
+    level = str(level).lower()
+    icon = _EFFORT_ICONS.get(level, "?")
+    color = _EFFORT_COLORS.get(level)
+    return _colorize(icon, color) if color else icon
+
+
+def _fcounter_sum(val):
+    if not val:
+        return ""
+    return str(sum(val.values()))
+
+
+# Tools read as their action, not their name: a shell prompt for the shell, an
+# open book for reading, a pencil for editing. Anything unmapped keeps its name.
+# The caret is the one text glyph here, so it is painted white on black rather
+# than inheriting whatever color wraps the group.
+_SHELL_ICON = "❯"
+_TOOL_ICONS = {
+    "Bash": _SHELL_ICON, "PowerShell": _SHELL_ICON,
+    "Read": "📖", "Edit": "✏️", "Write": "📝", "NotebookEdit": "📓",
+    "Glob": "📁", "Grep": "🔍", "Artifact": "📦", "SendUserFile": "📤",
+    "Task": "👥", "Agent": "👥", "ListAgents": "👥", "Workflow": "🔄",
+    "TaskCreate": "☑️", "TaskList": "☑️", "TaskOutput": "☑️",
+    "TaskStop": "☑️", "TaskUpdate": "☑️", "TodoWrite": "☑️",
+    "SendMessage": "💬", "SendFeedback": "💬", "AskUserQuestion": "❓",
+    "PushNotification": "🔔",
+    "WebFetch": "🌐", "WebSearch": "🌐",
+    "ToolSearch": "🧰", "Skill": "🎓", "StructuredOutput": "🧾",
+    "EnterPlanMode": "🗺️", "ExitPlanMode": "🗺️", "EnterWorktree": "⑂",
+    "CronCreate": "⏰", "CronDelete": "⏰", "CronList": "⏰",
+    "ScheduleWakeup": "⏰", "Monitor": "👁️",
+}
+
+
+def _tool_icon(name):
+    """Icon for a tool name. MCP tools carry their full server path in the name
+    (mcp__<server>__<tool>), which is unbounded, so they all read as one plug."""
+    if name.startswith("mcp__"):
+        return "🔌"
+    return _TOOL_ICONS.get(name, name)
+
+
+def _ftop_tools(tools, n=6):
+    """Top tools by call count, summed per icon so Bash and PowerShell read as one shell."""
+    if not tools or not isinstance(tools, Counter):
+        return ""
+    merged = Counter()
+    for name, count in tools.items():
+        merged[_tool_icon(name)] += count
+    return " ".join(
+        f"{_colorize(icon, '38;5;15;48;5;0') if icon == _SHELL_ICON else icon}"
+        f" {_colorize(str(c), TColor.GRAY3)}"
+        for icon, c in merged.most_common(n)
+    )
+
+
+def _fnonzero(val):
+    return str(val) if val else ""
+
+
+def _fc(val, color, prefix='', suffix=''):
+    """Colorize val with TColor name. Returns '' if val is empty."""
+    if not val:
+        return ''
+    text = f"{prefix}{val}{suffix}"
+    tc = getattr(TColor, color, None)
+    return _colorize(text, tc) if tc else text
+
+
+# Red → yellow → green ramp in the xterm-256 cube. Numbers that live on a scale
+# get a position on it rather than a hand-picked colour per threshold, so the
+# gradient is code, not config.
+_GRADIENT = (196, 202, 208, 214, 220, 226, 190, 154, 118, 82, 46)
+_REMAINING_DIM = 240
+_REMAINING_BRIGHT = 255
+_REMAINING_DANGER = 20
+_REMAINING_QUIET = 75
+
+
+def _fgrad(val, pos, lo=0, hi=1, bg=False):
+    """Colorize val by where pos sits in [lo, hi] — lo end red, hi end green."""
+    if not val:
+        return ''
+    try:
+        f = (float(pos) - float(lo)) / (float(hi) - float(lo))
+    except (TypeError, ValueError, ZeroDivisionError):
+        return str(val)
+    n = _GRADIENT[min(len(_GRADIENT) - 1, max(0, round(f * (len(_GRADIENT) - 1))))]
+    return _colorize(str(val), f"48;5;{n};38;5;16" if bg else f"38;5;{n};1")
+
+
+def _fremaining(val, left):
+    """Dim abundant headroom, brighten toward 20%, then switch to red."""
+    if not val:
+        return ''
+    try:
+        left = min(100, max(0, float(left)))
+    except (TypeError, ValueError):
+        return str(val)
+    if left <= _REMAINING_DANGER:
+        return _colorize(str(val), "48;5;196;38;5;15;1")
+    urgency = (_REMAINING_QUIET - min(_REMAINING_QUIET, left)) / (
+        _REMAINING_QUIET - _REMAINING_DANGER
+    )
+    shade = round(_REMAINING_DIM + urgency * (_REMAINING_BRIGHT - _REMAINING_DIM))
+    return _colorize(str(val), f"38;5;{shade}")
+
+
+def _fsep(val, sep='|', color='GRAY2'):
+    """Prepend colored separator if val is non-empty."""
+    if not val:
+        return ''
+    tc = getattr(TColor, color, None)
+    s = f" {_colorize(sep, tc)} " if tc else f" {sep} "
+    return s + str(val)
+
+
+class _SilentUndefined(Undefined):
+    """Undefined that returns empty/falsy instead of raising."""
+    def __str__(self):
+        return ""
+    def __bool__(self):
+        return False
+    def __iter__(self):
+        return iter([])
+    def __getattr__(self, name):
+        return self
+    def __getitem__(self, name):
+        return self
+
+_JINJA_ENV = Environment(undefined=_SilentUndefined)
+_JINJA_ENV.filters.update(
+    tok=_ftok, ms=_fms, ago=_fago, time_left=_ftime_left, pct=_fpct, effort_icon=_feffort_icon,
+    counter_sum=_fcounter_sum, top_tools=_ftop_tools, nonzero=_fnonzero, c=_fc, grad=_fgrad,
+    remaining=_fremaining, sep=_fsep,
+)
+
+
+@cache
+def _compile(template_str):
+    return _JINJA_ENV.from_string(template_str)
+
+
+def _render_template(template_str, ctx):
+    return _compile(template_str).render(ctx).strip()
+
+
+# ── Raw stats builder ───────────────────────────────────────────────────────
+
+def _home_rel(p):
+    """The path with forward slashes and the home prefix abbreviated to ~."""
+    p, home = str(Path(p)), str(Env.home)
+    return "~" + p[len(home):] if p.lower().startswith(home.lower()) else p
+
+
+def build_stats(data):
+    """Merge raw stdin data with enrichments. No extraction, no calculations."""
+    ws = data.get("workspace", {})
+    cwd = ws.get("current_dir") or data.get("cwd", "")
+    project_dir = ws.get("project_dir") or cwd
+    tools, counts, tmeta, subagent_count = transcript_stats_cached(data.get("transcript_path", ""), JSONL_TTL)
+
+    return {
+        **data,
+        "tools": tools,
+        "counts": counts,
+        "tmeta": tmeta,
+        "subagents": subagent_count,
+        "git": cached(f"git:{cwd}", GIT_TTL, lambda: git_info(cwd)) if cwd else git_info(cwd),
+        "ov": ov_stats(data.get("session_id", ""), OV_TTL),
+        "project_dir": project_dir,
+        "project_name": Path(project_dir).name if project_dir else "",
+        "project_folder": _home_rel(Path(project_dir).parent) if project_dir else "",
+        # socket's name, not Env.host: Env.host is lowercased and cut at the first dot.
+        "hostname": socket.gethostname(),
+    }
+
+
+# ── Complex formatters (internal ANSI via gppu) ─────────────────────────────
+
+def _fmt_context_bar(s):
+    ctx = s.get("context_window") or {}
+    pct_raw = ctx.get("used_percentage")
+    if pct_raw is None:
+        return ""
+    pct = int(float(pct_raw))
+    width = CONTEXT_BAR_WIDTH
+    window = ctx.get("context_window_size") or 200_000
+    usage = ctx.get("current_usage") or {}
+    # As of CC v2.1.132 context_window.total_input/output_tokens reflect current
+    # context (not cumulative), so derive segments straight from current_usage.
+    cache = usage.get("cache_read_input_tokens", 0) + usage.get("cache_creation_input_tokens", 0)
+    inp = usage.get("input_tokens", 0)
+    out = usage.get("output_tokens", 0)
+    used = cache + inp + out
+    free = max(0, window - used)
+    total = used + free or 1
+    # Floor non-zero segments at 1 cell so small input/output slices stay
+    # visible against a large (e.g. 1M) window instead of rounding to 0.
+    def cells(t): return max(1, round(width * t / total)) if t else 0
+    c_cache = cells(cache)
+    c_in = cells(inp)
+    c_out = cells(out)
+    c_free = width - c_cache - c_in - c_out
+    if c_free < 0:
+        c_cache = max(0, c_cache + c_free)
+        c_free = 0
+    pct_color = TColor.DG if pct < 50 else TColor.DY if pct < 80 else TColor.DR
+    segs = []
+    if c_cache: segs.append(_colorize("█" * c_cache, TColor.DC))
+    if c_in:    segs.append(_colorize("█" * c_in, TColor.DM))
+    if c_out:   segs.append(_colorize("█" * c_out, TColor.BY))
+    dim_sep = _colorize("│", TColor.DIM)
+    filled = dim_sep.join(segs)
+    if c_free:
+        free_block = _colorize("░" * c_free, TColor.DIM)
+        filled += (dim_sep + free_block) if segs else free_block
+    return f"{filled} {_colorize(f'{pct}%', pct_color)}"
+
+
+def _fmt_git_branch(s):
+    gi = s.get("git", {})
+    if not gi.get("branch"):
+        return ""
+    markers = []
+    if gi["dirty"]:  markers.append(_colorize("*", TColor.DR))
+    if gi["ahead"]:  markers.append(_colorize(f"↑{gi['ahead']}", TColor.BG))
+    if gi["behind"]: markers.append(_colorize(f"↓{gi['behind']}", TColor.DR))
+    if gi["stash"]:  markers.append(_colorize(f"≡{gi['stash']}", TColor.DM))
+    branch = _colorize(gi["branch"], TColor.DY)
+    return branch + (" " + "".join(markers) if markers else "")
+
+
+def _fmt_lines_changed(s):
+    cost = s.get("cost") or {}
+    a = cost.get("total_lines_added", 0)
+    r = cost.get("total_lines_removed", 0)
+    if not a and not r:
+        return ""
+    return f"{_colorize(f'+{a}', TColor.BG)}{_colorize('/', TColor.DIM)}{_colorize(f'-{r}', TColor.DR)}"
+
+
+def _fmt_cache_tokens(s):
+    usage = (s.get("context_window") or {}).get("current_usage") or {}
+    cr = usage.get("cache_read_input_tokens", 0)
+    cw = usage.get("cache_creation_input_tokens", 0)
+    if not cr and not cw:
+        return ""
+    parts = []
+    if cr: parts.append(_colorize(f"r:{_ftok(cr)}", TColor.DC))
+    if cw: parts.append(_colorize(f"w:{_ftok(cw)}", TColor.DM))
+    return _colorize("/", TColor.DIM).join(parts)
+
+
+_FORMATTERS = {
+    "context_bar":     _fmt_context_bar,
+    "git_branch":      _fmt_git_branch,
+    "lines_changed":   _fmt_lines_changed,
+    "cache_tokens":    _fmt_cache_tokens,
+}
+
+
+# ── Rendering ───────────────────────────────────────────────────────────────
+
+def _pre_render(stats):
+    """Pre-render all widget templates and formatters into string values."""
+    return {**{name: _render_template(t, stats) for name, t in TEMPLATES.items()},
+            **{name: fn(stats) for name, fn in _FORMATTERS.items()}}
+
+
+def main():
+    data = json.loads(sys.stdin.read())
+    stats = build_stats(data)
+    rendered = _pre_render(stats)
+    ctx = {**stats, **rendered}
+
+    line1 = _render_template(LINE1, ctx)
+    if line1:
+        print(line1)
+    line2 = _render_template(LINE2, ctx)
+    if line2:
+        print(f"{LINE2_INDENT}{line2}")
+
+
+if __name__ == "__main__":
+    main()
