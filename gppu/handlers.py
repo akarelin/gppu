@@ -8,18 +8,12 @@ type and subtype say which handler reads it:
     handler = HANDLERS[record.type, record.subtype]          # MarkdownHandler
     record = handler.parse('D:/Dev/gppu/README.md')
 
-Probing starts from the path's stat, and nothing is read: a file's handler is its suffix's in SUFFIXES. A link, a junction, an ignored path and an offline file are what probe gives; no handler
-reads them. A handler is a class of class methods, and `parse(path)` reads the path into a Record, what Linked Data
-holds of the thing, or a type of Linked Data's built on it, an Activity with a span or a Session; each handler says
+Probing is gppu's probe_path, from the path's stat and its name, and nothing is read: it names a folder's handler by
+its path and a file's by its suffix. A link, a junction, an ignored path and an offline file are what probe gives; no
+handler reads them. A handler is a class of class methods, and `parse(path)` reads the path into a Record, what Linked
+Data holds of the thing, or a type of Linked Data's built on it, an Activity with a span or a Session; each handler says
 what it returns. A subtype is a subclass of its type, and its parse adds to its type's. probe and parse are plain
-functions. A program adds a handler by
-subclassing and adding its suffix:
-
-    class TSVHandler(CSVHandler):
-        ...
-
-    SUFFIXES['.tsv'] = TSVHandler
-    HANDLERS[TSVHandler.type, TSVHandler.subtype] = TSVHandler
+functions.
 
 A handler reads the path it is given and nothing else: no index, no location, no fsspec. A read that fails raises.
 """
@@ -31,7 +25,6 @@ import json
 import os
 import re
 import sqlite3
-import stat as stat_module
 from collections.abc import Iterator, Mapping
 from contextlib import closing
 from copy import deepcopy
@@ -42,7 +35,7 @@ from uuid import UUID, uuid5
 
 import yaml
 
-from .gppu import Path, TimeSpan
+from .gppu import Path, TimeSpan, probe_path
 
 # Times tools write in place of a time: Windows FILETIME zero, Unix epoch zero, DOS zero, and the constant
 # Android build tools stamp on every APK member. Anything at or before DOS zero is not a time either.
@@ -59,17 +52,6 @@ LOG_BLOCK = 65536   # how much of a log's tail is read at a time
 LOG_TIMESTAMP = re.compile(
     r"^\s*[\[(]?(?P<timestamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)"
 )
-IGNORED_SUFFIXES = (".tmp", ".bak", ".swp")
-IGNORED_PREFIX = "~$"
-IGNORED_NAMES = ("Thumbs.db", ".DS_Store", "desktop.ini")
-IGNORED_FOLDERS = (
-    ".git", ".svn", "__pycache__", ".venv", "venv", "node_modules", ".idea", ".vscode",
-    ".SynologyWorking Directory", ".SynologyWorkingDirectory", "$RECYCLE.BIN", "RECYCLE.BIN",
-    "System Volume Information", "OneDriveTemp", "Cache", ".cache",
-)
-WINDOWS_SYSTEM = 4
-# Windows' FILE_ATTRIBUTE_OFFLINE and FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS: a file whose bytes are not on this host.
-OFFLINE = 0x1000 | 0x400000
 Harness = Literal[
     "chatgpt",
     "cx",
@@ -1452,75 +1434,33 @@ class SessionFolderHandler(FolderHandler):
                 yield SessionHandler.parse(member)
 
 
-# What probe reads off a path: a file's handler by its suffix, a folder's by its path; a program adds its own.
-SUFFIXES: dict[str, type[Handler]] = {
-    ".sqlite": SqliteHandler, ".sqlite3": SqliteHandler, ".db": SqliteHandler, ".md": MarkdownHandler,
-    ".csv": CSVHandler, ".log": LogHandler, ".eml": EmailHandler, ".msg": EmailHandler, ".jsonl": SessionHandler,
-}
-FOLDERS: dict[str, type[Handler]] = {
-    ".hermes": SessionFolderHandler, ".gemini/antigravity": SessionFolderHandler,
-    ".gemini/antigravity-cli": SessionFolderHandler, ".gemini/antigravity-cli/brain/*": SessionFolderHandler,
-}
 # The handler that reads a record of a type and subtype; a link, a junction, an offline file or an ignored path has none.
 HANDLERS: dict[tuple[str, str | None], type[Handler]] = {
     (handler.type, handler.subtype): handler
-    for handler in (FolderHandler, FileHandler, *SUFFIXES.values(), *FOLDERS.values())
+    for handler in (FolderHandler, FileHandler, SqliteHandler, MarkdownHandler, CSVHandler, LogHandler, EmailHandler,
+                    SessionHandler, SessionFolderHandler)
 }
 
 
-def kind(stat: os.stat_result) -> str:
-    """What the stat says a path is: a symlink, a junction, an offline file, a folder or a file."""
-    if stat_module.S_ISLNK(stat.st_mode):
-        return "symlink"
-    if getattr(stat, "st_reparse_tag", 0) == getattr(stat_module, "IO_REPARSE_TAG_MOUNT_POINT", None):
-        return "junction"
-    if getattr(stat, "st_file_attributes", 0) & OFFLINE:
-        return "offline"
-    if stat_module.S_ISDIR(stat.st_mode):
-        return "folder"
-    if stat_module.S_ISREG(stat.st_mode):
-        return "file"
-    raise ValueError("neither a folder nor a file")
-
-
-def ignored(path: Path, stat: os.stat_result) -> bool:
-    """FileIndexer's global ignore rules: a name, a suffix or a prefix, and a folder's name or its Windows system
-    attribute. A folder is not ignored for starting with a dot or for being hidden; a root, with no name, never is."""
-    folder = stat_module.S_ISDIR(stat.st_mode)
-    return bool(path.name) and (path.name in IGNORED_NAMES or path.suffix in IGNORED_SUFFIXES
-                                or path.name.startswith(IGNORED_PREFIX)
-                                or folder and (path.name in IGNORED_FOLDERS
-                                               or bool(getattr(stat, "st_file_attributes", 0) & WINDOWS_SYSTEM)))
-
-
 def probe(path: str | Path) -> Record:
-    """What info gives of a path: its record from its stat and its name, nothing read. The stat says what the path
-    is; a link or a junction is that and its target, an offline file is a file whose bytes are not on this host, and
-    an ignored path is ignored. A folder's handler is the one FOLDERS gives its path, a file's the one SUFFIXES gives
-    its suffix; an empty file, one a harness has only just made, is a file. Probe and parse are plain functions: nothing in them can be awaited.
+    """gppu's probe_path as a Record: nothing read. A path probe_path gives a handler is that handler's type and
+    subtype; a link, a junction, an offline file and an ignored path are fs_node with that as subtype, and no handler
+    reads them.
 
-    Returns: type and subtype, which say the handler that reads it: fs_node and symlink or junction, with
-    data.target; fs_node and offline; fs_node and ignored; else the handler's. name the path's name; updated as stat gives
-    it, and created where the stat has a birth time, as Windows and macOS give and Linux does not; meta.size a file's
-    size, a folder's being unknown until what it holds is counted."""
+    Returns: type and subtype; name the path's name; updated, and created where the stat has a birth time, in local
+    time; meta.size a file's size; data.target a link's or a junction's target."""
     path = Path(path).absolute()
-    stat = path.stat(follow_symlinks=False)
-    record = Record(name=path.name or str(path), updated=datetime.fromtimestamp(stat.st_mtime).astimezone())
-    if hasattr(stat, "st_birthtime"):
-        record.created = datetime.fromtimestamp(stat.st_birthtime).astimezone()
-    if kind(stat) in ("file", "offline"):
-        record.meta["size"] = stat.st_size
-    match kind(stat):
-        case "symlink" | "junction" as link:
-            record.type, record.subtype, record.data["target"] = "fs_node", link, os.readlink(path)
-        case "offline":
-            record.type, record.subtype = "fs_node", "offline"
-        case _ if ignored(path, stat):
-            record.type, record.subtype = "fs_node", "ignored"
-        case "folder":
-            handler = next((handler for pattern, handler in FOLDERS.items() if path.match(pattern)), FolderHandler)
-            record.type, record.subtype = handler.type, handler.subtype
-        case "file":
-            handler = SUFFIXES.get(path.suffix.casefold(), FileHandler) if stat.st_size else FileHandler
-            record.type, record.subtype = handler.type, handler.subtype
+    probed = probe_path(path)
+    record = Record(name=path.name or str(path), updated=probed["modified"].astimezone())
+    if probed["created"]:
+        record.created = probed["created"].astimezone()
+    if probed["size"] is not None:
+        record.meta["size"] = probed["size"]
+    if probed["target"] is not None:
+        record.data["target"] = str(probed["target"])
+    if probed["handler"]:
+        handler = next(handler for handler in HANDLERS.values() if handler.__name__ == probed["handler"])
+        record.type, record.subtype = handler.type, handler.subtype
+    else:
+        record.type, record.subtype = "fs_node", probed["status"]
     return record

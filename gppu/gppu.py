@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pprint
-from turtle import st
 import yaml
 from yaml.dumper import Dumper
 from yaml.representer import SafeRepresenter
@@ -41,8 +40,6 @@ from string import Template
 from contextlib import contextmanager
 
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
-
-from gppu.handlers import SessionFolderHandler
 try: _ver_full = _pkg_version('gppu')
 except PackageNotFoundError: _ver_full = '0.0.0'
 
