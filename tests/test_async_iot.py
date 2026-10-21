@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from gppu import AsyncApp, Env, EventLoopBridge, HTTPControl, JSONHTTPControl, SerializedControl, mixin_Mqtt
+from gppu import AsyncApp, Env, mixin_EventLoopBridge, HTTPControl, JSONHTTPControl, SerializedControl, mixin_Mqtt
 from gppu.iot import aiohttp
 
 
@@ -32,7 +32,7 @@ class _FiniteApp(AsyncApp):
     self.seen.append(3)
 
 
-class _ExternalLoop(EventLoopBridge):
+class _ExternalLoop(mixin_EventLoopBridge):
   def __init__(self, loop: asyncio.AbstractEventLoop): self.loop = loop
   def _get_loop(self) -> asyncio.AbstractEventLoop: return self.loop
 

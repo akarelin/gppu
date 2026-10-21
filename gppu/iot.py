@@ -34,7 +34,7 @@ try:
   import aiohttp
 except ImportError:
   aiohttp = None  # type: ignore[assignment]
-from .app import AsyncApp, AsyncSubmission, EventLoopBridge
+from .app import AsyncApp, AsyncSubmission, mixin_EventLoopBridge
 from .gppu import _DC, _DC_BASE_TYPE_MAP, y2list, y2path, y2topic, y2uri
 
 
@@ -305,9 +305,9 @@ class MqttApp(mixin_Mqtt, AsyncApp):
 
 
 # $$
-# $$        Serialized controls (EventLoopBridge lives in gppu.app)
+# $$        Serialized controls (mixin_EventLoopBridge lives in gppu.app)
 # $$
-class SerializedControl(EventLoopBridge):
+class SerializedControl(mixin_EventLoopBridge):
   """Runs controls on one daemon loop, serialized by a per-instance lock."""
 
   _control_loop: ClassVar[asyncio.AbstractEventLoop | None] = None

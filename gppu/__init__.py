@@ -145,7 +145,7 @@ from .iot import (
     MqttApp,
 
     # event-loop and device-control bridges
-    EventLoopBridge,
+    mixin_EventLoopBridge,
     SerializedControl,
     HTTPControl,
     JSONHTTPControl,
@@ -224,7 +224,7 @@ __all__ = [
     'mixin_Mqtt', 'MqttApp', 'AppService',
 
     # event-loop and device-control bridges
-    'EventLoopBridge', 'SerializedControl', 'HTTPControl', 'JSONHTTPControl',
+    'mixin_EventLoopBridge', 'SerializedControl', 'HTTPControl', 'JSONHTTPControl',
 
     # lifecycle: sync YMRO (AppDaemon/Y2)
     'YStepper', 'mixin_Stepper',

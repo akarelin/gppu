@@ -390,7 +390,7 @@ class CliApp(App):
 type AsyncSubmission[T] = Future[T] | asyncio.Task[T]
 
 
-class EventLoopBridge:
+class mixin_EventLoopBridge(_mixin):
   """Schedules coroutines on an externally owned loop; ``call`` blocks off-loop."""
 
   def schedule[T](self, coroutine: Coroutine[Any, Any, T], /) -> AsyncSubmission[T]:
@@ -413,7 +413,7 @@ class EventLoopBridge:
   @staticmethod
   def _schedule[T](loop: asyncio.AbstractEventLoop, coroutine: Coroutine[Any, Any, T], /) -> AsyncSubmission[T]:
     try:
-      if EventLoopBridge._on_loop(loop): return loop.create_task(coroutine)
+      if mixin_EventLoopBridge._on_loop(loop): return loop.create_task(coroutine)
       return asyncio.run_coroutine_threadsafe(coroutine, loop)
     except BaseException:
       coroutine.close()
@@ -531,7 +531,7 @@ class mixin_Rest:
 
 
 # region async application
-class AsyncApp(App, EventLoopBridge):
+class AsyncApp(App, mixin_EventLoopBridge):
   """Application base for long-lived asyncio services.
 
   Override ``setup()`` for synchronous setup during construction with config ready,
@@ -542,7 +542,7 @@ class AsyncApp(App, EventLoopBridge):
   On that loop, ``await app.stop()`` cancels spawned tasks, not ``start()`` itself.
   Put resource cleanup in the owning coroutine's ``finally`` or async context;
   ``run()`` does not call ``stop()`` automatically.
-  The app is an ``EventLoopBridge`` onto its own running loop, so off-loop threads
+  The app is an ``mixin_EventLoopBridge`` onto its own running loop, so off-loop threads
   ``schedule``/``submit``/``call`` work onto it.
   """
 
