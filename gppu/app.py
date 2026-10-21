@@ -1,7 +1,7 @@
 """gppu.app — the apps with steps. See docs/app.md.
 
 Env, ``_Base``, ``App`` and ``CliApp``, the regular apps with no steps, are in gppu.gppu. Here ``AsyncApp`` composes
-``_App`` with ``mixin_Stepper``, the YMRO (Y2 Method Resolution Order) init, load and start steps; ``APIApp`` serves HTTP
+``_Base`` with ``mixin_Stepper``, the YMRO (Y2 Method Resolution Order) init, load and start steps; ``APIApp`` serves HTTP
 on it. For Textual, use ``gppu.tui.TUIApp``; for MQTT, ``gppu.iot.MqttApp``.
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
 from typing import Any, final
 
-from .gppu import App, CliApp, Debug, Env, _App, _Base, _Config, _DC, _mixin, glob, glob_dict, glob_int, glob_list, mixin_Config
+from .gppu import App, CliApp, Debug, Env, _Base, _DC, _mixin, glob, glob_dict, glob_int, glob_list, mixin_Config
 
 _trace_mro = False
 
@@ -186,7 +186,7 @@ class mixin_EventLoopBridge(_mixin):
 
 
 # region async application
-class AsyncApp(_App, mixin_Stepper, mixin_EventLoopBridge):
+class AsyncApp(_Base, mixin_Stepper, mixin_EventLoopBridge):
   """Application base for long-lived asyncio services, on the YMRO steps.
 
   Construction runs init; ``run()`` runs init (light loading, with the configuration ready),

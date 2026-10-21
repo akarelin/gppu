@@ -1412,7 +1412,6 @@ class mixin_Logger(_mixin):
 Debug, Info, Warn, Error, Dump = Logger.Debug, Logger.Info, Logger.Warn, Logger.Error, Logger.Dump
 
 
-class _Logger(mixin_Logger): pass
 # endregion
 
 
@@ -1504,19 +1503,19 @@ class mixin_Config(_mixin):
   def my_dict(self, path: str | y2path, default: dict = {}) -> dict: return self._config_data() if path == '' else deepget_dict(path, self._config_data(), default=default or {})
 
 
-class _Config(mixin_Config):
-  """``_my`` is a copy of Env, which loads the program's default environment on its first read, as for a script."""
+class _Base(mixin_Logger, mixin_Config):
+  """An object with its log and its configuration: named as given, or after the program, and its ``_my`` a copy of
+  Env, which loads the program's default environment on its first read, as for a script. Env and the apps are these."""
   _base_path: Path
 
-  def __init__(self, **kw) -> None:
+  def __init__(self, name: str = '', **kw) -> None:
     super().__init__(**kw)
+    self.name = name or Env.name
     self._my = deepcopy(Env._data())
     self._base_path = Path('.')
 
   # def my_path(self, path) -> Path: return self._base_path / self.my(path)
 
-
-class _Base(_Logger, _Config): pass
 # endregion
 
 
@@ -1670,21 +1669,13 @@ glob_dict = Env.glob_dict
 
 
 # region App
-class _App(_Base):
-  """Base class with logging and configuration; named after the program, as Env is, unless given a name."""
-
-  def __init__(self, name: str = '', **kw) -> None:
-    super().__init__(**kw)
-    self.name = name or Env.name
-
-
-class App(_App, _DC):
+class App(_Base, _DC):
   """An app with the data class: what it is constructed with is its data. It has no entry method and no steps;
   construct it and call what the app defines. Read settings with ``self.my(...)``. See docs/app.md."""
   pass
 
 
-class CliApp(_App):
+class CliApp(_Base):
   """Runs ``main`` once. The command line is already over the configuration, as for every program, ``--since 3d``;
   ``main`` is the action; what it returns is printed as JSON on stdout, logs go to stderr.
 

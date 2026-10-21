@@ -15,9 +15,7 @@ from .gppu import (
     glob_list,
     glob_dict,
     mixin_Config,
-    _Config,
     _Base,
-    _App,
     App,
     CliApp,
 )
@@ -124,7 +122,6 @@ from .gppu import (
     mixin_Logger,
 
     # Foundation classes
-    _Logger,
 )
 
 from .iot import (
@@ -204,7 +201,7 @@ __all__ = [
     'glob', 'glob_int', 'glob_list', 'glob_dict',
 
     # Foundation classes
-    '_Logger', '_Config', '_Base', '_App', 'App', 'CliApp', 'AsyncApp', 'APIApp', 'mixin_Rest',
+    '_Base', 'App', 'CliApp', 'AsyncApp', 'APIApp', 'mixin_Rest',
 
     # y2xxx classes
     'y2list', 'y2path', 'y2uri', 'y2topic', 'y2slug', 'y2eid',
