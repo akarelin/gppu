@@ -336,7 +336,7 @@ class Entity(_Record, table=True):
 
 class Knowledge(_Record, table=True):
     """Content that is knowledge: a knowledge graph, an ontology, a constrained vocabulary, the glossary, and what each holds by
-    `parent_id`. Its `subtype` says which; what a model proposes is `new` until a person reviews it."""
+    `parent_id`. It has no subtype until there is a reason for one; what a model proposes is `new` until a person reviews it."""
 
 
 class Collection(_Record, table=True):
