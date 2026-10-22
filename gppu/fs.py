@@ -27,6 +27,7 @@ import json
 import os
 import posixpath
 import re
+import ctypes
 import shutil
 import socket
 import sqlite3
@@ -911,6 +912,9 @@ CACHE = Path('C:/.cache') if os.name == 'nt' else Path.home() / '.cache'
 # in 958 MB), well above every other index on alex-pc, the largest of which held 27 MB.
 INDEX_LIMIT = 64 * 2**20
 
+# The filesystems a Linux host mounts another host's folders with: such a folder is not this host's to write an index in.
+NETWORK_FILESYSTEMS = ('cifs', 'smb3', 'smbfs', 'nfs', 'nfs4', 'afpfs', 'fuse.sshfs')
+
 
 # A folder's address -> the index it holds, asked of its store once in this process: every gppufs here reads it, and
 # records the index it makes, moves or removes.
@@ -946,6 +950,24 @@ def _excluded_from_git(folder: str) -> None:
 def _scratch(prefix: str) -> tempfile.TemporaryDirectory:
   CACHE.mkdir(parents=True, exist_ok=True)
   return tempfile.TemporaryDirectory(prefix=prefix, dir=CACHE)
+
+
+def _remote(root: str) -> bool:
+  """Whether a local path is on another host: a UNC share, a Windows drive letter mapped to one, or a folder a Linux host
+  mounts over the network, such as trix's /mnt/S1/Lake. A host without /proc, macOS, has its mounts taken as its own."""
+  if root.startswith('//'):
+    return True
+  if os.name == 'nt':
+    drive = PureWindowsPath(root).drive
+    return bool(drive) and ctypes.windll.kernel32.GetDriveTypeW(drive + '\\') == 4   # DRIVE_REMOTE
+  mounts = Path('/proc/self/mounts')
+  if not mounts.exists():
+    return False
+  here = os.path.realpath(root)
+  points = [line.split()[1:3] for line in mounts.read_text(encoding='utf-8').splitlines()]
+  kind = max(((point.replace('\\040', ' '), kind) for point, kind in points
+              if here == point or here.startswith(point.rstrip('/') + '/')), key=lambda found: len(found[0]), default=('', ''))[1]
+  return kind in NETWORK_FILESYSTEMS
 
 
 def _signature(path: str | None) -> tuple[int, int] | None:
@@ -1049,7 +1071,7 @@ class GppuFileSystem(AbstractFileSystem):
     self._index = index              # the index that answers first; the file beside the location is a cache
     # Only the host a location belongs to writes its indexes: an index file is written only on this host's own disk. Another
     # host's share and every other store hold theirs in memory for this instance, read from the store and never written back.
-    self._cacheless = not isinstance(self.fs, LocalFileSystem) or self.root.startswith('//')
+    self._cacheless = not isinstance(self.fs, LocalFileSystem) or _remote(self.root)
     self._memory: dict[str, sqlite3.Connection] = {}   # a remote store's index, held for this instance
     self._working: dict[str, list] = {}   # an index's path -> [its copy in the cache, the file it was copied from, changed]
     self._scratch: tempfile.TemporaryDirectory | None = None   # where the copies are, made at the first write
@@ -1368,6 +1390,8 @@ class GppuFileSystem(AbstractFileSystem):
         raise
     try:
       os.replace(pending, path)
+    except PermissionError as error:
+      raise PermissionError(f'{path}: not replaced; on Windows a process holding it open refuses it') from error
     finally:
       pending.unlink(missing_ok=True)
     self._working[path] = [copy, _signature(path), False, owner]
