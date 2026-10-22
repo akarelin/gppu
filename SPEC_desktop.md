@@ -25,12 +25,12 @@ The catalog's API is `/lake/catalog` for now. Its methods are specialized to wor
 This phase is successful when these work in the virtual filesystem:
 
 1. Rich information: a folder of sessions on a local disk shows each session's number of messages, its start and its span.
-2. SharePoint libraries are browsed from the index, without touching SharePoint.
+2. SharePoint libraries are browsed from the index, without touching SharePoint, with each file's content type and the rest of its columns, a statement's period and a tax form's year among them.
 3. Projects and Work, stored partitioned by date, are shown from the index, which sees the data for what it is regardless of how it is laid out on disk: a project or task kept on several days is one project. Projects and Work show a well-structured view however messy they are inside, with GitHub repositories and hidden files among them, and projects kept in RAR archives show correctly.
 
 An entry is shown by its own name: a project or task without the date leading it. Its time span is an attribute of its own, which a name may also carry, as a session's does.
 
-Any file manager that opens the virtual filesystem sees roughly the same thing: nothing is done in the file manager, such as Directory Opus.
+Any file manager that opens the virtual filesystem sees roughly the same thing: nothing is done in the file manager, such as Directory Opus, beyond configuring its lister to show the columns it reads from the catalog's API.
 
 ## Regions
 
