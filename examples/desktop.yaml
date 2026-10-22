@@ -2,5 +2,7 @@
 mount_point: 'G:'
 # Linked Data's API: every location it knows that this host reaches is a source too, named as Linked Data names it.
 ld: 'https://api.karel.in/ld/v1'
+# The catalog's API (gppu.catalog), shown as the Catalog folder: Linked Data's locations, and in each what the catalog holds there.
+catalog: 'https://api.karel.in'
 sources:
   Lake: '\\s1\Lake'

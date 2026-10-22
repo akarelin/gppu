@@ -5,9 +5,10 @@ Requirements: [SPEC_desktop.md](SPEC_desktop.md). This phase is done when its th
 ## Use cases
 - done: rich information: a session the handler read is shown by its handler's name (start, turns, length, topic), its span the entry's created and modified times; proven on the virtual filesystem over `C:\Users\Alex\.claude\projects\D--Dev-CRAP`, read from the local index after a FileIndexer handlers run, a session read back by its shown name. On G: Windows' Created column is left at 1970: the wrapper does not pass the creation time
 - in progress: SharePoint libraries browsed from the index, without touching SharePoint
-  - The index exists: the Lake catalog (pg.karel.in `files`, schema `lake`) holds source `sharepoint`, 162,802 entries read through gppu's `SharePointFileSystem` on 2026-09-18 with each item's content type and columns; each library is a catalog location, its entries a tree by id (`entity.parent_uid`). Linked Data holds the libraries as locations with the catalog's location id in `meta.lake_id`.
-  - Browsing works by ids: a location, then an entry's children by the entry's id; a uri is only resolved into an id.
-  - Open: the API that serves the catalog to the virtual filesystem. The September Lake API (stack admin, `admin-ui-prior-lake`) serves entries and children by id but only inside stack admin's network; the Lake's API (`gppu.lake`, `api.karel.in/lake`) has no stack; Linked Data's files API does not read the catalog. A store that is not this host's disk gets no index file, so the catalog, not a file, is the index here.
+  - The index: the Lake catalog (pg.karel.in `files`, schema `lake`) holds source `sharepoint`, 162,802 entries read on 2026-09-18 with each item's content type and columns, a tree by id (`entity.parent_uid`); Linked Data holds the libraries as locations with the catalog's id in `meta.lake_id`.
+  - Done: `gppu.catalog`, the catalog's API at `/catalog`, served by stack lake beside `/lake` (CRAP `Systems/lake/serve.py`); a folder's entries stream a line at a time from a server-side cursor, so the largest folder, 56,297 entries, is never held whole. `CatalogFileSystem` browses it by ids, and the desktop shows it as the Catalog folder (`examples/desktop_mount.py`).
+  - Proven in-process on the virtual filesystem over the real catalog: `Catalog/M365/Karelin/sharepoint/sites/Suntrust/Statements` lists its files with SharePoint's Created and Modified.
+  - Next: deploy stack lake's new image and trix's `api` nginx site, then prove it on the virtual filesystem against `api.karel.in/catalog`.
 - not started: folders partitioned by date, such as Projects and Work, shown as stored, with a filter by date
 
 ## Done
