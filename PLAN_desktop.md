@@ -10,7 +10,7 @@ Requirements: [SPEC_desktop.md](SPEC_desktop.md). This phase is done when its th
   - Proven in-process on the virtual filesystem over the real catalog: `Catalog/M365/Karelin/sharepoint/sites/Suntrust/Statements` lists its files with SharePoint's Created and Modified.
   - Next: deploy stack lake's new image, then prove it on the virtual filesystem against `api.karel.in/lake/catalog`.
 - done: Projects and Work shown from the index, each task or project once by its own name with its span; proven on the virtual filesystem and on G: over `D:\Work` and `D:\Projects`. gppufs reads them with `WorkFolderHandler` and `ProjectsFolderHandler` on `PartitionedFolderHandler`, which say which folders are date partitions and a thing's own name; a task's archived stages are part of it, ignored entries are left out, and a file a task keeps on several days is shown as its latest
-- next for Work and Projects: their spans from their files, which a FileIndexer handlers run over them gives; until then a task's span is its folders' created and modified times
+  - A task's or project's span is that of its files in each place it is kept, one aggregate in the index (`GppuFileSystem.spans`), after FileIndexer indexed Work and Projects at the files level (2026-10-22); a folder the index has listed is answered from the index alone. G: gives Windows the span's start as the creation time.
 
 ## Done
 - Complete: recover prior work and verify fsspec and Windows integration.
