@@ -69,6 +69,28 @@ def test_live_and_sqlite_return_all_metadata(tmp_path, monkeypatch):
   assert cached.ls(detail=False) == [row['name'] for row in cached.ls()]
 
 
+def test_stats_are_aggregated_in_the_index(tmp_path, monkeypatch):
+  """A location's statistics are the index's aggregate: nothing is listed or read into memory, an ignored entry is not counted,
+  and a location never indexed holds nothing and is given no index."""
+  folder = tmp_path / 'notes'
+  folder.mkdir()
+  (folder / 'note.md').write_text('Text', encoding='utf-8')
+  session(folder / 'session.jsonl')
+  (tmp_path / 'added.txt').write_text('added')
+  (tmp_path / '.DS_Store').write_bytes(b'ignored')
+  fs = GppuFileSystem(tmp_path)
+  fs.ls(recurse=True)
+  monkeypatch.setattr(GppuFileSystem, 'ls_sync', no_live)
+  stats = fs.stats()
+  assert (stats['folders'], stats['files'], stats['notes'], stats['sessions']) == (1, 3, 1, 1)
+  assert stats['bytes'] == sum(path.stat().st_size for path in (folder / 'note.md', folder / 'session.jsonl', tmp_path / 'added.txt'))
+  assert stats['first'] <= stats['last'] and stats['seen'] is None
+  empty = tmp_path.parent / f'{tmp_path.name}-empty'
+  empty.mkdir()
+  assert GppuFileSystem(empty).stats() == dict(folders=0, files=0, bytes=0, notes=0, sessions=0, first=None, last=None, seen=None)
+  assert not index(empty).exists()
+
+
 def test_ls_identifies_without_probing_and_refresh_probes(tmp_path, monkeypatch):
   folder = tmp_path / 'notes'
   folder.mkdir()

@@ -995,6 +995,14 @@ class GppuFileSystem(AbstractFileSystem):
   protocol = 'gppu'
   cachable = False
   _index_name = re.compile(r'^\..+\.gppufs\.sqlite(?:-(?:journal|wal|shm))?$')
+  _stats = f'''SELECT count(*) FILTER (WHERE kind='folder'), count(*) FILTER (WHERE kind='file'),
+      coalesce(sum(size) FILTER (WHERE kind='file'), 0), min(mtime) FILTER (WHERE kind='file'), max(mtime) FILTER (WHERE kind='file'),
+      max(probed), count(*) FILTER (WHERE kind='file' AND path LIKE '%.md'), count(*) FILTER (WHERE session)
+    FROM (SELECT path, metadata->>'$.gppu.type' AS kind, metadata->>'$.gppu.size' AS size, metadata->>'$.mtime' AS mtime,
+        metadata->>'$.gppu.probed_at' AS probed,
+        EXISTS (SELECT 1 FROM json_each(metadata, '$.gppu.handlers') WHERE value='session') AS session
+      FROM gppufs_entries WHERE path<>'.'
+        AND coalesce(metadata->>'$.gppu.record.subtype', '') NOT IN ({", ".join(f"'{s}'" for s in handlers.IGNORED)}))'''
 
   def __init__(self, location: str | Path, locations: Mapping[str, Mapping[str, str]] | None = None,
                index: GppuIndex | None = None, **storage_options: Any) -> None:
@@ -1849,6 +1857,19 @@ class GppuFileSystem(AbstractFileSystem):
     nothing. The listing is None until the folder was listed."""
     with self._lock:
       return self._stored(self._key(path))
+
+  def stats(self) -> dict[str, Any]:
+    """What this location's own index holds, aggregated in the index and touching no filesystem: its folders and files, the
+    files' bytes, the first and the last modified time among them, when the latest entry was probed, its notes (.md) and its
+    sessions (what the session handler read). An ignored entry is not counted, as a row's totals do not count it; an index
+    below the location owns its subtree and is not counted here."""
+    with self._lock, self._database('.') as database:
+      row = database.execute(self._stats).fetchone() if database is not None else (0, 0, 0, None, None, None, 0, 0)
+    folders, files, size, first, last, seen, notes, sessions = row
+    return dict(folders=folders, files=files, bytes=size, notes=notes, sessions=sessions,
+                first=None if first is None else datetime.fromtimestamp(first, timezone.utc).astimezone(),
+                last=None if last is None else datetime.fromtimestamp(last, timezone.utc).astimezone(),
+                seen=None if seen is None else datetime.fromisoformat(seen))
 
   def info_sync(self, path: str | Path | None = None, refresh: bool = False) -> dict:
     """``info`` on the calling thread."""

@@ -8,6 +8,7 @@ configuration into gppu's Env: `drives`, where a Windows host's WSL mounts its d
                 GppuCatalog takes them: the Locations and Containers FileIndexer and every gppufs user reach files through
   filesystem()  the GppuFileSystem of a location this host reaches, its index beside it: a listing reads the folder and keeps what
                 gppufs's handlers read there, a lookup answers from it"""
+import socket
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
@@ -81,7 +82,11 @@ def catalog(**location_types: Any) -> GppuCatalog:
 
 def here(catalog: GppuCatalog, uri: str) -> Path | None:
     """The folder on this host a location's file uri names, as the catalog's FileSystem reaches it (Drives in a Windows host's WSL);
-    none when it names another host or is not a file uri."""
+    none when it names another host or is not a file uri. Which host is decided from the uri alone, as FileIndexer 0.1.3 decided it:
+    another host's share is that host's location, and asking it from here waits out the network for every share that does not
+    answer."""
+    if urlsplit(uri).netloc.casefold() not in ('', socket.gethostname().split('.')[0].casefold()):
+        return None
     try:
         return catalog.location_types['file']().local(uri)
     except ValueError:
@@ -90,7 +95,7 @@ def here(catalog: GppuCatalog, uri: str) -> Path | None:
 
 def reached(catalog: GppuCatalog) -> dict[str, dict[str, str]]:
     """The folders on this host the catalog's locations are, as GppuFileSystem's locations map takes them: what addresses its entries.
-    Each is looked for once, a share that does not answer included, so a caller reads it once and gives it to filesystem()."""
+    Each is looked for once, so a caller reads it once and gives it to filesystem()."""
     return {full_path(path).as_posix(): {'location': uid, 'canonical': row['canonical']}
             for uid, row in catalog.locations.items() if (path := here(catalog, row['canonical'])) and path.is_dir()}
 
