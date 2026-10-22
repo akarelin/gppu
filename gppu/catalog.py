@@ -193,7 +193,7 @@ class CatalogFileSystem(AbstractFileSystem):
     def _get(self, route: str, **params: str):
         r = self.client.get(f"/lake/catalog{route}", params=params)
         if r.status_code == 404:
-            raise FileNotFoundError(r.json()['error'])
+            raise FileNotFoundError(f'{route}: {r.text}')
         r.raise_for_status()
         return r
 
@@ -239,7 +239,7 @@ class CatalogFileSystem(AbstractFileSystem):
             listed = {}
             with self.client.stream("GET", f"/lake/catalog{route}") as r:
                 if r.status_code == 404:
-                    raise FileNotFoundError(json.loads(r.read())['error'])
+                    raise FileNotFoundError(f'{route}: {r.read().decode()}')
                 r.raise_for_status()
                 for line in r.iter_lines():
                     row = json.loads(line)
