@@ -1012,6 +1012,15 @@ class GppuFileSystem(AbstractFileSystem):
   _largest = '''SELECT top FROM (SELECT substr(path, 1, instr(path, '/') - 1) AS top,
         sum(length(metadata) + coalesce(length(children), 0)) AS held FROM gppufs_entries WHERE instr(path, '/') > 0 GROUP BY top)
     WHERE top IN (SELECT path FROM gppufs_entries WHERE metadata->>'$.type' = 'directory') ORDER BY held DESC LIMIT 1'''
+  # A folder's rows moved from the owner's index into the folder's own, their paths and the paths in their listings made
+  # relative to the folder (`_split`).
+  _moved = '''INSERT INTO gppufs_entries SELECT at, json_set(metadata, '$.name', at, '$.gppu.path', at),
+      CASE WHEN children IS NULL THEN NULL ELSE (SELECT json_group_array(json(json_set(value, '$.path',
+        CASE WHEN value->>'$.path' = :here THEN '.' ELSE substr(value->>'$.path', :cut) END)))
+        FROM (SELECT value FROM json_each(children) ORDER BY key)) END
+    FROM (SELECT CASE WHEN path = :here THEN '.' ELSE substr(path, :cut) END AS at, metadata, children
+      FROM owner.gppufs_entries WHERE path = :here OR substr(path, 1, :cut - 1) = :prefix) WHERE true
+    ON CONFLICT(path) DO UPDATE SET metadata=excluded.metadata, children=excluded.children'''
   # The folders below that hold an index of their own: a listing here names them, and their rows are in their own index.
   _nested = '''SELECT DISTINCT child.value->>'$.path' FROM gppufs_entries, json_each(gppufs_entries.children) AS child
     WHERE child.value->>'$.type' = 'directory' AND child.value->>'$.path' NOT IN (SELECT path FROM gppufs_entries)'''
@@ -1404,8 +1413,8 @@ class GppuFileSystem(AbstractFileSystem):
     """No index past INDEX_LIMIT: while owner's holds more, the folder directly below it holding the most of it gets an
     index of its own (`_split`), and the same holds again in that one, so however large a folder, an index is larger
     than the limit only by one folder's own entries. Only an index this host writes is bounded."""
-    if self._cacheless:
-      return
+    if self._database_path(self._path(owner)) not in self._working:
+      return   # an index this instance holds in memory, or has not written
     while True:
       with self._database(owner) as database:
         if database is None:
@@ -1423,19 +1432,14 @@ class GppuFileSystem(AbstractFileSystem):
     made its. The listing above it still names it, which is how `stats` finds the folders below that hold their own index.
     The new index is recorded in `_INDEXES` as gppufs makes it."""
     here = self._relative(folder, owner)
-    with self._database(owner) as database:
-      rows = database.execute('SELECT path, metadata, children FROM gppufs_entries WHERE path=? OR substr(path,1,?)=?',
-                              (here, len(here) + 1, here + '/')).fetchall()
-    moved = []
-    for path, metadata, children in rows:
-      at = self._relative(self._absolute(path, owner), folder)
-      value = json.loads(metadata)
-      value['name'] = value['gppu']['path'] = at
-      moved.append((at, json.dumps(value), children if children is None else json.dumps([
-        {**child, 'path': self._relative(self._absolute(child['path'], owner), folder)} for child in json.loads(children)])))
+    with self._database(owner, write=True):
+      pass   # owner's copy in the cache, which the rows move from inside SQLite, none of them read into memory
     with self._database(folder, write=True) as database:
-      database.executemany('INSERT INTO gppufs_entries VALUES (?, ?, ?) '
-        'ON CONFLICT(path) DO UPDATE SET metadata=excluded.metadata, children=excluded.children', moved)
+      database.commit()
+      database.execute('ATTACH DATABASE ? AS owner', (self._working[self._database_path(self._path(owner))][0],))
+      database.execute(self._moved, dict(here=here, cut=len(here) + 2, prefix=here + '/'))
+      database.commit()
+      database.execute('DETACH DATABASE owner')
     with self._database(owner, write=True) as database:
       database.execute('DELETE FROM gppufs_entries WHERE path=? OR substr(path,1,?)=?', (here, len(here) + 1, here + '/'))
       database.commit()
