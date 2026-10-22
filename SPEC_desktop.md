@@ -10,4 +10,6 @@ Browse indexed folders based on the index, with access to deeper contents withou
 
 The virtual filesystem coexists with the filesystem, including SMB shares and synced folders.
 
+The virtual filesystem is read-only for now.
+
 What is local is shown from the local indexes, through gppufs. The rest comes through Linked Data and the Lake's API, which serve the server's index; it holds more, and a local index can hold what the server's does not. The local region and the API region are one view, each entry once.
