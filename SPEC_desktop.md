@@ -24,7 +24,7 @@ This phase is successful when these work in the virtual filesystem:
 
 1. Rich information: a folder of sessions on a local disk shows each session's number of messages, its start and its span.
 2. SharePoint libraries are browsed from the index, without touching SharePoint.
-3. A folder with internal data partitioning by date, such as Projects and Work, shows what is stored in it as is, and a filter by date limits what is shown.
+3. A folder stored partitioned by date, such as Projects and Work, is shown flattened: the date partitions are flattened and what they hold is shown correctly grouped.
 
 ## Regions
 

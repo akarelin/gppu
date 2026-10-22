@@ -215,3 +215,49 @@ def test_a_session_is_shown_by_its_handlers_name_and_dated_by_its_span(tmp_path)
     assert fs.cat_file(shown) == (folder / 'rollout.jsonl').read_bytes()
     assert DesktopFileSystem({'home': GppuFileSystem(tmp_path)}).cat_file(shown) == (folder / 'rollout.jsonl').read_bytes()
     assert fs.info('/home/sessions/plain.txt')['ctime'] == pytest.approx((folder / 'plain.txt').stat().st_ctime)
+
+
+def _made(root, *paths):
+    for path in paths:
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if path.endswith('/'):
+            target.mkdir(exist_ok=True)
+        else:
+            target.write_text(path)
+
+
+def test_a_folder_partitioned_by_day_is_shown_flattened_and_grouped(tmp_path):
+    work = tmp_path / 'Work'
+    _made(work, '10/21/ov-memory/plan.md', '10/22/ov-memory/plan.md', '10/22/ov-memory/run.py', '10/22/speed/record.md',
+          '10/21/notes.md', '10/22/notes.md', 'README.md')
+    fs = DesktopFileSystem({'Work': GppuFileSystem(work)})
+    assert sorted(fs.ls('/Work', detail=False)) == ['/Work/10-21 notes.md', '/Work/10-22 notes.md', '/Work/README.md',
+                                                    '/Work/ov-memory', '/Work/speed']
+    assert sorted(fs.ls('/Work/ov-memory', detail=False)) == ['/Work/ov-memory/10-21 plan.md', '/Work/ov-memory/10-22 plan.md',
+                                                              '/Work/ov-memory/run.py']
+    assert fs.info('/Work/ov-memory')['type'] == 'directory'
+    assert fs.cat_file('/Work/ov-memory/10-21 plan.md') == b'10/21/ov-memory/plan.md'
+    assert fs.cat_file('/Work/speed/record.md') == b'10/22/speed/record.md'
+    assert fs.cat_file('/Work/10-22 notes.md') == b'10/22/notes.md'
+    with pytest.raises(IsADirectoryError):
+        fs.open('/Work/ov-memory')
+
+
+def test_a_folder_partitioned_by_month_groups_a_project_over_months(tmp_path):
+    projects = tmp_path / 'Projects'
+    _made(projects, '09/2026-09 Linked Data/260920-schema/a.md', '10/2026-10 Linked Data/261018-api/b.md',
+          '10/261005 tony-lifespan/c.md', '2026-10 Suno/d.md')
+    fs = DesktopFileSystem({'Projects': GppuFileSystem(projects)})
+    assert sorted(fs.ls('/Projects', detail=False)) == ['/Projects/2026-10 Suno', '/Projects/261005 tony-lifespan',
+                                                        '/Projects/Linked Data']
+    assert sorted(fs.ls('/Projects/Linked Data', detail=False)) == ['/Projects/Linked Data/260920-schema',
+                                                                    '/Projects/Linked Data/261018-api']
+    assert fs.cat_file('/Projects/Linked Data/261018-api/b.md') == b'10/2026-10 Linked Data/261018-api/b.md'
+
+
+def test_a_folder_named_like_a_month_is_a_partition_only_when_what_it_holds_is_dated(tmp_path):
+    _made(tmp_path / 'Book', '10/chapter.md', '11/261105 notes.md')
+    fs = DesktopFileSystem({'Book': GppuFileSystem(tmp_path / 'Book')})
+    assert sorted(fs.ls('/Book', detail=False)) == ['/Book/10', '/Book/261105 notes.md']
+    assert fs.ls('/Book/10', detail=False) == ['/Book/10/chapter.md']

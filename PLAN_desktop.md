@@ -9,7 +9,7 @@ Requirements: [SPEC_desktop.md](SPEC_desktop.md). This phase is done when its th
   - Done: `gppu.catalog`, the catalog's API at `/lake/catalog`, served by stack lake with `/lake` (CRAP `Systems/lake/serve.py`); a folder's entries stream a line at a time from a server-side cursor, so the largest folder, 56,297 entries, is never held whole. `CatalogFileSystem` browses it by ids, and the desktop shows it as the Catalog folder (`examples/desktop_mount.py`).
   - Proven in-process on the virtual filesystem over the real catalog: `Catalog/M365/Karelin/sharepoint/sites/Suntrust/Statements` lists its files with SharePoint's Created and Modified.
   - Next: deploy stack lake's new image, then prove it on the virtual filesystem against `api.karel.in/lake/catalog`.
-- not started: folders partitioned by date, such as Projects and Work, shown as stored, with a filter by date
+- done: folders stored partitioned by date, such as Projects and Work, shown flattened and correctly grouped; proven on the virtual filesystem over `D:\Work` and `D:\Projects`, read from the local index. A month folder, MM, is a partition when everything in it is a day folder, DD, or is named with a date of that month; partitions are replaced by what they hold, folders from partitions alike but for their dates are one folder grouping them (a task over several days, a project over several months), and a name two partitions hold is led by its partition
 
 ## Done
 - Complete: recover prior work and verify fsspec and Windows integration.
