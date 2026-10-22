@@ -353,8 +353,8 @@ class PartitionedFolderHandler(FolderHandler):
         """Whether a folder named name, level partitions below this folder, is a partition."""
         if level >= len(cls.partitions):
             return False
-        try:
-            datetime.strptime(name, cls.partitions[level])
+        try:   # read in a leap year, as a month or a day has no year of its own and Python 3.15 asks for one
+            datetime.strptime(f'2000 {name}', f'%Y {cls.partitions[level]}')
         except ValueError:
             return False
         return True

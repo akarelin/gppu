@@ -10,8 +10,12 @@ by its uid; a path is only resolved into one.
   Catalog(dsn)            the catalog in the database at dsn, its locations read from Linked Data through gppu.ld.gppufs
   api(catalog)            the catalog as a FastAPI app, which an APIApp serves at /lake/catalog among its apis()
   CatalogFileSystem(url)  the catalog through its API as an fsspec filesystem: Linked Data's locations as folders, in each what
-                          the catalog holds there; read-only"""
+                          the catalog holds there; read-only
+
+An entry is described by its columns: its content type and what SharePoint's columns hold for it, a statement's period, a tax
+form's year, as text a file manager shows in a column of its own."""
 import json
+import re
 from collections import Counter
 from datetime import date, datetime
 from typing import Any, Iterator
@@ -19,12 +23,13 @@ from uuid import UUID
 
 from fsspec import AbstractFileSystem
 
-FETCH = 1000   # the rows a cursor fetches at a time: a row is about 300 bytes, so a fetch is about 300 kB, under the 1 MB Linked
-# Data sends at most (gppu.ld LIST_BYTES), and the largest folder, 56,297 entries, takes 57 fetches
+FETCH = 1000   # the rows a cursor fetches at a time: a row read is about 2 kB with SharePoint's columns, so a fetch is about 2 MB,
+# and the largest folder, 56,297 entries, takes 57 fetches; a row sent is about 300 bytes, its columns given as text
 
 # What a listing shows of each entry: its latest instance, as the source that read it last read it; an entry gone from it is not shown
 ENTRIES = """SELECT e.uid AS id, e.kind, e.name, i.size, i.files, i.folders, i.changed_at AS modified,
-                    i.metadata->'columns'->>'Created' AS created, i.metadata->>'content_type' AS content_type
+                    i.metadata->'columns'->>'Created' AS created, i.metadata->>'content_type' AS content_type,
+                    i.metadata->'columns' AS columns
              FROM lake.entity e
              CROSS JOIN LATERAL (SELECT * FROM lake.instance WHERE entity_uid = e.uid ORDER BY read_at DESC LIMIT 1) i
              WHERE {inside} AND i.gone_at IS NULL ORDER BY e.name"""
@@ -38,6 +43,11 @@ AT = """WITH RECURSIVE walk(uid, depth) AS (
 ENTRY = """SELECT e.uid AS id, e.location_id, e.parent_uid AS parent, e.kind, e.name, e.extension, e.created_at,
                   coalesce(json_agg(to_jsonb(i) - 'entity_uid' ORDER BY i.read_at DESC) FILTER (WHERE i.entity_uid IS NOT NULL), '[]') AS instances
            FROM lake.entity e LEFT JOIN lake.instance i ON i.entity_uid = e.uid WHERE e.uid = %s GROUP BY e.uid"""
+# Each column SharePoint gave items, by how many carry it, and how many items it gave columns for
+COLUMNS = """SELECT k AS name, count(*) AS n FROM lake.instance i, jsonb_object_keys(i.metadata->'columns') k
+             WHERE jsonb_typeof(i.metadata->'columns') = 'object' AND i.gone_at IS NULL GROUP BY k ORDER BY n DESC, k"""
+ITEMS = "SELECT count(*) AS n FROM lake.instance WHERE jsonb_typeof(metadata->'columns') = 'object' AND gone_at IS NULL"
+WHEN = re.compile(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ')   # how SharePoint gives a date or a time
 
 
 def _json(value: Any) -> Any:
@@ -48,6 +58,46 @@ def _json(value: Any) -> Any:
     raise TypeError(f'{type(value).__name__} is not JSON')
 
 
+def _text(value: Any) -> str:
+    """A column's value as a file manager shows it: a date or a time as the local date it falls on, a whole number without
+    decimals, a term by its label, a link by its description, a list joined."""
+    if isinstance(value, dict):
+        return str(value.get('Label') or value.get('Description') or '')
+    if isinstance(value, list):
+        return ', '.join(_text(item) for item in value)
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    if isinstance(value, str) and WHEN.fullmatch(value):
+        return datetime.fromisoformat(value).astimezone().date().isoformat()
+    return '' if value is None else str(value)
+
+
+def label(name: str) -> str:
+    """A column's internal name, as SharePoint gives it, in words: _StartDate is Start Date, TaxYear is Tax Year."""
+    return re.sub(r'(?<=[a-z0-9])(?=[A-Z])', ' ', name.replace('_x0020_', ' ').strip('_')).replace('_', ' ')
+
+
+def paths(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Linked Data's locations by path, as the desktop shows them: each by its name, and by its name and uid where locations beside
+    it share the name, as Windows shows one folder per name."""
+    found = {row['id']: row for row in rows}
+    names = Counter((row['parent'], row['name'].casefold()) for row in found.values())
+
+    def path(row: dict[str, Any]) -> str:
+        name = row['name'] if names[row['parent'], row['name'].casefold()] == 1 else f"{row['name']} ({row['uid'] or row['id']})"
+        return f"{path(found[row['parent']])}/{name}" if row['parent'] else name
+    return {path(row): row for row in found.values()}
+
+
+def where(tree: dict[str, dict[str, Any]], path: str) -> tuple[dict[str, Any] | None, str]:
+    """The location a path is in, the longest location path in tree it starts with, and the path below it."""
+    parts = [part for part in path.split('/') if part]
+    for n in range(len(parts), 0, -1):
+        if (location := tree.get('/'.join(parts[:n]))) is not None:
+            return location, '/'.join(parts[n:])
+    return None, path
+
+
 class Catalog:
     """The catalog in the database at dsn, read only."""
 
@@ -56,6 +106,7 @@ class Catalog:
             raise ValueError("the catalog's database is required")
         self.dsn = dsn
         self.lake_ids: dict[str, int] = {}   # each location's Linked Data id -> the catalog's id for it, as locations() last read them
+        self._columns: list[str] | None = None   # columns(), read once
 
     def _open(self):
         import psycopg
@@ -87,20 +138,43 @@ class Catalog:
             raise LookupError(f'location {location}: the catalog holds nothing there')
         return self.lake_ids[location]
 
-    def entries(self, location: str | None = None, parent: UUID | None = None) -> Iterator[dict[str, Any]]:
-        """What is directly inside an entry, parent, or at a location's root, by name, read a fetch at a time from a cursor the
-        database keeps, so a folder of any size is never held whole. The location is found before the first row is asked for."""
+    def columns(self) -> list[str]:
+        """The columns an entry is described by, by their internal names: its content type, then each column SharePoint gave some
+        of its items and not every one, those carried most first. Every item carries SharePoint's own columns, its file name, its
+        version, who edited it; what only some carry is what a library or a content type adds, a statement's period, a tax form's
+        year. Read from the whole catalog once."""
+        if self._columns is None:
+            with self._open() as db:
+                items = db.execute(ITEMS).fetchone()['n']
+                self._columns = ['ContentType'] + [row['name'] for row in db.execute(COLUMNS) if row['n'] < items]
+        return self._columns
+
+    def entries(self, location: str | None = None, parent: UUID | None = None, path: str | None = None) -> Iterator[dict[str, Any]]:
+        """What is directly inside an entry, parent, at a location's root, or in the folder a path names as the desktop shows the
+        catalog, by name, each with the text of its columns; read a fetch at a time from a cursor the database keeps, so a folder
+        of any size is never held whole. What is asked for is found before the first row is."""
+        if path is not None:
+            found, below = where(paths(self.locations()), path)
+            if found is None:
+                raise LookupError(f'{path}: the catalog holds no location there')
+            if not below and found['lake_id'] is None:
+                return iter(())
+            location, parent = (None, self.at(found['id'], below)) if below else (found['id'], None)
         if parent:
             with self._open() as db:
                 if db.execute('SELECT 1 FROM lake.entity WHERE uid = %s', (parent,)).fetchone() is None:
                     raise LookupError(f'entry {parent}: the catalog holds no such entry')
         inside, value = ('e.parent_uid = %s', parent) if parent else ('e.location_id = %s AND e.parent_uid IS NULL', self.lake_id(location))
+        columns = self.columns()
 
         def rows() -> Iterator[dict[str, Any]]:
             with self._open() as db, db.cursor(name='entries') as cursor:
                 cursor.itersize = FETCH
                 cursor.execute(ENTRIES.format(inside=inside), (value,))
-                yield from cursor
+                for row in cursor:
+                    held = row['columns'] or {}
+                    row['columns'] = {name: text for name in columns if (text := _text(held.get(name)))}
+                    yield row
         return rows()
 
     def at(self, location: str, path: str) -> UUID:
@@ -132,8 +206,10 @@ def api(catalog: Catalog):
     GET /locations/{id}/entry?path= the entry path names below a location's root
     GET /entries/{uid}              one entry with every instance of it
     GET /entries/{uid}/entries      what is directly inside an entry, a line of JSON each, by name
+    GET /entries?path=              what is directly inside the folder path names as the desktop shows the catalog, a line each
+    GET /columns                    the columns an entry is described by, each its internal name and its name in words
 
-    What the catalog does not hold answers 404 with its error."""
+    An entry listed carries the text of its columns. What the catalog does not hold answers 404 with its error."""
     from fastapi import FastAPI, Response
     from fastapi.responses import StreamingResponse
 
@@ -165,6 +241,14 @@ def api(catalog: Catalog):
     @app.get('/entries/{uid}/entries')
     def inside(uid: UUID):
         return lines(catalog.entries(parent=uid))
+
+    @app.get('/entries')
+    def at_path(path: str):
+        return lines(catalog.entries(path=path))
+
+    @app.get('/columns')
+    def columns():
+        return reply([{'name': name, 'label': label(name)} for name in catalog.columns()])
 
     return app
 
@@ -198,32 +282,20 @@ class CatalogFileSystem(AbstractFileSystem):
         return r
 
     def _locations(self) -> dict[str, dict[str, Any]]:
-        """Linked Data's locations by path, each shown by its name, and by its name and uid where locations beside it share the
-        name, as Windows shows one folder per name."""
+        """Linked Data's locations by path, read once."""
         if self._tree is None:
-            rows = {row['id']: row for row in self._get('/locations').json()}
-            names = Counter((row['parent'], row['name'].casefold()) for row in rows.values())
-
-            def path(row: dict[str, Any]) -> str:
-                name = row['name'] if names[row['parent'], row['name'].casefold()] == 1 else f"{row['name']} ({row['uid'] or row['id']})"
-                return f"{path(rows[row['parent']])}/{name}" if row['parent'] else name
-            self._tree = {path(row): row for row in rows.values()}
+            self._tree = paths(self._get('/locations').json())
         return self._tree
 
     def _where(self, path: str) -> tuple[dict[str, Any] | None, str]:
-        """The location a path is in, the longest location path it starts with, and the path below it."""
-        parts = [part for part in path.split('/') if part]
-        for n in range(len(parts), 0, -1):
-            if (location := self._locations().get('/'.join(parts[:n]))) is not None:
-                return location, '/'.join(parts[n:])
-        return None, path
+        return where(self._locations(), path)
 
     @staticmethod
     def _entry(row: dict[str, Any], name: str) -> dict[str, Any]:
         """A catalog row as fsspec has an entry; its uid is `id`, since a FUSE bridge reads `uid` as the owner's."""
         folder = row['kind'] == 'folder'
         entry = {'name': name, 'type': 'directory' if folder else 'file', 'size': 0 if folder else row['size'] or 0,
-                 'id': row['id'], 'content_type': row['content_type']}
+                 'id': row['id'], 'content_type': row['content_type'], 'columns': row['columns']}
         for key, value in (('mtime', row['modified']), ('ctime', row['created'])):
             if value:
                 entry[key] = _seconds(value)
