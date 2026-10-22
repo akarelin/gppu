@@ -93,6 +93,7 @@ class Type(IntEnum):
     WORK = 0x40
     TASK = 0x41
     PROJECT = 0x42
+    KNOWLEDGE = 0x51
     LINK = 0xA0
 
 
@@ -333,6 +334,11 @@ class Entity(_Record, table=True):
     is free, the entity's class."""
 
 
+class Knowledge(_Record, table=True):
+    """Content that is knowledge: a knowledge graph, an ontology, a constrained vocabulary, the glossary, and what each holds by
+    `parent_id`. Its `subtype` says which; what a model proposes is `new` until a person reviews it."""
+
+
 class Collection(_Record, table=True):
     """A node that groups the nodes linked to it; one node can be in many collections."""
 
@@ -459,6 +465,7 @@ async def record_links(id: UUID, conditions: QueryParams = Depends(), params: Pa
 router.include_router(operations('/records', Fields, 'record', Record, Node, Collection, View, Event, Message, Activity, Link))
 router.include_router(operations('/links', _Link, 'link', Link))
 router.include_router(operations('/entities', _Record, 'entity', Entity))
+router.include_router(operations('/knowledge', _Record, 'knowledge', Knowledge))
 
 
 async def refusal(request: Request, e: StatementError):
@@ -478,7 +485,8 @@ app = FastAPI(
         {'name': 'type', 'description': 'What a record can be.'},
         {'name': 'record', 'description': 'Every record of every type.'},
         {'name': 'link', 'description': 'The links between nodes.'},
-        {'name': 'entity', 'description': 'Named entities: a person, an organization, a place, a concept, an agent or a system, which records link to.'}],
+        {'name': 'entity', 'description': 'Named entities: a person, an organization, a place, a concept, an agent or a system, which records link to.'},
+        {'name': 'knowledge', 'description': 'Knowledge: knowledge graphs, ontologies, constrained vocabularies and the glossary.'}],
 )
 app.include_router(router)
 
