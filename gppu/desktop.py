@@ -117,9 +117,11 @@ class DesktopFileSystem(AbstractFileSystem):
         return fs, posixpath.join(parent, parts[-1])
 
     def _held(self, fs, folder):
-        """What gppufs lists in a real folder, each row with its real path: what it ignores and the indexes the Indexed view
-        shows are left out."""
-        return [(row, posixpath.join(folder, self._name(row))) for row in fs.ls_sync(folder)
+        """What the index holds in a real folder, each row with its real path, what gppufs ignores and the indexes the Indexed
+        view shows left out: answered from the index alone once it holds the folder's listing, and the folder read, and so
+        indexed, only while it does not."""
+        stored = fs.stored(folder)
+        return [(row, posixpath.join(folder, self._name(row))) for row in fs.ls_sync(folder, live=stored is None or stored[1] is None)
                 if 'ignored' not in row['gppu']['handlers']
                 and fs.fs._strip_protocol(row['gppu']['path']).replace('\\', '/').casefold() not in self._index_paths]
 

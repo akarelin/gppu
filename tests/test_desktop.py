@@ -282,6 +282,6 @@ def test_a_folder_stored_before_its_handler_existed_is_identified_again(tmp_path
     fs = DesktopFileSystem({'D': GppuFileSystem(tmp_path)})
     assert fs.ls('/D/Work', detail=False) == ['/D/Work/10']
     monkeypatch.setattr(handlers, 'probe', probe)
-    fs = DesktopFileSystem({'D': GppuFileSystem(tmp_path)})
-    fs.ls('/D', detail=False)
-    assert fs.ls('/D/Work', detail=False) == ['/D/Work/task']
+    source = GppuFileSystem(tmp_path)
+    source.ls_sync(None)   # listed live, as a FileIndexer run lists it
+    assert DesktopFileSystem({'D': source}).ls('/D/Work', detail=False) == ['/D/Work/task']
