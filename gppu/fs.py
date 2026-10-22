@@ -2073,6 +2073,35 @@ class GppuFileSystem(AbstractFileSystem):
                 last=None if last is None else datetime.fromtimestamp(last, timezone.utc).astimezone(),
                 seen=None if seen is None else datetime.fromisoformat(seen))
 
+  def spans(self, path: str | Path | None, depth: int) -> dict[str, TimeSpan]:
+    """The span of the files below a folder, from the first to the last modified time, for each path below it that its first
+    depth names give: aggregated in the folder's index, touching no filesystem, what the things of a partitioned folder span
+    when depth is where its things are. The indexes split off below the folder are not asked."""
+    with self._lock:
+      key = self._key(path)
+      owner = self._owner(key)
+      here = self._relative(key, owner)
+      with self._database(owner) as database:
+        if database is None:
+          return {}
+        rows = database.execute(self._spanned(here, depth), {'low': f'{here}/', 'high': f'{here}0'}).fetchall()
+    return {prefix: TimeSpan(datetime.fromtimestamp(first).astimezone(), datetime.fromtimestamp(last).astimezone())
+            for prefix, first, last in rows}
+
+  @staticmethod
+  def _spanned(here: str, depth: int) -> str:
+    """The aggregate spans() asks: each file's path below here cut after its depth-th name, and the first and the last
+    modified time of the files under each cut; a path range below here, so the index's key is used."""
+    below = 'path' if here == '.' else f'substr(path, {len(here) + 2})'
+    end = '0'
+    for _ in range(depth):
+      end = f"({end} + instr(substr({below} || '/', {end} + 1), '/'))"
+    return f'''SELECT prefix, min(mtime), max(mtime) FROM (SELECT substr({below}, 1, {end} - 1) AS prefix,
+        unixepoch(metadata->>'$.gppu.modified_at', 'subsec') AS mtime FROM gppufs_entries
+        WHERE {'' if here == '.' else 'path > :low AND path < :high AND '}metadata->>'$.gppu.type' = 'file'
+          AND coalesce(metadata->>'$.gppu.record.subtype', '') NOT IN ({", ".join(f"'{s}'" for s in handlers.IGNORED)}))
+      WHERE mtime IS NOT NULL GROUP BY prefix'''
+
   def _aggregated(self, owner: str) -> list:
     """owner's index aggregated in it, with what the indexes of the folders below it hold, but for a configured location's,
     which is its own."""

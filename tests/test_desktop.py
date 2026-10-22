@@ -245,6 +245,9 @@ def test_work_shows_each_task_once_by_its_own_name(tmp_path):
     assert task['type'] == 'directory' and task['mtime'] == pytest.approx(max((work / '10' / day / 'ov-memory').stat().st_mtime for day in ('21', '22')), abs=1e-3)
     with pytest.raises(IsADirectoryError):
         fs.open('/Work/ov-memory')
+    fs.ls('/Work', detail=False)   # its files are in the index now: a task's span is theirs, on each day it was kept
+    task = fs.info('/Work/ov-memory')
+    assert (task['ctime'], task['mtime']) == (pytest.approx(1_790_000_000, abs=1e-3), pytest.approx(1_790_000_002, abs=1e-3))
 
 
 def test_projects_shows_a_project_kept_over_months_once_by_its_own_name(tmp_path):

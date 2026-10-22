@@ -146,6 +146,7 @@ class DesktopFileSystem(AbstractFileSystem):
         places being shown as its latest. Any other folder shows what it holds."""
         if isinstance(real, Thing):
             handler, held = real.handler, [entry for place in real.places for entry in self._held(fs, place)]
+            spans = [(place, fs.spans(place, 1)) for place in real.places]
         else:
             self._discover(fs, real, ' › '.join(here.parts[1:]))
             handler = self._handler(fs, real)
@@ -154,6 +155,7 @@ class DesktopFileSystem(AbstractFileSystem):
                 return ([self._row(row, str(here / self._shown(row))) for row, _ in held],
                         {self._shown(row).casefold(): place for row, place in held})
             held = list(self._things(fs, real, handler))
+            spans = [(real, fs.spans(real, len(handler.partitions) + 1))]
         alike = defaultdict(list)
         for row, place in held:
             alike[self._own(row, handler).casefold(), row['gppu']['is_container']].append((row, place))
@@ -162,10 +164,7 @@ class DesktopFileSystem(AbstractFileSystem):
             if container:
                 name = self._own(kept[0][0], handler)
                 shown_as[name.casefold()] = Thing(handler, [place for _, place in kept])
-                times = [self._seconds(row, '') for row, _ in kept]
-                rows.append({'name': str(here / name), 'type': 'directory', 'size': 0} | {
-                    key: pick(row[key] for row in times if key in row) for key, pick in (('ctime', min), ('mtime', max))
-                    if any(key in row for row in times)})
+                rows.append({'name': str(here / name), 'type': 'directory', 'size': 0} | self._spanned(kept, spans))
             else:
                 row, place = max(kept, key=lambda entry: self._seconds(entry[0], '').get('mtime', 0))
                 name = (row['gppu'].get('record') or {}).get('data', {}).get('normalized_name') or self._own(row, handler)
@@ -173,6 +172,17 @@ class DesktopFileSystem(AbstractFileSystem):
                 rows.append(self._row(row, str(here / name)))
             self._rows[rows[-1]['name'].casefold()] = rows[-1]
         return rows, shown_as
+
+    def _spanned(self, kept, spans):
+        """A thing's span as the times Windows shows: from the first to the last modified time of the files the index holds
+        below the places it is kept, each folder's spans as gppufs aggregates them; the folders' own times when it holds none."""
+        found = [span for place in (place for _, place in kept) for folder, held in spans for prefix, span in held.items()
+                 if prefix == (below := posixpath.relpath(place, folder)) or prefix.startswith(below + '/')]
+        if found:
+            return {'ctime': min(span.start for span in found).timestamp(), 'mtime': max(span.end for span in found).timestamp()}
+        times = [self._seconds(row, '') for row, _ in kept]
+        return {key: pick(row[key] for row in times if key in row) for key, pick in (('ctime', min), ('mtime', max))
+                if any(key in row for row in times)}
 
     def _own(self, row, handler):
         """An entry's own name, as its partitioned folder's handler says it."""
