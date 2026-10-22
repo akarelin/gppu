@@ -154,6 +154,8 @@ class Catalog:
         catalog, by name, each with the text of its columns; read a fetch at a time from a cursor the database keeps, so a folder
         of any size is never held whole. What is asked for is found before the first row is."""
         if path is not None:
+            if not path.strip('/'):
+                return iter(())   # the catalog's root holds only locations
             found, below = where(paths(self.locations()), path)
             if found is None:
                 raise LookupError(f'{path}: the catalog holds no location there')
