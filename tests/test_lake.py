@@ -97,6 +97,22 @@ def test_a_client_copies_a_session_where_the_lake_answers_then_has_it_indexed(tm
     assert row['gppu']['record']['subtype'] == 'cc' and row['gppu']['record']['uid'] == UID
 
 
+def test_the_lake_answers_for_itself_and_keeps_a_failed_index(tmp_path, monkeypatch):
+    lake, outer = lake_of(tmp_path)
+    served = FastAPI()
+    served.mount('/lake', api(lake))
+    client = TestClient(served, raise_server_exceptions=False)   # an index fails after its 202, in the server's log
+    assert client.get('/lake/').json() == json.loads(json.dumps(lake.info(outer.as_uri()), default=str))
+    copied = (outer / 'a.txt').as_uri()
+    index = lake.index
+    monkeypatch.setattr(lake, 'index', lambda uri: (_ for _ in ()).throw(ValueError('unreadable')))
+    assert client.post(f'/lake/{copied}').status_code == 202
+    assert client.get('/lake/', params={'failed': ''}).json() == {copied: 'ValueError: unreadable'}
+    monkeypatch.setattr(lake, 'index', index)
+    assert client.post(f'/lake/{copied}').status_code == 202
+    assert client.get('/lake/', params={'failed': ''}).json() == {}
+
+
 def test_the_lake_api_is_an_fsspec_filesystem(tmp_path):
     lake, outer = lake_of(tmp_path)
     served = FastAPI()

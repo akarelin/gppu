@@ -183,8 +183,9 @@ def api(lake: Lake):
     POST   /{uri}            index the file a client copied to uri, after answering 202: a long session is read for seconds, and
                              no client waits for it; one file is indexed at a time, and a file copied to again while it is
                              indexed is indexed once more after
-    GET    /{uri}            what the handlers found at uri; ?ls what is inside it, ?walk&level=&recursive= everything below it,
-                             ?retrieve the object with its content, ?content its bytes
+    GET    /{uri}            what the handlers found at uri, the Lake itself when no uri is given; ?ls what is inside it,
+                             ?walk&level=&recursive= everything below it, ?retrieve the object with its content, ?content its bytes
+    GET    /?failed          each copied file whose last index failed, with its error, until an index of it succeeds
     DELETE /{uri}            remove the object at uri
 
     A uri no location holds answers 404, a save to a place another object holds 409 and a value the Lake refuses 400, each with
@@ -215,7 +216,8 @@ def api(lake: Lake):
         return reply({'uri': str(uri)}, 201)
 
     indexing: dict[str, bool] = {}   # each uri waiting or being indexed, and whether it was copied to again meanwhile
-    turn, guard = threading.Lock(), threading.Lock()   # one file indexed at a time; guard keeps indexing whole
+    failures: dict[str, str] = {}   # each uri whose last index failed, and why: the client had its 202 before, so ?failed shows it
+    turn, guard = threading.Lock(), threading.Lock()   # one file indexed at a time; guard keeps indexing and failures whole
 
     def index(uri: str) -> None:
         try:
@@ -223,13 +225,15 @@ def api(lake: Lake):
                 with turn:
                     lake.index(uri)
                 with guard:
+                    failures.pop(uri, None)
                     if not indexing[uri]:
                         del indexing[uri]
                         return
                     indexing[uri] = False
-        except BaseException:   # raised on to the server's log, the uri free for the next copy to index it
+        except BaseException as error:   # kept for ?failed and raised on to the server's log, the uri free for the next copy
             with guard:
                 indexing.pop(uri, None)
+                failures[uri] = f'{type(error).__name__}: {error}'
             raise
 
     @app.post('/{uri:path}')
@@ -245,7 +249,11 @@ def api(lake: Lake):
 
     @app.get('/{uri:path}')
     def found(uri: str, ls: str | None = None, walk: str | None = None, level: str = 'files', recursive: str | None = None,
-              retrieve: str | None = None, content: str | None = None):   # a flag is there, ?ls, or not
+              retrieve: str | None = None, content: str | None = None, failed: str | None = None):   # a flag is there, ?ls, or not
+        if failed is not None:
+            with guard:
+                return reply(dict(failures))
+        uri = uri or str(lake.store.uri)
         if ls is not None:
             return reply(lake.ls(uri))
         if walk is not None:
