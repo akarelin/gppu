@@ -1052,6 +1052,7 @@ class GppuFileSystem(AbstractFileSystem):
     self._memory: dict[str, sqlite3.Connection] = {}   # a remote store's index, held for this instance
     self._working: dict[str, list] = {}   # an index's path -> [its copy in the cache, the file it was copied from, changed]
     self._scratch: tempfile.TemporaryDirectory | None = None   # where the copies are, made at the first write
+    self._copies = 0                 # how many copies were made there
     self._running = 0                # how many runs are open: their writes reach the folders when the last one ends
     self._locations = dict(locations) if locations else {}   # folder -> the location that is there
     self._here: str | None = None   # the root as the location map names folders, resolved once
@@ -1323,14 +1324,19 @@ class GppuFileSystem(AbstractFileSystem):
       del self._working[path]
     if not write:
       return held if seen is not None else None
-    if self._scratch is None:
-      self._scratch = _scratch('gppufs-')
-    copy = os.path.join(self._scratch.name, f'{len(os.listdir(self._scratch.name))}.sqlite')
+    copy = self._fresh()
     if seen is not None:
       shutil.copyfile(held, copy)
     self._working[path] = [copy, seen, False, owner]
     _INDEXES[self.fs.unstrip_protocol(self._path(owner))] = path   # gppufs holds it: known without asking the store
     return copy
+
+  def _fresh(self) -> str:
+    """A name in the cache no copy has had."""
+    if self._scratch is None:
+      self._scratch = _scratch('gppufs-')
+    self._copies += 1
+    return os.path.join(self._scratch.name, f'{self._copies}.sqlite')
 
   def _put(self, path: str) -> None:
     """An index this instance wrote, put into its folder whole: staged beside it and moved into place, as FileSystem.write
@@ -1440,10 +1446,14 @@ class GppuFileSystem(AbstractFileSystem):
       database.execute(self._moved, dict(here=here, cut=len(here) + 2, prefix=here + '/'))
       database.commit()
       database.execute('DETACH DATABASE owner')
+    index = self._database_path(self._path(owner))
+    compact = self._fresh()
     with self._database(owner, write=True) as database:
       database.execute('DELETE FROM gppufs_entries WHERE path=? OR substr(path,1,?)=?', (here, len(here) + 1, here + '/'))
       database.commit()
-      database.execute('VACUUM')   # the file is then the size of what it holds, not of what it held
+      database.execute('VACUUM INTO ?', (compact,))   # the file is then the size of what it holds, not of what it held
+    os.remove(self._working[index][0])
+    self._working[index][0] = compact
 
   @staticmethod
   def _columns_of(database: sqlite3.Connection) -> bool:
