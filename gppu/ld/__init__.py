@@ -382,6 +382,7 @@ def operations(path: str, body: type[_Record], name: str, *models: type[_Record]
     own = {Type[m.__tablename__.upper()]: m for m in models}   # the path's types, in its order
     coded = own | {code: m for m in models if issubclass(m, _Link) for code in LINKS}   # an id's first byte to its table, a link's any of LINKS
     One = Union[models]   # a record of the path, read with its own type's columns
+    a, names = 'an' if name[0] in 'aeiou' else 'a', name[:-1] + 'ies' if name.endswith('y') else name + 's'   # an entity, entities
 
     def table(type: Type | None = None):
         """The table of the `type` a create makes, one of the path's."""
@@ -389,17 +390,17 @@ def operations(path: str, body: type[_Record], name: str, *models: type[_Record]
             raise HTTPException(422, f'{path} makes {", ".join(t.name.lower() for t in own)}, not {type.name.lower()}')
         return own[type] if type is not None else base
 
-    @routes.post(path, response_model=One, summary=f'Create a {name}')
+    @routes.post(path, response_model=One, summary=f'Create {a} {name}')
     async def create(record: body, model=Depends(table if len(models) > 1 else lambda: base)):
         """It comes back with the `id`, `type` and `created` the store gave it."""
         return await model.create(record)
 
-    @routes.get(path + '/{id}', response_model=One, summary=f'Read a {name}')
+    @routes.get(path + '/{id}', response_model=One, summary=f'Read {a} {name}')
     async def read(id: UUID):
         """404 when there is none."""
         return await coded.get(id.bytes[0], base).read(id)
 
-    @routes.put(path + '/{id}', response_model=One, summary=f'Update a {name}')
+    @routes.put(path + '/{id}', response_model=One, summary=f'Update {a} {name}')
     async def update(id: UUID, record: body):
         """Merged with what is sent when the `id` is there, created with that `id` when it is not; an `id` of a type the path does not
         make is refused when it is not there."""
@@ -407,12 +408,12 @@ def operations(path: str, body: type[_Record], name: str, *models: type[_Record]
             raise HTTPException(422, f'{path} makes {", ".join(t.name.lower() for t in own)}; no {base.__tablename__} {id} is there to update')
         return await coded.get(id.bytes[0], base).update(id, record)
 
-    @routes.delete(path + '/{id}', status_code=204, summary=f'Delete a {name}')
+    @routes.delete(path + '/{id}', status_code=204, summary=f'Delete {a} {name}')
     async def delete(id: UUID):
         """With its links; refused while it holds records, which are deleted or moved out first. 404 when there is none."""
         await coded.get(id.bytes[0], base).delete(id)
 
-    @routes.get(path, response_model=Page[One], summary=f'Search {name}s')
+    @routes.get(path, response_model=Page[One], summary=f'Search {names}')
     async def search(type: Type | None = None, conditions: QueryParams = Depends(), params: Params = Depends()):
         """Of one `type`, or of every type of the path with the columns of the first; a type of the path, its own table's records,
         not those of the types made from it, and any other through the first, with its columns.
@@ -455,8 +456,9 @@ async def record_links(id: UUID, conditions: QueryParams = Depends(), params: Pa
     return await Link.search(params, or_(Link.from_id == id, Link.to_id == id), conditions=conditions)
 
 
-router.include_router(operations('/records', Fields, 'record', Record, Node, Entity, Collection, View, Event, Message, Activity, Link))
+router.include_router(operations('/records', Fields, 'record', Record, Node, Collection, View, Event, Message, Activity, Link))
 router.include_router(operations('/links', _Link, 'link', Link))
+router.include_router(operations('/entities', _Record, 'entity', Entity))
 
 
 async def refusal(request: Request, e: StatementError):
@@ -475,7 +477,8 @@ app = FastAPI(
     openapi_tags=[
         {'name': 'type', 'description': 'What a record can be.'},
         {'name': 'record', 'description': 'Every record of every type.'},
-        {'name': 'link', 'description': 'The links between nodes.'}],
+        {'name': 'link', 'description': 'The links between nodes.'},
+        {'name': 'entity', 'description': 'Named entities: a person, an organization, a place, a concept, an agent or a system, which records link to.'}],
 )
 app.include_router(router)
 
