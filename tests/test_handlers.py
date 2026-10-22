@@ -899,6 +899,22 @@ def test_parse_messages_reads_claude_code_messages() -> None:
   assert (messages[0].ts, messages[0].data) == (datetime.fromisoformat('2026-08-20T02:00:00+00:00'), CLAUDE[0])
 
 
+def test_parse_messages_reads_a_prompt_sent_while_the_session_worked() -> None:
+  """Claude Code keeps a prompt the person sends mid-turn as a queued_command attachment marked human: it is a user message."""
+  sent = {'type': 'attachment', 'uuid': 'three', 'sessionId': 'claude-one', 'timestamp': '2026-08-20T02:02:00Z',
+          'attachment': {'type': 'queued_command', 'prompt': 'And the epics too', 'origin': {'kind': 'human'}, 'humanTurn': True}}
+  other = {'type': 'attachment', 'uuid': 'four', 'sessionId': 'claude-one', 'timestamp': '2026-08-20T02:03:00Z',
+           'attachment': {'type': 'queued_command', 'prompt': '<task-notification>done</task-notification>', 'origin': {'kind': 'task-notification'}}}
+
+  session, messages = SessionHandler.parse_messages('cc', CLAUDE + [sent, other])
+
+  assert [(message.subtype, message.name, message.meta) for message in messages[2:]] == [
+    ('user', 'And the epics too', {'uid': 'three', 'line': 3}),
+    ('attachment', 'attachment', {'uid': 'four', 'line': 4}),
+  ]
+  assert session['topic'] == 'Question', 'the first prompt stays the topic'
+
+
 def test_parse_messages_reads_codex_messages() -> None:
   session, messages = SessionHandler.parse_messages('cx', CODEX)
 

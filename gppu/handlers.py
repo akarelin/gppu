@@ -757,6 +757,14 @@ class SessionHandler(FileHandler):
             kind = message.get("type")
             if kind in TITLES:
                 session["title"] = message.get(TITLES[kind]) or session["title"]
+            attachment = message.get("attachment") or {}
+            if kind == "attachment" and attachment.get("type") == "queued_command" and (attachment.get("origin") or {}).get("kind") == "human":
+                # a prompt the person sent while the session worked: the harness keeps it as an attachment, not a user line
+                prompt = attachment.get("prompt") or ""
+                session["uid"] = message.get("sessionId") or session["uid"]
+                cls._prompted(session, prompt)
+                session_messages.append(cls._session_message(message.get("uuid"), message, n, "user", prompt))
+                continue
             if kind not in ("user", "assistant"):
                 session_messages.append(cls._session_message(message.get("uuid"), message, n, kind, ""))
                 continue
