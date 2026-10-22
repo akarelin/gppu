@@ -266,6 +266,14 @@ def mount(sources: dict[str, AbstractFileSystem], mount_point: str) -> None:
     from fuse import FUSE, FuseOSError
 
     class ReadOnly(FUSEr):
+        def getattr(self, path, fh=None):
+            """fsspec's attributes, and the start of the entry's span as the time Windows shows it created, which fsspec's
+            bridge does not give."""
+            data = super().getattr(path, fh)
+            if 'st_mode' in data and 'ctime' in (info := self.fs.info(''.join([self.root, path.lstrip('/')]).rstrip('/'))):
+                data['st_birthtime'] = info['ctime']
+            return data
+
         def open(self, path, flags):
             if flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND):
                 raise FuseOSError(EROFS)
