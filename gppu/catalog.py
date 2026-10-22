@@ -217,7 +217,8 @@ def api(catalog: Catalog):
         return Response(json.dumps(payload, default=_json, ensure_ascii=False), status_code=status, media_type='application/json; charset=utf-8')
 
     def lines(rows: Iterator[dict[str, Any]]) -> StreamingResponse:
-        return StreamingResponse((json.dumps(row, default=_json, ensure_ascii=False) + '\n' for row in rows), media_type='application/x-ndjson')
+        return StreamingResponse((json.dumps(row, default=_json, ensure_ascii=False) + '\n' for row in rows),
+                                 media_type='application/x-ndjson; charset=utf-8')   # as a client takes text without one differs
 
     app = FastAPI(title='Catalog')
     app.add_exception_handler(LookupError, lambda request, error: reply({'error': str(error)}, 404))
