@@ -75,6 +75,7 @@ class Type(IntEnum):
     is 0xA0 to 0xAF (`LINKS`)."""
     RECORD = 0x01
     NODE = 0x02
+    ENTITY = 0x04
     CONTENT = 0x05
     RESOURCE = 0x06
     CONTAINER = 0x07
@@ -327,6 +328,11 @@ class Node(_Record, table=True):
     """A record that links join and that can hold other records: every type but record and link."""
 
 
+class Entity(_Record, table=True):
+    """A named entity: a person, an organization, a place, a concept, an agent or a system, which records link to. Its `subtype`
+    is free, the entity's class."""
+
+
 class Collection(_Record, table=True):
     """A node that groups the nodes linked to it; one node can be in many collections."""
 
@@ -449,7 +455,7 @@ async def record_links(id: UUID, conditions: QueryParams = Depends(), params: Pa
     return await Link.search(params, or_(Link.from_id == id, Link.to_id == id), conditions=conditions)
 
 
-router.include_router(operations('/records', Fields, 'record', Record, Node, Collection, View, Event, Message, Activity, Link))
+router.include_router(operations('/records', Fields, 'record', Record, Node, Entity, Collection, View, Event, Message, Activity, Link))
 router.include_router(operations('/links', _Link, 'link', Link))
 
 
