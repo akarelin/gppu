@@ -915,6 +915,17 @@ def test_parse_messages_reads_a_prompt_sent_while_the_session_worked() -> None:
   assert session['topic'] == 'Question', 'the first prompt stays the topic'
 
 
+def test_parse_messages_reads_a_prompt_sent_while_the_session_worked_as_blocks() -> None:
+  """A prompt sent mid-turn with an image is its blocks: its text is the text blocks'."""
+  sent = {'type': 'attachment', 'uuid': 'three', 'sessionId': 'claude-one', 'timestamp': '2026-08-20T02:02:00Z',
+          'attachment': {'type': 'queued_command', 'origin': {'kind': 'human'}, 'humanTurn': True,
+                         'prompt': [{'type': 'text', 'text': 'Look at this'}, {'type': 'image', 'source': {'type': 'base64', 'data': ''}}]}}
+
+  _, messages = SessionHandler.parse_messages('cc', CLAUDE + [sent])
+
+  assert (messages[2].subtype, messages[2].name) == ('user', 'Look at this')
+
+
 def test_parse_messages_reads_codex_messages() -> None:
   session, messages = SessionHandler.parse_messages('cx', CODEX)
 

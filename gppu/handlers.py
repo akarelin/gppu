@@ -811,7 +811,7 @@ class SessionHandler(FileHandler):
             attachment = message.get("attachment") or {}
             if kind == "attachment" and attachment.get("type") == "queued_command" and (attachment.get("origin") or {}).get("kind") == "human":
                 # a prompt the person sent while the session worked: the harness keeps it as an attachment, not a user line
-                prompt = attachment.get("prompt") or ""
+                prompt = cls._text_of(attachment.get("prompt"), ("text",))   # a string, or blocks when it carries an image
                 session["uid"] = message.get("sessionId") or session["uid"]
                 cls._prompted(session, prompt)
                 session_messages.append(cls._session_message(message.get("uuid"), message, n, "user", prompt))
