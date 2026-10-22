@@ -12,6 +12,8 @@ The virtual filesystem coexists with the filesystem, including SMB shares and sy
 
 The virtual filesystem is read-only for now.
 
+The virtual filesystem is what is relied on, not the G: drive that wraps it.
+
 Browsing is virtually instantaneous: it reads the local SQLite index, or the API that serves the Lake catalog.
 
 ## Use cases

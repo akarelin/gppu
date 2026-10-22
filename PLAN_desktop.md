@@ -3,8 +3,9 @@
 Requirements: [SPEC_desktop.md](SPEC_desktop.md). This phase is done when its three use cases work.
 
 ## Use cases
-- in progress: rich information: a local folder of sessions shows each session's number of messages, start and span
-- not started: SharePoint libraries browsed from the index, without touching SharePoint
+- done: rich information: a session the handler read is shown by its handler's name (start, turns, length, topic), its span the entry's created and modified times; proven on the virtual filesystem over `C:\Users\Alex\.claude\projects\D--Dev-CRAP`, read from the local index after a FileIndexer handlers run, a session read back by its shown name. On G: Windows' Created column is left at 1970: the wrapper does not pass the creation time
+- in progress: SharePoint libraries browsed from the index, without touching SharePoint
+  - Where a SharePoint library's index lives: a store that is not this host's disk gets no index file, so it is the catalog's (gppufs's `GppuIndex`, `index=`); which implementation exists and what SharePoint indexing left in September decides the rest
 - not started: folders partitioned by date, such as Projects and Work, shown as stored, with a filter by date
 
 ## Done
