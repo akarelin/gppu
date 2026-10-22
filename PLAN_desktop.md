@@ -4,11 +4,10 @@ Requirements: [SPEC_desktop.md](SPEC_desktop.md). This phase is done when its th
 
 ## Use cases
 - done: rich information: a session the handler read is shown by its handler's name (start, turns, length, topic), its span the entry's created and modified times; proven on the virtual filesystem over `C:\Users\Alex\.claude\projects\D--Dev-CRAP`, read from the local index after a FileIndexer handlers run, a session read back by its shown name; G: gives Windows the span's start as the creation time
-- in progress: SharePoint libraries browsed from the index, without touching SharePoint
+- done: SharePoint libraries browsed from the index, without touching SharePoint; live at `api.karel.in/lake/catalog` since 2026-10-22 10:00, proven on the virtual filesystem and on G:
   - The index: the Lake catalog (pg.karel.in `files`, schema `lake`) holds source `sharepoint`, 162,802 entries read on 2026-09-18 with each item's content type and columns, a tree by id (`entity.parent_uid`); Linked Data holds the libraries as locations with the catalog's id in `meta.lake_id`.
   - Done: `gppu.catalog`, the catalog's API at `/lake/catalog`, served by stack lake with `/lake` (CRAP `Systems/lake/serve.py`); a folder's entries stream a line at a time from a server-side cursor, so the largest folder, 56,297 entries, is never held whole. `CatalogFileSystem` browses it by ids, and the desktop shows it as the Catalog folder (`examples/desktop_mount.py`).
-  - Proven in-process on the virtual filesystem over the real catalog: `Catalog/M365/Karelin/sharepoint/sites/Suntrust/Statements` lists its files with SharePoint's Created and Modified.
-  - Next: deploy stack lake's new image, then prove it on the virtual filesystem against `api.karel.in/lake/catalog`.
+  - Proven against `api.karel.in/lake/catalog`: `Catalog/M365/Karelin/sharepoint/sites/Suntrust/Statements` lists its files with SharePoint's Created and Modified, and the largest folder streams whole.
 - done: Projects and Work shown from the index, each task or project once by its own name with its span; proven on the virtual filesystem and on G: over `D:\Work` and `D:\Projects`. gppufs reads them with `WorkFolderHandler` and `ProjectsFolderHandler` on `PartitionedFolderHandler`, which say which folders are date partitions and a thing's own name; a task's archived stages are part of it, ignored entries are left out, and a file a task keeps on several days is shown as its latest
   - A task's or project's span is that of its files in each place it is kept, one aggregate in the index (`GppuFileSystem.spans`), after FileIndexer indexed Work and Projects at the files level (2026-10-22); a folder the index has listed is answered from the index alone. G: gives Windows the span's start as the creation time.
 
@@ -28,3 +27,4 @@ Requirements: [SPEC_desktop.md](SPEC_desktop.md). This phase is done when its th
 
 ## Found, unrelated
 - tests: `tests/test_tui_progress.py`'s process-row test fails in some full-suite runs and passes alone
+- gppufs: `_misread` probes (stats) every known subfolder on every live listing; probe picks a folder's handler from its path alone
