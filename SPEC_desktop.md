@@ -12,4 +12,14 @@ The virtual filesystem coexists with the filesystem, including SMB shares and sy
 
 The virtual filesystem is read-only for now.
 
+## Use cases
+
+This phase is successful when these work in the virtual filesystem:
+
+1. Rich information: a folder of sessions on a local disk shows each session's number of messages, its start and its span.
+2. SharePoint libraries are browsed from the index, without touching SharePoint.
+3. A folder with internal data partitioning by date, such as Projects and Work, shows what is stored in it as is, and a filter by date limits what is shown.
+
+## Regions
+
 What is local is shown from the local indexes, through gppufs. The rest comes through Linked Data and the Lake's API, which serve the server's index; it holds more, and a local index can hold what the server's does not. The local region and the API region are one view, each entry once.
