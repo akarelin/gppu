@@ -917,6 +917,15 @@ def test_parse_messages_numbers_messages_after_an_offset() -> None:
   assert [(message.subtype, message.meta) for message in messages] == [(message.subtype, message.meta) for message in whole[2:]]
 
 
+def test_parse_messages_drops_the_nul_postgres_cannot_hold() -> None:
+  line = {**CLAUDE[0], 'toolUseResult': {'stdout': 'SQLite format 3\x00', 'lines': ['w\x00s\x00l']}}
+
+  _, [message] = SessionHandler.parse_messages('cc', [line])
+
+  assert message.data['toolUseResult'] == {'stdout': 'SQLite format 3', 'lines': ['wsl']}
+  assert '\\u0000' not in json.dumps(message.data)
+
+
 def test_parse_messages_reads_only_claude_code_and_codex() -> None:
   with pytest.raises(NotImplementedError):
     SessionHandler.parse_messages('hermes', HERMES)

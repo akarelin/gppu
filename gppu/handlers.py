@@ -730,10 +730,21 @@ class SessionHandler(FileHandler):
                          text: str) -> Event:
         """A session message as Linked Data holds it (session_message 31), an event: its subtype, its time, its name
         the first line of its text, the message as its data, and in meta its id in its harness and its place in the
-        file."""
+        file. The data drops the NUL character, which Postgres holds in no text or JSON, as a name does."""
         return Event(type="session_message", subtype=subtype,
                      ts=datetime.fromisoformat(message["timestamp"]) if message.get("timestamp") else None,
-                     name=cls.first_line(text) or subtype, data=dict(message), meta={"uid": uid, "line": n})
+                     name=cls.first_line(text) or subtype, data=cls._without_nul(dict(message)), meta={"uid": uid, "line": n})
+
+    @classmethod
+    def _without_nul(cls, value: Any) -> Any:
+        """A value with the NUL character out of every string in it, its keys' too."""
+        if isinstance(value, str):
+            return value.replace(chr(0), "")
+        if isinstance(value, dict):
+            return {cls._without_nul(key): cls._without_nul(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [cls._without_nul(item) for item in value]
+        return value
 
     @classmethod
     def _claude_messages(cls, messages, offset: int, uid: str | None) -> tuple[dict[str, Any], list[Event]]:
