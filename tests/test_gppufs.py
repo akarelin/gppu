@@ -91,6 +91,47 @@ def test_stats_are_aggregated_in_the_index(tmp_path, monkeypatch):
   assert not index(empty).exists()
 
 
+def test_an_index_past_the_limit_splits_off_the_folder_holding_most_of_it(tmp_path, monkeypatch):
+  """No index grows past INDEX_LIMIT (Alex's proposal of 2026-10-21): the folder below holding the most of an index gets
+  one of its own, again further down, until only one folder's own entries are left; listings and statistics stay what
+  they were, and a new instance reads them from the indexes alone."""
+  for name, count in (('big', 40), ('small', 2)):
+    (tmp_path / name / 'deep').mkdir(parents=True)
+    for i in range(count):
+      (tmp_path / name / 'deep' / f'note{i}.md').write_text(f'Text {i}', encoding='utf-8')
+  monkeypatch.setattr(gppu.fs, 'INDEX_LIMIT', 16 * 1024)
+  fs = GppuFileSystem(tmp_path)
+  listed = fs.ls(recurse=True)
+  assert index(tmp_path / 'big').is_file() and index(tmp_path / 'big' / 'deep').is_file()
+  assert not index(tmp_path / 'small').exists() and not index(tmp_path / 'small' / 'deep').exists()
+  assert index(tmp_path).stat().st_size <= gppu.fs.INDEX_LIMIT
+  assert index(tmp_path / 'big').stat().st_size <= gppu.fs.INDEX_LIMIT
+  stats = fs.stats()
+  assert (stats['folders'], stats['files'], stats['notes']) == (4, 42, 42)
+  monkeypatch.setattr(GppuFileSystem, '_live', no_live)
+  assert GppuFileSystem(tmp_path).ls(recurse=True) == listed
+  assert GppuFileSystem(tmp_path).stats() == stats
+
+
+def test_a_run_puts_its_indexes_into_their_folders_when_it_ends(tmp_path):
+  """An index is replaced whole, never written in place (Alex's proposal of 2026-10-21): during a run the index in the
+  folder is not touched, and the run's ending, however it ends, puts it there whole."""
+  (tmp_path / 'notes').mkdir()
+  (tmp_path / 'notes' / 'note.md').write_text('Text', encoding='utf-8')
+  fs = GppuFileSystem(tmp_path)
+  with fs.run():
+    fs.ls(recurse=True)
+    assert not index(tmp_path).exists()
+    assert [row['gppu']['name'] for row in fs.ls_sync(None, recurse=True, live=False)] == ['notes', 'note.md']
+  before = index(tmp_path).read_bytes()
+  (tmp_path / 'notes' / 'added.md').write_text('More', encoding='utf-8')
+  with pytest.raises(KeyboardInterrupt), fs.run():
+    fs.ls('notes', refresh=True)
+    assert index(tmp_path).read_bytes() == before
+    raise KeyboardInterrupt
+  assert [row['gppu']['name'] for row in GppuFileSystem(tmp_path).ls_sync('notes', live=False)] == ['added.md', 'note.md']
+
+
 def test_ls_identifies_without_probing_and_refresh_probes(tmp_path, monkeypatch):
   folder = tmp_path / 'notes'
   folder.mkdir()
@@ -358,7 +399,9 @@ def test_entering_an_archive_identifies_members_and_refresh_probes_them(tmp_path
   assert GppuFileSystem(tmp_path).ls(path.name, recurse=True) == probed
 
 
-def test_nonlocal_fsspec_location_keeps_sqlite_beside_source(tmp_path, monkeypatch):
+def test_nonlocal_fsspec_location_is_read_and_never_written(tmp_path, monkeypatch):
+  """Only the host a location belongs to writes its indexes (Alex's proposal of 2026-10-21): a store that is not this host's
+  own disk keeps what this instance read in memory and is given no index file; one already there is read."""
   native = MemoryFileSystem()
   root = '/' + tmp_path.name
   native.makedirs(root)
@@ -367,9 +410,18 @@ def test_nonlocal_fsspec_location_keeps_sqlite_beside_source(tmp_path, monkeypat
   assert 'title' not in fs.ls()[0]['gppu']['record']['data']   # a listing identifies; it fetches nothing
   before = fs.ls(refresh=True)
   assert before[0]['gppu']['record']['data']['title'] == 'Remote'
-  assert native.cat_file(root + '/.' + tmp_path.name + '.gppufs.sqlite').startswith(b'SQLite format 3')
+  assert not native.exists(root + '/.' + tmp_path.name + '.gppufs.sqlite')
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
-  assert GppuFileSystem('memory://' + root).ls() == before
+  assert fs.ls() == before
+  monkeypatch.undo()
+  local = tmp_path / tmp_path.name
+  local.mkdir()
+  (local / 'note.md').write_bytes(native.cat_file(root + '/note.md'))
+  GppuFileSystem(local).ls(refresh=True)
+  native.pipe_file(root + '/.' + tmp_path.name + '.gppufs.sqlite', index(local).read_bytes())
+  reader = GppuFileSystem('memory://' + root)
+  reader._forget_indexes(reader.root)   # the store was asked for its index before this one was put there
+  assert reader.ls_sync(live=False)[0]['gppu']['record']['data']['title'] == 'Remote'
 
 
 @pytest.mark.parametrize('extension', ['zip', 'tar.gz'])

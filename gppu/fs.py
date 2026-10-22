@@ -906,6 +906,11 @@ class GppuIndex(Protocol):
 # Where gppufs and the walk put what they must hold for a moment: the cache, never the system's temporary folder.
 CACHE = Path('C:/.cache') if os.name == 'nt' else Path.home() / '.cache'
 
+# The most an index holds before the folder below it holding the most of it gets an index of its own (Alex's proposal of
+# 2026-10-21, D:\Work\10\21\gppufs-index-size): about 28,000 entries at the 2.3 KB each D:'s index measured (419,042 entries
+# in 958 MB), well above every other index on alex-pc, the largest of which held 27 MB.
+INDEX_LIMIT = 64 * 2**20
+
 
 # A folder's address -> the index it holds, asked of its store once in this process: every gppufs here reads it, and
 # records the index it makes, moves or removes.
@@ -941,6 +946,14 @@ def _excluded_from_git(folder: str) -> None:
 def _scratch(prefix: str) -> tempfile.TemporaryDirectory:
   CACHE.mkdir(parents=True, exist_ok=True)
   return tempfile.TemporaryDirectory(prefix=prefix, dir=CACHE)
+
+
+def _signature(path: str | None) -> tuple[int, int] | None:
+  """Which version of a file is there, by its modified time and size; None when there is none."""
+  if path is None or not os.path.isfile(path):
+    return None
+  status = os.stat(path)
+  return status.st_mtime_ns, status.st_size
 
 
 def _probe_name(name: str, directory: bool, size: int | None = None) -> handlers.Record:
@@ -995,7 +1008,14 @@ class GppuFileSystem(AbstractFileSystem):
   protocol = 'gppu'
   cachable = False
   _index_name = re.compile(r'^\..+\.gppufs\.sqlite(?:-(?:journal|wal|shm))?$')
-  _stats = f'''SELECT count(*) FILTER (WHERE kind='folder'), count(*) FILTER (WHERE kind='file'),
+  # The folders directly below an index's own, the one holding the most of it first: what a split moves (`_bound`).
+  _largest = '''SELECT top FROM (SELECT substr(path, 1, instr(path, '/') - 1) AS top,
+        sum(length(metadata) + coalesce(length(children), 0)) AS held FROM gppufs_entries WHERE instr(path, '/') > 0 GROUP BY top)
+    WHERE top IN (SELECT path FROM gppufs_entries WHERE metadata->>'$.type' = 'directory') ORDER BY held DESC LIMIT 1'''
+  # The folders below that hold an index of their own: a listing here names them, and their rows are in their own index.
+  _nested = '''SELECT DISTINCT child.value->>'$.path' FROM gppufs_entries, json_each(gppufs_entries.children) AS child
+    WHERE child.value->>'$.type' = 'directory' AND child.value->>'$.path' NOT IN (SELECT path FROM gppufs_entries)'''
+  _aggregate = f'''SELECT count(*) FILTER (WHERE kind='folder'), count(*) FILTER (WHERE kind='file'),
       coalesce(sum(size) FILTER (WHERE kind='file'), 0), min(mtime) FILTER (WHERE kind='file'), max(mtime) FILTER (WHERE kind='file'),
       max(probed), count(*) FILTER (WHERE kind='file' AND path LIKE '%.md'), count(*) FILTER (WHERE session)
     FROM (SELECT path, metadata->>'$.gppu.type' AS kind, metadata->>'$.gppu.size' AS size, metadata->>'$.mtime' AS mtime,
@@ -1017,8 +1037,13 @@ class GppuFileSystem(AbstractFileSystem):
     self.location = self.fs.unstrip_protocol(self.root)
     self._lock = RLock()
     self._index = index              # the index that answers first; the file beside the location is a cache
-    self._cacheless = False          # set when the store refuses the index it would keep beside itself
+    # Only the host a location belongs to writes its indexes: an index file is written only on this host's own disk. Another
+    # host's share and every other store hold theirs in memory for this instance, read from the store and never written back.
+    self._cacheless = not isinstance(self.fs, LocalFileSystem) or self.root.startswith('//')
     self._memory: dict[str, sqlite3.Connection] = {}   # a remote store's index, held for this instance
+    self._working: dict[str, list] = {}   # an index's path -> [its copy in the cache, the file it was copied from, changed]
+    self._scratch: tempfile.TemporaryDirectory | None = None   # where the copies are, made at the first write
+    self._running = 0                # how many runs are open: their writes reach the folders when the last one ends
     self._locations = dict(locations) if locations else {}   # folder -> the location that is there
     self._here: str | None = None   # the root as the location map names folders, resolved once
     self._database_path(self.root)  # Validate the required location name.
@@ -1235,47 +1260,35 @@ class GppuFileSystem(AbstractFileSystem):
 
   @contextmanager
   def _database(self, owner: str, *, write: bool = False):
-    """The location's index: beside the location, or in memory when the store will not hold one.
+    """The location's index: the file in its folder, read in place, until this instance writes it; from then on a copy in
+    the cache, put into the folder whole (`_put`). In memory when the store is not this host's own disk, or the folder is
+    one this account cannot write.
 
     Alex, 2026-09-17 03:49: "local databases are caches for runtime and original indexes (often only
     copy because original is a rar file now). / Local dbs are not synced in many cases. Don't count on
     these being present". So this is a cache and never the answer: the index a lookup asks is the one
-    in Postgres. A place that refuses the file — GitHub serves read-only, and so does a folder on a
-    read-only share — is read through an index this instance keeps in memory instead, and the refusal
-    is remembered so the place is asked once rather than once per folder.
+    in Postgres. Alex's proposal of 2026-10-21 (D:\\Work\\10\\21\\gppufs-index-size): an index is replaced
+    whole, never written in place, so a sync client, a share or another desktop only ever sees a complete
+    file; and only the host a location belongs to writes its indexes, so a share, another host's or the
+    Lake, is read and never written.
     """
     path = self._database_path(self._path(owner))
-    if isinstance(self.fs, LocalFileSystem) and not self._cacheless:
-      exists = self._existing_index(self._path(owner)) is not None
-      if not exists and not write:
+    if not self._cacheless and os.path.isdir(self._path(owner)) and os.access(self._path(owner), os.W_OK):
+      working = self._working_copy(owner, path, write)
+      if working is None:
         yield None
         return
-      try:
-        connection = sqlite3.connect(path)
-      except sqlite3.OperationalError:   # a read-only folder will not hold the file; only the cache is lost
-        self._cacheless = True
-      else:
-        with closing(connection) as database:
-          try:
-            database.execute('BEGIN EXCLUSIVE')   # takes the lock a write commits with, which a share may refuse, before anything is written
-            database.execute('ROLLBACK')
-            if write:
-              with database:
-                self._prepare(database, owner, exists)   # and the first write, the lock a share refuses
-          except sqlite3.OperationalError as error:
-            # An SMB share (\s1\Lake on trix) opens the file and refuses its lock: it will not hold the index in place,
-            # as a read-only one will not, so it is held in memory and written back whole. Any other refusal is raised.
-            if 'database is locked' not in str(error):
-              raise
-          else:
-            if write:
-              _excluded_from_git(self._path(owner))
-            if write and not exists:
-              _INDEXES[self.fs.unstrip_protocol(self._path(owner))] = path   # gppufs made it: known without asking the store
-            with database:
-              yield database
-            return
-        self._cacheless = True
+      opened = sqlite3.connect(Path(path).as_uri() + '?mode=ro', uri=True) if working == path else sqlite3.connect(working)
+      with closing(opened) as database:
+        with database:
+          if write:
+            self._prepare(database, owner, self._columns_of(database))
+          yield database
+      if write:
+        self._working[path][2] = True
+        if not self._running:
+          self._put(path)
+      return
     database = self._held(owner)
     with database:
       if write:
@@ -1284,14 +1297,149 @@ class GppuFileSystem(AbstractFileSystem):
         yield None
         return
       yield database
-    if write and not self._cacheless:
+
+  def _working_copy(self, owner: str, path: str, write: bool) -> str | None:
+    """The file owner's index is read in: its copy in the cache once this instance writes it, taken from the file in the
+    folder at the first write; that file itself until then; None when there is neither and nothing is written. A copy whose
+    file changed in the folder since it was taken, by another writer, is taken again, and refused if it holds writes this
+    instance has not put yet."""
+    held = self._existing_index(self._path(owner))
+    seen = _signature(held)
+    if path in self._working:
+      copy, taken, changed, _ = self._working[path]
+      if taken == seen:
+        return copy
+      if changed:
+        raise RuntimeError(f'{path}: changed in its folder while this instance held writes to put into it')
+      del self._working[path]
+    if not write:
+      return held if seen is not None else None
+    if self._scratch is None:
+      self._scratch = _scratch('gppufs-')
+    copy = os.path.join(self._scratch.name, f'{len(os.listdir(self._scratch.name))}.sqlite')
+    if seen is not None:
+      shutil.copyfile(held, copy)
+    self._working[path] = [copy, seen, False, owner]
+    _INDEXES[self.fs.unstrip_protocol(self._path(owner))] = path   # gppufs holds it: known without asking the store
+    return copy
+
+  def _put(self, path: str) -> None:
+    """An index this instance wrote, put into its folder whole: staged beside it and moved into place, as FileSystem.write
+    puts a file, so the folder never holds part of one."""
+    copy, taken, changed, owner = self._working[path]
+    if not changed:
+      return
+    if os.path.lexists(path) and not os.path.isfile(path):
+      return self._hold(path)   # something else is where the index would go
+    if _signature(path) != taken:
+      raise RuntimeError(f'{path}: changed in its folder while this instance held writes to put into it')
+    folder = os.path.dirname(path)
+    try:
+      staged = tempfile.NamedTemporaryFile(dir=folder, prefix='.', suffix='.pending', delete=False)
+    except PermissionError:
+      return self._hold(path)   # a folder this account cannot write
+    _excluded_from_git(folder)
+    with staged:
+      pending = Path(staged.name)
       try:
-        with self.fs.transaction:
-          self.fs.pipe_file(path, database.serialize())
-      except (NotImplementedError, OSError):   # the store serves read-only; only the cache file is lost
-        self._cacheless = True
-      else:
-        _INDEXES[self.fs.unstrip_protocol(self._path(owner))] = path
+        with open(copy, 'rb') as source:
+          shutil.copyfileobj(source, staged)
+        staged.flush()
+        os.fsync(staged.fileno())
+      except BaseException:
+        staged.close()
+        pending.unlink()
+        raise
+    try:
+      os.replace(pending, path)
+    finally:
+      pending.unlink(missing_ok=True)
+    self._working[path] = [copy, _signature(path), False, owner]
+
+  def _hold(self, path: str) -> None:
+    """A folder that will not take its index: what this instance wrote is held in memory, as a store that is not this
+    host's disk holds it, and this instance writes no index file again. Alex, 2026-09-17: "Don't count on these being
+    present"; only the cache is lost."""
+    copy, _, _, owner = self._working.pop(path)
+    database = sqlite3.connect(':memory:', check_same_thread=False)
+    with closing(sqlite3.connect(copy)) as written:
+      written.backup(database)
+    self._memory[owner] = database
+    self._cacheless = True
+
+  def _put_all(self, key: str = '.') -> None:
+    """Every index this instance wrote at and below key, put into its folder, the deepest first: an index is in place
+    before the listing above it that leads to it."""
+    folder = self._path(key).rstrip('/')
+    below = [path for path in self._working if key == '.' or os.path.dirname(path) == folder
+             or os.path.dirname(path).startswith(folder + '/')]
+    for path in sorted(below, key=lambda item: len(PurePosixPath(item).parts), reverse=True):
+      self._put(path)
+
+  def _let_go(self, key: str) -> None:
+    """The indexes at and below key put into their folders and their copies dropped: the folder is about to move."""
+    self._put_all(key)
+    folder = self._path(key).rstrip('/')
+    for path in [path for path in self._working if key == '.' or os.path.dirname(path) == folder
+                 or os.path.dirname(path).startswith(folder + '/')]:
+      del self._working[path]
+
+  @contextmanager
+  def run(self):
+    """Writes that reach their folders together: every index a run writes is built in the cache and put into its folder
+    whole when the run ends, however it ends, the deepest first. A share, a sync client or another desktop sees only
+    complete files, and a run that stops keeps what it wrote. FileIndexer's index of a selection is one run; a write
+    outside a run is put as soon as it is made."""
+    with self._lock:
+      self._running += 1
+    try:
+      yield self
+    finally:
+      with self._lock:
+        self._running -= 1
+        if not self._running:
+          self._put_all()
+
+  def _bound(self, owner: str) -> None:
+    """No index past INDEX_LIMIT: while owner's holds more, the folder directly below it holding the most of it gets an
+    index of its own (`_split`), and the same holds again in that one, so however large a folder, an index is larger
+    than the limit only by one folder's own entries. Only an index this host writes is bounded."""
+    if self._cacheless:
+      return
+    while True:
+      with self._database(owner) as database:
+        if database is None:
+          return
+        pages, free, size = (database.execute(f'PRAGMA {name}').fetchone()[0]
+                             for name in ('page_count', 'freelist_count', 'page_size'))
+        if (pages - free) * size <= INDEX_LIMIT or not (top := database.execute(self._largest).fetchone()):
+          return
+      folder = self._absolute(top[0], owner)
+      self._split(owner, folder)
+      self._bound(folder)
+
+  def _split(self, owner: str, folder: str) -> None:
+    """folder, below owner, given an index of its own: its row and the rows below it move into the new index, their paths
+    made its. The listing above it still names it, which is how `stats` finds the folders below that hold their own index.
+    The new index is recorded in `_INDEXES` as gppufs makes it."""
+    here = self._relative(folder, owner)
+    with self._database(owner) as database:
+      rows = database.execute('SELECT path, metadata, children FROM gppufs_entries WHERE path=? OR substr(path,1,?)=?',
+                              (here, len(here) + 1, here + '/')).fetchall()
+    moved = []
+    for path, metadata, children in rows:
+      at = self._relative(self._absolute(path, owner), folder)
+      value = json.loads(metadata)
+      value['name'] = value['gppu']['path'] = at
+      moved.append((at, json.dumps(value), children if children is None else json.dumps([
+        {**child, 'path': self._relative(self._absolute(child['path'], owner), folder)} for child in json.loads(children)])))
+    with self._database(folder, write=True) as database:
+      database.executemany('INSERT INTO gppufs_entries VALUES (?, ?, ?) '
+        'ON CONFLICT(path) DO UPDATE SET metadata=excluded.metadata, children=excluded.children', moved)
+    with self._database(owner, write=True) as database:
+      database.execute('DELETE FROM gppufs_entries WHERE path=? OR substr(path,1,?)=?', (here, len(here) + 1, here + '/'))
+      database.commit()
+      database.execute('VACUUM')   # the file is then the size of what it holds, not of what it held
 
   @staticmethod
   def _columns_of(database: sqlite3.Connection) -> bool:
@@ -1415,16 +1563,19 @@ class GppuFileSystem(AbstractFileSystem):
     if keep:
       self._index.put(keep)
     # Publish descendant databases before the listing which references them.
-    for owner in sorted(grouped, key=lambda item: len(PurePosixPath(item).parts), reverse=True):
-      with self._database(owner, write=True) as database:
-        if scope == '.' or owner == scope or owner.startswith(scope + '/'):
-          database.execute('DELETE FROM gppufs_entries')
-        else:
-          relative = self._relative(scope, owner)
-          database.execute('DELETE FROM gppufs_entries WHERE path=? OR substr(path,1,?)=?',
-            (relative, len(relative) + 1, relative + '/'))
-        database.executemany('INSERT INTO gppufs_entries VALUES (?, ?, ?) '
-          'ON CONFLICT(path) DO UPDATE SET metadata=excluded.metadata, children=excluded.children', grouped[owner])
+    with self.run():
+      for owner in sorted(grouped, key=lambda item: len(PurePosixPath(item).parts), reverse=True):
+        with self._database(owner, write=True) as database:
+          if scope == '.' or owner == scope or owner.startswith(scope + '/'):
+            database.execute('DELETE FROM gppufs_entries')
+          else:
+            relative = self._relative(scope, owner)
+            database.execute('DELETE FROM gppufs_entries WHERE path=? OR substr(path,1,?)=?',
+              (relative, len(relative) + 1, relative + '/'))
+          database.executemany('INSERT INTO gppufs_entries VALUES (?, ?, ?) '
+            'ON CONFLICT(path) DO UPDATE SET metadata=excluded.metadata, children=excluded.children', grouped[owner])
+      for owner in grouped:
+        self._bound(owner)
 
   @staticmethod
   def _renamed_key(key: str, old: str, new: str) -> str:
@@ -1761,15 +1912,18 @@ class GppuFileSystem(AbstractFileSystem):
       grouped.setdefault(owner, []).append((value['name'], json.dumps(value, default=_metadata_text),
         None if members is None else json.dumps([
           {**entry, 'path': self._relative(entry['path'], owner)} for entry in members])))
-    for owner, values in grouped.items():
-      with self._database(owner, write=True) as database:
-        database.executemany('INSERT INTO gppufs_entries VALUES (?, ?, ?) ON CONFLICT(path) DO NOTHING', values)
-    if listing is None:
-      return
-    owner = self._owner(key)
-    with self._database(owner, write=True) as database:
-      database.execute('UPDATE gppufs_entries SET children=? WHERE path=?', (json.dumps([
-        {**entry, 'path': self._relative(entry['path'], owner)} for entry in listing]), self._relative(key, owner)))
+    with self.run():
+      for owner, values in grouped.items():
+        with self._database(owner, write=True) as database:
+          database.executemany('INSERT INTO gppufs_entries VALUES (?, ?, ?) ON CONFLICT(path) DO NOTHING', values)
+      if listing is not None:
+        owner = self._owner(key)
+        with self._database(owner, write=True) as database:
+          database.execute('UPDATE gppufs_entries SET children=? WHERE path=?', (json.dumps([
+            {**entry, 'path': self._relative(entry['path'], owner)} for entry in listing]), self._relative(key, owner)))
+        grouped.setdefault(owner, [])
+      for owner in grouped:
+        self._bound(owner)
 
   @staticmethod
   def _unindexed(record: handlers.Record, directory: bool) -> bool:
@@ -1861,15 +2015,32 @@ class GppuFileSystem(AbstractFileSystem):
   def stats(self) -> dict[str, Any]:
     """What this location's own index holds, aggregated in the index and touching no filesystem: its folders and files, the
     files' bytes, the first and the last modified time among them, when the latest entry was probed, its notes (.md) and its
-    sessions (what the session handler read). An ignored entry is not counted, as a row's totals do not count it; an index
-    below the location owns its subtree and is not counted here."""
-    with self._lock, self._database('.') as database:
-      row = database.execute(self._stats).fetchone() if database is not None else (0, 0, 0, None, None, None, 0, 0)
-    folders, files, size, first, last, seen, notes, sessions = row
+    sessions (what the session handler read). An ignored entry is not counted, as a row's totals do not count it. The
+    indexes gppufs split off below it count with it (`_split`); a location below it, holding its own, does not."""
+    with self._lock:
+      folders, files, size, first, last, seen, notes, sessions = self._aggregated('.')
     return dict(folders=folders, files=files, bytes=size, notes=notes, sessions=sessions,
                 first=None if first is None else datetime.fromtimestamp(first, timezone.utc).astimezone(),
                 last=None if last is None else datetime.fromtimestamp(last, timezone.utc).astimezone(),
                 seen=None if seen is None else datetime.fromisoformat(seen))
+
+  def _aggregated(self, owner: str) -> list:
+    """owner's index aggregated in it, with what the indexes of the folders below it hold, but for a configured location's,
+    which is its own."""
+    with self._database(owner) as database:
+      if database is None:
+        return [0, 0, 0, None, None, None, 0, 0]
+      held = list(database.execute(self._aggregate).fetchone())
+      nested = [self._absolute(path, owner) for (path,) in database.execute(self._nested).fetchall()]
+    for key in nested:
+      if self._on_host(key) in self._locations:
+        continue
+      below = self._aggregated(key)
+      below[0] += 1   # the folder itself, whose row is its own index's root
+      for i, combined in ((0, sum), (1, sum), (2, sum), (3, min), (4, max), (5, max), (6, sum), (7, sum)):
+        held[i] = combined(value for value in (held[i], below[i]) if value is not None) if any(
+          value is not None for value in (held[i], below[i])) else None
+    return held
 
   def info_sync(self, path: str | Path | None = None, refresh: bool = False) -> dict:
     """``info`` on the calling thread."""
@@ -1997,6 +2168,7 @@ class GppuFileSystem(AbstractFileSystem):
       source, destination = self._key(path1), self._key(path2)
       if source == destination:
         return
+      self._let_go(source)
       self.fs.mv(self._path(source), self._path(destination), recursive=recursive,
                  maxdepth=maxdepth, **kwargs)
       self._move_rows(source, destination)
@@ -2019,6 +2191,8 @@ class GppuFileSystem(AbstractFileSystem):
     source, arriving = self._key(path), other._key(destination)
     was, now = self._address(source), other._address(arriving)
     here, there = self._path(source), other._path(arriving)
+    with self._lock:
+      self._let_go(source)
     if type(self.fs) is type(other.fs) and isinstance(self.fs, LocalFileSystem):
       self.fs.mv(here, there, recursive=True)
     else:
@@ -2058,6 +2232,8 @@ class GppuFileSystem(AbstractFileSystem):
     """
     if not isinstance(self.fs, LocalFileSystem):
       return None
+    with self._lock:
+      self._let_go('.')
     index = self._existing_index(self.root)
     if index is None:
       return None
