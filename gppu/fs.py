@@ -1027,7 +1027,8 @@ class GppuFileSystem(AbstractFileSystem):
   _aggregate = f'''SELECT count(*) FILTER (WHERE kind='folder'), count(*) FILTER (WHERE kind='file'),
       coalesce(sum(size) FILTER (WHERE kind='file'), 0), min(mtime) FILTER (WHERE kind='file'), max(mtime) FILTER (WHERE kind='file'),
       max(probed), count(*) FILTER (WHERE kind='file' AND path LIKE '%.md'), count(*) FILTER (WHERE session)
-    FROM (SELECT path, metadata->>'$.gppu.type' AS kind, metadata->>'$.gppu.size' AS size, metadata->>'$.mtime' AS mtime,
+    FROM (SELECT path, metadata->>'$.gppu.type' AS kind, metadata->>'$.gppu.size' AS size,
+        unixepoch(metadata->>'$.gppu.modified_at', 'subsec') AS mtime,
         metadata->>'$.gppu.probed_at' AS probed,
         EXISTS (SELECT 1 FROM json_each(metadata, '$.gppu.handlers') WHERE value='session') AS session
       FROM gppufs_entries WHERE path<>'.'
