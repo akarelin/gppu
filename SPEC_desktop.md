@@ -16,7 +16,7 @@ The virtual filesystem is what is relied on, not the G: drive that wraps it.
 
 Browsing is virtually instantaneous: it reads the local SQLite index, or the API that serves the Lake catalog.
 
-The catalog's API is `/catalog` for now. Its methods are specialized to working with the catalog, browsing it and these use cases, on a general foundation, and they handle very large data sets.
+The catalog's API is `/lake/catalog` for now. Its methods are specialized to working with the catalog, browsing it and these use cases, on a general foundation, and they handle very large data sets.
 
 ## Use cases
 

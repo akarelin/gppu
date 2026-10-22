@@ -1,4 +1,4 @@
-"""gppu.catalog: /catalog served from a catalog held in memory, browsed through CatalogFileSystem and the desktop."""
+"""gppu.catalog: /lake/catalog served from a catalog held in memory, browsed through CatalogFileSystem and the desktop."""
 from uuid import UUID
 
 import pytest
@@ -49,7 +49,7 @@ class Held:
 
 def browsed(held):
     app = FastAPI()
-    app.mount('/catalog', api(held))
+    app.mount('/lake/catalog', api(held))
     return CatalogFileSystem(client=TestClient(app))
 
 

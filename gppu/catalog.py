@@ -1,4 +1,4 @@
-"""gppu.catalog: the catalog's API, /catalog, and the filesystem a desktop browses it with. Its methods are specific to working with
+"""gppu.catalog: the catalog's API, /lake/catalog, and the filesystem a desktop browses it with. Its methods are specific to working with
 the catalog and browsing it as the desktop's use cases do (SPEC_desktop.md), not generic, and a folder of any size is sent a row
 at a time: neither the API nor its client asks the database for more than a fetch.
 
@@ -8,7 +8,7 @@ catalog carries the catalog's id for it, `meta.lake_id`. Everything is reached b
 by its uid; a path is only resolved into one.
 
   Catalog(dsn)            the catalog in the database at dsn, its locations read from Linked Data through gppu.ld.gppufs
-  api(catalog)            the catalog as a FastAPI app, which an APIApp serves at /catalog among its apis()
+  api(catalog)            the catalog as a FastAPI app, which an APIApp serves at /lake/catalog among its apis()
   CatalogFileSystem(url)  the catalog through its API as an fsspec filesystem: Linked Data's locations as folders, in each what
                           the catalog holds there; read-only"""
 import json
@@ -120,7 +120,8 @@ class Catalog:
 
 
 def api(catalog: Catalog):
-    """catalog as REST resources, a FastAPI app an APIApp serves at /catalog. Needs FastAPI (the `ld` extra).
+    """catalog as REST resources, a FastAPI app an APIApp serves at /lake/catalog, mounted before the Lake's at /lake, whose paths
+    are uris and would take it. Needs FastAPI (the `ld` extra).
 
     GET /locations                  Linked Data's locations whose entries are in the catalog, as one tree
     GET /locations/{id}/entries     what is at a location's root, a line of JSON each, by name
@@ -186,7 +187,7 @@ class CatalogFileSystem(AbstractFileSystem):
         self._listed: dict[str, dict[str, dict[str, Any]]] = {}   # each folder listed -> its entries by name
 
     def _get(self, route: str, **params: str):
-        r = self.client.get(f"/catalog{route}", params=params)
+        r = self.client.get(f"/lake/catalog{route}", params=params)
         if r.status_code == 404:
             raise FileNotFoundError(r.json()['error'])
         r.raise_for_status()
@@ -232,7 +233,7 @@ class CatalogFileSystem(AbstractFileSystem):
         if location is not None and (below or location['lake_id'] is not None):
             route = f"/entries/{self._id(path, location, below)}/entries" if below else f"/locations/{location['id']}/entries"
             listed = {}
-            with self.client.stream('GET', f'/catalog{route}') as r:
+            with self.client.stream("GET", f"/lake/catalog{route}") as r:
                 if r.status_code == 404:
                     raise FileNotFoundError(json.loads(r.read())['error'])
                 r.raise_for_status()
