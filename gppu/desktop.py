@@ -37,6 +37,7 @@ class DesktopFileSystem(AbstractFileSystem):
         self.sources = dict(sources)
         self.indexed: dict[str, GppuIndexedFileSystem] = {}
         self._index_paths: set[str] = set()
+        self._shown_as: dict[str, dict[str, str]] = {}   # a listed folder -> the names shown in it -> the names they stand for
 
     def _discover(self, fs, folder, name):
         if not fs.fs.isdir(folder):
@@ -81,15 +82,38 @@ class DesktopFileSystem(AbstractFileSystem):
         if name is None:
             raise FileNotFoundError(path)
         fs = self.sources[name]
-        return fs, posixpath.join(fs.root, *parts[1:])   # a drive's root, D:/, keeps its slash
+        folder = posixpath.join(fs.root, *parts[1:-1])
+        shown = self._shown_as.get(folder.casefold(), {})
+        return fs, posixpath.join(folder, *([shown.get(parts[-1].casefold(), parts[-1])] if len(parts) > 1 else []))
+
+    def _found(self, path):
+        """The source of a path whose last name may be the one an entry is shown by: a folder not listed yet is listed
+        first, since its listing says what each name shown in it stands for."""
+        parts = self._parts(path)
+        if len(parts) > 1:
+            folder = '/' + '/'.join(parts[:-1])
+            if self._source(folder)[1].casefold() not in self._shown_as:
+                self.ls(folder, detail=False)
+        return self._source(path)
+
+    @staticmethod
+    def _shown(row):
+        """The name an entry is shown by: the one its handler gives it, as SessionHandler names a session by its start, its
+        turns, its length and its topic, else its own."""
+        return (row['gppu']['record'].get('data') or {}).get('normalized_name') or \
+            PurePosixPath(row['gppu']['path'].replace('\\', '/')).name
 
     @staticmethod
     def _seconds(row, name):
-        """The row as Windows is given it: its modified time in seconds, as gppufs reads a row's time. An archive member's
-        index row holds it as text, which fusepy cannot give Windows, and Windows leaves out the entry."""
-        modified = GppuFileSystem._modified(row)
-        result = {key: value for key, value in row.items() if key != 'mtime'} | {'name': name}
-        return result | ({'mtime': modified.timestamp()} if modified else {})
+        """The row as Windows is given it: its times in seconds, as gppufs reads a row's time. An archive member's index row
+        holds it as text, which fusepy cannot give Windows, and Windows leaves out the entry. An entry whose handler read its
+        span, such as a session, is created at its start and modified at its end, so Windows' date columns show its span."""
+        span = GppuFileSystem._span(row.get('gppu', {}).get('record', {}).get('span'))   # an older index's row has no gppu
+        modified = span.end if span else GppuFileSystem._modified(row)
+        created = span.start.timestamp() if span else row.get('created')
+        result = {key: value for key, value in row.items() if key not in ('mtime', 'created')} | {'name': name}
+        return result | ({'mtime': modified.timestamp()} if modified else {}) | (
+            {'ctime': created} if isinstance(created, (int, float)) else {})
 
     @classmethod
     def _row(cls, row, name):
@@ -108,8 +132,8 @@ class DesktopFileSystem(AbstractFileSystem):
                 return {'name': '/Indexed', 'type': 'directory', 'size': 0}
             fs, relative = self._index_view(parts)
             return self._seconds(fs.info(relative), '/' + '/'.join(parts))
-        fs, source = self._source(path)
-        return self._row(fs.info_sync(source), '/' + '/'.join(self._parts(path)))
+        fs, source = self._found(path)
+        return self._row(fs.info_sync(source), '/' + '/'.join(parts))
 
     def ls(self, path='', detail=True, **kwargs):
         if not self._parts(path):
@@ -127,10 +151,12 @@ class DesktopFileSystem(AbstractFileSystem):
         else:
             fs, source = self._source(path)
             self._discover(fs, source, ' › '.join(self._parts(path)))
-            rows = [self._row(row, str(PurePosixPath('/' + '/'.join(self._parts(path))) /
-                    PurePosixPath(row['gppu']['path'].replace('\\', '/')).name))
-                    for row in fs.ls_sync(source)
-                    if fs.fs._strip_protocol(row['gppu']['path']).replace('\\', '/').casefold() not in self._index_paths]
+            listed = [row for row in fs.ls_sync(source)
+                      if fs.fs._strip_protocol(row['gppu']['path']).replace('\\', '/').casefold() not in self._index_paths]
+            self._shown_as[source.casefold()] = {self._shown(row).casefold(): PurePosixPath(row['gppu']['path'].replace('\\', '/')).name
+                                                 for row in listed}
+            here = PurePosixPath('/' + '/'.join(self._parts(path)))
+            rows = [self._row(row, str(here / self._shown(row))) for row in listed]
         names = [row['name'].casefold() for row in rows]
         if len(names) != len(set(names)):
             raise ValueError(f'{path}: gppufs names collide in the Windows namespace')
@@ -143,7 +169,7 @@ class DesktopFileSystem(AbstractFileSystem):
         if parts[0].casefold() == 'indexed':
             fs, relative = self._index_view(parts)
             return fs.open(relative, mode=mode, **kwargs)
-        fs, source = self._source(path)
+        fs, source = self._found(path)
         return fs.open(source, mode=mode, **kwargs)
 
 

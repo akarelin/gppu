@@ -187,3 +187,31 @@ def test_transported_snapshot_never_reads_unrelated_sibling_files(tmp_path):
     assert view.ls(detail=False) == ['/note.txt']
     with pytest.raises(FileNotFoundError, match='no bound original source'):
         view.cat_file('/note.txt')
+
+
+def test_a_session_is_shown_by_its_handlers_name_and_dated_by_its_span(tmp_path):
+    """Rich information (SPEC_desktop's first use case): a session the handler read is shown by the name SessionHandler gives
+    it, its start, turns, length and topic, and Windows' created and modified times are its span; it is found and read by
+    that name, before its folder is listed too."""
+    import json
+    folder = tmp_path / 'sessions'
+    folder.mkdir()
+    lines = ({'type': 'session_meta', 'timestamp': '2026-09-01T08:00:00Z', 'payload': {'id': 'codex-demo'}},
+             {'type': 'response_item', 'timestamp': '2026-09-01T08:01:00Z', 'payload': {
+                 'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': 'Show the handlers'}]}},
+             {'type': 'response_item', 'timestamp': '2026-09-01T08:05:00Z', 'payload': {
+                 'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'Here they are'}]}})
+    (folder / 'rollout.jsonl').write_text('\n'.join(json.dumps(line) for line in lines), encoding='utf-8')
+    (folder / 'plain.txt').write_text('ordinary file')
+    GppuFileSystem(tmp_path).ls('sessions', refresh=True)
+    fs = DesktopFileSystem({'home': GppuFileSystem(tmp_path)})
+    names = fs.ls('/home/sessions', detail=False)
+    shown = next(name for name in names if name != '/home/sessions/plain.txt')
+    assert re.fullmatch(r'/home/sessions/260901-\d{4} \d+~\d+m - Show the handlers\.codex-demo\.jsonl', shown)
+    row = fs.info(shown)
+    start, end = GppuFileSystem(tmp_path).info('sessions/rollout.jsonl')['gppu']['record']['span']
+    assert (row['ctime'], row['mtime']) == (datetime.fromisoformat(start).timestamp(), datetime.fromisoformat(end).timestamp())
+    assert row['ctime'] < row['mtime']
+    assert fs.cat_file(shown) == (folder / 'rollout.jsonl').read_bytes()
+    assert DesktopFileSystem({'home': GppuFileSystem(tmp_path)}).cat_file(shown) == (folder / 'rollout.jsonl').read_bytes()
+    assert fs.info('/home/sessions/plain.txt')['ctime'] == pytest.approx((folder / 'plain.txt').stat().st_ctime)
