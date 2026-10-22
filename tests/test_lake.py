@@ -78,6 +78,25 @@ def test_the_api_at_lake_answers_what_the_lake_answers(tmp_path):
     assert client.post('/lake/', params={'name': 'note.txt'}, content=b'text').status_code == 400
 
 
+def test_a_client_copies_a_session_where_the_lake_answers_then_has_it_indexed(tmp_path):
+    lake, outer = lake_of(tmp_path)
+    served = FastAPI()
+    served.mount('/lake', api(lake))
+    client = TestClient(served)
+    first = SESSION.splitlines(keepends=True)[0]   # as much of the session as its handler needs to place it
+    placed = client.post('/lake/', params={'name': f'{UID}.jsonl', 'copy': ''}, content=first.encode())
+    path = f'timeseries/2026/Sessions/07/cc/{UID}/{UID}.jsonl'
+    assert placed.status_code == 200 and placed.json()['path'] == path and not (outer / path).exists()
+    assert placed.json()['uri'] == (outer / path).as_uri()
+    assert client.post(f"/lake/{placed.json()['uri']}").status_code == 404   # nothing copied there yet
+    (outer / path).parent.mkdir(parents=True)
+    (outer / path).write_text(SESSION)
+    indexed = client.post(f"/lake/{placed.json()['uri']}")
+    assert indexed.status_code == 202 and indexed.json()['uri'] == placed.json()['uri']
+    row = lake.info(placed.json()['uri'])   # from the Lake's catalog, indexed after the answer
+    assert row['gppu']['record']['subtype'] == 'cc' and row['gppu']['record']['uid'] == UID
+
+
 def test_the_lake_api_is_an_fsspec_filesystem(tmp_path):
     lake, outer = lake_of(tmp_path)
     served = FastAPI()

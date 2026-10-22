@@ -1,5 +1,7 @@
 """gppu.lake: the Lake. An object is saved to the Lake without a uri, and the Lake decides where it is stored and answers with
-its uri; an object is retrieved by its uri. Linked Data is Linked Data and the Lake is the Lake: their APIs are separate, /ld and
+its uri; an object is retrieved by its uri. A client that copies an object to the Lake itself, such as a session hook growing a
+session's copy as its log grows, saves it the same way, with enough of it for its handler, and the Lake answers where the client
+copies it, storing nothing; the client then has the Lake index what it copied. Linked Data is Linked Data and the Lake is the Lake: their APIs are separate, /ld and
 /lake. The Lake is a catalog on gppufs: a Lake folder is listed through gppufs's GppuFileSystem, its index beside the Lake, and a
 UI lists it through the Lake's API, never the file system or gppufs.
 
@@ -14,6 +16,7 @@ import io
 import json
 import shutil
 import tempfile
+import threading
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, BinaryIO, Mapping
@@ -80,10 +83,12 @@ class Lake:
             raise ValueError(f'{obj.name}: the Lake has no place for a {record.type} {record.subtype or ""} from {obj.uri}'.replace('  ', ' '))
         return str(Location.relative(path))
 
-    def save(self, obj: DataObject) -> y2uri:
-        """Store obj where the Lake's layout places it, by what gppu's handlers read of it, and the uri it is stored at. Its
-        content is a file under its own name in CACHE while it is read and stored, a stream copied a piece at a time, so a large
-        file is never held whole."""
+    def save(self, obj: DataObject, copy: bool = False) -> y2uri:
+        """Store obj where the Lake's layout places it, by what gppu's handlers read of it, and the uri it is stored at. With
+        copy the client copies it there itself: obj is as much of the object as its handler needs, such as a session's first
+        lines, nothing is stored, and the uri is where the client copies it and then has it indexed. Its content is a file under
+        its own name in CACHE while it is read and stored, a stream copied a piece at a time, so a large file is never held
+        whole."""
         with tempfile.TemporaryDirectory(prefix='lake-', dir=CACHE) as folder:
             scratch = Path(folder) / Path(obj.name).name   # its own name, never a path out of the folder
             with scratch.open('wb') as file:
@@ -93,11 +98,28 @@ class Lake:
                     file.write(obj.content if isinstance(obj.content, bytes) else obj.content.encode('utf-8')
                                if isinstance(obj.content, str) else json.dumps(obj.content, ensure_ascii=False).encode('utf-8'))
             path = self.place(obj, self.read(scratch))
+            if copy:
+                return self.store.provider.join(self.store.uri, Location.relative(path))
             with scratch.open('rb') as stream:
                 self.store.write(path, DataObject(obj.uri, stream, obj.identity, obj.kind, obj.name))
         uri = self.store.provider.join(self.store.uri, Location.relative(path))
-        self.files.info(self._here(uri), refresh=True)   # the catalog holds what was saved
+        self.index(uri)   # the catalog holds what was saved
         return uri
+
+    def index(self, uri: y2uri | str) -> dict[str, Any]:
+        """The file at uri read again by its handlers into the Lake's catalog, gppufs: what save stored, or what a client copied
+        where save told it to."""
+        here = self._here(uri)
+        if here is None or not Path(here).is_file():
+            raise LookupError(f'{uri}: the Lake holds no file there')
+        return self._row(self.files.info_sync(here, True))   # plainly, as an async route calls save too
+
+    def path(self, uri: y2uri | str) -> str:
+        """Where uri is below the Lake, as a client that has the Lake mounted joins it to the mount."""
+        below = _below(str(self.store.uri), str(uri))
+        if below is None:
+            raise LookupError(f'{uri} is not in the Lake')
+        return unquote(below).strip('/')
 
     def retrieve(self, uri: y2uri | str) -> DataObject:
         """The object at uri with its content."""
@@ -155,7 +177,12 @@ def api(lake: Lake):
     """lake as REST resources, a FastAPI app an APIApp serves at /lake. Needs FastAPI (the `ld` extra).
 
     POST   /?name=&source=   save the file that is the body, by its name and the uri it came from, source, where there is one;
-                             the answer is the uri the Lake stored it at
+                             the answer is the uri the Lake stored it at; with ?copy the client copies the file itself, the body
+                             as much of it as its handler needs, and the answer is the uri and the path below the Lake it copies
+                             it to, nothing stored
+    POST   /{uri}            index the file a client copied to uri, after answering 202: a long session is read for seconds, and
+                             no client waits for it; one file is indexed at a time, and a file copied to again while it is
+                             indexed is indexed once more after
     GET    /{uri}            what the handlers found at uri; ?ls what is inside it, ?walk&level=&recursive= everything below it,
                              ?retrieve the object with its content, ?content its bytes
     DELETE /{uri}            remove the object at uri
@@ -177,12 +204,44 @@ def api(lake: Lake):
         app.add_exception_handler(refused, lambda request, error: reply({'error': str(error)}, 400))
 
     @app.post('/')
-    async def save(request: Request, name: str, source: str = ''):
+    async def save(request: Request, name: str, source: str = '', copy: str | None = None):
         with tempfile.TemporaryFile(dir=CACHE) as body:   # the body streamed to a file as it arrives, never held whole
             async for chunk in request.stream():
                 body.write(chunk)
             body.seek(0)
-            return reply({'uri': str(lake.save(DataObject(source, body, None, 'file', name)))}, 201)
+            uri = lake.save(DataObject(source, body, None, 'file', name), copy is not None)
+        if copy is not None:
+            return reply({'uri': str(uri), 'path': lake.path(uri)})
+        return reply({'uri': str(uri)}, 201)
+
+    indexing: dict[str, bool] = {}   # each uri waiting or being indexed, and whether it was copied to again meanwhile
+    turn, guard = threading.Lock(), threading.Lock()   # one file indexed at a time; guard keeps indexing whole
+
+    def index(uri: str) -> None:
+        try:
+            while True:
+                with turn:
+                    lake.index(uri)
+                with guard:
+                    if not indexing[uri]:
+                        del indexing[uri]
+                        return
+                    indexing[uri] = False
+        except BaseException:   # raised on to the server's log, the uri free for the next copy to index it
+            with guard:
+                indexing.pop(uri, None)
+            raise
+
+    @app.post('/{uri:path}')
+    def copied(uri: str):
+        here = lake._here(uri)
+        if here is None or not Path(here).is_file():
+            raise LookupError(f'{uri}: the Lake holds no file there')
+        with guard:
+            waiting = uri in indexing
+            indexing[uri] = waiting
+        return Response(json.dumps({'uri': uri}), status_code=202, media_type='application/json; charset=utf-8',
+                        background=None if waiting else BackgroundTask(index, uri))
 
     @app.get('/{uri:path}')
     def found(uri: str, ls: str | None = None, walk: str | None = None, level: str = 'files', recursive: str | None = None,
