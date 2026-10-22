@@ -72,6 +72,8 @@ NAMED_DATES = (
     (re.compile(r"(?<![A-Za-z0-9])(\d{4}-\d{2}-\d{2})(?![A-Za-z0-9])"), "%Y-%m-%d"),
     (re.compile(r"(?<![A-Za-z0-9])(\d{6})(?![A-Za-z0-9])"), "%y%m%d"),
 )
+# The dates that lead a name, as a partitioned folder's things are named: the times and dates above, and a month, YYYY-MM.
+NAMED_LEADING = NAMED_TIMES + NAMED_DATES + ((re.compile(r"(\d{4}-\d{2})(?![A-Za-z0-9-])"), "%Y-%m"),)
 # A duration after a single time in a name, `~2h` or `(30m)`, is where its span ends.
 NAMED_DURATION = re.compile(r"(?:~|\()\s*(\d+)\s*([dhms])\)?", re.I)
 SECONDS = {"d": 86400, "h": 3600, "m": 60, "s": 1}
@@ -329,10 +331,59 @@ class FolderHandler(Handler):
         record = Activity(**vars(super().parse(path)))
         held = [probe(member) for member in Path(path).absolute().iterdir()]
         files = [member for member in held if "size" in member.meta and member.subtype not in IGNORED]
-        folders = [member for member in held if member.subtype in ("folder", "sessionfolder")]
+        folders = [member for member in held if member.subtype in FOLDERS]
         record.data.update(files=len(files), folders=len(folders), bytes=sum(member.meta["size"] for member in files))
         record.span = cls.spanning([time for member in files if (time := cls.valid_time(member.updated))])
         return record
+
+
+class PartitionedFolderHandler(FolderHandler):
+    """A folder that keeps what it holds partitioned by date, as the Lake does: the folders of its first levels are its
+    partitions, each named by a date in its level's form, `partitions` outermost first, and what they hold are the things
+    themselves. A thing in several partitions, a task on several days, is one thing, known by its own name: its name without
+    the date leading it, and an archive's, a thing's finished stage, without the archive's extension.
+
+    Returns: FolderHandler's record.
+    """
+
+    partitions: tuple[str, ...] = ()
+
+    @classmethod
+    def partition(cls, name: str, level: int) -> bool:
+        """Whether a folder named name, level partitions below this folder, is a partition."""
+        if level >= len(cls.partitions):
+            return False
+        try:
+            datetime.strptime(name, cls.partitions[level])
+        except ValueError:
+            return False
+        return True
+
+    @classmethod
+    def own_name(cls, name: str, archive: bool = False) -> str:
+        """A thing's own name: its name without the date leading it, an archive's without the archive's extension too."""
+        for pattern, form in NAMED_LEADING:
+            if found := pattern.match(name):
+                try:
+                    datetime.strptime(found.group(1), form)
+                except ValueError:
+                    continue
+                name = name[found.end():].lstrip(" -_") or name
+                break
+        extension = next((extension for extension in ARCHIVES if name.casefold().endswith(extension)), "") if archive else ""
+        return name[:len(name) - len(extension)]
+
+
+class WorkFolderHandler(PartitionedFolderHandler):
+    """Work: each day's tasks, `{MM}/{DD}/{task}`, the year implied."""
+
+    partitions = ("%m", "%d")
+
+
+class ProjectsFolderHandler(PartitionedFolderHandler):
+    """Projects: by month, `{MM}/{YYMMDD} {title}` for a project of one day and `{MM}/{YYYY-MM} {project}` for a longer one."""
+
+    partitions = ("%m",)
 
 
 class FileHandler(Handler):
@@ -1498,7 +1549,7 @@ class SessionFolderHandler(FolderHandler):
         .system_generated/logs/chunks holds pieces of the transcripts beside it, cut mid-message, and is not entered."""
         for member in sorted(path.iterdir()):
             found = probe(member)
-            if found.subtype in ("folder", "sessionfolder") and not member.match(AGY_CHUNKS):
+            if found.subtype in FOLDERS and not member.match(AGY_CHUNKS):
                 yield from cls._sessions(member)
             elif found.type == "session":
                 yield SessionHandler.parse(member)
@@ -1508,8 +1559,10 @@ class SessionFolderHandler(FolderHandler):
 HANDLERS: dict[tuple[str, str | None], type[Handler]] = {
     (handler.type, handler.subtype): handler
     for handler in (FolderHandler, FileHandler, SqliteHandler, MarkdownHandler, CSVHandler, LogHandler, EmailHandler,
-                    SessionHandler, ExportHandler, SessionFolderHandler)
+                    SessionHandler, ExportHandler, SessionFolderHandler, WorkFolderHandler, ProjectsFolderHandler)
 }
+# The subtypes of the handlers that read a folder.
+FOLDERS = tuple(handler.subtype for handler in HANDLERS.values() if issubclass(handler, FolderHandler))
 
 
 def probe(path: str | Path) -> Record:

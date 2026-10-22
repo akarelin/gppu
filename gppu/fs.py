@@ -1866,7 +1866,7 @@ class GppuFileSystem(AbstractFileSystem):
 
   @staticmethod
   def _folder(record: handlers.Record) -> bool:
-    return record.subtype in (handlers.FolderHandler.subtype, handlers.SessionFolderHandler.subtype)
+    return record.subtype in handlers.FOLDERS
 
   @staticmethod
   def _span(value: Any) -> TimeSpan | None:
@@ -1996,6 +1996,14 @@ class GppuFileSystem(AbstractFileSystem):
     stored = self._stored(key)
     return stored is not None and 'location' not in stored[0]['gppu']
 
+  def _misread(self, key: str, entry: dict) -> bool:
+    """Whether the index holds a folder on this host as read by another handler than the one probe gives it now, as a
+    folder stored before its handler was added is: probe tells a folder's handler by its path, nothing read."""
+    if entry['type'] != 'directory' or not isinstance(self.fs, LocalFileSystem):
+      return False
+    stored = self._stored(key)
+    return stored is not None and (stored[0]['gppu'].get('record') or {}).get('subtype') != handlers.probe(Path(self._path(key))).subtype
+
   def _forget(self, key: str) -> None:
     """Drop one stored entry so it is identified again on this listing."""
     owner = self._owner(key)
@@ -2017,8 +2025,8 @@ class GppuFileSystem(AbstractFileSystem):
       if stored is not None and stored[0]['type'] != 'directory' and 'ignored' in stored[0]['gppu']['handlers']:
         self._forget(child_key)   # an ignored file an earlier listing indexed
         continue
-      if self._unlocated(child_key):
-        self._forget(child_key)   # the stored row predates the location; an insert alone would keep it
+      if self._unlocated(child_key) or (child_key in known and self._misread(child_key, entry)):
+        self._forget(child_key)   # the stored row predates the location or the folder's handler; an insert alone would keep it
       elif child_key in known:
         listing.append(known[child_key])
         continue

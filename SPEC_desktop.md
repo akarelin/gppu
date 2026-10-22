@@ -8,6 +8,8 @@ Use the integration most adjacent to fsspec. Directory Opus can use the filesyst
 
 Browse indexed folders based on the index, with access to deeper contents without browsing through very deep folders.
 
+The virtual filesystem shows the index. The index holds the data and sees it for what it is; the file system is one representation of it.
+
 The virtual filesystem coexists with the filesystem, including SMB shares and synced folders.
 
 The virtual filesystem is read-only for now.
@@ -24,9 +26,9 @@ This phase is successful when these work in the virtual filesystem:
 
 1. Rich information: a folder of sessions on a local disk shows each session's number of messages, its start and its span.
 2. SharePoint libraries are browsed from the index, without touching SharePoint.
-3. A folder stored partitioned by date, such as Projects and Work, is shown flattened: the date partitions are flattened and what they hold is shown correctly grouped. A project or task kept on several days is one project. Projects and Work show a well-structured view however messy they are inside, with GitHub repositories and hidden files among them, and projects kept in RAR archives show correctly.
+3. Projects and Work, stored partitioned by date, are shown from the index, which sees the data for what it is regardless of how it is laid out on disk: a project or task kept on several days is one project. Projects and Work show a well-structured view however messy they are inside, with GitHub repositories and hidden files among them, and projects kept in RAR archives show correctly.
 
-An entry is shown by its own name. Its date is an attribute, a column of its own, never part of its name.
+An entry is shown by its own name. Its time span is an attribute of its own, never part of its name.
 
 Any file manager that opens the virtual filesystem sees roughly the same thing: nothing is done in the file manager, such as Directory Opus.
 

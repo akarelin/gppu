@@ -3,32 +3,32 @@
 The mount has one named folder per configured source. All navigation and bytes
 below a gppufs source's folder belong to gppufs; a source served by an API, such
 as the catalog (gppu.catalog), is an fsspec filesystem shown with its own names
-and rows. A folder stored partitioned by date, such as Projects and Work, is shown
-flattened, what its partitions hold correctly grouped. No handler parsing or index
-lives here.
+and rows. What is shown is the index: a folder its handler says keeps its things
+partitioned by date, such as Projects and Work, shows the things, each once by its
+own name. No handler parsing or index lives here.
 """
 from __future__ import annotations
 
-import calendar
 import os
 import posixpath
-import re
 from collections import defaultdict
-from datetime import date, datetime
 from errno import EROFS
 from pathlib import PurePosixPath
+from typing import NamedTuple
 
 from fsspec import AbstractFileSystem
 
+from . import handlers
 from .fs import GppuFileSystem
 from .handlers import IGNORED
 from .fs_index import GppuIndexedFileSystem, indexes
 
-MONTH = re.compile(r'0[1-9]|1[0-2]')   # a month partition's name, MM
-DAY = re.compile(r'0[1-9]|[12][0-9]|3[01]')   # a day partition's name in a month, DD
-# A date leading a name as the Lake's layout writes one (CRAP Systems/lake/docs/layout.md), then its separator: YYMMDD, YYMMDD.HHMM,
-# YYMMDD.HHMMSS, YYMMDD-HHMM or YYMMDD HHMM, its month the second pair; or YYYY-MM
-DATED = re.compile(r'(?P<yy>\d{2})(?P<mm>\d{2})(?P<dd>\d{2})(?:[.-]\d{4}(?:\d{2})?| \d{4})?[ -]|(?P<yyyy>\d{4})-(?P<month>\d{2})[ -]')
+
+class Thing(NamedTuple):
+    """One thing a partitioned folder holds, its handler's, in each place it is kept: a task's folder on each day it has
+    one, and its archived stages."""
+    handler: type[handlers.PartitionedFolderHandler]
+    places: list[str]
 
 
 class DesktopFileSystem(AbstractFileSystem):
@@ -51,10 +51,9 @@ class DesktopFileSystem(AbstractFileSystem):
         self.sources = dict(sources)
         self.indexed: dict[str, GppuIndexedFileSystem] = {}
         self._index_paths: set[str] = set()
-        # a listed folder, as shown -> each name shown in it -> the real path it stands for, or, for a folder grouping one thing
-        # the date partitions hold, each folder it groups with the partition that folder is in
-        self._shown_as: dict[str, dict[str, str | list[tuple[str, str]]]] = {}
-        self._rows: dict[str, dict] = {}   # an entry of a flattened folder or a grouping one, as shown -> its row as listed
+        # a listed folder, as shown -> each name shown in it -> the real path it stands for, or the thing it is
+        self._shown_as: dict[str, dict[str, str | Thing]] = {}
+        self._rows: dict[str, dict] = {}   # an entry a partitioned folder or a thing shows, as shown -> its row as listed
 
     def _discover(self, fs, folder, name):
         if not fs.fs.isdir(folder):
@@ -96,10 +95,9 @@ class DesktopFileSystem(AbstractFileSystem):
         return parts
 
     def _real(self, path):
-        """The source of a shown path and what it stands for: a real folder or file, or, for a folder grouping one thing the
-        date partitions hold, each folder it groups with its partition. A name shown in a folder is what that folder's listing
-        says it stands for, the folder listed first when it was not yet; a name the listing did not show, as one gppufs leaves
-        out, is taken as it is."""
+        """The source of a shown path and what it stands for: a real folder or file, or a thing a partitioned folder holds. A
+        name shown in a folder is what that folder's listing says it stands for, the folder listed first when it was not yet; a
+        name the listing did not show, as one gppufs leaves out, is taken as it is."""
         parts = self._parts(path)
         name = next((name for name in self.sources if name.casefold() == parts[0].casefold()), None)
         if name is None:
@@ -114,121 +112,71 @@ class DesktopFileSystem(AbstractFileSystem):
             self.ls(folder, detail=False)
         if (real := self._shown_as[folder.casefold()].get(parts[-1].casefold())) is not None:
             return fs, real
-        if isinstance(parent := self._real(folder)[1], list):
+        if isinstance(parent := self._real(folder)[1], Thing):
             raise FileNotFoundError(path)
         return fs, posixpath.join(parent, parts[-1])
 
     def _held(self, fs, folder):
-        """What gppufs lists in a real folder, each row with its real path, without the indexes the Indexed view shows."""
+        """What gppufs lists in a real folder, each row with its real path: what it ignores and the indexes the Indexed view
+        shows are left out."""
         return [(row, posixpath.join(folder, self._name(row))) for row in fs.ls_sync(folder)
-                if fs.fs._strip_protocol(row['gppu']['path']).replace('\\', '/').casefold() not in self._index_paths]
+                if 'ignored' not in row['gppu']['handlers']
+                and fs.fs._strip_protocol(row['gppu']['path']).replace('\\', '/').casefold() not in self._index_paths]
 
     @staticmethod
     def _name(row):
         return PurePosixPath(row['gppu']['path'].replace('\\', '/')).name
 
-    @staticmethod
-    def _leading(name):
-        """The date leading a name and where the name goes on after it; none when no date leads it."""
-        if (dated := DATED.match(name)) is None:
-            return None
-        year, month, day = (int(dated['yyyy']), int(dated['month']), 1) if dated['yyyy'] else (
-            2000 + int(dated['yy']), int(dated['mm']), int(dated['dd']))
-        if not (1 <= month <= 12 and 1 <= day <= calendar.monthrange(year, month)[1]):   # digits that are no date
-            return None
-        return date(year, month, day), dated.end()
+    def _handler(self, fs, folder):
+        """The handler the index says reads a real folder."""
+        return handlers.HANDLERS.get(('fs_node', fs.info_sync(folder)['gppu']['record']['subtype']))
 
-    @staticmethod
-    def _of_month(row, month):
-        """Whether an entry belongs in a month partition: a day folder, or named with a date of that month."""
-        name = DesktopFileSystem._name(row)
-        if row['gppu']['type'] == 'folder' and DAY.fullmatch(name):
-            return True
-        return (found := DesktopFileSystem._leading(name)) is not None and found[0].month == int(month)
-
-    def _flattened(self, fs, held):
-        """A folder's entries with its date partitions flattened, each with the partition it is in: a month folder, MM, whose
-        every entry is a day folder, DD, or is named with a date of that month, is replaced by what it holds, and a day folder
-        in it by what that holds; anything else is in none."""
-        for row, real in held:
-            month = self._name(row)
-            inside = self._held(fs, real) if row['gppu']['type'] == 'folder' and MONTH.fullmatch(month) else None
-            if not inside or not all(self._of_month(entry, month) for entry, _ in inside):
-                yield row, real, ''
-                continue
-            for entry, place in inside:
-                day = self._name(entry)
-                if entry['gppu']['type'] == 'folder' and DAY.fullmatch(day):
-                    yield from ((inner, there, f'{month}-{day}') for inner, there in self._held(fs, place))
-                else:
-                    yield entry, place, month
-
-    @staticmethod
-    def _key(name):
-        """A name with the date leading it set aside: the thing's own name, the date being a column of its own."""
-        return name[found[1]:] if (found := DesktopFileSystem._leading(name)) else name
-
-    def _thing(self, row):
-        """What one thing is called in each partition holding it: a folder by its own name, an archive by its own name without
-        the archive's extension, since a finished stage of a task is kept as its archive."""
-        name = self._key(self._shown(row))
-        return name if row['gppu']['type'] == 'folder' else PurePosixPath(name).stem
-
-    def _created(self, row, partition):
-        """The date the thing an entry is was of, as Windows' Created column shows it: the date leading its name, else the date
-        of the partition it is in, in the year that puts it at or before its last change; else when it was created."""
-        seconds = self._seconds(row, '')
-        if found := self._leading(self._shown(row)):
-            day = found[0]
-        elif partition and 'mtime' in seconds:
-            month, _, of = partition.partition('-')
-            last = datetime.fromtimestamp(seconds['mtime']).date()
-            day = date(last.year, int(month), int(of or 1))
-            day = day if day <= last else date(last.year - 1, day.month, day.day)
-        else:
-            return seconds.get('ctime')
-        return datetime.combine(day, datetime.min.time()).timestamp()
-
-    def _group(self, members, name):
-        """The row of a folder grouping one thing the partitions hold: of the date the earliest is of, modified when the latest
-        was."""
-        created = [seconds for row, _, partition in members if (seconds := self._created(row, partition)) is not None]
-        modified = [seconds['mtime'] for row, _, _ in members if 'mtime' in (seconds := self._seconds(row, name))]
-        return {'name': name, 'type': 'directory', 'size': 0} | ({'ctime': min(created)} if created else {}) | (
-            {'mtime': max(modified)} if modified else {})
+    def _things(self, fs, folder, handler, level=0):
+        """What a partitioned folder holds: in place of a partition, what the partition holds."""
+        for row, place in self._held(fs, folder):
+            if row['gppu']['type'] == 'folder' and handler.partition(self._name(row), level):
+                yield from self._things(fs, place, handler, level + 1)
+            else:
+                yield row, place
 
     def _listed(self, fs, real, here):
-        """The rows shown in a gppufs folder, as here, and what each name shown stands for. A folder stored partitioned by date
-        shows its partitions flattened, and a folder grouping one thing the partitions hold shows what each folder it groups
-        holds. In both, an entry is shown by its own name, the date leading it set aside, its date in the Created column; a task
-        or project the partitions hold on several days, its folders and the archives of its finished stages, is one thing and
-        one folder grouping them, and a file several of them hold is shown as its latest. Any other folder shows what it holds."""
-        if isinstance(real, list):
-            entries = [(row, place, partition) for folder, partition in real for row, place in self._held(fs, folder)]
+        """The rows shown in a gppufs folder, as here, and what each name shown stands for: what the index holds there. A
+        folder its handler says is partitioned shows the things its partitions hold, and a thing shows what it holds in each
+        place it is kept; in both, an entry is shown once by its own name, a container being a thing and a file kept in several
+        places being shown as its latest. Any other folder shows what it holds."""
+        if isinstance(real, Thing):
+            handler, held = real.handler, [entry for place in real.places for entry in self._held(fs, place)]
         else:
             self._discover(fs, real, ' › '.join(here.parts[1:]))
-            entries = list(self._flattened(fs, self._held(fs, real)))
-            if not any(partition for _, _, partition in entries):
-                return ([self._row(row, str(here / self._shown(row))) for row, _, _ in entries],
-                        {self._shown(row).casefold(): place for row, place, _ in entries})
-        things = defaultdict(list)
-        for row, place, partition in entries:
-            container = row['gppu']['is_container']
-            things[(self._thing(row) if container else self._key(self._shown(row))).casefold(), container].append((row, place, partition))
+            handler = self._handler(fs, real)
+            if not (handler and issubclass(handler, handlers.PartitionedFolderHandler)):
+                held = self._held(fs, real)
+                return ([self._row(row, str(here / self._shown(row))) for row, _ in held],
+                        {self._shown(row).casefold(): place for row, place in held})
+            held = list(self._things(fs, real, handler))
+        alike = defaultdict(list)
+        for row, place in held:
+            alike[self._own(row, handler).casefold(), row['gppu']['is_container']].append((row, place))
         shown_as, rows = {}, []
-        for (_, container), members in things.items():
-            if container and len(members) > 1:
-                name = self._thing(members[0][0])
-                shown_as[name.casefold()] = [(place, partition) for _, place, partition in members]
-                rows.append(self._group(members, str(here / name)))
+        for (_, container), kept in alike.items():
+            if container:
+                name = self._own(kept[0][0], handler)
+                shown_as[name.casefold()] = Thing(handler, [place for _, place in kept])
+                times = [self._seconds(row, '') for row, _ in kept]
+                rows.append({'name': str(here / name), 'type': 'directory', 'size': 0} | {
+                    key: pick(row[key] for row in times if key in row) for key, pick in (('ctime', min), ('mtime', max))
+                    if any(key in row for row in times)})
             else:
-                row, place, partition = max(members, key=lambda member: self._seconds(member[0], '').get('mtime', 0))
-                name = self._key(self._shown(row))
+                row, place = max(kept, key=lambda entry: self._seconds(entry[0], '').get('mtime', 0))
+                name = (row['gppu'].get('record') or {}).get('data', {}).get('normalized_name') or self._own(row, handler)
                 shown_as[name.casefold()] = place
-                rows.append(self._row(row, str(here / name)) | (
-                    {'ctime': created} if (created := self._created(row, partition)) is not None else {}))
+                rows.append(self._row(row, str(here / name)))
             self._rows[rows[-1]['name'].casefold()] = rows[-1]
         return rows, shown_as
+
+    def _own(self, row, handler):
+        """An entry's own name, as its partitioned folder's handler says it."""
+        return handler.own_name(self._name(row), 'archive' in row['gppu']['handlers'])
 
     @staticmethod
     def _shown(row):
@@ -307,7 +255,7 @@ class DesktopFileSystem(AbstractFileSystem):
             fs, relative = self._index_view(parts)
             return fs.open(relative, mode=mode, **kwargs)
         fs, real = self._real(path)
-        if isinstance(real, list):
+        if isinstance(real, Thing):
             raise IsADirectoryError(path)
         return fs.open(real, mode=mode, **kwargs)
 

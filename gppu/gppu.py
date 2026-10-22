@@ -110,6 +110,7 @@ def probe_path(path: str | Path) -> dict:
       "System Volume Information", "OneDriveTemp", "Cache", ".cache",
     ),
     "session_folders": (".hermes", ".gemini/antigravity", ".gemini/antigravity-cli", ".gemini/antigravity-cli/brain/*"),
+    "partitioned_folders": {"Work": "WorkFolderHandler", "Projects": "ProjectsFolderHandler"},
     "suffix_handlers": {
       ".sqlite": "SqliteHandler", ".sqlite3": "SqliteHandler", ".db": "SqliteHandler",
       ".md": "MarkdownHandler", ".csv": "CSVHandler", ".log": "LogHandler",
@@ -159,7 +160,7 @@ def probe_path(path: str | Path) -> dict:
       handler = (
         "SessionFolderHandler"
         if any(path.match(p) for p in _CONFIG["session_folders"])
-        else "FolderHandler"
+        else _CONFIG["partitioned_folders"].get(path.name, "FolderHandler")
       )
     elif result["file"]:
       handler = (
