@@ -9,10 +9,12 @@ lives here.
 """
 from __future__ import annotations
 
+import calendar
 import os
 import posixpath
 import re
-from collections import Counter, defaultdict
+from collections import defaultdict
+from datetime import date, datetime
 from errno import EROFS
 from pathlib import PurePosixPath
 
@@ -26,7 +28,7 @@ MONTH = re.compile(r'0[1-9]|1[0-2]')   # a month partition's name, MM
 DAY = re.compile(r'0[1-9]|[12][0-9]|3[01]')   # a day partition's name in a month, DD
 # A date leading a name as the Lake's layout writes one (CRAP Systems/lake/docs/layout.md), then its separator: YYMMDD, YYMMDD.HHMM,
 # YYMMDD.HHMMSS, YYMMDD-HHMM or YYMMDD HHMM, its month the second pair; or YYYY-MM
-DATED = re.compile(r'\d{2}(\d{2})\d{2}(?:[.-]\d{4}(?:\d{2})?| \d{4})?[ -]|\d{4}-(\d{2})[ -]')
+DATED = re.compile(r'(?P<yy>\d{2})(?P<mm>\d{2})(?P<dd>\d{2})(?:[.-]\d{4}(?:\d{2})?| \d{4})?[ -]|(?P<yyyy>\d{4})-(?P<month>\d{2})[ -]')
 
 
 class DesktopFileSystem(AbstractFileSystem):
@@ -52,7 +54,7 @@ class DesktopFileSystem(AbstractFileSystem):
         # a listed folder, as shown -> each name shown in it -> the real path it stands for, or, for a folder grouping one thing
         # the date partitions hold, each folder it groups with the partition that folder is in
         self._shown_as: dict[str, dict[str, str | list[tuple[str, str]]]] = {}
-        self._groups: dict[str, dict] = {}   # a grouping folder, as shown -> its row
+        self._rows: dict[str, dict] = {}   # an entry of a flattened folder or a grouping one, as shown -> its row as listed
 
     def _discover(self, fs, folder, name):
         if not fs.fs.isdir(folder):
@@ -126,12 +128,23 @@ class DesktopFileSystem(AbstractFileSystem):
         return PurePosixPath(row['gppu']['path'].replace('\\', '/')).name
 
     @staticmethod
+    def _leading(name):
+        """The date leading a name and where the name goes on after it; none when no date leads it."""
+        if (dated := DATED.match(name)) is None:
+            return None
+        year, month, day = (int(dated['yyyy']), int(dated['month']), 1) if dated['yyyy'] else (
+            2000 + int(dated['yy']), int(dated['mm']), int(dated['dd']))
+        if not (1 <= month <= 12 and 1 <= day <= calendar.monthrange(year, month)[1]):   # digits that are no date
+            return None
+        return date(year, month, day), dated.end()
+
+    @staticmethod
     def _of_month(row, month):
         """Whether an entry belongs in a month partition: a day folder, or named with a date of that month."""
         name = DesktopFileSystem._name(row)
         if row['gppu']['type'] == 'folder' and DAY.fullmatch(name):
             return True
-        return (dated := DATED.match(name)) is not None and month in dated.groups()
+        return (found := DesktopFileSystem._leading(name)) is not None and found[0].month == int(month)
 
     def _flattened(self, fs, held):
         """A folder's entries with its date partitions flattened, each with the partition it is in: a month folder, MM, whose
@@ -152,46 +165,69 @@ class DesktopFileSystem(AbstractFileSystem):
 
     @staticmethod
     def _key(name):
-        """A name with the date leading it set aside: what one thing is called in each partition holding it."""
-        return name[dated.end():] if (dated := DATED.match(name)) else name
+        """A name with the date leading it set aside: the thing's own name, the date being a column of its own."""
+        return name[found[1]:] if (found := DesktopFileSystem._leading(name)) else name
+
+    def _thing(self, row):
+        """What one thing is called in each partition holding it: a folder by its own name, an archive by its own name without
+        the archive's extension, since a finished stage of a task is kept as its archive."""
+        name = self._key(self._shown(row))
+        return name if row['gppu']['type'] == 'folder' else PurePosixPath(name).stem
+
+    def _created(self, row, partition):
+        """The date the thing an entry is was of, as Windows' Created column shows it: the date leading its name, else the date
+        of the partition it is in, in the year that puts it at or before its last change; else when it was created."""
+        seconds = self._seconds(row, '')
+        if found := self._leading(self._shown(row)):
+            day = found[0]
+        elif partition and 'mtime' in seconds:
+            month, _, of = partition.partition('-')
+            last = datetime.fromtimestamp(seconds['mtime']).date()
+            day = date(last.year, int(month), int(of or 1))
+            day = day if day <= last else date(last.year - 1, day.month, day.day)
+        else:
+            return seconds.get('ctime')
+        return datetime.combine(day, datetime.min.time()).timestamp()
 
     def _group(self, members, name):
-        """The row of a folder grouping one thing the partitions hold: created when the earliest was, modified when the latest
+        """The row of a folder grouping one thing the partitions hold: of the date the earliest is of, modified when the latest
         was."""
-        rows = [self._seconds(row, name) for row, _, _ in members]
-        times = {key: [row[key] for row in rows if key in row] for key in ('ctime', 'mtime')}
-        return {'name': name, 'type': 'directory', 'size': 0} | ({'ctime': min(times['ctime'])} if times['ctime'] else {}) | (
-            {'mtime': max(times['mtime'])} if times['mtime'] else {})
+        created = [seconds for row, _, partition in members if (seconds := self._created(row, partition)) is not None]
+        modified = [seconds['mtime'] for row, _, _ in members if 'mtime' in (seconds := self._seconds(row, name))]
+        return {'name': name, 'type': 'directory', 'size': 0} | ({'ctime': min(created)} if created else {}) | (
+            {'mtime': max(modified)} if modified else {})
 
     def _listed(self, fs, real, here):
-        """The rows shown in a gppufs folder, as here, and what each name shown stands for. A folder grouping one thing the
-        partitions hold shows what each folder it groups holds, a name two of them hold led by the partition it is in; a folder
-        stored partitioned by date shows its partitions flattened, and the folders there that are one thing, their names alike
-        but for their dates, as one folder grouping them; any other folder shows what it holds. Where entries from partitions
-        share a name, each is led by the partition it is in, as the Lake's layout leads a name with its date."""
+        """The rows shown in a gppufs folder, as here, and what each name shown stands for. A folder stored partitioned by date
+        shows its partitions flattened, and a folder grouping one thing the partitions hold shows what each folder it groups
+        holds. In both, an entry is shown by its own name, the date leading it set aside, its date in the Created column; a task
+        or project the partitions hold on several days, its folders and the archives of its finished stages, is one thing and
+        one folder grouping them, and a file several of them hold is shown as its latest. Any other folder shows what it holds."""
         if isinstance(real, list):
-            entries = [([(row, place, partition)], partition)
-                       for folder, partition in real for row, place in self._held(fs, folder)]
+            entries = [(row, place, partition) for folder, partition in real for row, place in self._held(fs, folder)]
         else:
             self._discover(fs, real, ' › '.join(here.parts[1:]))
-            groups = defaultdict(list)
-            for row, place, partition in self._flattened(fs, self._held(fs, real)):
-                alike = partition and row['gppu']['type'] == 'folder'   # only folders that came from a partition are grouped
-                groups[('', self._key(self._shown(row)).casefold()) if alike else (place.casefold(), '')].append((row, place, partition))
-            entries = [(members, members[0][2] if len(members) == 1 else '') for members in groups.values()]
-        names = [self._shown(members[0][0]) if len(members) == 1 else self._key(self._shown(members[0][0])) for members, _ in entries]
-        counts = Counter(name.casefold() for name in names)
+            entries = list(self._flattened(fs, self._held(fs, real)))
+            if not any(partition for _, _, partition in entries):
+                return ([self._row(row, str(here / self._shown(row))) for row, _, _ in entries],
+                        {self._shown(row).casefold(): place for row, place, _ in entries})
+        things = defaultdict(list)
+        for row, place, partition in entries:
+            container = row['gppu']['is_container']
+            things[(self._thing(row) if container else self._key(self._shown(row))).casefold(), container].append((row, place, partition))
         shown_as, rows = {}, []
-        for (members, partition), name in zip(entries, names):
-            name = f'{partition} {name}' if counts[name.casefold()] > 1 and partition else name
-            if len(members) == 1:
-                row, place, _ = members[0]
-                shown_as[name.casefold()] = place
-                rows.append(self._row(row, str(here / name)))
-            else:
+        for (_, container), members in things.items():
+            if container and len(members) > 1:
+                name = self._thing(members[0][0])
                 shown_as[name.casefold()] = [(place, partition) for _, place, partition in members]
-                self._groups[str(here / name).casefold()] = self._group(members, str(here / name))
-                rows.append(self._groups[str(here / name).casefold()])
+                rows.append(self._group(members, str(here / name)))
+            else:
+                row, place, partition = max(members, key=lambda member: self._seconds(member[0], '').get('mtime', 0))
+                name = self._key(self._shown(row))
+                shown_as[name.casefold()] = place
+                rows.append(self._row(row, str(here / name)) | (
+                    {'ctime': created} if (created := self._created(row, partition)) is not None else {}))
+            self._rows[rows[-1]['name'].casefold()] = rows[-1]
         return rows, shown_as
 
     @staticmethod
@@ -233,8 +269,8 @@ class DesktopFileSystem(AbstractFileSystem):
         fs, real = self._real(path)
         if not isinstance(fs, GppuFileSystem):
             return fs.info(real) | {'name': '/' + '/'.join(parts)}
-        if isinstance(real, list):
-            return self._groups[('/' + '/'.join(parts)).casefold()] | {'name': '/' + '/'.join(parts)}
+        if (listed := self._rows.get(('/' + '/'.join(parts)).casefold())) is not None:   # as the folder's listing showed it
+            return listed | {'name': '/' + '/'.join(parts)}
         return self._row(fs.info_sync(real), '/' + '/'.join(parts))
 
     def ls(self, path='', detail=True, **kwargs):

@@ -24,7 +24,11 @@ This phase is successful when these work in the virtual filesystem:
 
 1. Rich information: a folder of sessions on a local disk shows each session's number of messages, its start and its span.
 2. SharePoint libraries are browsed from the index, without touching SharePoint.
-3. A folder stored partitioned by date, such as Projects and Work, is shown flattened: the date partitions are flattened and what they hold is shown correctly grouped.
+3. A folder stored partitioned by date, such as Projects and Work, is shown flattened: the date partitions are flattened and what they hold is shown correctly grouped. A project or task kept on several days is one project. Projects and Work show a well-structured view however messy they are inside, with GitHub repositories and hidden files among them, and projects kept in RAR archives show correctly.
+
+An entry is shown by its own name. Its date is an attribute, a column of its own, never part of its name.
+
+Any file manager that opens the virtual filesystem sees roughly the same thing: nothing is done in the file manager, such as Directory Opus.
 
 ## Regions
 
