@@ -90,6 +90,10 @@ class Catalog:
     def entries(self, location: str | None = None, parent: UUID | None = None) -> Iterator[dict[str, Any]]:
         """What is directly inside an entry, parent, or at a location's root, by name, read a fetch at a time from a cursor the
         database keeps, so a folder of any size is never held whole. The location is found before the first row is asked for."""
+        if parent:
+            with self._open() as db:
+                if db.execute('SELECT 1 FROM lake.entity WHERE uid = %s', (parent,)).fetchone() is None:
+                    raise LookupError(f'entry {parent}: the catalog holds no such entry')
         inside, value = ('e.parent_uid = %s', parent) if parent else ('e.location_id = %s AND e.parent_uid IS NULL', self.lake_id(location))
 
         def rows() -> Iterator[dict[str, Any]]:
