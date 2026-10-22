@@ -1011,7 +1011,7 @@ class GppuFileSystem(AbstractFileSystem):
   # The folders directly below an index's own, the one holding the most of it first: what a split moves (`_bound`).
   _largest = '''SELECT top FROM (SELECT substr(path, 1, instr(path, '/') - 1) AS top,
         sum(length(metadata) + coalesce(length(children), 0)) AS held FROM gppufs_entries WHERE instr(path, '/') > 0 GROUP BY top)
-    WHERE top IN (SELECT path FROM gppufs_entries WHERE metadata->>'$.type' = 'directory') ORDER BY held DESC LIMIT 1'''
+    WHERE top NOT IN (SELECT path FROM gppufs_entries WHERE metadata->>'$.type' <> 'directory') ORDER BY held DESC LIMIT 1'''
   # A folder's rows moved from the owner's index into the folder's own, their paths and the paths in their listings made
   # relative to the folder (`_split`).
   _moved = '''INSERT INTO gppufs_entries SELECT at, json_set(metadata, '$.name', at, '$.gppu.path', at),
@@ -1436,16 +1436,18 @@ class GppuFileSystem(AbstractFileSystem):
   def _split(self, owner: str, folder: str) -> None:
     """folder, below owner, given an index of its own: its row and the rows below it move into the new index, their paths
     made its. The listing above it still names it, which is how `stats` finds the folders below that hold their own index.
-    The new index is recorded in `_INDEXES` as gppufs makes it."""
+    The new index is recorded in `_INDEXES` as gppufs makes it. A folder that holds an index already owns its rows there,
+    so owner's copies of them, which nothing reads, are dropped and not moved again."""
     here = self._relative(folder, owner)
     with self._database(owner, write=True):
       pass   # owner's copy in the cache, which the rows move from inside SQLite, none of them read into memory
-    with self._database(folder, write=True) as database:
-      database.commit()
-      database.execute('ATTACH DATABASE ? AS owner', (self._working[self._database_path(self._path(owner))][0],))
-      database.execute(self._moved, dict(here=here, cut=len(here) + 2, prefix=here + '/'))
-      database.commit()
-      database.execute('DETACH DATABASE owner')
+    if self._existing_index(self._path(folder)) is None:
+      with self._database(folder, write=True) as database:
+        database.commit()
+        database.execute('ATTACH DATABASE ? AS owner', (self._working[self._database_path(self._path(owner))][0],))
+        database.execute(self._moved, dict(here=here, cut=len(here) + 2, prefix=here + '/'))
+        database.commit()
+        database.execute('DETACH DATABASE owner')
     index = self._database_path(self._path(owner))
     compact = self._fresh()
     with self._database(owner, write=True) as database:

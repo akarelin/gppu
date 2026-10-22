@@ -50,10 +50,6 @@ class DesktopFileSystem(AbstractFileSystem):
             self.indexed[label] = view
             self._index_paths.add(view.index.as_posix().casefold())
 
-    def close(self):
-        for view in self.indexed.values():
-            view.close()
-
     def _discover_roots(self):
         for name, fs in self.sources.items():
             self._discover(fs, fs.root, name)
@@ -157,9 +153,6 @@ def mount(sources: dict[str, GppuFileSystem], mount_point: str) -> None:
     from fuse import FUSE, FuseOSError
 
     class ReadOnly(FUSEr):
-        def destroy(self, path):
-            self.fs.close()
-
         def open(self, path, flags):
             if flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND):
                 raise FuseOSError(EROFS)

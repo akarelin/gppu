@@ -7,6 +7,7 @@ import sqlite3
 import subprocess
 import tarfile
 import zipfile
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 
@@ -111,6 +112,17 @@ def test_an_index_past_the_limit_splits_off_the_folder_holding_most_of_it(tmp_pa
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
   assert GppuFileSystem(tmp_path).ls(recurse=True) == listed
   assert GppuFileSystem(tmp_path).stats() == stats
+  monkeypatch.undo()
+  with closing(sqlite3.connect(index(tmp_path))) as database, database:   # rows of big left in the root's index, as an index made before rule one has
+    assert database.execute("SELECT count(*) FROM gppufs_entries WHERE path LIKE 'big%'").fetchone()[0] == 0
+    database.execute('INSERT INTO gppufs_entries VALUES (?, ?, ?)', ('big/stale.md', json.dumps(listed[0]), None))
+  (tmp_path / 'small' / 'added.md').write_text('More', encoding='utf-8')
+  monkeypatch.setattr(gppu.fs, 'INDEX_LIMIT', 1024)
+  GppuFileSystem(tmp_path).ls('small')
+  with closing(sqlite3.connect(index(tmp_path))) as database:   # big owns its rows in its own index: the copy is dropped, not moved
+    assert database.execute("SELECT count(*) FROM gppufs_entries WHERE path LIKE 'big%'").fetchone()[0] == 0
+  with closing(sqlite3.connect(index(tmp_path / 'big'))) as database:
+    assert database.execute("SELECT count(*) FROM gppufs_entries WHERE path LIKE '%stale%'").fetchone()[0] == 0
 
 
 def test_a_run_puts_its_indexes_into_their_folders_when_it_ends(tmp_path):

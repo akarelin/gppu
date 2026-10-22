@@ -9,7 +9,7 @@ import io
 import json
 import sqlite3
 from collections import Counter
-from contextlib import nullcontext
+from contextlib import closing
 from pathlib import Path, PurePosixPath
 
 import fsspec
@@ -31,18 +31,16 @@ class GppuIndexedFileSystem(AbstractFileSystem):
         self.source = GppuFileSystem(self.index.parent) if self.index.name.startswith('.') else None
         self._paths: dict[str, str] = {}  # display name -> original relative path; metadata stays in SQLite
         self._stamp, self._aliases = None, {}   # the index file's modified time and size when its names were read
-        uri = self.index.as_uri()
+        self._uri = self.index.as_uri()
         if self.index.anchor.startswith('\\\\'):
-            uri = uri.replace('file://', 'file:////', 1)
-        self._database = sqlite3.connect(uri + '?mode=ro', uri=True, check_same_thread=False)
+            self._uri = self._uri.replace('file://', 'file:////', 1)
         with self.database() as database:
             database.execute('SELECT path, metadata, children FROM gppufs_entries LIMIT 0')
 
     def database(self):
-        return nullcontext(self._database)
-
-    def close(self):
-        self._database.close()
+        """The index, opened for one read and closed after it: gppufs replaces an index whole, and Windows refuses to
+        replace a file another process holds open."""
+        return closing(sqlite3.connect(self._uri + '?mode=ro', uri=True))
 
     def _names(self, database):
         stamp = self.index.stat()
