@@ -3,13 +3,14 @@
 Requirements: [SPEC_desktop.md](SPEC_desktop.md). This phase is done when its three use cases work.
 
 ## Use cases
-- done: rich information: a session the handler read is shown by its handler's name (start, turns, length, topic), its span the entry's created and modified times; proven on the virtual filesystem over `C:\Users\Alex\.claude\projects\D--Dev-CRAP`, read from the local index after a FileIndexer handlers run, a session read back by its shown name. On G: Windows' Created column is left at 1970: the wrapper does not pass the creation time
+- done: rich information: a session the handler read is shown by its handler's name (start, turns, length, topic), its span the entry's created and modified times; proven on the virtual filesystem over `C:\Users\Alex\.claude\projects\D--Dev-CRAP`, read from the local index after a FileIndexer handlers run, a session read back by its shown name; G: gives Windows the span's start as the creation time
 - in progress: SharePoint libraries browsed from the index, without touching SharePoint
   - The index: the Lake catalog (pg.karel.in `files`, schema `lake`) holds source `sharepoint`, 162,802 entries read on 2026-09-18 with each item's content type and columns, a tree by id (`entity.parent_uid`); Linked Data holds the libraries as locations with the catalog's id in `meta.lake_id`.
   - Done: `gppu.catalog`, the catalog's API at `/lake/catalog`, served by stack lake with `/lake` (CRAP `Systems/lake/serve.py`); a folder's entries stream a line at a time from a server-side cursor, so the largest folder, 56,297 entries, is never held whole. `CatalogFileSystem` browses it by ids, and the desktop shows it as the Catalog folder (`examples/desktop_mount.py`).
   - Proven in-process on the virtual filesystem over the real catalog: `Catalog/M365/Karelin/sharepoint/sites/Suntrust/Statements` lists its files with SharePoint's Created and Modified.
   - Next: deploy stack lake's new image, then prove it on the virtual filesystem against `api.karel.in/lake/catalog`.
-- done: folders stored partitioned by date, such as Projects and Work, shown flattened and correctly grouped; proven on the virtual filesystem over `D:\Work` and `D:\Projects`, read from the local index. A month folder, MM, is a partition when everything in it is a day folder, DD, or is named with a date of that month; partitions are replaced by what they hold, folders from partitions alike but for their dates are one folder grouping them (a task over several days, a project over several months), and a name two partitions hold is led by its partition
+- done: Projects and Work shown from the index, each task or project once by its own name with its span; proven on the virtual filesystem and on G: over `D:\Work` and `D:\Projects`. gppufs reads them with `WorkFolderHandler` and `ProjectsFolderHandler` on `PartitionedFolderHandler`, which say which folders are date partitions and a thing's own name; a task's archived stages are part of it, ignored entries are left out, and a file a task keeps on several days is shown as its latest
+- next for Work and Projects: their spans from their files, which a FileIndexer handlers run over them gives; until then a task's span is its folders' created and modified times
 
 ## Done
 - Complete: recover prior work and verify fsspec and Windows integration.
@@ -22,5 +23,5 @@ Requirements: [SPEC_desktop.md](SPEC_desktop.md). This phase is done when its th
 - Complete: the Indexed view opens an index only while it reads it, so gppufs can replace an index whole (2026-10-22).
 
 ## Independent and unscoped
-- the API region, the server's index through Linked Data and the Lake's API, joined with the local one; the Lake's API is not served until its stack exists
-- the drive is stopped since 2026-10-22, being redundant for now
+- the API region, the server's index through Linked Data and the Lake's API, joined with the local one
+- the Lake's own read side: a handler for its date layout, beside the templates `gppu.lake` saves by
