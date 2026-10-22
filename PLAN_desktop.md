@@ -25,3 +25,6 @@ Requirements: [SPEC_desktop.md](SPEC_desktop.md). This phase is done when its th
 ## Independent and unscoped
 - the API region, the server's index through Linked Data and the Lake's API, joined with the local one
 - the Lake's own read side: a handler for its date layout, beside the templates `gppu.lake` saves by
+
+## Found, unrelated
+- tests: `tests/test_tui_progress.py`'s process-row test fails in some full-suite runs and passes alone

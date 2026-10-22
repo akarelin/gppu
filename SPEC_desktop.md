@@ -28,7 +28,7 @@ This phase is successful when these work in the virtual filesystem:
 2. SharePoint libraries are browsed from the index, without touching SharePoint.
 3. Projects and Work, stored partitioned by date, are shown from the index, which sees the data for what it is regardless of how it is laid out on disk: a project or task kept on several days is one project. Projects and Work show a well-structured view however messy they are inside, with GitHub repositories and hidden files among them, and projects kept in RAR archives show correctly.
 
-An entry is shown by its own name. Its time span is an attribute of its own, never part of its name.
+An entry is shown by its own name: a project or task without the date leading it. Its time span is an attribute of its own, which a name may also carry, as a session's does.
 
 Any file manager that opens the virtual filesystem sees roughly the same thing: nothing is done in the file manager, such as Directory Opus.
 
