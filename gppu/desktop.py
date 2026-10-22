@@ -1,7 +1,9 @@
 """A read-only Windows desktop view of gppufs, mounted through fsspec's FUSE bridge.
 
 The mount has one named folder per configured source. All navigation and bytes
-below those folders belong to gppufs. No handler parsing or index lives here.
+below a gppufs source's folder belong to gppufs; a source served by an API, such
+as the catalog (gppu.catalog), is an fsspec filesystem shown with its own names
+and rows. No handler parsing or index lives here.
 """
 from __future__ import annotations
 
@@ -23,7 +25,7 @@ class DesktopFileSystem(AbstractFileSystem):
     protocol = 'gppu-desktop'
     cachable = False
 
-    def __init__(self, sources: dict[str, GppuFileSystem]):
+    def __init__(self, sources: dict[str, AbstractFileSystem]):
         super().__init__()
         if not sources:
             raise ValueError('desktop sources are required')
@@ -53,6 +55,8 @@ class DesktopFileSystem(AbstractFileSystem):
 
     def _discover_roots(self):
         for name, fs in self.sources.items():
+            if not isinstance(fs, GppuFileSystem):
+                continue
             self._discover(fs, fs.root, name)
             for row in fs.ls_sync(fs.root):   # gppufs's listing: an ignored folder, a junction or a link is not entered
                 if row['gppu']['type'] == 'folder' and not set(row['gppu']['handlers']) & set(IGNORED):
@@ -82,6 +86,8 @@ class DesktopFileSystem(AbstractFileSystem):
         if name is None:
             raise FileNotFoundError(path)
         fs = self.sources[name]
+        if not isinstance(fs, GppuFileSystem):   # a source served by an API: its paths are its own
+            return fs, '/'.join(parts[1:])
         folder = posixpath.join(fs.root, *parts[1:-1])
         shown = self._shown_as.get(folder.casefold(), {})
         return fs, posixpath.join(folder, *([shown.get(parts[-1].casefold(), parts[-1])] if len(parts) > 1 else []))
@@ -90,7 +96,7 @@ class DesktopFileSystem(AbstractFileSystem):
         """The source of a path whose last name may be the one an entry is shown by: a folder not listed yet is listed
         first, since its listing says what each name shown in it stands for."""
         parts = self._parts(path)
-        if len(parts) > 1:
+        if len(parts) > 1 and isinstance(self._source(path)[0], GppuFileSystem):
             folder = '/' + '/'.join(parts[:-1])
             if self._source(folder)[1].casefold() not in self._shown_as:
                 self.ls(folder, detail=False)
@@ -133,6 +139,8 @@ class DesktopFileSystem(AbstractFileSystem):
             fs, relative = self._index_view(parts)
             return self._seconds(fs.info(relative), '/' + '/'.join(parts))
         fs, source = self._found(path)
+        if not isinstance(fs, GppuFileSystem):
+            return fs.info(source) | {'name': '/' + '/'.join(parts)}
         return self._row(fs.info_sync(source), '/' + '/'.join(parts))
 
     def ls(self, path='', detail=True, **kwargs):
@@ -148,6 +156,10 @@ class DesktopFileSystem(AbstractFileSystem):
                 if not detail:   # names alone, as Windows asks a listing: no row's metadata is read for it
                     return ['/Indexed/' + parts[1] + name for name in fs.ls(relative, detail=False)]
                 rows = [self._seconds(row, '/Indexed/' + parts[1] + row['name']) for row in fs.ls(relative)]
+        elif not isinstance((found := self._source(path))[0], GppuFileSystem):
+            fs, source = found
+            here = '/' + self._parts(path)[0]
+            rows = [row | {'name': posixpath.join(here, row['name'])} for row in fs.ls(source)]
         else:
             fs, source = self._source(path)
             self._discover(fs, source, ' › '.join(self._parts(path)))
@@ -173,7 +185,7 @@ class DesktopFileSystem(AbstractFileSystem):
         return fs.open(source, mode=mode, **kwargs)
 
 
-def mount(sources: dict[str, GppuFileSystem], mount_point: str) -> None:
+def mount(sources: dict[str, AbstractFileSystem], mount_point: str) -> None:
     """Mount in this process; WinFsp owns the Windows mount lifecycle."""
     from fsspec.fuse import FUSEr
     from fuse import FUSE, FuseOSError
