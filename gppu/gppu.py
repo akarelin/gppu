@@ -30,6 +30,7 @@ from enum import Enum
 from functools import wraps, partial, cache
 from datetime import datetime as dt, timedelta, timezone
 from zoneinfo import ZoneInfo
+from uuid import UUID, uuid7
 
 from copy import copy, deepcopy
 import pathlib
@@ -249,6 +250,14 @@ def pretty_timedelta(ts) -> str:
   elif hours > 0: return '%dh %dm %ds' % (hours, minutes, seconds)
   elif minutes > 0: return '%dm %ds' % (minutes, seconds)
   else: return '%ds' % (seconds,)
+# endregion
+
+
+# region Linked Data ids
+def uuid_create(shard: int) -> UUID:
+  """A new Linked Data id in a shard, made offline as Linked Data's SQL uuid_create makes it: the shard, seven zero bytes, then UUIDv7's 6 bytes of time and 2 random bytes. A file's shard is 0x23."""
+  v7 = uuid7().bytes
+  return UUID(bytes=bytes([shard]) + bytes(7) + v7[:6] + v7[10:12])
 # endregion
 
 

@@ -35,6 +35,7 @@ from .app import (
 from .gppu import (
     Span,
     TimeSpan,
+    uuid_create,
     y2list,
     y2path,
     y2uri,
@@ -144,7 +145,7 @@ from .app_service import AppService   # an app that runs all the time and reload
 
 __version__ = VER_GPPU
 __all__ = [
-    'Span', 'TimeSpan',
+    'Span', 'TimeSpan', 'uuid_create',
     # Version
     'VER_GPPU', 'VER_GPPU_BASE', 'VER_GPPU_BUILD', '__version__',
 
