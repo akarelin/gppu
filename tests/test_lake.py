@@ -9,7 +9,8 @@ pytest.importorskip('fastapi')   # gppu's ld extra; the build's tests install gp
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from gppu.fs import DataObject, GppuCatalog
+from gppu.fs import DataObject
+from gppu.fs.catalog import GppuCatalog
 from gppu.fs.lake import Lake, LakeFileSystem, api
 
 UID = '01c098c1-c196-49d4-b7e2-d2f544809574'

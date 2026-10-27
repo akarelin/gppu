@@ -8,9 +8,9 @@ from datetime import datetime
 
 import pytest
 
-from gppu.fs.desktop import DesktopFileSystem
-from gppu.fs import GppuFileSystem
-from gppu.fs.fs_index import GppuIndexedFileSystem
+from gppu.fs.vfs import DesktopFileSystem
+from gppu.fs.gppufs import GppuFileSystem
+from gppu.fs.vfs import GppuIndexedFileSystem
 
 
 def test_desktop_archive_navigation_and_reads(tmp_path):

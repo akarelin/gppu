@@ -11,7 +11,7 @@ import yaml
 
 from examples.handler_ls import listing, main
 from gppu import Env
-from gppu.fs import GppuCatalog
+from gppu.fs.catalog import GppuCatalog
 
 
 def catalog_for(tmp_path: Path, *locations: Path) -> Path:
@@ -67,7 +67,7 @@ def test_cli_redirected_output_preserves_unicode_on_windows(tmp_path):
   script.write_text((examples / 'handler_ls.py').read_text(encoding='utf-8'), encoding='utf-8')
   (script.parent / 'handlers.yaml').write_text(f'catalog: {catalog.as_posix()}\n', encoding='utf-8')
   result = subprocess.run([sys.executable, str(script), str(location)], cwd=tmp_path, capture_output=True,
-    env={**os.environ, 'PYTHONIOENCODING': 'cp1252'})
+    env={**os.environ, 'PYTHONIOENCODING': 'cp1252', 'PYTHONPATH': str(examples.parent)})   # the gppu under test, not the one installed
   assert result.returncode == 0, result.stderr
   rows = json.loads(result.stdout.decode('utf-8'))
   assert name in [row['gppu']['name'] for row in rows]

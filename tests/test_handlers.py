@@ -1031,7 +1031,7 @@ def test_an_export_of_anything_else_raises(tmp_path: Path) -> None:
 
 def test_gppufs_reads_an_export_inside_a_zip(tmp_path: Path) -> None:
   import zipfile
-  from gppu.fs import GppuFileSystem
+  from gppu.fs.gppufs import GppuFileSystem
   with zipfile.ZipFile(tmp_path / 'chatgpt.zip', 'w') as archive:
     archive.writestr('conversations.json', json.dumps([_chatgpt('one')]))
     archive.writestr('chat.html', '<html></html>')

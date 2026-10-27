@@ -4,7 +4,8 @@ from copy import deepcopy
 import pytest
 
 from gppu import Env, FileSystem, Location, Provider
-from gppu.fs import GppuCatalog, GppuFileSystem
+from gppu.fs.catalog import GppuCatalog
+from gppu.fs.gppufs import GppuFileSystem
 
 
 CONFIG = {

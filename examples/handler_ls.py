@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from gppu import Env
-from gppu.fs import GppuCatalog
+from gppu.fs.catalog import GppuCatalog
 
 
 def listing(gppufs: GppuCatalog, path: str | None = None) -> str:

@@ -2,7 +2,7 @@
 import pytest
 
 from gppu import Container, DataObject, FileSystem, Location, Provider, y2uri
-from gppu.fs import GppuCatalog
+from gppu.fs.catalog import GppuCatalog
 
 
 @pytest.mark.parametrize('uid', ['', None, 123])

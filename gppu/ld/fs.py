@@ -7,7 +7,7 @@ deleted and searched at its own path, `/fs/locations`, `/fs/files` and `/fs/inst
 file system's types at `/fs/types`; gppufs makes its catalog from the locations (gppu.fs.gppufs)."""
 from sqlmodel import Field, String
 
-from ..ld import _Record, _Type, api_at, operations
+from . import _Record, _Type, api_at, operations
 
 
 class Type(_Type, table=True):

@@ -9,7 +9,8 @@ from textual.widgets import DataTable, Static, TextArea
 from textual.worker import WorkerState
 
 from examples.handler_browser import HandlerBrowser
-from gppu.fs import GppuCatalog, GppuFileSystem
+from gppu.fs.catalog import GppuCatalog
+from gppu.fs.gppufs import GppuFileSystem
 from gppu.tui import TreeTable
 
 

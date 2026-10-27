@@ -1,7 +1,7 @@
 """GppuFileSystem.stored, and ls with live=False: what the index holds, read without touching the file system."""
 import zipfile
 
-from gppu.fs import GppuFileSystem
+from gppu.fs.gppufs import GppuFileSystem
 
 
 def test_ls_not_live_reads_the_index_alone(tmp_path):

@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from gppu.fs.catalog import CatalogFileSystem, _text, api, label, paths, where
-from gppu.fs.desktop import DesktopFileSystem
+from gppu.fs.vfs import DesktopFileSystem
 
 LIBRARY, ROOT, FOLDER, FILE = (UUID(f'00000000-0000-0000-0000-00000000000{n}') for n in range(1, 5))
 

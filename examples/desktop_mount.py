@@ -3,18 +3,18 @@ reaches, with its index beside it, the sources desktop.yaml names, and the catal
 from pathlib import Path
 
 from gppu import App, Env, Info
+from gppu.fs import catalog as locations
 from gppu.fs.catalog import CatalogFileSystem
-from gppu.fs.desktop import mount
-from gppu.fs import GppuFileSystem
-from gppu.fs import gppufs
+from gppu.fs.vfs import mount
+from gppu.fs.gppufs import GppuFileSystem
 
 
 class Desktop(App):
     def run(self):
-        gppufs.connect(self.my('ld'))
-        catalog = gppufs.catalog()
-        folders = gppufs.reached(catalog)
-        sources = {catalog.locations[row['location']]['name']: gppufs.filesystem(catalog, row['location'], folders)
+        locations.connect(self.my('ld'))
+        catalog = locations.catalog()
+        folders = locations.reached(catalog)
+        sources = {catalog.locations[row['location']]['name']: locations.filesystem(catalog, row['location'], folders)
                    for row in folders.values()}
         sources |= {name: GppuFileSystem(location) for name, location in self.my('sources').items()}
         sources['Catalog'] = CatalogFileSystem(self.my('catalog'))

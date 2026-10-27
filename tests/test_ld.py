@@ -1,4 +1,4 @@
-"""gppu.ld and gppu.fs.files on Postgres: the standard's schemas ld and fs (tests/ld.sql) in a database of their own, made for
+"""gppu.ld and gppu.ld.fs on Postgres: the standard's schemas ld and fs (tests/ld.sql) in a database of their own, made for
 these tests and dropped after them; every call goes through the API to Postgres and back. LD_TEST_DSN is the Postgres server
 to make it on."""
 import os
@@ -16,7 +16,8 @@ from fastapi.testclient import TestClient
 
 from gppu import Env
 from gppu.data import _SQABase
-from gppu.fs import files, gppufs
+from gppu.fs import catalog as locations
+from gppu.ld import fs as files
 from gppu.ld import serve
 
 DSN = os.environ['LD_TEST_DSN']
@@ -134,7 +135,7 @@ def test_gppufs_makes_its_catalog_from_the_locations(api):
                                        'data': {'uid': 'cat-inner', 'canonical': 'file:///cat-root/inner'}}))
     ok(api.post('/fs/locations', json={'type': 'location', 'parent_id': root['id'], 'flags': 16,
                                        'data': {'uid': 'cat-archived', 'canonical': 'file:///cat-root/archived'}}))
-    gppufs.client = api
-    catalog = gppufs.catalog()
+    locations.client = api
+    catalog = locations.catalog()
     assert {'cat-root', 'cat-inner'} <= catalog.locations.keys() and 'cat-archived' not in catalog.locations
     assert catalog.locations['cat-inner']['parent'] == 'cat-root'

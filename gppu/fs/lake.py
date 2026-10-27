@@ -5,7 +5,7 @@ copies it, storing nothing; the client then has the Lake index what it copied. L
 /lake. The Lake is a catalog on gppufs: a Lake folder is listed through gppufs's GppuFileSystem, its index beside the Lake, and a
 UI lists it through the Lake's API, never the file system or gppufs.
 
-The Lake is configured in two places. Its locations are Linked Data's, a catalog made by gppu.fs.gppufs.catalog(). What the Lake
+The Lake is configured in two places. Its locations are Linked Data's, a catalog made by gppu.fs.catalog.catalog(). What the Lake
 itself is configured with is the app's, in Env: the uri of the Lake saved objects are stored in, and the templates of its layout
 (CRAP Systems/lake/docs/layout.md), one per type of record gppu's handlers read, `source` for any other.
 
@@ -25,7 +25,9 @@ from urllib.parse import unquote, urlsplit
 from fsspec import AbstractFileSystem
 
 from . import handlers
-from . import CACHE, Container, DataObject, GppuCatalog, GppuFileSystem, Location, _below
+from . import CACHE, Container, DataObject, Location, _below
+from .catalog import GppuCatalog
+from .gppufs import GppuFileSystem
 from ..gppu import TemplateSet, TimeSpan, y2uri
 
 PIECE = 1 << 20   # a download is sent a mebibyte at a time
@@ -286,7 +288,7 @@ class LakeFileSystem(AbstractFileSystem):
         super().__init__(**kwargs)
         import httpx
         self.root = root.rstrip('/')
-        self.client = client or httpx.Client(base_url=url.rstrip('/'), timeout=300)   # as gppu.fs.gppufs.connect gives each call
+        self.client = client or httpx.Client(base_url=url.rstrip('/'), timeout=300)   # as gppu.fs.catalog.connect gives each call
 
     def _uri(self, path: str) -> str:
         path = self._strip_protocol(path).strip('/')

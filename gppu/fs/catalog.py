@@ -1,27 +1,542 @@
-"""gppu.fs.catalog: the catalog's API, /lake/catalog, and the filesystem a desktop browses it with. Its methods are specific to working with
-the catalog and browsing it as the desktop's use cases do (SPEC_desktop.md), not generic, and a folder of any size is sent a row
-at a time: neither the API nor its client asks the database for more than a fetch.
+r"""The catalog: where every location is and what is in each.
 
-The catalog is the Lake's index in Postgres, schema `lake`: each entry in a tree by its parent's uid inside the location it is in,
-with what each source read of it, its instances. Its locations are Linked Data's: an fs_location record whose entries are in the
-catalog carries the catalog's id for it, `meta.lake_id`. Everything is reached by id, a location by its Linked Data id and an entry
-by its uid; a path is only resolved into one.
-
-  Catalog(dsn)            the catalog in the database at dsn, its locations read from Linked Data through gppu.fs.gppufs
-  api(catalog)            the catalog as a FastAPI app, which an APIApp serves at /lake/catalog among its apis()
-  CatalogFileSystem(url)  the catalog through its API as an fsspec filesystem: Linked Data's locations as folders, in each what
-                          the catalog holds there; read-only
-
-An entry is described by its columns: its content type and what SharePoint's columns hold for it, a statement's period, a tax
-form's year, as text a file manager shows in a column of its own."""
+  GppuCatalog             the locations as Location objects, each with the Provider of its connection
+  connect(), catalog()    the locations from Linked Data's /fs/locations, through its API at the address connect() is given
+  Catalog(dsn)            what is in the locations: the index in Postgres (schema lake), its API /lake/catalog, and
+  CatalogFileSystem(url)  the index through that API as an fsspec filesystem, read-only"""
+import importlib
 import json
+import os
 import re
+import socket
 from collections import Counter
+from collections.abc import Iterator, Mapping
+from copy import deepcopy
 from datetime import date, datetime
-from typing import Any, Iterator
+from pathlib import Path, PurePosixPath
+from threading import RLock
+from typing import Any
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 from uuid import UUID
 
-from fsspec import AbstractFileSystem
+import httpx
+import yaml
+from fsspec.spec import AbstractFileSystem
+
+from ..app import glob
+from ..gppu import Env, TemplateSet, TimeSpan, full_path, sync, y2path, y2uri
+from . import FileSystem, Location, Provider
+from .gppufs import GppuFileSystem
+
+
+# region locations
+
+class GppuCatalog(AbstractFileSystem):
+  """A catalog of Locations keyed by uid.
+
+  After ``Env.from_env(...)`` or ``Env.from_dict(...)``, ``GppuCatalog()``
+  resolves the configured connections and nested Locations. ``ls(recurse=True)``
+  walks that configuration tree. ``location(uid)`` returns the Location whose
+  ``ls`` and ``walk`` enumerate its child Locations. An explicit mapping
+  accepts the same data from another configuration loader.
+
+  FileSystem is built in. A connection's ``provider`` can name an external
+  Provider by its Python module and class; configuration loading imports it and
+  registers its declared scheme. ``schemas`` reports the loaded schemes. Each
+  connection gets one Provider instance, shared by every Location it reaches.
+
+  The explicit folder argument retains the existing exported-host catalog:
+
+  ``catalog`` is an absolute folder with one subfolder per host or server, named
+  as the Locations table names it, holding that host's ``locations.yaml``: one
+  row per Location as the table has it, plus ``root_path`` and ``index``, where
+  that Location keeps its gppufs index. The host's folder is chosen by the
+  machine name unless ``host`` says otherwise. The JSON files beside the host
+  folders are the global catalog, one per service, the file name being the
+  service: ``sharepoint.yaml``, ``synology-drive.yaml``, ``git.yaml`` and
+  so on. Each holds the canonical ``locations`` of that service, nested, a
+  location carrying its children in its own ``locations``, servers at the top.
+  The host folder's ``replicas.yaml`` says, per service, where this host holds
+  a copy of a location, named by its path of names in that tree, and when that
+  was last checked. A folder that is a replica carries a ``source`` block: the
+  service, the location's path of names, its server, what the catalog says of
+  it, and ``checked_at``. The catalog root lists the Locations without touching
+  them. Every address at or below a Location is served by that Location's
+  :class:`GppuFileSystem`; the deepest Location whose root contains the address
+  owns it. A Location root's parent is its parent Location when the catalog
+  names one, otherwise the catalog root, so a browser walks the Locations tree.
+  """
+
+  protocol = 'gppu-catalog'
+  cachable = False
+
+  def __init__(self, catalog: str | Path | Mapping | None = None, host: str | None = None,
+               location_types: Mapping | None = None, templates: Mapping[str, str] | None = None) -> None:
+    self.location_types = {'file': FileSystem}
+    if location_types is not None:
+      self.location_types.update(location_types)
+    self.templates = templates
+    self._providers: dict[str | None, Provider] = {}
+    self._configuration = catalog is None or isinstance(catalog, Mapping)
+    if self._configuration:
+      if catalog is None:
+        if not Env.initialized:
+          raise RuntimeError('load configuration with Env before constructing GppuCatalog')
+        catalog = Env.glob_dict('')
+      super().__init__()
+      self.host = host or socket.gethostname().split('.')[0].lower()
+      self.root = 'gppu-catalog://'
+      self._lock = RLock()
+      self._config = deepcopy(dict(catalog))
+      self._bound_locations = {}
+      self._load_configuration()
+      return
+    if not Path(catalog).is_absolute():
+      raise ValueError(f'{catalog}: the catalog is an absolute folder path')
+    super().__init__()
+    self.catalog = Path(catalog)
+    self.host = host or socket.gethostname()
+    folders = {folder.name.casefold(): folder for folder in self.catalog.iterdir() if folder.is_dir()}
+    if self.host.casefold() not in folders:
+      raise ValueError(f'{catalog}: no folder for host {self.host}')
+    self.folder = folders[self.host.casefold()]
+    self.sources: dict[str, dict] = {file.stem: yaml.safe_load(file.read_text(encoding='utf-8'))
+      for file in sorted(self.catalog.glob('*.yaml'))}
+    canonical: dict[tuple[str, str], dict] = {}
+    def walk(service: str, entries: list[dict], above: tuple[str, ...]) -> None:
+      for location in entries:  # a location carries its children in its own ``locations``; the top level is a server
+        names = (*above, location['name'])
+        canonical[service, '/'.join(names)] = {'service': service, 'location': '/'.join(names),
+          **({'server': names[0]} if len(names) > 1 else {}),
+          **{field: value for field, value in location.items() if field != 'locations'}}
+        walk(service, location.get('locations', []), names)
+    for service, source in self.sources.items():
+      walk(service, source['locations'], ())
+    replicas = self.folder / 'replicas.yaml'
+    self._replicas: dict[str, dict] = {}
+    listed = yaml.safe_load(replicas.read_text(encoding='utf-8')) or {} if replicas.is_file() else {}
+    for service, entries in listed.items():
+      for replica in entries:
+        location = canonical.get((service, replica['location']))
+        if location is None:
+          raise ValueError(f"{replicas}: {replica['path']} is a replica of {service} {replica['location']}, which {service}.yaml does not list")
+        self._replicas[os.path.normcase(os.path.normpath(replica['path']))] = {**location, 'checked_at': replica['checked_at']}
+    self.root = f'gppu-catalog://{self.catalog.as_posix()}'
+    self._lock = RLock()
+    self._filesystems: dict[str, GppuFileSystem] = {}
+    self._load()
+
+  def _load_configuration(self) -> None:
+    """Resolve configured Locations without opening any provider or index.
+
+    The input is the tree already loaded by Env, or the same plain data returned
+    by a database loader. Nested paths are provider-relative, never appended to
+    their parent's path. Loading does not mutate Env or the supplied mapping.
+    """
+    config = self._config
+    definitions = config['connections']
+    connection_templates = definitions['templates'] if 'templates' in definitions else {}
+    connection_rules = TemplateSet(templates=connection_templates, context=config)
+    self.connections = {
+      uid: connection_rules.resolve({'uid': uid, **row})
+      for uid, row in definitions.items()
+      if uid not in ('templates', 'macros', 'generators') and not uid.endswith('_templates')
+    }
+    for connection in self.connections.values():
+      if 'provider' not in connection:
+        continue
+      provider = connection['provider']
+      if provider in self.location_types:
+        continue
+      module, _, name = provider.rpartition('.')
+      if not module:
+        raise ValueError(f'{provider}: unknown configured provider')
+      kind = getattr(importlib.import_module(module), name)
+      if not isinstance(kind, type) or not issubclass(kind, Provider):
+        raise TypeError(f'{provider}: provider must implement Provider')
+      if kind.scheme in self.location_types and self.location_types[kind.scheme] is not kind:
+        raise ValueError(f'{kind.scheme}: provider already registered')
+      self.location_types[kind.scheme] = kind
+    tree = config['locations']
+    if isinstance(tree, Mapping):
+      templates = tree['templates'] if 'templates' in tree else {}
+      entries = [{'uid': uid, **row} for uid, row in tree.items()
+                 if uid not in ('templates', 'macros', 'generators') and not uid.endswith('_templates')]
+    elif isinstance(tree, list):
+      templates = config['location_templates'] if 'location_templates' in config else {}
+      entries = tree
+    else:
+      raise TypeError('locations must be a list or a mapping keyed by uid')
+    context = {**config, 'connections': self.connections, 'host': self.host}
+    rules = TemplateSet(templates=templates, context=context)
+    self.locations = {}
+    self._parents = {}
+
+    def add(items, parent=None, connection=None):
+      if not isinstance(items, list):
+        raise TypeError('nested locations must be a list')
+      for item in items:
+        row = dict(item)
+        uid = row['uid']
+        if not isinstance(uid, str) or not uid:
+          raise ValueError('every Location requires a nonempty uid')
+        if uid in self.locations:
+          raise ValueError(f'duplicate Location uid: {uid}')
+        children = row.pop('locations') if 'locations' in row else []
+        owner = row['parent'] if 'parent' in row else parent
+        if parent is not None and owner != parent:
+          raise ValueError(f'{uid}: parent conflicts with its nested Location')
+        serving = row['connection'] if 'connection' in row else connection
+        if serving is not None:
+          if serving not in self.connections:
+            raise KeyError(f'{uid}: unknown connection {serving}')
+          row['connection'] = serving
+        if templates and 'template' not in row:
+          row['template'] = 'connected' if serving is not None else 'location'
+        row['parent'] = owner
+        resolved = rules.resolve(row)
+        resolved['parent'] = owner
+        self.locations[uid] = resolved
+        self._parents[uid] = owner
+        add(children, uid, serving)
+
+    add(entries)
+    for uid, parent in self._parents.items():
+      visited = {uid}
+      while parent is not None:
+        if parent not in self.locations:
+          raise KeyError(f'{uid}: unknown parent Location {parent}')
+        if parent in visited:
+          raise ValueError(f'{uid}: Location hierarchy contains a cycle')
+        visited.add(parent)
+        parent = self._parents[parent]
+
+  def _provider(self, scheme: str, connection: str | None) -> Provider | None:
+    """The one Provider instance for a connection, or for a scheme reached without one."""
+    if scheme not in self.location_types:
+      return None
+    key = connection if connection is not None else scheme + '://'
+    if key not in self._providers:
+      self._providers[key] = self.location_types[scheme](self.connections[connection] if connection is not None else None)
+    return self._providers[key]
+
+  def location(self, uid: str) -> Location:
+    """Return the Location with this UID, with the Provider of its connection.
+
+    Args:
+      uid (str): Location UID from the configured tree.
+
+    Returns:
+      Location: The configured Location. Repeated calls with the same UID return
+        the same instance. A missing UID raises KeyError.
+    """
+    if not self._configuration:
+      raise TypeError('Location operations require a configured catalog')
+    with self._lock:
+      if uid not in self._bound_locations:
+        row = self.locations[uid]
+        parent = self._parents[uid]
+        self._bound_locations[uid] = Location(row,
+          provider=self._provider(urlsplit(row['canonical']).scheme, row.get('connection')),
+          parent=self.location(parent) if parent is not None else None,
+          children=lambda: (self.location(child) for child, owner in self._parents.items() if owner == uid),
+          templates=self.templates)
+      return self._bound_locations[uid]
+
+  def location_of(self, uri: y2uri | str) -> tuple[Location, y2path]:
+    """The nearest configured Location at or above uri, walking up one segment at a time, and the path below it."""
+    by_uri = {self._bare(row['canonical']): uid for uid, row in self.locations.items()}
+    at, below = self._bare(uri), []
+    while at not in by_uri:
+      scheme, _, rest = at.partition('://')
+      if not rest:
+        raise KeyError(f'{uri}: no configured Location holds this uri')
+      head, _, name = rest.rpartition('/')
+      at = f'{scheme}://{head}'
+      below.insert(0, name)
+    location = self.location(by_uri[at])
+    if isinstance(location.provider, FileSystem) and not urlsplit(at).path and below:
+      # A host has no folder of its own: the drive below it is the root of what is listed.
+      location = Location({'uid': location.uid, 'canonical': f'{at}/{below.pop(0)}'}, provider=location.provider,
+                          parent=location, templates=location.templates)
+    return location, y2path(unquote('/'.join(below)))
+
+  @staticmethod
+  def _bare(uri: y2uri | str) -> str:
+    """uri without a trailing slash; a scheme's own root keeps its '://'."""
+    scheme, _, rest = str(uri).partition('://')
+    return f'{scheme}://{rest.rstrip("/")}'
+
+  @property
+  def schemas(self) -> list[dict[str, str]]:
+    """URI schemes served by the implementations loaded in this catalog."""
+    return [{'scheme': scheme + '://',
+             'implementation': (kind.func if hasattr(kind, 'func') else kind).__name__}
+            for scheme, kind in self.location_types.items()]
+
+  def filesystem(self, uid: str) -> GppuFileSystem:
+    """Indexing is explicitly selected; ingestion uses Location operations."""
+    return GppuFileSystem(self.locations[uid]['canonical'])
+
+  def _configured_row(self, uid: str | None) -> dict:
+    if uid is None:
+      return {'name': self.root, 'type': 'directory', 'size': 0,
+              'gppu': {'uid': None, 'parent': None, 'locations': len(self.locations)}}
+    return {'name': uid, 'type': 'directory', 'size': 0, 'gppu': deepcopy(self.locations[uid])}
+
+  def _configured_listing(self, path, detail, recurse, refresh) -> list:
+    if refresh:
+      raise ValueError('reload configuration explicitly; catalog listing does not refresh storage')
+    parent = None if path is None or path == self.root or path == '' else str(path)
+    if parent is not None:
+      self.locations[parent]
+    result = []
+
+    def children(uid):
+      for child, owner in self._parents.items():
+        if owner == uid:
+          result.append(self._configured_row(child))
+          if recurse:
+            children(child)
+
+    children(parent)
+    return result if detail else [row['name'] for row in result]
+
+  def _load(self) -> None:
+    """Read the host's ``locations.yaml``; a Location whose ``index`` is not where gppufs keeps it is an error, not a redirect."""
+    rows = yaml.safe_load((self.folder / 'locations.yaml').read_text(encoding='utf-8')) or []
+    locations: dict[str, dict] = {}
+    for row in rows:
+      fs = self._filesystems.get(row['root_path']) or GppuFileSystem(row['root_path'])
+      if Path(row['index']) != Path(fs._database_path(fs.root)):
+        raise ValueError(f"{row['root_path']}: catalog index {row['index']} is not {fs._database_path(fs.root)}")
+      self._filesystems[row['root_path']] = fs
+      locations[row['root_path']] = row
+    self.locations = locations
+    by_id = {row['id']: row['root_path'] for row in rows}
+    self._parents = {row['root_path']: by_id.get(row['parent_file_location_id']) for row in rows}
+
+  def _location(self, path: str | Path) -> GppuFileSystem:
+    """The Location serving an absolute address: the deepest one whose root contains it."""
+    physical = str(path).replace('\\', '/')
+    if '://' not in physical and not Path(physical).is_absolute():
+      raise ValueError(f'{path}: catalog addresses are absolute paths or URLs')
+    owners = []
+    for fs in self._filesystems.values():
+      try:
+        fs._key(path)
+      except ValueError:
+        continue
+      owners.append(fs)
+    if not owners:
+      raise FileNotFoundError(f'{path}: not inside a catalog Location')
+    return max(owners, key=lambda fs: len(fs.root))
+
+  def _parent(self, fs: GppuFileSystem) -> str:
+    parent = self._parents[self._path_of(fs)]
+    return self.root if parent is None else self._filesystems[parent].location
+
+  def _path_of(self, fs: GppuFileSystem) -> str:
+    return next(path for path, item in self._filesystems.items() if item is fs)
+
+  def _ancestors(self, path: str) -> Iterator[str]:
+    parent = self._parents.get(path)
+    while parent is not None:
+      yield parent
+      parent = self._parents.get(parent)
+
+  def _catalog_row(self) -> dict:
+    """The catalog: its Locations, how many have an index, and the totals and latest refresh their indexes hold.
+
+    A Location below a Location whose totals are known is already inside them
+    and is not counted again.
+    """
+    rows = {path: self._location_row(fs)['gppu'] for path, fs in self._filesystems.items()}
+    counted = [row for path, row in rows.items() if row['files'] is not None
+      and not any(rows[parent]['files'] is not None for parent in self._ancestors(path))]
+    spans = [TimeSpan(start=row['span'][0], end=row['span'][1]) for row in counted if row['span']]
+    refreshed = [datetime.fromisoformat(row['probed_at']) for row in rows.values() if row['probed_at']]
+    return {'name': self.root, 'type': 'directory', 'size': 0, 'gppu': {
+      'name': self.catalog.name, 'path': self.root, 'parent': None, 'type': 'folder', 'modified_at': None,
+      'handlers': [], 'files': sum(row['files'] for row in counted) if counted else None,
+      'folders': sum(row['folders'] for row in counted) if counted else None,
+      'bytes': sum(row['bytes'] for row in counted) if counted else None,
+      'span': [str(min(span.start for span in spans)), str(max(span.end for span in spans))] if spans else None,
+      'stats': {}, 'probed': False, 'probed_at': str(max(refreshed)) if refreshed else None, 'is_container': True,
+      'locations': len(self.locations), 'indexed': sum(row['indexed'] for row in rows.values())}}
+
+  def _location_row(self, fs: GppuFileSystem) -> dict:
+    """A Location as the catalog knows it: the catalog's row, with the totals and last refresh its own index holds."""
+    row = self.locations[self._path_of(fs)]
+    cached = fs._stored('.')
+    known = cached[0]['gppu'] if cached is not None else {}
+    return {'name': fs.location, 'type': 'directory', 'size': 0, 'gppu': {
+      'name': PurePosixPath(fs.root).name or fs.root.rstrip('/'), 'path': fs.location, 'parent': self._parent(fs),
+      'type': 'folder', 'modified_at': known.get('modified_at'), 'handlers': known.get('handlers', []),
+      'files': known.get('files'), 'folders': known.get('folders'), 'bytes': known.get('bytes'),
+      'span': known.get('span'), 'stats': known.get('stats', {}), 'probed': known.get('probed', False),
+      'probed_at': known.get('probed_at'), 'is_container': True, 'indexed': cached is not None, 'location': row,
+      **({'source': source} if (source := self._source(fs, '.')) is not None else {})}}
+
+  def _source(self, fs: GppuFileSystem, key: str) -> dict | None:
+    """What a folder is by the catalog: the canonical location it is a replica of on this host, or None."""
+    return self._replicas.get(os.path.normcase(os.path.normpath(fs._path(key))))
+
+  def _served(self, fs: GppuFileSystem, row: dict) -> dict:
+    """A row from a Location's filesystem: its root carries the catalog's parent and Location, a replica its source."""
+    extra = {}
+    if row['name'] == fs.location:
+      extra.update(parent=self._parent(fs), location=self.locations[self._path_of(fs)])
+    if row['type'] == 'directory' and (source := self._source(fs, fs._key(row['name']))) is not None:
+      extra['source'] = source
+    return {**row, 'gppu': {**row['gppu'], **extra}} if extra else row
+
+  @sync
+  async def info(self, path: str | Path | None = None, refresh: bool = False, **kwargs) -> dict:
+    """The catalog itself, or one entry served by its Location; awaited in a loop, called plainly outside one."""
+    return self.info_sync(path, refresh)
+
+  def info_sync(self, path: str | Path | None = None, refresh: bool = False) -> dict:
+    """``info`` on the calling thread."""
+    with self._lock:
+      if self._configuration:
+        if refresh:
+          raise ValueError('reload configuration explicitly; catalog lookup does not refresh storage')
+        uid = None if path is None or path == self.root or path == '' else str(path)
+        return self._configured_row(uid)
+      if path is None or path == self.root:
+        if refresh:
+          self._load()
+        return self._catalog_row()
+      fs = self._location(path)
+      return self._served(fs, fs.info_sync(path, refresh=refresh))
+
+  @sync
+  async def ls(self, path: str | Path | None = None, detail: bool = True,
+               recurse: bool = False, refresh: bool = False, **kwargs) -> list:
+    """The Locations at the catalog root, otherwise the listing the owning Location gives.
+
+    Awaited inside an event loop, called plainly outside one. ``refresh=True``
+    at the root rereads ``locations.yaml``. Recursion from the root descends
+    the Locations that have no parent Location; their subtrees hold the rest.
+    """
+    return self.ls_sync(path, detail, recurse, refresh)
+
+  def ls_sync(self, path: str | Path | None = None, detail: bool = True,
+              recurse: bool = False, refresh: bool = False) -> list:
+    """``ls`` on the calling thread."""
+    with self._lock:
+      if self._configuration:
+        return self._configured_listing(path, detail, recurse, refresh)
+      if path is None or path == self.root:
+        if refresh:
+          self._load()
+        result = []
+        for location in sorted(self._filesystems, key=str.casefold):
+          fs = self._filesystems[location]
+          if recurse and self._parents[location] is not None:
+            continue
+          result.append(self._location_row(fs))
+          if recurse:
+            result.extend(fs.ls_sync(None, recurse=True))
+      else:
+        fs = self._location(path)
+        result = [self._served(fs, row) for row in fs.ls_sync(path, recurse=recurse, refresh=refresh)]
+      return result if detail else [row['name'] for row in result]
+
+# endregion
+# region Linked Data
+
+client: httpx.Client   # the API, opened by connect()
+NOT_IN_USE = ('discarded', 'rejected')   # the statuses of a location not in use; an archived one is out of sight (# Flags)
+
+
+def connect(url: str) -> None:
+    """Open Linked Data's API at url. One connection serves every call: a connection a call left 11,811 sockets waiting after one walk
+    and ran this host out of ports (WinError 10048)."""
+    global client
+    if not url:
+        raise ValueError("Linked Data's API address is required")
+    client = httpx.Client(base_url=url, timeout=300)
+
+
+def ld(method: str, path: str, body: Any = None, **params: Any) -> Any:
+    """One call to the API, its answer as JSON; a refusal raises with what the API said (a 422 carries Postgres' reason), a 404 as LookupError."""
+    r = client.request(method, path, json=body, params=params)
+    if r.is_error:
+        raise (LookupError if r.status_code == 404 else ValueError)(f'{method} {path}: {r.status_code} {r.text}')
+    return r.json()
+
+
+class Drives(FileSystem):
+    """gppufs's FileSystem in a Windows host's WSL: a file uri naming a drive, file://alex-pc/D:/Dev, is that drive as WSL mounts it,
+    /mnt/d/Dev (`drives` in the app's configuration), so a location configured on the host is walked from its WSL as it is configured."""
+
+    def local(self, uri: Any) -> Path:
+        parsed = urlsplit(str(uri))
+        path = unquote(parsed.path)
+        if len(path) >= 3 and path[0] == '/' and path[2] == ':':
+            if not (drives := glob('drives')):
+                raise ValueError("`drives`, where WSL mounts this host's drives, is not in the app's configuration")
+            uri = urlunsplit(parsed._replace(path=quote(f"{drives}/{path[1].casefold()}{path[3:]}")))
+        return super().local(uri)
+
+
+def catalog(**location_types: Any) -> GppuCatalog:
+    """gppufs's catalog of Linked Data's locations (GET /fs/locations): every location in use that has a uid and a
+    canonical uri, the two a gppufs Location is known and reached by, as a row of gppufs's configuration table, its data with its id,
+    name, parent's uid and tags. A location in use is not discarded or rejected, inside locations that are in use too, since
+    a location is part of the location above it; its connection is its root location, whose data.handler holds the connection's
+    parameters. location_types are the Providers a caller adds by scheme, as GppuCatalog takes them; gppufs's FileSystem reaches
+    file://, and in a Windows host's WSL, Drives does."""
+    records = {r['id']: r for r in ld('GET', '/fs/locations')['items']
+               if r['status'] not in NOT_IN_USE and r['data'].get('uid') and r['data'].get('canonical')}
+
+    def root(r: dict) -> dict | None:
+        """The root location above it; none when one above it is not in use, so it is not in use either."""
+        while r['parent_id']:
+            if not (r := records.get(r['parent_id'])):
+                return None
+        return r
+    rows = [r['data'] | {'id': r['id'], 'name': r['name'], 'parent': r['parent_id'] and records[r['parent_id']]['data']['uid'],
+                         'connection': top['data']['uid']} | ({'tags': r['meta']['tags']} if 'tags' in r['meta'] else {})
+            for r in records.values() if (top := root(r))]
+    roots = [r for r in rows if r['connection'] == r['uid']]
+    if missing := [r['uid'] for r in roots if r.get('handler') is None]:
+        raise ValueError(f'root locations without a handler, their connection: {", ".join(missing)}')
+    return GppuCatalog({'locations': rows, 'connections': {r['uid']: r['handler'] for r in roots}}, location_types=location_types)
+
+
+def here(catalog: GppuCatalog, uri: str) -> Path | None:
+    """The folder on this host a location's file uri names, as the catalog's FileSystem reaches it (Drives in a Windows host's WSL);
+    none when it names another host or is not a file uri. Which host is decided from the uri alone, as FileIndexer 0.1.3 decided it:
+    another host's share is that host's location, and asking it from here waits out the network for every share that does not
+    answer."""
+    if urlsplit(uri).netloc.casefold() not in ('', socket.gethostname().split('.')[0].casefold()):
+        return None
+    try:
+        return catalog.location_types['file']().local(uri)
+    except ValueError:
+        return None
+
+
+def reached(catalog: GppuCatalog) -> dict[str, dict[str, str]]:
+    """The folders on this host the catalog's locations are, as GppuFileSystem's locations map takes them: what addresses its entries.
+    Each is looked for once, so a caller reads it once and gives it to filesystem()."""
+    return {full_path(path).as_posix(): {'location': uid, 'canonical': row['canonical']}
+            for uid, row in catalog.locations.items() if (path := here(catalog, row['canonical'])) and path.is_dir()}
+
+
+def filesystem(catalog: GppuCatalog, uid: str, folders: dict[str, dict[str, str]]) -> GppuFileSystem:
+    """The GppuFileSystem of a location this host reaches, its index beside it, `.<location-name>.gppufs.sqlite`: a listing reads the
+    folder and keeps what gppufs's handlers read, a lookup answers from the index; each address its entries carry is the location's,
+    from folders, what reached() found."""
+    if (root := here(catalog, catalog.locations[uid]['canonical'])) is None:
+        raise ValueError(f"{catalog.locations[uid]['canonical']}: {uid} is not on this host")
+    return GppuFileSystem(str(root), locations=folders)
+
+# endregion
+# region what is in the locations
 
 FETCH = 1000   # the rows a cursor fetches at a time: a row read is about 2 kB with SharePoint's columns, so a fetch is about 2 MB,
 # and the largest folder, 56,297 entries, takes 57 fetches; a row sent is about 300 bytes, its columns given as text
@@ -116,9 +631,8 @@ class Catalog:
     def locations(self) -> list[dict[str, Any]]:
         """Linked Data's locations in use whose entries are in the catalog, with every location above them, so they make one tree:
         each its id, name, parent's id and, where it has entries, the catalog's id for it."""
-        from . import gppufs
-        records = {r['id']: r for r in gppufs.api('GET', '/fs/locations')['items']
-                   if r['status'] not in gppufs.NOT_IN_USE}
+        records = {r['id']: r for r in ld('GET', '/fs/locations')['items']
+                   if r['status'] not in NOT_IN_USE}
         kept: set[str] = set()
         for r in records.values():
             if 'lake_id' in r['meta']:
@@ -273,7 +787,7 @@ class CatalogFileSystem(AbstractFileSystem):
     def __init__(self, url: str = '', client: Any = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         import httpx
-        self.client = client or httpx.Client(base_url=url.rstrip('/'), timeout=300)   # as gppu.fs.gppufs.connect gives each call
+        self.client = client or httpx.Client(base_url=url.rstrip('/'), timeout=300)   # as gppu.fs.catalog.connect gives each call
         self._tree: dict[str, dict[str, Any]] | None = None   # Linked Data's locations by path, read once
         self._listed: dict[str, dict[str, dict[str, Any]]] = {}   # each folder listed -> its entries by name
 
@@ -346,3 +860,5 @@ class CatalogFileSystem(AbstractFileSystem):
 
     def _open(self, path: str, mode: str = 'rb', **kwargs: Any):
         raise PermissionError(f'{path}: the catalog holds what an entry is, not its content')
+
+# endregion

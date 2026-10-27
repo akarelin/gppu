@@ -16,7 +16,10 @@ import yaml
 from fsspec.implementations.memory import MemoryFileSystem
 
 import gppu.fs
-from gppu.fs import GppuCatalog, GppuFileSystem, _RarFileSystem
+import gppu.fs.gppufs
+from gppu.fs.catalog import GppuCatalog
+from gppu.fs.gppufs import GppuFileSystem
+from gppu.fs import _RarFileSystem
 
 
 def index(folder: Path) -> Path:
@@ -100,13 +103,13 @@ def test_an_index_past_the_limit_splits_off_the_folder_holding_most_of_it(tmp_pa
     (tmp_path / name / 'deep').mkdir(parents=True)
     for i in range(count):
       (tmp_path / name / 'deep' / f'note{i}.md').write_text(f'Text {i}', encoding='utf-8')
-  monkeypatch.setattr(gppu.fs, 'INDEX_LIMIT', 32 * 1024)   # above what an index holding small's notes takes after big moves out (6 pages), below big/deep's (13)
+  monkeypatch.setattr(gppu.fs.gppufs, 'INDEX_LIMIT', 32 * 1024)   # above what an index holding small's notes takes after big moves out (6 pages), below big/deep's (13)
   fs = GppuFileSystem(tmp_path)
   listed = fs.ls(recurse=True)
   assert index(tmp_path / 'big').is_file() and index(tmp_path / 'big' / 'deep').is_file()
   assert not index(tmp_path / 'small').exists() and not index(tmp_path / 'small' / 'deep').exists()
-  assert index(tmp_path).stat().st_size <= gppu.fs.INDEX_LIMIT
-  assert index(tmp_path / 'big').stat().st_size <= gppu.fs.INDEX_LIMIT
+  assert index(tmp_path).stat().st_size <= gppu.fs.gppufs.INDEX_LIMIT
+  assert index(tmp_path / 'big').stat().st_size <= gppu.fs.gppufs.INDEX_LIMIT
   stats = fs.stats()
   assert (stats['folders'], stats['files'], stats['notes']) == (4, 42, 42)
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
@@ -117,7 +120,7 @@ def test_an_index_past_the_limit_splits_off_the_folder_holding_most_of_it(tmp_pa
     assert database.execute("SELECT count(*) FROM gppufs_entries WHERE path LIKE 'big%'").fetchone()[0] == 0
     database.execute('INSERT INTO gppufs_entries VALUES (?, ?, ?)', ('big/stale.md', json.dumps(listed[0]), None))
   (tmp_path / 'small' / 'added.md').write_text('More', encoding='utf-8')
-  monkeypatch.setattr(gppu.fs, 'INDEX_LIMIT', 1024)
+  monkeypatch.setattr(gppu.fs.gppufs, 'INDEX_LIMIT', 1024)
   GppuFileSystem(tmp_path).ls('small')
   with closing(sqlite3.connect(index(tmp_path))) as database:   # big owns its rows in its own index: the copy is dropped, not moved
     assert database.execute("SELECT count(*) FROM gppufs_entries WHERE path LIKE 'big%'").fetchone()[0] == 0
@@ -860,9 +863,9 @@ def test_a_folder_is_asked_once_whether_it_holds_an_index(tmp_path, monkeypatch)
   for name in ('one.md', 'two.md'):
     (deep / name).write_text('Text', encoding='utf-8')
   asked, resolved = [], []
-  index_at, full_path = GppuFileSystem._index_at, gppu.fs.full_path
+  index_at, full_path = GppuFileSystem._index_at, gppu.fs.gppufs.full_path
   monkeypatch.setattr(GppuFileSystem, '_index_at', lambda self, folder: asked.append(folder) or index_at(self, folder))
-  monkeypatch.setattr(gppu.fs, 'full_path', lambda path, *args, **kwargs: resolved.append(path) or full_path(path, *args, **kwargs))
+  monkeypatch.setattr(gppu.fs.gppufs, 'full_path', lambda path, *args, **kwargs: resolved.append(path) or full_path(path, *args, **kwargs))
   fs = GppuFileSystem(tmp_path, locations={tmp_path.as_posix(): {'location': 'work', 'canonical': 'work://'}})
   fs.ls(recurse=True)
   assert len(asked) == len(set(asked)) and len(resolved) == 1
@@ -1104,7 +1107,7 @@ def test_a_folder_moved_between_two_locations_keeps_its_index(tmp_path):
 def test_a_postgres_location_is_addressed_like_any_other():
   """Alex, 2026-09-17 04:21: an index of his Postgres databases, schemas and tables. They are read
   through gppufs like any other place, so a schema is a folder and a table is an entry in it."""
-  from gppu.fs import PostgresFileSystem
+  from gppu.fs.gppufs import PostgresFileSystem
 
   with pytest.raises(ValueError, match='dsn'):
     PostgresFileSystem('pg://pg.karel.in/files')
@@ -1187,7 +1190,7 @@ def test_a_store_that_lists_enough_is_identified_without_its_bytes(monkeypatch):
 
 
 def test_an_m365_address_names_its_tenant_service_site_and_drive():
-  from gppu.fs import SharePointFileSystem
+  from gppu.fs.gppufs import SharePointFileSystem
   assert SharePointFileSystem._get_kwargs_from_urls('m365://karelin/sharepoint/sites/Suntrust/Statements') == {
     'tenant': 'karelin', 'service': 'sharepoint', 'site': 'sites/Suntrust', 'drive': 'Statements'}
   assert SharePointFileSystem._get_kwargs_from_urls('m365://karelin/onedrive/personal/alex_karelin_com/Documents') == {
@@ -1215,4 +1218,4 @@ def test_an_index_in_a_repository_is_left_out_of_it(tmp_path):
   git('worktree', 'add', '-q', str(tmp_path / 'tree'))
   GppuFileSystem(tmp_path / 'tree').ls(recurse=True)
   assert index(tmp_path / 'tree').is_file() and git('status', '--porcelain', cwd=tmp_path / 'tree') == ''
-  assert (repo / '.git' / 'info' / 'exclude').read_text(encoding='utf-8').splitlines().count(gppu.fs.GIT_EXCLUDE) == 1
+  assert (repo / '.git' / 'info' / 'exclude').read_text(encoding='utf-8').splitlines().count(gppu.fs.gppufs.GIT_EXCLUDE) == 1

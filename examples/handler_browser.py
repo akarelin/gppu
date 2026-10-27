@@ -8,7 +8,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 from gppu import Env, Error, format_size
-from gppu.fs import GppuCatalog, GppuFileSystem
+from gppu.fs.catalog import GppuCatalog
+from gppu.fs.gppufs import GppuFileSystem
 from gppu.tui import TreeEntry, TreeTable, TreeTableColumn, TUIApp
 from rich.text import Text
 from textual import work

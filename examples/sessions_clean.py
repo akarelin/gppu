@@ -6,7 +6,7 @@ import time
 from pathlib import Path, PurePosixPath
 
 from gppu import Env, glob
-from gppu.fs import GppuFileSystem
+from gppu.fs.gppufs import GppuFileSystem
 
 
 def sessions(fs: GppuFileSystem) -> dict[str, dict]:
