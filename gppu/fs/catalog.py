@@ -7,7 +7,7 @@ with what each source read of it, its instances. Its locations are Linked Data's
 catalog carries the catalog's id for it, `meta.lake_id`. Everything is reached by id, a location by its Linked Data id and an entry
 by its uid; a path is only resolved into one.
 
-  Catalog(dsn)            the catalog in the database at dsn, its locations read from Linked Data through gppu.ld.gppufs
+  Catalog(dsn)            the catalog in the database at dsn, its locations read from Linked Data through gppu.fs.gppufs
   api(catalog)            the catalog as a FastAPI app, which an APIApp serves at /lake/catalog among its apis()
   CatalogFileSystem(url)  the catalog through its API as an fsspec filesystem: Linked Data's locations as folders, in each what
                           the catalog holds there; read-only
@@ -116,7 +116,8 @@ class Catalog:
     def locations(self) -> list[dict[str, Any]]:
         """Linked Data's locations in use whose entries are in the catalog, with every location above them, so they make one tree:
         each its id, name, parent's id and, where it has entries, the catalog's id for it."""
-        from ..ld import Type, gppufs
+        from ..ld import Type
+        from . import gppufs
         records = {r['id']: r for r in gppufs.api('GET', '/files', type=int(Type.FS_LOCATION))['items']
                    if r['status'] not in gppufs.NOT_IN_USE}
         kept: set[str] = set()
@@ -273,7 +274,7 @@ class CatalogFileSystem(AbstractFileSystem):
     def __init__(self, url: str = '', client: Any = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         import httpx
-        self.client = client or httpx.Client(base_url=url.rstrip('/'), timeout=300)   # as gppu.ld.gppufs.connect gives each call
+        self.client = client or httpx.Client(base_url=url.rstrip('/'), timeout=300)   # as gppu.fs.gppufs.connect gives each call
         self._tree: dict[str, dict[str, Any]] | None = None   # Linked Data's locations by path, read once
         self._listed: dict[str, dict[str, dict[str, Any]]] = {}   # each folder listed -> its entries by name
 

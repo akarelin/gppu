@@ -28,7 +28,7 @@ desktop = ["fusepy"]
 serve = ["textual-serve"]
 vault-azure = ["azure-identity", "azure-keyvault-secrets"]
 vault = ["azure-identity", "azure-keyvault-secrets"]
-# gppu.ld, and httpx for gppu.ld.gppufs, its client; and fastapi-querybuilder, installed with --no-deps: its metadata lists poetry, uvicorn and aiosqlite as runtime dependencies
+# gppu.ld, and httpx for gppu.fs.gppufs, its client; and fastapi-querybuilder, installed with --no-deps: its metadata lists poetry, uvicorn and aiosqlite as runtime dependencies
 ld = ["fastapi", "sqlmodel", "sqlalchemy[asyncio]", "psycopg[binary]", "fastapi-pagination", "sqlakeyset", "httpx"]
 all = ["psycopg2-binary", "sqlalchemy", "diskcache", "aiomqtt", "selenium>=4.0.0", "jinja2", "textual", "textual-serve", "azure-identity", "azure-keyvault-secrets"]
 test = ["pytest"]

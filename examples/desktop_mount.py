@@ -6,7 +6,7 @@ from gppu import App, Env, Info
 from gppu.fs.catalog import CatalogFileSystem
 from gppu.fs.desktop import mount
 from gppu.fs import GppuFileSystem
-from gppu.ld import gppufs
+from gppu.fs import gppufs
 
 
 class Desktop(App):

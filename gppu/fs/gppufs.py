@@ -15,8 +15,8 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 import httpx
 
-from . import Type
-from ..fs import FileSystem, GppuCatalog, GppuFileSystem
+from ..ld import Type
+from . import FileSystem, GppuCatalog, GppuFileSystem
 from ..app import glob
 from ..gppu import full_path
 
