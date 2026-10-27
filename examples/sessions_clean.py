@@ -12,13 +12,15 @@ from gppu.fs.gppufs import GppuFileSystem
 def sessions(fs: GppuFileSystem) -> dict[str, dict]:
     """The sessions gppufs lists in a harness's folder, each with its own entries and its subagents', by the session's uid."""
     found = {}
-    for row in fs.ls('', recurse=True, refresh=True):
+    rows = {fs._key(row['name']): row for row in fs.ls('', recurse=True, refresh=True) if row['type'] == 'file'}
+    for path, row in rows.items():
         record = row['gppu'].get('record') or {}
-        if record.get('uid') is None and not row['gppu'].get('unread') or row['type'] != 'file':
-            continue
-        path = fs._key(row['name'])
+        if 'session' not in row['gppu']['handlers'] and record.get('uid') is None:
+            continue   # not a session: what its handler read names none
+        if any(f'{folder}.jsonl' in rows for folder in PurePosixPath(path).parents):
+            continue   # in a session's own folder, which moves with it
         subagent = (record.get('data') or {}).get('subagent')
-        uid = record['meta'].get('parent_uid') if subagent else record.get('uid') or PurePosixPath(path).stem
+        uid = record['meta'].get('parent_uid') if subagent else record.get('uid') or path
         session = found.setdefault(uid, {'paths': [], 'root': False, 'typed': False, 'unread': None, 'modified': 0.0})
         session['paths'].append(path)
         session['unread'] = session['unread'] or row['gppu'].get('unread')
