@@ -213,6 +213,7 @@ class GppuFileSystem(AbstractFileSystem):
     # host's share and every other store hold theirs in memory for this instance, read from the store and never written back.
     self._cacheless = not cache or not isinstance(self.fs, LocalFileSystem) or _remote(self.root)
     self._memory: dict[str, sqlite3.Connection] = {}   # a remote store's index, held for this instance
+    self._tabled: set[str] = set()   # the held indexes known to have their tables, asked of each once
     self._working: dict[str, list] = {}   # an index's path -> [its copy in the cache, the file it was copied from, changed]
     self._scratch: tempfile.TemporaryDirectory | None = None   # where the copies are, made at the first write
     self._copies = 0                 # how many copies were made there
@@ -471,11 +472,13 @@ class GppuFileSystem(AbstractFileSystem):
       return
     database = self._held(owner)
     with database:
-      if write:
-        self._prepare(database, owner, self._columns_of(database))
-      elif not self._columns_of(database):
-        yield None
-        return
+      if owner not in self._tabled:
+        if write:
+          self._prepare(database, owner, self._columns_of(database))
+        elif not self._columns_of(database):
+          yield None
+          return
+        self._tabled.add(owner)
       yield database
 
   def _working_copy(self, owner: str, path: str, write: bool) -> str | None:
@@ -657,12 +660,33 @@ class GppuFileSystem(AbstractFileSystem):
         return None
       row = database.execute('SELECT metadata, children FROM gppufs_entries WHERE path=?',
         (self._relative(key, owner),)).fetchone()
-    if row is None:
-      return None
-    metadata = json.loads(row[0])
+    return None if row is None else self._read_row(key, owner, row)
+
+  def _read_row(self, key: str, owner: str, row: tuple[str, str | None]) -> tuple[dict, list[dict] | None]:
     children = None if row[1] is None else [
       {**child, 'path': self._absolute(child['path'], owner)} for child in json.loads(row[1])]
-    return self._addressed(key, metadata), children
+    return self._addressed(key, json.loads(row[0])), children
+
+  def _stored_many(self, keys: list[str]) -> dict[str, tuple[dict, list[dict] | None]]:
+    """`_stored` of a folder's entries, each index beside the location asked once for all of them it holds."""
+    if self._index is not None:
+      return {key: found for key in keys if (found := self._stored(key)) is not None}
+    owners: dict[str, dict[str, str]] = {}
+    for key in keys:
+      owner = self._owner(key)
+      owners.setdefault(owner, {})[self._relative(key, owner)] = key
+    found = {}
+    for owner, relative in owners.items():
+      with self._database(owner) as database:
+        if database is None:
+          continue
+        paths = list(relative)
+        for start in range(0, len(paths), 900):   # SQLite takes at most 999 parameters in one statement
+          chunk = paths[start:start + 900]
+          for path, *row in database.execute('SELECT path, metadata, children FROM gppufs_entries WHERE path IN '
+                                             f'({",".join("?" * len(chunk))})', chunk):
+            found[relative[path]] = self._read_row(relative[path], owner, row)
+    return found
 
   def _address(self, key: str) -> str:
     """How an index names this entry: the permalink a configured location gives it, else its uri.
@@ -1134,12 +1158,11 @@ class GppuFileSystem(AbstractFileSystem):
     stored = self._stored(key)
     return stored is not None and 'location' not in stored[0]['gppu']
 
-  def _misread(self, key: str, entry: dict) -> bool:
+  def _misread(self, key: str, entry: dict, stored: tuple[dict, list[dict] | None] | None) -> bool:
     """Whether the index holds a folder on this host as read by another handler than the one probe gives it now, as a
     folder stored before its handler was added is: probe tells a folder's handler by its path, nothing read."""
     if entry['type'] != 'directory' or not isinstance(self.fs, LocalFileSystem):
       return False
-    stored = self._stored(key)
     return stored is not None and (stored[0]['gppu'].get('record') or {}).get('type') != handlers.probe(Path(self._path(key))).type
 
   def _forget(self, key: str) -> None:
@@ -1154,16 +1177,17 @@ class GppuFileSystem(AbstractFileSystem):
     rows: dict[str, tuple[dict, list | None]] = {}
     listing: list[dict] = []
     local = isinstance(self.fs, LocalFileSystem)
+    held = self._stored_many(list(known))
     for entry in self.fs.ls(self._path(key), detail=True):
       name = entry['name'].rstrip('/')
       if self._index_name.fullmatch(PurePosixPath(name).name):
         continue
       child_key = self._key(name)
-      stored = self._stored(child_key) if child_key in known else None
+      stored = held.get(child_key)
       if stored is not None and stored[0]['type'] != 'directory' and 'ignored' in stored[0]['gppu']['handlers']:
         self._forget(child_key)   # an ignored file an earlier listing indexed
         continue
-      if self._unlocated(child_key) or (child_key in known and self._misread(child_key, entry)):
+      if self._unlocated(child_key) or (child_key in known and self._misread(child_key, entry, stored)):
         self._forget(child_key)   # the stored row predates the location or the folder's handler; an insert alone would keep it
       elif child_key in known:
         listing.append(known[child_key])
@@ -1341,8 +1365,9 @@ class GppuFileSystem(AbstractFileSystem):
       elif not archive and self._folder_renames(key, children):
         current, children = self._stored(key)
       result = []
+      held = self._stored_many([child['path'] for child in children])
       for child in children:
-        cached = self._stored(child['path'])
+        cached = held.get(child['path'])
         if cached is None:
           continue
         row = cached[0]
@@ -1462,6 +1487,7 @@ class GppuFileSystem(AbstractFileSystem):
     here.unlink()
     with self._lock:
       self._memory.clear()
+      self._tabled.clear()
       self._forget_indexes(self.root)
     return kept
 
