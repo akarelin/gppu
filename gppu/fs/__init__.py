@@ -2271,10 +2271,10 @@ class GppuFileSystem(AbstractFileSystem):
     here, there = self._path(source), other._path(arriving)
     with self._lock:
       self._let_go(source)
+    other.fs.mkdirs(other._path(other._parent_key(arriving) or '.'), exist_ok=True)
     if type(self.fs) is type(other.fs) and isinstance(self.fs, LocalFileSystem):
       self.fs.mv(here, there, recursive=True)
     else:
-      other.fs.mkdirs(other._path(other._parent_key(arriving) or '.'), exist_ok=True)
       self.fs.get(here, there, recursive=True) if self.fs.isdir(here) else other.fs.pipe_file(
         there, self.fs.cat_file(here))
       self.fs.rm(here, recursive=True)

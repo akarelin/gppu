@@ -1,0 +1,12 @@
+# sessions-clean: where each harness keeps its sessions below the profile, and where a finished session goes,
+# as RAN Hosts' sessions_clean has them. --run moves the files; --keep_hours overrides the window for one run.
+home: '~'   # the profile the harnesses keep their sessions in
+sessions: [.claude/projects, .codex/sessions]
+archive: D:/SD.agents/claude.not
+buckets:
+  human: _human        # read, and nothing in it was typed by a person
+  orphan: _session     # only subagents, the session they belong to gone
+  damaged: _readable   # its handler could not read it
+# A session written to within this window may still be in use.
+keep_hours: 24
+run: false
