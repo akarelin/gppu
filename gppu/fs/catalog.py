@@ -1,4 +1,4 @@
-"""gppu.catalog: the catalog's API, /lake/catalog, and the filesystem a desktop browses it with. Its methods are specific to working with
+"""gppu.fs.catalog: the catalog's API, /lake/catalog, and the filesystem a desktop browses it with. Its methods are specific to working with
 the catalog and browsing it as the desktop's use cases do (SPEC_desktop.md), not generic, and a folder of any size is sent a row
 at a time: neither the API nor its client asks the database for more than a fetch.
 
@@ -116,7 +116,7 @@ class Catalog:
     def locations(self) -> list[dict[str, Any]]:
         """Linked Data's locations in use whose entries are in the catalog, with every location above them, so they make one tree:
         each its id, name, parent's id and, where it has entries, the catalog's id for it."""
-        from .ld import Type, gppufs
+        from ..ld import Type, gppufs
         records = {r['id']: r for r in gppufs.api('GET', '/files', type=int(Type.FS_LOCATION))['items']
                    if r['status'] not in gppufs.NOT_IN_USE}
         kept: set[str] = set()

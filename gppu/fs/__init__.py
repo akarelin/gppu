@@ -5,12 +5,12 @@ paths relative to itself. A Provider reaches objects by uri over one connection,
 FileSystem is the Provider of files, and M365, Telegram and Plaud are Providers in CRAP. A DataObject is content
 with its uri.
 
-The public methods are the API. The Lake, which saves objects and retrieves them by uri, is gppu.lake.
+The public methods are the API. The Lake, which saves objects and retrieves them by uri, is gppu.fs.lake.
 
 Files:
 ``GppuFileSystem(location)`` is the fsspec file system of a location, with a SQLite index beside each folder it lists. ``ls`` and
-``info`` identify an entry from its listing, by :func:`gppu.handlers.probe` on this host, and read nothing; ``refresh=True`` parses
-it with the handler :mod:`gppu.handlers` gives it, and a row carries the handler's Record under ``gppu.record``. A file a handler
+``info`` identify an entry from its listing, by :func:`gppu.fs.handlers.probe` on this host, and read nothing; ``refresh=True`` parses
+it with the handler :mod:`gppu.fs.handlers` gives it, and a row carries the handler's Record under ``gppu.record``. A file a handler
 reads on a store other than this host is fetched into the cache, one at a time, and removed. An archive is opened only when it is
 listed itself; a recursion enters folders, never an ignored one, and an archive only when the index holds its listing. An
 ignored file is neither indexed nor listed.
@@ -53,8 +53,8 @@ from fsspec.implementations.local import LocalFileSystem
 from fsspec.spec import AbstractFileSystem
 from fsspec.utils import stringify_path
 
-from .gppu import TimeSpan, OSType, TemplateSet, detect_os, full_path, sync, y2path, y2uri
-from .gppu import Env, Warn
+from ..gppu import TimeSpan, OSType, TemplateSet, detect_os, full_path, sync, y2path, y2uri
+from ..gppu import Env, Warn
 from . import handlers
 
 

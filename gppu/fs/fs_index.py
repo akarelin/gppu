@@ -15,7 +15,7 @@ from pathlib import Path, PurePosixPath
 import fsspec
 from fsspec import AbstractFileSystem
 
-from .fs import GppuFileSystem
+from . import GppuFileSystem
 from .handlers import IGNORED
 
 

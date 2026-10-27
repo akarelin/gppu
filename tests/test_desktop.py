@@ -8,9 +8,9 @@ from datetime import datetime
 
 import pytest
 
-from gppu.desktop import DesktopFileSystem
+from gppu.fs.desktop import DesktopFileSystem
 from gppu.fs import GppuFileSystem
-from gppu.fs_index import GppuIndexedFileSystem
+from gppu.fs.fs_index import GppuIndexedFileSystem
 
 
 def test_desktop_archive_navigation_and_reads(tmp_path):
@@ -269,7 +269,7 @@ def test_a_folder_no_handler_says_is_partitioned_shows_what_it_holds(tmp_path):
 
 
 def test_a_folder_stored_before_its_handler_existed_is_identified_again(tmp_path, monkeypatch):
-    from gppu import handlers
+    from gppu.fs import handlers
     _made(tmp_path, 'Work/10/21/task/a.md')
     probe = handlers.probe
 

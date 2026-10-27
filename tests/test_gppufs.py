@@ -843,7 +843,7 @@ def test_an_ignored_file_is_neither_indexed_nor_listed(tmp_path):
   assert fs.info('.DS_Store', refresh=True)['gppu']['handlers'] == ['ignored']
   assert fs.stored('.DS_Store') is None
   path = tmp_path / '.DS_Store'
-  earlier = fs._row('.DS_Store', fs.fs.info(str(path)), gppu.handlers.probe(path), path)
+  earlier = fs._row('.DS_Store', fs.fs.info(str(path)), gppu.fs.handlers.probe(path), path)
   fs._store('.', {'.DS_Store': (earlier, None)}, fs.stored()[1] + [{'path': '.DS_Store', 'type': 'file', 'ino': None}])
   assert fs.stored('.DS_Store') is not None
   assert [row['gppu']['name'] for row in fs.ls()] == ['__pycache__', 'note.md']

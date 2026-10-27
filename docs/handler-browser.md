@@ -5,7 +5,7 @@ updated: 2026-09-23
 generated: { by: Codex/GPT-6, at: '2026-09-23' }
 ---
 
-The examples construct `GppuCatalog` and use only `ls` and `info`. `handler_ls.py` prints complete JSON metadata; `handler_browser.py` displays one tree of Locations, folders, archives and files with the highlighted entry's complete metadata. `handler_tui.py` launches the same browser. Parsing, aggregates, SQLite storage, shard routing, and external rename recovery belong to `gppu.handlers`.
+The examples construct `GppuCatalog` and use only `ls` and `info`. `handler_ls.py` prints complete JSON metadata; `handler_browser.py` displays one tree of Locations, folders, archives and files with the highlighted entry's complete metadata. `handler_tui.py` launches the same browser. Parsing, aggregates, SQLite storage, shard routing, and external rename recovery belong to `gppu.fs.handlers`.
 
 Both examples load `examples/handlers.yaml` through `Env`:
 
@@ -18,7 +18,7 @@ catalog: D:\TextLake\.catalog
 With the repository virtual environment active, `python examples/handler_ls.py` prints the catalog's Locations; with a Location path as its argument it prints that Location and everything below it. `python examples/handler_browser.py` opens the TUI: the catalog's Locations as a tree, Locations in bold, before any folder is read. Enter or Right expands a Location, folder or archive and lists it; Left collapses, or moves to the parent; highlighting a row shows its `info`, which probes a file once; `r` refreshes the highlighted row from the source, its whole listing when it is a container; `f` hides or shows files and `i` ignored entries, so the tree can be folders only; `q` exits. The Indexed column is the row's last refresh. The catalog row carries the totals and the latest refresh its Locations' indexes hold, and each Location row what its own index holds, without reading any folder. The TUI awaits `gppufs.ls` and `gppufs.info`, whose reading runs off the event loop, and displays failures. It has no rename action.
 
 ```python
-from gppu.handlers import GppuFileSystem
+from gppu.fs.handlers import GppuFileSystem
 
 gppufs = GppuFileSystem(location=r'D:\Downloads')
 root = gppufs.info()

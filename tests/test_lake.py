@@ -1,4 +1,4 @@
-"""gppu.lake: an object saved without a uri is read by gppu's handlers and stored where the Lake's layout places it, answered
+"""gppu.fs.lake: an object saved without a uri is read by gppu's handlers and stored where the Lake's layout places it, answered
 with that uri and retrieved by it; the Lake's API at /lake answers what the Lake answers itself."""
 import json
 
@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from gppu.fs import DataObject, GppuCatalog
-from gppu.lake import Lake, LakeFileSystem, api
+from gppu.fs.lake import Lake, LakeFileSystem, api
 
 UID = '01c098c1-c196-49d4-b7e2-d2f544809574'
 SESSION = '\n'.join(json.dumps(line) for line in (

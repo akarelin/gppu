@@ -2,7 +2,7 @@
 
 The mount has one named folder per configured source. All navigation and bytes
 below a gppufs source's folder belong to gppufs; a source served by an API, such
-as the catalog (gppu.catalog), is an fsspec filesystem shown with its own names
+as the catalog (gppu.fs.catalog), is an fsspec filesystem shown with its own names
 and rows. What is shown is the index: a folder its handler says keeps its things
 partitioned by date, such as Projects and Work, shows the things, each once by its
 own name. No handler parsing or index lives here.
@@ -19,7 +19,7 @@ from typing import NamedTuple
 from fsspec import AbstractFileSystem
 
 from . import handlers
-from .fs import GppuFileSystem
+from . import GppuFileSystem
 from .handlers import IGNORED
 from .fs_index import GppuIndexedFileSystem, indexes
 

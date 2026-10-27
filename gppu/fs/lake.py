@@ -1,4 +1,4 @@
-"""gppu.lake: the Lake. An object is saved to the Lake without a uri, and the Lake decides where it is stored and answers with
+"""gppu.fs.lake: the Lake. An object is saved to the Lake without a uri, and the Lake decides where it is stored and answers with
 its uri; an object is retrieved by its uri. A client that copies an object to the Lake itself, such as a session hook growing a
 session's copy as its log grows, saves it the same way, with enough of it for its handler, and the Lake answers where the client
 copies it, storing nothing; the client then has the Lake index what it copied. Linked Data is Linked Data and the Lake is the Lake: their APIs are separate, /ld and
@@ -25,8 +25,8 @@ from urllib.parse import unquote, urlsplit
 from fsspec import AbstractFileSystem
 
 from . import handlers
-from .fs import CACHE, Container, DataObject, GppuCatalog, GppuFileSystem, Location, _below
-from .gppu import TemplateSet, TimeSpan, y2uri
+from . import CACHE, Container, DataObject, GppuCatalog, GppuFileSystem, Location, _below
+from ..gppu import TemplateSet, TimeSpan, y2uri
 
 PIECE = 1 << 20   # a download is sent a mebibyte at a time
 

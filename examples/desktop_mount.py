@@ -3,8 +3,8 @@ reaches, with its index beside it, the sources desktop.yaml names, and the catal
 from pathlib import Path
 
 from gppu import App, Env, Info
-from gppu.catalog import CatalogFileSystem
-from gppu.desktop import mount
+from gppu.fs.catalog import CatalogFileSystem
+from gppu.fs.desktop import mount
 from gppu.fs import GppuFileSystem
 from gppu.ld import gppufs
 

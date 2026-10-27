@@ -10,10 +10,10 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-import gppu.handlers as handlers_module
+import gppu.fs.handlers as handlers_module
 from gppu import TimeSpan
 
-from gppu.handlers import (
+from gppu.fs.handlers import (
   HANDLERS,
   Activity,
   CSVHandler,

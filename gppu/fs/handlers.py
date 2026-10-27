@@ -34,7 +34,7 @@ from uuid import UUID, uuid5
 
 import yaml
 
-from .gppu import Path, TimeSpan, probe_path
+from ..gppu import Path, TimeSpan, probe_path
 
 # Times tools write in place of a time: Windows FILETIME zero, Unix epoch zero, DOS zero, and the constant
 # Android build tools stamp on every APK member. Anything at or before DOS zero is not a time either.

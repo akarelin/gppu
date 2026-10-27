@@ -8,13 +8,13 @@ Requirements: [SPEC_desktop.md](../SPEC_desktop.md). Configuration: [examples/de
 
 ## Implementation
 
-`gppu.desktop.DesktopFileSystem` projects the named source folders onto fsspec. Each listing and lookup calls gppufs; `gppu.is_container` makes archives browsable directories, including nested archives. Entry names come from gppufs's native path, preserving Unicode and literal URL punctuation. Reads call gppufs's `open`. The adapter has no metadata index or parsing of its own. gppufs continues to maintain its existing indexes beside sources; browsing does not change original file contents.
+`gppu.fs.desktop.DesktopFileSystem` projects the named source folders onto fsspec. Each listing and lookup calls gppufs; `gppu.is_container` makes archives browsable directories, including nested archives. Entry names come from gppufs's native path, preserving Unicode and literal URL punctuation. Reads call gppufs's `open`. The adapter has no metadata index or parsing of its own. gppufs continues to maintain its existing indexes beside sources; browsing does not change original file contents.
 
 `mount` uses the upstream `fsspec.fuse.FUSEr` operations with fusepy and the official WinFsp driver. The mount is read-only at both WinFsp and operation levels. Its only open handles are those held by fsspec's bridge. It serves callbacks on one thread, matching gppufs's synchronous SQLite access. A failed callback is reported by fusepy on stderr and returned to Windows as an error.
 
 ## Indexed navigation
 
-`gppu.fs_index.GppuIndexedFileSystem` reads the actual `gppufs_entries` table through a read-only SQLite connection. It lists entries recorded as files without enumerating their physical parents or reparsing their content. The connection is reused while the view exists. Display names map to original relative paths; metadata remains in SQLite. Unique names appear as filenames; collisions include original parent names separated by ` › `, and a remaining Windows name collision is reported as an error. Reads of colocated indexes go through gppufs to the original relative path, including archive members.
+`gppu.fs.fs_index.GppuIndexedFileSystem` reads the actual `gppufs_entries` table through a read-only SQLite connection. It lists entries recorded as files without enumerating their physical parents or reparsing their content. The connection is reused while the view exists. Display names map to original relative paths; metadata remains in SQLite. Unique names appear as filenames; collisions include original parent names separated by ` › `, and a remaining Windows name collision is reported as an error. Reads of colocated indexes go through gppufs to the original relative path, including archive members.
 
 Index discovery examines the source root and its immediate folders, and the physical folder currently being browsed. It does not crawl the share. A deeper index becomes available when its folder is visited; its indexed descendants then require no further physical traversal. Recognized gppufs index files become folders under `Indexed` and are omitted from the physical listing. Additional sources use the same configured `sources` mapping.
 

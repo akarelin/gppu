@@ -8,7 +8,7 @@ line names the git blob of each. graphify keeps what its model
 read under CACHE and reads a document again only when it has changed.
 
   python docs/written.py                 every module whose description is out of date, then the graph
-  python docs/written.py gppu.handlers   these modules, whether or not, then the graph"""
+  python docs/written.py gppu.fs.handlers   these modules, whether or not, then the graph"""
 import json
 import os
 import re
