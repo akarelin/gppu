@@ -1,13 +1,12 @@
-"""Linked Data: records and the links between them, on Postgres, and what an API of a type is built from (_Projects/Linked Data,
-"Linked Data - Universal types, statuses and sharding", # Implementation). `_Record`, every record's columns and its operations
-(# Universals, Operations: create, read, update, delete, list, search), with no table; the types that add columns as data models on
-it (`_Event`, `_Activity`, `_View`, `_Link`); and each type's class, which only defines its table: the core's (`Record`, `Node`,
-`Collection`, `View`, `Event`, `Message`, `Activity`, `Link`) here, a domain's in its own module. `operations()` gives a path its types'
-create, read, update, delete and search, the core's `/records` and `/links` and each domain's; `app` is the core with `/types` and
-what controls read; `api_at()`, a domain's API with its own documentation; `serve()`, the APIs at one address, on the store of the
-app that serves them. The tables are made by the store's `schema.sql` (RAN `Projects/ld`), and how they inherit is Postgres'. The
-store is the app's: a `gppu.data._SQABase`, which RAN `Projects/ld/api.py`'s `LDAPI` is, gives the engine and each request's
-database session.
+"""Linked Data: records and the links between them, on Postgres (_Standards/Linked Data/Linked Data.md), schema `ld`, and what
+another schema's API is built from. `_Record`, every record's columns and its operations (create, read, update, delete, list,
+search), with no table; `_Type` and `_Link`, the columns a type and a link add; and each table's class, which only defines its table
+and the shard its ids start with (`__shard__`): `ld.records`, `ld.types` 0x00, `ld.nodes` 0x01, `ld.links` 0x02, `ld.events` 0x03.
+A record's `flags` say what can change it and whether it is in sight (`Flags`). `operations()` gives a path its tables' create, read,
+update, delete and search; `app` is the core, `/records`, `/types` and `/links`; `api_at()`, another schema's API with its own
+documentation; `serve()`, the APIs at one address, on the store of the app that serves them. The tables are made by the standard's
+SQL, and how they inherit is Postgres'. The store is the app's: a `gppu.data._SQABase` gives the engine and each request's database
+session.
 
 Needs the `ld` extra, and fastapi-querybuilder installed with `--no-deps`: its metadata lists poetry, uvicorn and aiosqlite as runtime
 dependencies."""
@@ -27,7 +26,7 @@ from fastapi_pagination.customization import (CustomizedPage, UseExcludedFields,
 from fastapi_pagination.ext.sqlalchemy import apaginate   # querybuilder builds SQLAlchemy selects
 from fastapi_querybuilder import QueryParams, build_query
 from psycopg.errors import UndefinedFunction
-from pydantic import ConfigDict, GetCoreSchemaHandler, GetJsonSchemaHandler, TypeAdapter, ValidationError, field_validator
+from pydantic import ConfigDict, GetCoreSchemaHandler, GetJsonSchemaHandler, TypeAdapter, ValidationError
 from pydantic_core import core_schema
 from sqlakeyset import custom_bookmark_type
 from sqlalchemy import DateTime, FetchedValue, SmallInteger, String, TypeDecorator
@@ -35,7 +34,7 @@ from sqlalchemy.dialects.postgresql import JSONB, TSTZRANGE, Range
 from sqlalchemy.exc import DataError, IntegrityError, StatementError
 from sqlalchemy.sql.elements import UnaryExpression
 from sqlalchemy.sql.visitors import iterate
-from sqlmodel import Column, Field, SQLModel, delete, func, or_, select
+from sqlmodel import Column, Field, SQLModel, func, or_, select
 
 from ..data import _SQABase
 from ..gppu import TimeSpan
