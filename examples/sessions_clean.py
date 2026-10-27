@@ -7,12 +7,11 @@ from pathlib import Path, PurePosixPath
 
 from gppu import Env, glob
 from gppu.fs.gppufs import GppuFileSystem
-from gppu.fs.handlers import SessionHandler
 
 
 def sessions(fs: GppuFileSystem, keep: float) -> dict[str, dict]:
     """The finished sessions in a harness's folder, each with its files and its subagents', by the session's uid. The
-    listing probes, reading nothing; a session is read only from its start to the first line a person typed."""
+    listing probes, reading nothing; each finished session is read whole by its handler once, the index keeping it."""
     found = {}
     rows = {fs._key(row['name']): row for row in fs.ls('', recurse=True) if row['type'] == 'file'}
     for path, row in rows.items():
@@ -23,19 +22,18 @@ def sessions(fs: GppuFileSystem, keep: float) -> dict[str, dict]:
         hours = (time.time() - row['mtime']) / 3600
         if hours < keep:
             continue
-        try:
-            record, unread = SessionHandler.probe(fs._path(path)), None
-        except Exception as error:   # what cannot be read is a damaged session
-            record, unread = None, f'{type(error).__name__}: {error}'
-        subagent = record is not None and record.data['subagent']
-        uid = record.meta.get('parent_uid') if subagent else (record and record.uid) or path
-        session = found.setdefault(uid, {'paths': [], 'root': False, 'typed': False, 'unread': None, 'hours': hours})
+        parsed = fs.info(path, refresh=True)['gppu']   # its handler reads it once; the index keeps what it read
+        record, unread = parsed.get('record') or {}, parsed.get('unread')
+        subagent = (record.get('data') or {}).get('subagent')
+        uid = record['meta'].get('parent_uid') if subagent else record.get('uid') or path
+        session = found.setdefault(uid, {'paths': [], 'root': False, 'typed': False, 'unread': None, 'hours': hours, 'turns': 0})
         session['paths'].append(path)
         session['unread'] = session['unread'] or unread
         session['hours'] = min(session['hours'], hours)
-        if record is not None and not subagent:
+        session['turns'] += (record.get('data') or {}).get('turns') or 0
+        if record.get('uid') and not subagent:
             session['root'] = True
-            session['typed'] |= bool(record.data['topic'])
+            session['typed'] |= ' - ' in record['data']['normalized_name']   # the handler names a session by what a person typed in it, when anyone did
     return found
 
 
@@ -58,7 +56,7 @@ def main() -> None:
         for uid, session in sorted(sessions(fs, keep).items()):
             if (to := bucket(session)) is None:
                 continue
-            print(f'{to:8} {session["hours"]:7.0f}h {folder} {uid} {session["unread"] or ""}')
+            print(f'{to:8} {session["hours"]:7.0f}h {session["turns"]:5} turns {folder} {uid} {session["unread"] or ""}')
             if run:
                 for path in session['paths']:
                     for entry in (path, str(PurePosixPath(path).with_suffix(''))):   # Claude Code keeps a session's other files in a folder by its uid

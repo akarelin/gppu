@@ -685,47 +685,6 @@ class SessionHandler(FileHandler):
         return record
 
     @classmethod
-    def probe(cls, path: str | Path) -> Session:
-        """What the start of a session says, its lines read only until the first one a person typed: the harness, uid,
-        data.subagent, meta.parent_uid and data.topic, the first line a person typed, empty when nobody did. Only a line
-        naming a user is decoded after the first eight; a .jsonl whose first messages name no harness raises."""
-        path = Path(path).absolute()
-        record, head, harness, topic = Session(name=path.name), [], None, ""
-        with path.open("r", encoding="utf-8") as stream:
-            for line in stream:
-                if harness is not None and "user" not in line:
-                    continue
-                try:
-                    message = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(message, dict):
-                    continue
-                if harness is None:
-                    head.append(message)
-                    if len(head) < SNIFF:
-                        continue
-                    harness = cls._harness(tuple(head))
-                    if harness is None:
-                        break
-                    messages = tuple(head)
-                else:
-                    messages = (message,)
-                if topic := cls._topic(getattr(cls, cls.TURNS[harness])(messages)):
-                    break
-        if harness is None and (harness := cls._harness(tuple(head))) is not None:
-            topic = cls._topic(getattr(cls, cls.TURNS[harness])(tuple(head)))   # a session shorter than eight messages
-        if harness is None:
-            raise ValueError(f"{path}: its messages name no harness")
-        parent = cls.PARENT.get(harness)
-        parent_uid, subagent = getattr(cls, parent)(tuple(head)) if parent else (None, False)
-        record.type, record.uid = harness, getattr(cls, cls.UID[harness])(tuple(head), path)
-        record.data.update(subagent=subagent, topic=topic)
-        if parent_uid:
-            record.meta["parent_uid"] = parent_uid
-        return record
-
-    @classmethod
     def human_messages(cls, turns: tuple[SessionTurn, ...]) -> tuple[str, ...]:
         """What a person typed: the mainline user messages that are not meta, without their envelopes, leaving
         out generated ones."""
