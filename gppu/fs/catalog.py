@@ -116,9 +116,8 @@ class Catalog:
     def locations(self) -> list[dict[str, Any]]:
         """Linked Data's locations in use whose entries are in the catalog, with every location above them, so they make one tree:
         each its id, name, parent's id and, where it has entries, the catalog's id for it."""
-        from ..ld import Type
         from . import gppufs
-        records = {r['id']: r for r in gppufs.api('GET', '/files', type=int(Type.FS_LOCATION))['items']
+        records = {r['id']: r for r in gppufs.api('GET', '/fs/locations')['items']
                    if r['status'] not in gppufs.NOT_IN_USE}
         kept: set[str] = set()
         for r in records.values():

@@ -1,9 +1,9 @@
-r"""gppufs on Linked Data: gppu.fs as it is, what it is configured with kept by Linked Data's files API (gppu.ld.files) and reached
+r"""gppufs on Linked Data: gppu.fs as it is, what it is configured with kept by Linked Data's fs API (gppu.fs.files) and reached
 through it only, at the address the caller gives connect(); its files in gppufs's own index, the distributed index beside each location
 (Linked Data - gppufs: "Files stay in gppufs's indexes; they are not Linked Data records"). The app using it loads its own
 configuration into gppu's Env: `drives`, where a Windows host's WSL mounts its drives, is read from it (Drives).
 
-  catalog()     gppu.fs.GppuCatalog made from GET /files' locations: every location in use, each reached over its root location's
+  catalog()     gppu.fs.GppuCatalog made from GET /fs/locations: every location in use, each reached over its root location's
                 handler, its connection. Its Providers are gppufs's own, FileSystem for file://, and those a caller gives, as
                 GppuCatalog takes them: the Locations and Containers FileIndexer and every gppufs user reach files through
   filesystem()  the GppuFileSystem of a location this host reaches, its index beside it: a listing reads the folder and keeps what
@@ -15,13 +15,12 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 import httpx
 
-from ..ld import Type
 from . import FileSystem, GppuCatalog, GppuFileSystem
 from ..app import glob
 from ..gppu import full_path
 
 client: httpx.Client   # the API, opened by connect()
-NOT_IN_USE = ('discarded', 'rejected', 'archived')   # the statuses of a location not in use (# States)
+NOT_IN_USE = ('discarded', 'rejected')   # the statuses of a location not in use; an archived one is out of sight (# Flags)
 
 
 def connect(url: str) -> None:
@@ -56,13 +55,13 @@ class Drives(FileSystem):
 
 
 def catalog(**location_types: Any) -> GppuCatalog:
-    """gppufs's catalog of Linked Data's locations (GET /files, its fs_location records): every location in use that has a uid and a
+    """gppufs's catalog of Linked Data's locations (GET /fs/locations): every location in use that has a uid and a
     canonical uri, the two a gppufs Location is known and reached by, as a row of gppufs's configuration table, its data with its id,
-    name, parent's uid and tags. A location in use is not discarded, rejected or archived, inside locations that are in use too, since
+    name, parent's uid and tags. A location in use is not discarded or rejected, inside locations that are in use too, since
     a location is part of the location above it; its connection is its root location, whose data.handler holds the connection's
     parameters. location_types are the Providers a caller adds by scheme, as GppuCatalog takes them; gppufs's FileSystem reaches
     file://, and in a Windows host's WSL, Drives does."""
-    records = {r['id']: r for r in api('GET', '/files', type=int(Type.FS_LOCATION))['items']
+    records = {r['id']: r for r in api('GET', '/fs/locations')['items']
                if r['status'] not in NOT_IN_USE and r['data'].get('uid') and r['data'].get('canonical')}
 
     def root(r: dict) -> dict | None:

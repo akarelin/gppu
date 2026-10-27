@@ -255,7 +255,7 @@ def pretty_timedelta(ts) -> str:
 
 # region Linked Data ids
 def uuid_create(shard: int) -> UUID:
-  """A new Linked Data id in a shard, made offline as Linked Data's SQL uuid_create makes it: the shard, seven zero bytes, then UUIDv7's 6 bytes of time and 2 random bytes. A file's shard is 0x23.
+  """A new Linked Data id in a shard, made offline as Linked Data's SQL uuid_create makes it: the shard, seven zero bytes, then UUIDv7's 6 bytes of time and 2 random bytes. A file's shard is 0x13.
   The time in an id is when the id was made, never the time of what it names: to a reader it is a random number."""
   v7 = uuid7().bytes
   return UUID(bytes=bytes([shard]) + bytes(7) + v7[:6] + v7[10:12])
