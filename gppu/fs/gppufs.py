@@ -1337,6 +1337,8 @@ class GppuFileSystem(AbstractFileSystem):
     """
     with self._lock:
       key = self._key(path)
+      if recurse and live and not refresh and self._walkable(key) and (walked := self._walk(key)) is not None:
+        return walked if detail else [row['name'] for row in walked]
       if live:
         metadata = self.info_sync(path, refresh=refresh)
         if 'archive' in metadata['gppu']['handlers']:
@@ -1379,6 +1381,96 @@ class GppuFileSystem(AbstractFileSystem):
         else:
           result.append(row)
       return result if detail else [row['name'] for row in result]
+
+  def _walkable(self, key: str) -> bool:
+    """Whether a recursive listing of key is one walk of this host's disk: a folder outside any archive, its index the file
+    gppufs keeps and no other, and no configured location to place its entries in."""
+    return (self._index is None and not self._locations and isinstance(self.fs, LocalFileSystem) and not _remote(self.root)
+            and self._archive_parent(key) is None and os.path.isdir(self._path(key)))
+
+  def _walk(self, key: str) -> list[dict] | None:
+    """A recursive listing as a filesystem gives one: one walk of the disk, one query of the index for everything below
+    key, and one write of what changed. An entry the index holds with the time and size the disk gives it now is not
+    looked at again; a new or changed one is identified by probe, nothing read. A folder is entered when it is one; an
+    archive when the index holds its listing. None when a folder below holds an index of its own, which the listing
+    folder by folder reads."""
+    self.info_sync(key)   # the folder itself, identified once
+    owner = self._owner(key)
+    here = self._relative(key, owner)
+    with self._database(owner) as database:
+      found = [] if database is None else database.execute(
+        "SELECT path, metadata, children FROM gppufs_entries WHERE ? = '.' OR path = ? OR substr(path, 1, ?) = ?",
+        (here, here, len(here) + 1, here + '/')).fetchall()
+    stored = {self._absolute(path, owner): (metadata, children) for path, metadata, children in found}
+    rows: dict[str, dict] = {}       # every entry below key, as the index holds it
+    changed: dict[str, dict] = {}    # the new and changed ones, to be written
+    listings: dict[str, list[dict]] = {}
+    folders = [key]
+    while folders:
+      folder = folders.pop()
+      listing = []
+      with os.scandir(self._path(folder)) as entries:
+        for entry in entries:
+          if self._index_name.fullmatch(entry.name):
+            if folder != owner:
+              return None
+            continue
+          child = entry.name if folder == '.' else f'{folder}/{entry.name}'
+          stat = entry.stat(follow_symlinks=False)
+          row = json.loads(stored[child][0]) if child in stored else None
+          if row is None or (row['type'] != 'directory' and (row.get('mtime'), row.get('size')) != (stat.st_mtime, stat.st_size)):
+            path = self._path(child)
+            item = self.fs.info(path)
+            record = handlers.probe(Path(path))
+            if self._unindexed(record, item['type'] == 'directory'):
+              continue
+            row = json.loads(json.dumps(self._row(child, item, record, Path(path)), default=_metadata_text))
+            changed[child] = row
+          rows[child] = row
+          listing.append({'path': child, 'type': row['type'], 'ino': row.get('ino')})
+          if row['gppu']['type'] == 'folder':
+            folders.append(child)
+      listing.sort(key=lambda entry: (entry['type'] != 'directory', entry['path'].casefold()))
+      listings[folder] = listing
+      before = stored.get(folder, (None, None))[1]
+      before = None if before is None else [{**entry, 'path': self._absolute(entry['path'], owner)} for entry in json.loads(before)]
+      now = {entry['path'] for entry in listing}
+      if (any(entry['type'] == 'directory' and entry['path'] not in now for entry in before or ())
+          and any(entry['type'] == 'directory' and entry['path'] not in stored for entry in listing)
+          and self._folder_renames(folder, before)):
+        return self._walk(key)   # a folder renamed: its rows carried over by its inode, the walk starts again
+    relative = lambda child: self._relative(child, owner)
+    values, children, gone = [], [], []
+    for child, row in changed.items():
+      value = {**row, 'name': relative(child), 'gppu': {**row['gppu'], 'path': relative(child)}}
+      values.append((value['name'], json.dumps(value)))
+    for folder, listing in listings.items():
+      before = stored.get(folder, (None, None))[1]
+      before = None if before is None else [{**entry, 'path': self._absolute(entry['path'], owner)} for entry in json.loads(before)]
+      if before != listing or folder in changed:
+        children.append((json.dumps([{**entry, 'path': relative(entry['path'])} for entry in listing]), relative(folder)))
+      now = {entry['path'] for entry in listing}
+      gone.extend(entry['path'] for entry in before or () if entry['path'] not in now)
+    if values or children or gone:
+      with self.run():
+        with self._database(owner, write=True) as database:
+          database.executemany('INSERT INTO gppufs_entries VALUES (?, ?, NULL) ON CONFLICT(path) DO UPDATE SET metadata=excluded.metadata', values)
+          database.executemany('UPDATE gppufs_entries SET children=? WHERE path=?', children)
+          database.executemany('DELETE FROM gppufs_entries WHERE path=? OR substr(path, 1, ?)=?',
+                               [(relative(child), len(relative(child)) + 1, relative(child) + '/') for child in gone])
+        self._bound(owner)
+    result = []
+
+    def below(folder: str) -> None:
+      for entry in listings[folder]:
+        child = entry['path']
+        result.append(self._addressed(child, rows[child]))
+        if child in listings:
+          below(child)
+        elif rows[child]['gppu']['is_container'] and child in stored and stored[child][1] is not None:
+          result.extend(self.ls_sync(child, recurse=True))   # an archive whose listing the index holds
+    below(key)
+    return result
 
   def cp_file(self, path1: str | Path, path2: str | Path, **kwargs: Any) -> None:
     """Copy one entry's bytes inside this location. The copy is a new thing and is identified as one."""
