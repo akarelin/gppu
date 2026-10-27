@@ -1289,6 +1289,12 @@ class GppuFileSystem(AbstractFileSystem):
       if not refresh and self._unlocated(key):
         self._forget(key)   # the stored row predates the location, as _reconcile treats a child
       cached = None if refresh else self._stored(key)
+      if refresh and isinstance(self.fs, LocalFileSystem) and (held := self._stored(key)) is not None:
+        row = held[0]
+        if row['type'] != 'directory' and row['gppu']['probed'] and os.path.isfile(self._path(key)):
+          stat = os.stat(self._path(key), follow_symlinks=False)
+          if (row.get('mtime'), row.get('size')) == (stat.st_mtime, stat.st_size):
+            return row   # its handler read it as it is now
       if cached is None:
         physical = key
         for parent in reversed(PurePosixPath(physical).parents):

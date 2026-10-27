@@ -10,10 +10,11 @@ from gppu.fs.gppufs import GppuFileSystem
 from gppu.fs.handlers import SessionHandler
 
 
-def sessions(fs: GppuFileSystem) -> dict[str, dict]:
+def sessions(fs: GppuFileSystem, keep: float) -> dict[str, dict]:
     """The finished sessions in a harness's folder, each with its files and its subagents', by the session's uid. The
-    listing probes, reading nothing; each session is read whole by its handler once, the index keeping it."""
-    found = {}
+    listing probes, reading nothing; a session changed within keep hours is not read, and holds every session named after
+    it; each other is read whole by its handler once, the index keeping it."""
+    found, active, read, parent = {}, [], [], {}
     rows = {fs._key(row['name']): row for row in fs.ls('', recurse=True) if row['type'] == 'file'}
     for path, row in rows.items():
         if row['gppu']['record']['type'] not in ('session', *SessionHandler.UID):
@@ -21,10 +22,19 @@ def sessions(fs: GppuFileSystem) -> dict[str, dict]:
         if any(f'{folder}.jsonl' in rows for folder in PurePosixPath(path).parents):
             continue   # in a session's own folder, which moves with it
         hours = (time.time() - row['mtime']) / 3600
+        if hours < keep:
+            active.append(PurePosixPath(path).stem)
+            continue
         parsed = fs.info(path, refresh=True)['gppu']   # its handler reads it once; the index keeps what it read
         record, unread = parsed.get('record') or {}, parsed.get('unread')
         subagent = (record.get('data') or {}).get('subagent')
+        if subagent and record.get('uid'):
+            parent[record['uid']] = record['meta'].get('parent_uid')
+        read.append((path, record, unread, hours, subagent))
+    for path, record, unread, hours, subagent in read:
         uid = (record['meta'].get('parent_uid') if subagent else record.get('uid')) or path
+        while uid in parent and parent[uid]:
+            uid = parent[uid]   # a subagent's own subagents belong to the session at the top
         session = found.setdefault(uid, {'paths': [], 'root': False, 'typed': False, 'unread': None, 'hours': hours, 'turns': 0})
         session['paths'].append(path)
         session['unread'] = session['unread'] or unread
@@ -33,7 +43,7 @@ def sessions(fs: GppuFileSystem) -> dict[str, dict]:
         if record.get('uid') and not subagent:
             session['root'] = True
             session['typed'] |= ' - ' in record['data']['normalized_name']   # the handler names a session by what a person typed in it, when anyone did
-    return found
+    return {uid: session for uid, session in found.items() if not any(stem.endswith(uid) for stem in active)}   # a harness names a session's file by its uid
 
 
 def bucket(session: dict) -> str | None:
@@ -52,8 +62,8 @@ def main() -> None:
     for folder in glob('sessions'):
         fs = GppuFileSystem(Path(glob('home')).expanduser() / folder, cache=False)   # the harness watches its folder: no index file in it
         archive = {to: GppuFileSystem(Path(glob('archive')) / glob(f'buckets/{to}') / folder) for to in ('human', 'orphan', 'damaged')}
-        for uid, session in sorted(sessions(fs).items()):
-            if (to := bucket(session)) is None or session['hours'] < keep:   # a session is finished when none of its files changed for keep_hours
+        for uid, session in sorted(sessions(fs, keep).items()):
+            if (to := bucket(session)) is None:
                 continue
             print(f'{to:8} {session["hours"]:7.0f}h {session["turns"]:5} turns {folder} {uid} {session["unread"] or ""}')
             if run:

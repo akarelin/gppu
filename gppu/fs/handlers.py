@@ -677,7 +677,6 @@ class SessionHandler(FileHandler):
                               or session["uid"])
             record.span = cls.spanning(session["times"])
             record.data.update({key: value for key, value in data.items() if value is not None})
-            record.meta.pop("parent_uid", None)
             if session["parent_uid"]:
                 record.meta["parent_uid"] = session["parent_uid"]
         else:
