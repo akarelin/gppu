@@ -25,7 +25,7 @@ from fsspec.implementations.local import LocalFileSystem
 from fsspec.spec import AbstractFileSystem
 from fsspec.utils import stringify_path
 from ..gppu import TimeSpan, full_path, sync, Warn
-from . import handlers, UNSAFE, _address, _below, _display_order, _metadata_text, _modified, _probe_name, _scratch
+from . import handlers, CACHE, UNSAFE, _address, _below, _display_order, _metadata_text, _modified, _probe_name, _scratch
 
 
 @runtime_checkable
@@ -197,7 +197,7 @@ class GppuFileSystem(AbstractFileSystem):
   def __init__(self, location: str | Path, locations: Mapping[str, Mapping[str, str]] | None = None,
                index: GppuIndex | None = None, cache: bool = True, **storage_options: Any) -> None:
     """`cache=False` writes no index file into the location: a folder another program watches, such as a harness's
-    sessions, holds its index in memory for this instance, as another host's share does."""
+    sessions, keeps its index in the cache instead."""
     if location is None:
       raise ValueError('location is required')
     if '://' not in str(location) and not Path(location).is_absolute():
@@ -422,9 +422,16 @@ class GppuFileSystem(AbstractFileSystem):
     """The index held in memory for this instance, read once from the store when the store has one.
 
     This is the index for a store that is not the local filesystem, and for a folder that will not
-    hold the file. An existing index is still read: a folder can be readable and not writable.
+    hold the file. An existing index is still read: a folder can be readable and not writable. A folder
+    on this host opened with `cache=False` keeps its index in the cache instead, so the next run reads
+    only what changed.
     """
     if owner not in self._memory:
+      if isinstance(self.fs, LocalFileSystem) and not _remote(self.root):
+        cached = CACHE / 'gppufs' / re.sub(r'[:/\\]+', '_', self._database_path(self._path(owner))).strip('_')
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        self._memory[owner] = sqlite3.connect(cached, check_same_thread=False)
+        return self._memory[owner]
       database = sqlite3.connect(':memory:', check_same_thread=False)
       if self._existing_index(self._path(owner)) is not None:
         database.deserialize(self.fs.cat_file(self._database_path(self._path(owner))))
@@ -940,6 +947,11 @@ class GppuFileSystem(AbstractFileSystem):
         return None
       item = native[name]
       address = self._member_address(key, relative)
+      if item['type'] != 'directory' and not in_archive and (stored := self._stored(address)) is not None:
+        row = stored[0]
+        if row['gppu']['probed'] and (row.get('mtime'), row.get('size')) == (item.get('mtime'), item.get('size')):
+          rows[address] = row, None   # a file its handler read as it is now is not read again
+          return address, row
       record, unread = handlers.probe(path), None
       if self._unindexed(record, item['type'] == 'directory'):
         return None
