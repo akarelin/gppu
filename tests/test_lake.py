@@ -20,7 +20,7 @@ SESSION = '\n'.join(json.dumps(line) for line in (
      'message': {'role': 'assistant', 'model': 'claude', 'content': [{'type': 'text', 'text': 'hi'}]}},
 )) + '\n'
 LAYOUT = {   # the Lake's layout: a session under timeseries, by its own start; an original under its system and account
-    'session': "timeseries/{{ start.year }}/Sessions/{{ '%02d' % start.month }}/{{ record.subtype }}/{{ record.uid }}/{{ name }}",
+    'session': "timeseries/{{ start.year }}/Sessions/{{ '%02d' % start.month }}/{{ record.type }}/{{ record.uid }}/{{ name }}",
     'source': "{{ 'sources/' ~ system ~ '-' ~ account ~ '/' ~ path if system and account and path else '' }}",
 }
 
@@ -42,7 +42,7 @@ def test_a_session_is_placed_by_what_its_handler_reads(tmp_path):
     placed = outer / 'timeseries' / '2026' / 'Sessions' / '07' / 'cc' / UID / f'{UID}.jsonl'
     assert str(uri) == placed.as_uri() and placed.read_text() == SESSION
     listed = lake.ls(placed.parent.as_uri())   # from the Lake's catalog, gppufs: named by uri, with what the handler read
-    assert [row['name'] for row in listed] == [str(uri)] and listed[0]['gppu']['record']['subtype'] == 'cc'
+    assert [row['name'] for row in listed] == [str(uri)] and listed[0]['gppu']['record']['type'] == 'cc'
     with lake.open(uri) as stream:
         assert stream.read() == SESSION.encode()
 
@@ -94,7 +94,7 @@ def test_a_client_copies_a_session_where_the_lake_answers_then_has_it_indexed(tm
     indexed = client.post(f"/lake/{placed.json()['uri']}")
     assert indexed.status_code == 202 and indexed.json()['uri'] == placed.json()['uri']
     row = lake.info(placed.json()['uri'])   # from the Lake's catalog, indexed after the answer
-    assert row['gppu']['record']['subtype'] == 'cc' and row['gppu']['record']['uid'] == UID
+    assert row['gppu']['record']['type'] == 'cc' and row['gppu']['record']['uid'] == UID
 
 
 def test_the_lake_answers_for_itself_and_keeps_a_failed_index(tmp_path, monkeypatch):

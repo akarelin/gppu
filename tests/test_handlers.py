@@ -15,14 +15,13 @@ from gppu import TimeSpan
 
 from gppu.fs.handlers import (
   HANDLERS,
-  Activity,
   CSVHandler,
   EmailHandler,
-  Event,
   FolderHandler,
   Handler,
   LogHandler,
   MarkdownHandler,
+  Record,
   Session,
   SessionFolderHandler,
   SessionHandler,
@@ -143,10 +142,10 @@ def test_session_handler_reads_a_codex_session(tmp_path: Path) -> None:
   session = SessionHandler.parse(path)
 
   assert isinstance(session, Session)
-  assert (session.type, session.subtype, session.uid) == ('session', 'cx', 'codex-one')
+  assert (session.type, session.uid) == ('cx', 'codex-one')
   assert (session.data['turns'], session.data['topic'], session.name) == (2, 'Question', 'Question')
   record = probe(path)
-  assert HANDLERS[record.type, record.subtype] is SessionHandler
+  assert HANDLERS[record.type] is SessionHandler
 
 
 def test_a_codex_session_names_no_models(tmp_path: Path) -> None:
@@ -173,8 +172,8 @@ def test_session_probe_checks_extension_and_size(tmp_path: Path) -> None:
   empty.touch()
   supported = _jsonl(tmp_path / 'rollout.JSONL', CODEX)
 
-  assert (probe(unsupported).type, probe(unsupported).subtype) == ('fs_node', 'file')
-  assert (probe(empty).type, probe(empty).subtype) == ('fs_node', 'file')
+  assert probe(unsupported).type == 'file'
+  assert probe(empty).type == 'file'
   assert probe(supported).type == 'session'
 
 
@@ -182,10 +181,10 @@ def test_session_folder_probe_takes_harness_homes_by_their_path(tmp_path: Path) 
   folder = tmp_path / 'sessions'
   _jsonl(folder / 'nested.jsonl', CODEX)
 
-  assert probe(folder).subtype == 'folder'
+  assert probe(folder).type == 'folder'
   for home in ('.hermes', '.gemini/antigravity', '.gemini/antigravity-cli'):
     (tmp_path / home).mkdir(parents=True)
-    assert probe(tmp_path / home).subtype == 'sessionfolder'
+    assert probe(tmp_path / home).type == 'sessionfolder'
 
 
 def test_a_session_folder_is_told_by_its_path_not_by_what_it_holds(tmp_path: Path) -> None:
@@ -195,15 +194,15 @@ def test_a_session_folder_is_told_by_its_path_not_by_what_it_holds(tmp_path: Pat
   hermes = tmp_path / '.hermes'
   hermes.mkdir()
 
-  assert probe(folder).subtype == 'folder'
-  assert probe(hermes).subtype == 'sessionfolder'
+  assert probe(folder).type == 'folder'
+  assert probe(hermes).type == 'sessionfolder'
 
 
 def test_an_empty_folder_is_a_folder_holding_nothing(tmp_path: Path) -> None:
   record = probe(tmp_path)
   folder = FolderHandler.parse(tmp_path)
 
-  assert HANDLERS[record.type, record.subtype] is FolderHandler
+  assert HANDLERS[record.type] is FolderHandler
   assert (folder.data['files'], folder.data['folders'], folder.data['bytes'], folder.span) == (0, 0, 0, None)
 
 
@@ -239,7 +238,7 @@ unknown:
 
   markdown = MarkdownHandler.parse(path)
 
-  assert isinstance(markdown, Activity)
+  assert markdown.status == 'parsed'
   assert markdown.data['frontmatter'] == {
     'name': 'Display name',
     'tags': ['meta', 'handlers'],
@@ -257,7 +256,7 @@ unknown:
     '2026-09-01T05:11:00-07:00',
   ]]
   assert markdown.meta['size'] == path.stat().st_size
-  assert (probe(path).type, probe(path).subtype) == ('fs_node', 'markdown')
+  assert probe(path).type == 'markdown'
 
 
 def test_markdown_handler_uses_filename_without_frontmatter(tmp_path: Path) -> None:
@@ -289,11 +288,11 @@ def test_csv_handler_reads_header_and_every_row(tmp_path: Path) -> None:
 
   table = CSVHandler.parse(path)
 
-  assert isinstance(table, Activity)
+  assert table.status == 'parsed'
   assert table.data['header'] == ['title', 'tags']
   assert table.data['rows'] == 2
   assert (table.meta['size'], table.span) == (path.stat().st_size, None)
-  assert probe(path).subtype == 'csv'
+  assert probe(path).type == 'csv'
 
 
 def test_csv_handler_derives_span_and_allows_subclass_time_format(
@@ -323,7 +322,7 @@ def test_a_log_is_probed_as_a_log(tmp_path: Path) -> None:
   path = tmp_path / 'service.log'
   path.write_text('[2026-09-04T08:00:00-07:00] started\n', encoding='utf-8')
 
-  assert HANDLERS[probe(path).type, probe(path).subtype] is LogHandler
+  assert HANDLERS[probe(path).type] is LogHandler
 
 
 def test_log_handler_uses_timestamped_rows_for_span(tmp_path: Path) -> None:
@@ -390,13 +389,13 @@ def test_email_handler_derives_filename_metadata_without_parsing_message(
 
   email = EmailHandler.parse(path)
 
-  assert isinstance(email, Activity)
+  assert email.status == 'parsed'
   assert email.data['subject'] == subject
   assert email.data['party'] == party
   assert email.data.get('collision') == collision
   assert email.data['timestamp'].isoformat() == timestamp
   assert _bounds(email.span) == (email.data['timestamp'], email.data['timestamp'])
-  assert probe(path).subtype == 'email'
+  assert probe(path).type == 'email'
 
 
 def test_email_handler_accepts_a_filename_without_declared_metadata(
@@ -407,7 +406,7 @@ def test_email_handler_accepts_a_filename_without_declared_metadata(
 
   email = EmailHandler.parse(path)
 
-  assert probe(path).subtype == 'email'
+  assert probe(path).type == 'email'
   assert email.data == {}
   assert email.span is None
 
@@ -424,13 +423,13 @@ def test_ignored_paths_are_probed_and_no_handler_reads_them(tmp_path: Path) -> N
   ignored_file.write_text('scratch', encoding='utf-8')
   retained_file.write_text('retained', encoding='utf-8')
 
-  assert {path.name: probe(path).subtype for path in tmp_path.iterdir()} == {
+  assert {path.name: probe(path).type for path in tmp_path.iterdir()} == {
     '.git': 'ignored',
     '.cache': 'ignored',
     'scratch.tmp': 'ignored',
     'retained.txt': 'file',
   }
-  assert ('fs_node', 'ignored') not in HANDLERS
+  assert 'ignored' not in HANDLERS
 
 
 def _topic_session(tmp_path: Path) -> Path:
@@ -492,9 +491,9 @@ def test_session_folder_supports_nested_codex_logs_and_state_markers(tmp_path: P
   _jsonl(codex / '2026' / '08' / '20' / 'rollout.jsonl', CODEX)
   sessions = SessionFolderHandler.parse(codex)
 
-  assert isinstance(sessions, Activity)
-  assert probe(codex).subtype == 'folder'
-  assert (sessions.subtype, sessions.data['harness'], sessions.data['sessions'], sessions.data['uid']) == (
+  assert sessions.status == 'parsed'
+  assert probe(codex).type == 'folder'
+  assert (sessions.type, sessions.data['harness'], sessions.data['sessions'], sessions.data['uid']) == (
     'sessionfolder', 'cx', 1, 'codex-one'
   )
 
@@ -532,9 +531,9 @@ def test_openclaw_and_teleported_claude_are_identified_from_content(tmp_path: Pa
   openclaw_session = SessionHandler.parse(_jsonl(tmp_path / 'openclaw.jsonl', OPENCLAW))
   claude_session = SessionHandler.parse(_teleported(tmp_path))
 
-  assert (openclaw_session.subtype, openclaw_session.uid) == ('openclaw', 'openclaw-one')
+  assert (openclaw_session.type, openclaw_session.uid) == ('openclaw', 'openclaw-one')
   assert (openclaw_session.data['turns'], openclaw_session.data['models']) == (1, ['anthropic/claude-opus-5'])
-  assert claude_session.subtype == 'cc'
+  assert claude_session.type == 'cc'
 
 
 def test_a_teleported_claude_session_is_its_remote_session(tmp_path: Path) -> None:
@@ -549,7 +548,7 @@ def test_malformed_line_is_skipped_rather_than_failing_the_session(tmp_path: Pat
   session = SessionHandler.parse(path)
 
   assert isinstance(session, Session)
-  assert (session.subtype, session.uid, session.data) == ('cx', 'codex-one', clean.data)
+  assert (session.type, session.uid, session.data) == ('cx', 'codex-one', clean.data)
   assert _bounds(session.span) == _bounds(clean.span)
 
 
@@ -559,7 +558,7 @@ def test_codex_log_without_session_meta_remains_identifiable_but_has_no_uid(tmp_
   session = SessionHandler.parse(path)
 
   assert isinstance(session, Session)
-  assert (session.subtype, session.uid) == ('cx', None)
+  assert (session.type, session.uid) == ('cx', None)
 
 
 def _first_and_second(tmp_path: Path) -> tuple[Path, Path, float, float]:
@@ -735,9 +734,9 @@ def test_links_keep_their_physical_name_and_target_without_descent(tmp_path: Pat
   record = probe(link)
   folder = FolderHandler.parse(root)
 
-  assert (record.type, record.subtype, record.name) == ('fs_node', 'junction' if junction else 'symlink', 'link-name')
+  assert (record.type, record.name) == ('junction' if junction else 'symlink', 'link-name')
   assert Path(record.data['target']).name == 'different-target-name'
-  assert (record.type, record.subtype) not in HANDLERS
+  assert record.type not in HANDLERS
   assert (folder.data['files'], folder.data['folders'], folder.data['bytes']) == (1, 0, len('ordinary'))
 
 
@@ -746,7 +745,7 @@ def test_a_hermes_log_on_its_own_is_identified_from_its_content(tmp_path: Path) 
 
   assert probe(path).type == 'session'
   session = SessionHandler.parse(path)
-  assert (session.subtype, session.uid) == ('hermes', '20260512_035400_c197642b')
+  assert (session.type, session.uid) == ('hermes', '20260512_035400_c197642b')
   assert (session.data['turns'], session.name) == (2, 'Question')
   assert _iso(session.span) == [datetime.fromisoformat(value) for value in ['2026-05-12T10:54:00+00:00', '2026-05-12T10:55:00+00:00']]
 
@@ -756,12 +755,12 @@ def test_an_agy_transcript_and_its_session_folder_are_identified(tmp_path: Path)
 
   session = SessionHandler.parse(path)
 
-  assert (session.subtype, session.uid) == ('agy', AGY_UID)
+  assert (session.type, session.uid) == ('agy', AGY_UID)
   assert (session.data['turns'], session.name) == (2, 'Question')
   assert _iso(session.span) == [datetime.fromisoformat(value) for value in ['2026-08-29T14:35:31+00:00', '2026-08-29T14:49:31+00:00']]
 
   folder = SessionFolderHandler.parse(path.parents[2])
-  assert isinstance(folder, Activity)
+  assert folder.status == 'parsed'
   assert (folder.data['harness'], folder.data['uid'], folder.data['sessions']) == ('agy', AGY_UID, 1)
 
 
@@ -769,21 +768,21 @@ def test_an_agy_session_folder_is_probed_by_its_path(tmp_path: Path) -> None:
   brain = tmp_path / '.gemini' / 'antigravity-cli' / 'brain'
   path = _jsonl(brain / AGY_UID / '.system_generated' / 'logs' / 'transcript_full.jsonl', AGY)
 
-  assert probe(path.parents[2]).subtype == 'sessionfolder'
+  assert probe(path.parents[2]).type == 'sessionfolder'
 
 
 def test_an_agy_session_folder_is_told_by_its_path(tmp_path: Path) -> None:
   outside = _jsonl(tmp_path / 'brain' / AGY_UID / '.system_generated' / 'logs' / 'transcript_full.jsonl', AGY)
   inside = _jsonl(tmp_path / '.gemini' / 'antigravity-cli' / 'brain' / AGY_UID / '.system_generated' / 'logs' / 'transcript_full.jsonl', AGY)
 
-  assert probe(outside.parents[2]).subtype == 'folder'
-  assert probe(inside.parents[2]).subtype == 'sessionfolder'
+  assert probe(outside.parents[2]).type == 'folder'
+  assert probe(inside.parents[2]).type == 'sessionfolder'
 
 
 def test_a_filesystem_root_is_never_ignored(tmp_path: Path) -> None:
   root = Path(tmp_path.anchor)
 
-  assert probe(root).subtype == 'folder'
+  assert probe(root).type == 'folder'
 
 
 def test_a_dot_folder_is_walked_and_venv_and_git_are_not(tmp_path: Path) -> None:
@@ -804,14 +803,14 @@ def test_a_dot_folder_is_walked_and_venv_and_git_are_not(tmp_path: Path) -> None
     folder.mkdir()
     (folder / 'inside.txt').write_text('inside', encoding='utf-8')
 
-  assert probe(tmp_path / '.claude').subtype == 'folder'
-  assert probe(store).subtype == 'folder'
+  assert probe(tmp_path / '.claude').type == 'folder'
+  assert probe(store).type == 'folder'
   assert probe(store / 'session.jsonl').type == 'session'
-  assert probe(secrets).subtype == 'folder'
-  assert probe(secrets / 'id_ed25519').subtype == 'file'
+  assert probe(secrets).type == 'folder'
+  assert probe(secrets / 'id_ed25519').type == 'file'
   for name in ('.git', 'venv', '.venv'):
-    assert probe(tmp_path / name).subtype == 'ignored'
-  assert ('fs_node', 'ignored') not in HANDLERS
+    assert probe(tmp_path / name).type == 'ignored'
+  assert 'ignored' not in HANDLERS
 
 
 def test_a_gemini_cli_chat_is_read_as_itself(tmp_path: Path) -> None:
@@ -832,7 +831,7 @@ def test_a_gemini_cli_chat_is_read_as_itself(tmp_path: Path) -> None:
   second = chat('session-2026-08-24T13-52-a2a-serv.jsonl', '2026-08-24T13:52:06.188Z', 'second')
 
   readings = [SessionHandler.parse(path) for path in (first, second)]
-  assert [one.subtype for one in readings] == ['gemini', 'gemini']
+  assert [one.type for one in readings] == ['gemini', 'gemini']
   assert readings[0].uid != readings[1].uid, 'one service id must not fold two chats into one'
   assert readings[0].uid == 'a2a-server/2026-08-24T13:51:09.797Z'
   assert [one.data['turns'] for one in readings] == [1, 1]
@@ -853,8 +852,8 @@ def test_a_sqlite_file_is_read_as_material(tmp_path: Path) -> None:
   connection.close()
   (tmp_path / 'note.md').write_text('not a database', encoding='utf-8')
 
-  assert HANDLERS[probe(database).type, probe(database).subtype] is SqliteHandler
-  assert probe(tmp_path / 'note.md').subtype != 'sqlite'
+  assert HANDLERS[probe(database).type] is SqliteHandler
+  assert probe(tmp_path / 'note.md').type != 'sqlite'
 
   read = SqliteHandler.parse(database)
   assert list(read.data['tables']) == ['records', 'spans']
@@ -891,8 +890,8 @@ def test_parse_messages_reads_claude_code_messages() -> None:
     'uid': 'claude-one', 'parent_uid': None, 'topic': 'Question', 'name': 'Question', 'models': {'claude-opus-5'},
   }
   assert session['times'] == [datetime.fromisoformat(value) for value in ['2026-08-20T02:00:00+00:00', '2026-08-20T02:01:00+00:00']]
-  assert all(isinstance(message, Event) and message.type == 'session_message' for message in messages)
-  assert [(message.subtype, message.name, message.meta) for message in messages] == [
+  assert all(isinstance(message, Record) for message in messages)
+  assert [(message.type, message.name, message.meta) for message in messages] == [
     ('user', 'Question', {'uid': 'one', 'line': 1}),
     ('agent', 'Answer', {'uid': 'two', 'line': 2}),
   ]
@@ -908,7 +907,7 @@ def test_parse_messages_reads_a_prompt_sent_while_the_session_worked() -> None:
 
   session, messages = SessionHandler.parse_messages('cc', CLAUDE + [sent, other])
 
-  assert [(message.subtype, message.name, message.meta) for message in messages[2:]] == [
+  assert [(message.type, message.name, message.meta) for message in messages[2:]] == [
     ('user', 'And the epics too', {'uid': 'three', 'line': 3}),
     ('attachment', 'attachment', {'uid': 'four', 'line': 4}),
   ]
@@ -923,14 +922,14 @@ def test_parse_messages_reads_a_prompt_sent_while_the_session_worked_as_blocks()
 
   _, messages = SessionHandler.parse_messages('cc', CLAUDE + [sent])
 
-  assert (messages[2].subtype, messages[2].name) == ('user', 'Look at this')
+  assert (messages[2].type, messages[2].name) == ('user', 'Look at this')
 
 
 def test_parse_messages_reads_codex_messages() -> None:
   session, messages = SessionHandler.parse_messages('cx', CODEX)
 
   assert (session['uid'], session['topic'], session['name']) == ('codex-one', 'Question', 'Question')
-  assert [message.subtype for message in messages] == ['session_meta', 'turn_context', 'user', 'agent']
+  assert [message.type for message in messages] == ['session_meta', 'turn_context', 'user', 'agent']
   assert [message.meta['line'] for message in messages] == [1, 2, 3, 4]
   assert all(UUID(message.meta['uid']) for message in messages)
 
@@ -941,7 +940,7 @@ def test_parse_messages_numbers_messages_after_an_offset() -> None:
   session, messages = SessionHandler.parse_messages('cx', CODEX[2:], offset=2, uid='codex-one')
 
   assert session['uid'] == 'codex-one'
-  assert [(message.subtype, message.meta) for message in messages] == [(message.subtype, message.meta) for message in whole[2:]]
+  assert [(message.type, message.meta) for message in messages] == [(message.type, message.meta) for message in whole[2:]]
 
 
 def test_parse_messages_drops_the_nul_postgres_cannot_hold() -> None:
@@ -989,9 +988,9 @@ def _claude(uid: str) -> dict:
 def test_probe_tells_an_export_by_its_name(tmp_path: Path) -> None:
   for name in ('conversations.json', 'conversations-000.json', 'other.json'):
     (tmp_path / name).write_text('[]', encoding='utf-8')
-  assert [probe(tmp_path / name).subtype for name in ('conversations.json', 'conversations-000.json', 'other.json')] == \
+  assert [probe(tmp_path / name).type for name in ('conversations.json', 'conversations-000.json', 'other.json')] == \
     ['export', 'export', 'file']
-  assert HANDLERS['fs_node', 'export'] is handlers_module.ExportHandler
+  assert HANDLERS['export'] is handlers_module.ExportHandler
 
 
 def test_a_chatgpt_export_is_its_conversations_along_their_chains(tmp_path: Path) -> None:
@@ -1001,9 +1000,9 @@ def test_a_chatgpt_export_is_its_conversations_along_their_chains(tmp_path: Path
   record = handlers_module.ExportHandler.parse(path)
   first, second = handlers_module.ExportHandler.sessions(path)
 
-  assert (record.type, record.subtype, record.data['harness'], record.data['sessions']) == ('fs_node', 'export', 'chatgpt', 2)
+  assert (record.type, record.data['harness'], record.data['sessions']) == ('export', 'chatgpt', 2)
   assert (record.span.start, record.span.end) == (datetime.fromtimestamp(1785585600).astimezone(), datetime.fromtimestamp(1785585720).astimezone())
-  assert isinstance(first, Session) and (first.type, first.subtype, first.uid, first.name) == ('session', 'chatgpt', 'one', 'Question')
+  assert isinstance(first, Session) and (first.type, first.uid, first.name) == ('chatgpt', 'one', 'Question')
   assert (first.data['turns'], first.data['topic'], first.data['models']) == (2, 'Question', ['gpt-5.6'])
   assert first.created == datetime.fromtimestamp(1785585600).astimezone()
   assert first.data['normalized_name'].endswith(' 2~2m - Question.one.json')
@@ -1018,7 +1017,7 @@ def test_an_anthropic_export_is_read_by_its_conversations_not_by_what_is_beside_
   session, = handlers_module.ExportHandler.sessions(path)
 
   assert handlers_module.ExportHandler.parse(path).data == {'harness': 'claude', 'sessions': 1}
-  assert (session.subtype, session.uid, session.name, session.data['turns']) == ('claude', 'c-one', 'Question', 2)
+  assert (session.type, session.uid, session.name, session.data['turns']) == ('claude', 'c-one', 'Question', 2)
   assert (session.span.start, session.span.end) == (datetime(2026, 8, 1, 12, tzinfo=timezone.utc), datetime(2026, 8, 1, 12, 2, tzinfo=timezone.utc))
 
 

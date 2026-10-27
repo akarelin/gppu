@@ -131,7 +131,7 @@ class DesktopFileSystem(AbstractFileSystem):
 
     def _handler(self, fs, folder):
         """The handler the index says reads a real folder."""
-        return handlers.HANDLERS.get(('fs_node', fs.info_sync(folder)['gppu']['record']['subtype']))
+        return handlers.HANDLERS.get(fs.info_sync(folder)['gppu']['record']['type'])
 
     def _things(self, fs, folder, handler, level=0):
         """What a partitioned folder holds: in place of a partition, what the partition holds."""

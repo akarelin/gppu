@@ -1054,7 +1054,7 @@ class GppuFileSystem(AbstractFileSystem):
         metadata->>'$.gppu.probed_at' AS probed,
         EXISTS (SELECT 1 FROM json_each(metadata, '$.gppu.handlers') WHERE value='session') AS session
       FROM gppufs_entries WHERE path<>'.'
-        AND coalesce(metadata->>'$.gppu.record.subtype', '') NOT IN ({", ".join(f"'{s}'" for s in handlers.IGNORED)}))'''
+        AND coalesce(metadata->>'$.gppu.record.type', '') NOT IN ({", ".join(f"'{s}'" for s in handlers.IGNORED)}))'''
 
   def __init__(self, location: str | Path, locations: Mapping[str, Mapping[str, str]] | None = None,
                index: GppuIndex | None = None, **storage_options: Any) -> None:
@@ -1683,14 +1683,14 @@ class GppuFileSystem(AbstractFileSystem):
       if isinstance(fs, AbstractArchiveFileSystem) and root in ('', '/') else fs.info(root)}
     if native[root]['type'] != 'directory' or native[root].get('islink'):
       return native
-    if _probe_name(PurePosixPath(root).name, True).subtype == 'ignored':
+    if _probe_name(PurePosixPath(root).name, True).type == 'ignored':
       return native
     for _, directories, files in fs.walk(root, detail=True, on_error='raise'):
       for item in (*directories.values(), *files.values()):
         if not self._index_name.fullmatch(PurePosixPath(item['name']).name):
           native[item['name'].rstrip('/')] = fs.info(item['name'])
       for name in tuple(directories):
-        if _probe_name(PurePosixPath(name).name, True).subtype == 'ignored' or directories[name].get('islink'):
+        if _probe_name(PurePosixPath(name).name, True).type == 'ignored' or directories[name].get('islink'):
           del directories[name]
     return native
 
@@ -1726,7 +1726,7 @@ class GppuFileSystem(AbstractFileSystem):
       record = _probe_name(PurePosixPath(name).name or 'location', directory, item.get('size'))
       if self._unindexed(record, directory):
         return None
-      handler, unread = handlers.HANDLERS.get((record.type, record.subtype)), None
+      handler, unread = handlers.HANDLERS.get(record.type), None
       if not directory and handler not in (None, handlers.FileHandler):
         with _scratch('gppufs-file-') as scratch:
           copy = Path(scratch) / (''.join('_' if letter in UNSAFE else letter for letter in PurePosixPath(name).name) or 'entry')
@@ -1817,7 +1817,7 @@ class GppuFileSystem(AbstractFileSystem):
       record, unread = handlers.probe(path), None
       if self._unindexed(record, item['type'] == 'directory'):
         return None
-      handler = handlers.HANDLERS.get((record.type, record.subtype))
+      handler = handlers.HANDLERS.get(record.type)
       if handler is not None and handler is not handlers.FolderHandler:
         try:
           record = handler.parse(path)
@@ -1866,7 +1866,7 @@ class GppuFileSystem(AbstractFileSystem):
 
   @staticmethod
   def _folder(record: handlers.Record) -> bool:
-    return record.subtype in handlers.FOLDERS
+    return record.type in handlers.FOLDERS
 
   @staticmethod
   def _span(value: Any) -> TimeSpan | None:
@@ -1885,7 +1885,7 @@ class GppuFileSystem(AbstractFileSystem):
     nothing says more."""
     modified = gppu['modified_at'] and datetime.fromisoformat(str(gppu['modified_at']))
     spans = [span for span in (self._own_span(gppu),) if span]
-    if gppu['record']['subtype'] in handlers.IGNORED:
+    if gppu['record']['type'] in handlers.IGNORED:
       return {'files': 0, 'folders': 0, 'bytes': 0, 'span': None}   # counted as ignored: never counted
     if children is None:
       totals = {'files': 1, 'folders': 0, 'bytes': gppu['size']}
@@ -1906,7 +1906,7 @@ class GppuFileSystem(AbstractFileSystem):
     record and its totals. An entry only identified, not parsed, is `probed` false, and a folder's totals are then
     unknown."""
     folder = self._folder(record)
-    names = [record.subtype or record.type]
+    names = [record.type]
     if path.name.casefold().endswith(handlers.ARCHIVES):
       names.append('archive')
     located = self._location_of(key) if isinstance(self.fs, LocalFileSystem) else None
@@ -1970,7 +1970,7 @@ class GppuFileSystem(AbstractFileSystem):
   def _unindexed(record: handlers.Record, directory: bool) -> bool:
     """Whether an entry is left out of the index and of listings: an ignored file. An ignored folder is listed, and a
     recursion does not enter it, as FileIndexer's walk does."""
-    return record.subtype == 'ignored' and not directory
+    return record.type == 'ignored' and not directory
 
   def _identify_entry(self, key: str) -> tuple[dict, None] | None:
     """Index one entry from its native attributes and matching handlers, without probing, and give what the index holds
@@ -2002,7 +2002,7 @@ class GppuFileSystem(AbstractFileSystem):
     if entry['type'] != 'directory' or not isinstance(self.fs, LocalFileSystem):
       return False
     stored = self._stored(key)
-    return stored is not None and (stored[0]['gppu'].get('record') or {}).get('subtype') != handlers.probe(Path(self._path(key))).subtype
+    return stored is not None and (stored[0]['gppu'].get('record') or {}).get('type') != handlers.probe(Path(self._path(key))).type
 
   def _forget(self, key: str) -> None:
     """Drop one stored entry so it is identified again on this listing."""
@@ -2099,7 +2099,7 @@ class GppuFileSystem(AbstractFileSystem):
     return f'''SELECT prefix, min(mtime), max(mtime) FROM (SELECT substr({below}, 1, {end} - 1) AS prefix,
         unixepoch(metadata->>'$.gppu.modified_at', 'subsec') AS mtime FROM gppufs_entries
         WHERE {'' if here == '.' else 'path > :low AND path < :high AND '}metadata->>'$.gppu.type' = 'file'
-          AND coalesce(metadata->>'$.gppu.record.subtype', '') NOT IN ({", ".join(f"'{s}'" for s in handlers.IGNORED)}))
+          AND coalesce(metadata->>'$.gppu.record.type', '') NOT IN ({", ".join(f"'{s}'" for s in handlers.IGNORED)}))
       WHERE mtime IS NOT NULL GROUP BY prefix'''
 
   def _aggregated(self, owner: str) -> list:
@@ -3191,12 +3191,12 @@ def _walked(name: str, kind: str, size: int | None, modified: datetime | None, r
   """One row of a walk: the entry's name below the walked folder, its type and size as listed, and the record its
   handler read; a session is fingerprinted by its harness and uid."""
   row = {'name': name, 'type': kind, 'size': size, 'modified_at': modified,
-         'handlers': [record.subtype or record.type], 'record': vars(record)}
+         'handlers': [record.type], 'record': vars(record)}
   if name.casefold().endswith(handlers.ARCHIVES):
     row['handlers'].append('archive')
   if isinstance(record, handlers.Session) and record.uid:
-    row['fingerprints'] = [('session', f'{record.subtype}/{record.uid}')]
-  elif record.subtype == handlers.SessionFolderHandler.subtype and record.data.get('uid'):
+    row['fingerprints'] = [('session', f'{record.type}/{record.uid}')]
+  elif record.type == handlers.SessionFolderHandler.type and record.data.get('uid'):
     row['fingerprints'] = [('session', f"{record.data['harness']}/{record.data['uid']}")]
   if 'target' in record.data:
     row['target'] = record.data['target']
@@ -3209,7 +3209,7 @@ def _read(path: Path, parse: bool) -> tuple[handlers.Record, str | None]:
   """What probe gives of path, read by its handler when parse is asked; a read that fails is said, not raised, so
   the walk goes on."""
   record = handlers.probe(path)
-  handler = handlers.HANDLERS.get((record.type, record.subtype))
+  handler = handlers.HANDLERS.get(record.type)
   if not parse or handler is None or issubclass(handler, handlers.FolderHandler):
     return record, None
   try:
@@ -3262,7 +3262,7 @@ def walk_files(root: Path, path: str, level: str, recursive: bool,
     def wanted(member: str) -> bool:
       record = identified[member]
       return listing[member]['type'] != 'directory' and (member.casefold().endswith(handlers.ARCHIVES)
-        or handlers.HANDLERS.get((record.type, record.subtype)) not in (None, handlers.FileHandler))
+        or handlers.HANDLERS.get(record.type) not in (None, handlers.FileHandler))
 
     def folder(prefix: str, under: str) -> Iterator[tuple[dict, list[dict]]]:
       rows, descend, nested = [], [], []
@@ -3271,7 +3271,7 @@ def walk_files(root: Path, path: str, level: str, recursive: bool,
         item, record, unread = listing[member], identified[member], None
         name = f"{under}/{PurePosixPath(member).name}"
         kind = 'directory' if item['type'] == 'directory' else 'file'
-        if kind == 'file' and (level == 'refresh' or record.subtype == 'ignored'):
+        if kind == 'file' and (level == 'refresh' or record.type == 'ignored'):
           continue
         archive = kind == 'file' and member.casefold().endswith(handlers.ARCHIVES)
         if wanted(member) and not archive:
@@ -3285,7 +3285,7 @@ def walk_files(root: Path, path: str, level: str, recursive: bool,
               record, unread = _read(copy, parse)
         row = _walked(name, kind, item.get('size'), GppuFileSystem._modified(item), record, unread)
         if kind == 'directory':
-          if PurePosixPath(member).name in FOLDER_CLASSES or record.subtype == 'ignored':
+          if PurePosixPath(member).name in FOLDER_CLASSES or record.type == 'ignored':
             row['boundary'] = FOLDER_CLASSES.get(PurePosixPath(member).name, 'Ignored')
           elif recursive:
             descend.append((member, name))
@@ -3320,20 +3320,20 @@ def walk_files(root: Path, path: str, level: str, recursive: bool,
       name = f'{under}/{entry.name}' if under else entry.name
       record, unread = _read(entry, parse)
       folder_like = GppuFileSystem._folder(record)
-      if record.subtype == 'ignored' and not entry.is_dir():
+      if record.type == 'ignored' and not entry.is_dir():
         continue
       if level == 'refresh' and not (folder_like or entry.is_dir()):
         continue
       stat = entry.lstat()
       row = _walked(name, 'directory' if entry.is_dir() else 'file', None if entry.is_dir() else stat.st_size,
                     handlers.Handler.valid_time(datetime.fromtimestamp(stat.st_mtime).astimezone()), record, unread)
-      if record.subtype in ('symlink', 'junction'):
+      if record.type in ('symlink', 'junction'):
         row['boundary'] = 'link'
         row['target'] = str(entry.resolve())
       elif name in boundaries:
         row['boundary'] = 'Location'
       elif entry.is_dir():
-        if entry.name in FOLDER_CLASSES or record.subtype == 'ignored':
+        if entry.name in FOLDER_CLASSES or record.type == 'ignored':
           row['boundary'] = FOLDER_CLASSES.get(entry.name, 'Ignored')
         elif recursive:
           descend.append((entry, name))
@@ -3357,9 +3357,9 @@ def walk_files(root: Path, path: str, level: str, recursive: bool,
   if not selected.exists():
     raise NotADirectoryError(str(selected))
   record = handlers.probe(selected)
-  if record.subtype in ('symlink', 'junction'):
+  if record.type in ('symlink', 'junction'):
     raise PermissionError(f'{path}: a link cannot be selected for traversal')
-  if record.subtype == 'ignored':
+  if record.type == 'ignored':
     raise PermissionError(f'{path}: selected directory is excluded by the ignore rules')
   if not GppuFileSystem._folder(record):
     raise NotADirectoryError(str(selected))

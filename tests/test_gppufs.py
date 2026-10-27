@@ -100,7 +100,7 @@ def test_an_index_past_the_limit_splits_off_the_folder_holding_most_of_it(tmp_pa
     (tmp_path / name / 'deep').mkdir(parents=True)
     for i in range(count):
       (tmp_path / name / 'deep' / f'note{i}.md').write_text(f'Text {i}', encoding='utf-8')
-  monkeypatch.setattr(gppu.fs, 'INDEX_LIMIT', 16 * 1024)
+  monkeypatch.setattr(gppu.fs, 'INDEX_LIMIT', 32 * 1024)   # above what an index holding small's notes takes after big moves out (6 pages), below big/deep's (13)
   fs = GppuFileSystem(tmp_path)
   listed = fs.ls(recurse=True)
   assert index(tmp_path / 'big').is_file() and index(tmp_path / 'big' / 'deep').is_file()

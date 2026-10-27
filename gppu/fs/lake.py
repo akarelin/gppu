@@ -61,7 +61,7 @@ class Lake:
         """What gppu's handlers read of the file at path: read by the handler its name and content call for, and by none when
         none does."""
         found = handlers.probe(path)
-        handler = handlers.HANDLERS.get((found.type, found.subtype))
+        handler = handlers.HANDLERS.get(found.type)
         if handler is None:
             return found
         try:
@@ -69,18 +69,18 @@ class Lake:
         except Exception as error:   # what a handler cannot read has no place in the Lake: the save is refused with its reason
             raise ValueError(f'{path.name}: {handler.__name__} cannot read it: {type(error).__name__}: {error}') from error
 
-    def place(self, obj: DataObject, record: handlers.Record) -> str:
-        """Where obj goes in the Lake, by the template of its record's type, `source` for a type the Lake has none for: rendered
+    def place(self, obj: DataObject, record: handlers.Record, type: str) -> str:
+        """Where obj goes in the Lake, by the template of its file's type, `source` for a type the Lake has none for: rendered
         with the record, the object's name, the date it is of (its span's start, else the date its name says) and the system,
         account and path of the uri it came from."""
         span = getattr(record, 'span', None) or handlers.Handler.named(obj.name)
         source = urlsplit(str(obj.uri))
-        path = self.templates.render_template(record.type if record.type in self.templates.named else 'source',
+        path = self.templates.render_template(type if type in self.templates.named else 'source',
             record=record, name=obj.name, start=span.start if span else None, system=source.scheme, account=source.netloc,
             path=unquote(source.path).strip('/'))
         path = str(path or '').strip()
         if not path:
-            raise ValueError(f'{obj.name}: the Lake has no place for a {record.type} {record.subtype or ""} from {obj.uri}'.replace('  ', ' '))
+            raise ValueError(f'{obj.name}: the Lake has no place for a {type} from {obj.uri}')
         return str(Location.relative(path))
 
     def save(self, obj: DataObject, copy: bool = False) -> y2uri:
@@ -97,7 +97,7 @@ class Lake:
                 else:
                     file.write(obj.content if isinstance(obj.content, bytes) else obj.content.encode('utf-8')
                                if isinstance(obj.content, str) else json.dumps(obj.content, ensure_ascii=False).encode('utf-8'))
-            path = self.place(obj, self.read(scratch))
+            path = self.place(obj, self.read(scratch), handlers.probe(scratch).type)
             if copy:
                 return self.store.provider.join(self.store.uri, Location.relative(path))
             with scratch.open('rb') as stream:

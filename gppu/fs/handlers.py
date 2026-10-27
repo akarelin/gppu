@@ -2,17 +2,17 @@
 
 There is a handler for every type of data that is read, and probe, which, given a path, a file's or a folder's,
 whose type is not known in advance, gives what info gives of it, its record from its stat and its name; the record's
-type and subtype say which handler reads it:
+type, a file's type in Linked Data (# fs, File), says which handler reads it:
 
     record = probe('D:/Dev/gppu/README.md')
-    handler = HANDLERS[record.type, record.subtype]          # MarkdownHandler
+    handler = HANDLERS[record.type]                          # MarkdownHandler
     record = handler.parse('D:/Dev/gppu/README.md')
 
 Probing is gppu's probe_path, from the path's stat and its name, and nothing is read: it names a folder's handler by
 its path and a file's by its name or its suffix. A link, a junction, an ignored path and an offline file are what probe gives; no
 handler reads them. A handler is a class of class methods, and `parse(path)` reads the path into a Record, what Linked
-Data holds of the thing, or a type of Linked Data's built on it, an Activity with a span or a Session; each handler says
-what it returns. A subtype is a subclass of its type, and its parse adds to its type's. probe and parse are plain
+Data holds of the thing, or a Session; each handler says what it returns. A handler made from another is a type made from
+another, and its parse adds to its base's. probe and parse are plain
 functions.
 
 A handler reads the path it is given and nothing else: no index, no location, no fsspec. A read that fails raises.
@@ -153,7 +153,7 @@ OPENING = re.compile(r"\s*<([\w:-]+)([^>]*)>")
 SUMMARY = re.compile(r'\bsummary="([^"]*)"')
 ELEMENT = re.compile(r"<([\w:-]+)[^>]*>.*?</\1>", re.S)
 TAGS = re.compile(r"</?[\w:-]+[^>]*>")
-MESSAGE_SUBTYPES = ("user", "agent", "thinking", "tool_use", "tool_result")
+MESSAGE_TYPES = ("user", "agent", "thinking", "tool_use", "tool_result")
 SESSION_UID = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.I,
@@ -162,39 +162,31 @@ SESSION_UID = re.compile(
 
 @dataclass
 class Record:
-    """A record as Linked Data's spec has it (record 01) and gppu.ld holds it: id, type, subtype, status, name, data,
-    meta, created, updated and parent_id. Handlers import neither Postgres nor gppu.ld, so this is its shape without
-    the store; a record read from disk has no id until it is stored, so nothing read carries a parent_id."""
+    """A record as Linked Data's standard has it (_Standards/Linked Data, # Record) and gppu.ld holds it: id, flags, type,
+    status, name, parent_id, span, data, meta, created and updated; ts is the start of its span. Handlers import neither
+    Postgres nor gppu.ld, so this is its shape without the store; a record read from disk has no id until it is stored, so
+    nothing read carries a parent_id."""
 
     id: UUID | None = None
+    flags: int = 0
     type: str | None = None
-    subtype: str | None = None
     status: str | None = None
     name: str | None = None
+    parent_id: UUID | None = None
+    span: TimeSpan | None = None
     data: dict[str, Any] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
     created: datetime | None = None
     updated: datetime | None = None
-    parent_id: UUID | None = None
+
+    @property
+    def ts(self) -> datetime | None:
+        return self.span.start if self.span else None
 
 
 @dataclass
-class Event(Record):
-    """Linked Data's event (event 10): a record of a thing that happened, with ts, when it happened."""
-
-    ts: datetime | None = None
-
-
-@dataclass
-class Activity(Record):
-    """Linked Data's activity (activity 11): a record of a span of time."""
-
-    span: TimeSpan | None = None
-
-
-@dataclass
-class Session(Activity):
-    """Linked Data's session (session 30): an activity with uid, the harness's own id for it."""
+class Session(Record):
+    """Linked Data's session (# sessions, Session): its type its harness, with uid, the harness's own id for it."""
 
     uid: str | None = None
 
@@ -202,26 +194,25 @@ class Session(Activity):
 class Handler:
     """The base of every handler: a handler reads a file or a folder, and its parse is what it reads.
 
-    `type` is one of Linked Data's types, fs_node for a file or a folder and session for a session, and a handler
-    has its base's; `subtype` is the handler's own name, markdown for MarkdownHandler, unless it names its own.
+    `type` is a file's type in Linked Data (# fs, File): the handler's own name, markdown for MarkdownHandler, unless it
+    names its own.
     """
 
     type: str
-    subtype: str | None = None
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
-        if "subtype" not in cls.__dict__:
-            cls.subtype = cls.__name__.removesuffix("Handler").casefold()
+        if "type" not in cls.__dict__:
+            cls.type = cls.__name__.removesuffix("Handler").casefold()
 
     @classmethod
     def parse(cls, path: str | Path) -> Record:
-        """The record of the path: what probe gives, with the handler's type and subtype, and what the handler
-        reads. A handler's parse adds to its type's.
+        """The record of the path: what probe gives, with the handler's type and status `parsed`, and what the handler
+        reads. A handler's parse adds to its base's.
 
-        Returns: what probe gives, with the handler's type and subtype."""
+        Returns: what probe gives, with the handler's type and status `parsed`."""
         record = probe(path)
-        record.type, record.subtype = cls.type, cls.subtype
+        record.type, record.status = cls.type, "parsed"
         return record
 
     @staticmethod
@@ -319,19 +310,19 @@ class FolderHandler(Handler):
     """A folder and what it directly holds, each probed, nothing read. A subfolder's modified time is when something
     was added to it, so the span is its files' alone; what a folder holds is listed by the file system.
 
-    Returns: an Activity, Handler's record with data.files, data.folders and data.bytes, the files, the folders and
+    Returns: Handler's record with data.files, data.folders and data.bytes, the files, the folders and
     the bytes of the files it directly holds, what counts as ignored (IGNORED) being neither; span from its files'
     earliest updated time to their latest.
     """
 
-    type, subtype = "fs_node", "folder"
+    type = "folder"
 
     @classmethod
-    def parse(cls, path: str | Path) -> Activity:
-        record = Activity(**vars(super().parse(path)))
+    def parse(cls, path: str | Path) -> Record:
+        record = super().parse(path)
         held = [probe(member) for member in Path(path).absolute().iterdir()]
-        files = [member for member in held if "size" in member.meta and member.subtype not in IGNORED]
-        folders = [member for member in held if member.subtype in FOLDERS]
+        files = [member for member in held if "size" in member.meta and member.type not in IGNORED]
+        folders = [member for member in held if member.type in FOLDERS]
         record.data.update(files=len(files), folders=len(folders), bytes=sum(member.meta["size"] for member in files))
         record.span = cls.spanning([time for member in files if (time := cls.valid_time(member.updated))])
         return record
@@ -377,12 +368,14 @@ class PartitionedFolderHandler(FolderHandler):
 class WorkFolderHandler(PartitionedFolderHandler):
     """Work: each day's tasks, `{MM}/{DD}/{task}`, the year implied."""
 
+    type = "work"
     partitions = ("%m", "%d")
 
 
 class ProjectsFolderHandler(PartitionedFolderHandler):
     """Projects: by month, `{MM}/{YYMMDD} {title}` for a project of one day and `{MM}/{YYYY-MM} {project}` for a longer one."""
 
+    type = "projects"
     partitions = ("%m",)
 
 
@@ -392,7 +385,7 @@ class FileHandler(Handler):
     Returns: Handler's record.
     """
 
-    type, subtype = "fs_node", "file"
+    type = "file"
 
 
 class SqliteHandler(FileHandler):
@@ -425,7 +418,7 @@ class MarkdownHandler(FileHandler):
     stem. data.tags is a list or one value. The span is created to updated, both required; a date starts at
     midnight, a time without an offset is local.
 
-    Returns: an Activity, Handler's record with name; data.title, data.tags, a list of strings, and data.frontmatter, the whole
+    Returns: Handler's record with name; data.title, data.tags, a list of strings, and data.frontmatter, the whole
     mapping, {} when there is none; span from created to updated, or None.
     """
 
@@ -438,8 +431,8 @@ class MarkdownHandler(FileHandler):
     }
 
     @classmethod
-    def parse(cls, path: str | Path) -> Activity:
-        record = Activity(**vars(super().parse(path)))
+    def parse(cls, path: str | Path) -> Record:
+        record = super().parse(path)
         path = Path(path).absolute()
         frontmatter = cls._frontmatter(path)
         name, title = frontmatter.get("name", frontmatter.get("title")), frontmatter.get("title", frontmatter.get("name"))
@@ -482,7 +475,7 @@ class CSVHandler(FileHandler):
     milliseconds above 10,000,000,000, or one of a subclass's time_formats for strptime. A time without an
     offset is local; placeholders and future times do not count.
 
-    Returns: an Activity, Handler's record with data.header, the first row's names, and data.rows, how many rows follow it; span
+    Returns: Handler's record with data.header, the first row's names, and data.rows, how many rows follow it; span
     from the earliest time in the time columns to the latest, or None.
     """
 
@@ -490,8 +483,8 @@ class CSVHandler(FileHandler):
     time_formats: tuple[str, ...] = ()
 
     @classmethod
-    def parse(cls, path: str | Path) -> Activity:
-        record = Activity(**vars(super().parse(path)))
+    def parse(cls, path: str | Path) -> Record:
+        record = super().parse(path)
         with Path(path).absolute().open(encoding="utf-8-sig", newline="") as stream:
             rows = [tuple(row) for row in csv.reader(stream, strict=True)]
         header, rows = (rows[0], rows[1:]) if rows else ((), [])
@@ -524,12 +517,12 @@ class LogHandler(FileHandler):
     head that has a time and its end the first from its tail: it is read from both ends until each is found, LOG_BLOCK
     bytes at a time, and never whole unless no line has a time.
 
-    Returns: an Activity, Handler's record with span from the time of the first line that has one to the time of the last, or None.
+    Returns: Handler's record with span from the time of the first line that has one to the time of the last, or None.
     """
 
     @classmethod
-    def parse(cls, path: str | Path) -> Activity:
-        record = Activity(**vars(super().parse(path)))
+    def parse(cls, path: str | Path) -> Record:
+        record = super().parse(path)
         with Path(path).absolute().open("rb") as stream:
             start = next((time for line in cls._head(stream) if (time := cls._line_time(line)) is not None), None)
             end = next((time for line in cls._tail(stream) if (time := cls._line_time(line)) is not None), None)
@@ -570,13 +563,13 @@ class EmailHandler(FileHandler):
     the separator. A name outside the convention says nothing, and the record has no timestamp, subject,
     party or collision.
 
-    Returns: an Activity, Handler's record with data.timestamp, data.subject, data.party and data.collision, each where the name
+    Returns: Handler's record with data.timestamp, data.subject, data.party and data.collision, each where the name
     gives it; span the timestamp, or None.
     """
 
     @classmethod
-    def parse(cls, path: str | Path) -> Activity:
-        record = Activity(**vars(super().parse(path)))
+    def parse(cls, path: str | Path) -> Record:
+        record = super().parse(path)
         stamp, separator, rest = Path(path).absolute().stem.partition(" - ")
         content, separator2, party = rest.rpartition(" - ")
         if not (separator and separator2):
@@ -624,22 +617,22 @@ class SessionHandler(FileHandler):
     * Agy: USER_INPUT from USER_EXPLICIT or PLANNER_RESPONSE from MODEL, with a string created_at.
     * Hermes: role session_meta with a string session_id.
 
-    Its record is a session, its subtype the harness; a .jsonl whose messages name no harness raises. Its messages,
+    Its record is a session, its type the harness; a .jsonl whose messages name no harness raises. Its messages,
     every message of the file in order, are what parse_messages gives; a blank, truncated or non-object line of the
-    file is skipped. A session message's subtype is user, agent, thinking, tool_use or tool_result as Linked Data reads
+    file is skipped. A session message's type is user, agent, thinking, tool_use or tool_result as Linked Data reads
     the messages of cc and cx (parse_messages), else the type its harness gives it. For cc and cx the record has the
-    uid, the name, the span from the first session message of Linked Data's subtypes to the last, data.title, topic,
+    uid, the name, the span from the first session message of Linked Data's message types to the last, data.title, topic,
     cwd and models, and meta.parent_uid, as Linked Data reads them. For the other harnesses it has the uid its
     harness gives, the span from the first time in its messages to the last, and the models named anywhere in them.
     data.turns counts its turns, and data.normalized_name is the file's name from its start, turns, duration and the
     first line a person typed.
 
-    Returns: a Session, Handler's record with subtype the harness; uid; name; span; data.subagent,
+    Returns: a Session, Handler's record with type the harness; uid; name; span; data.subagent,
     data.sidechain_only, data.turns, data.normalized_name and data.models, and for cc and cx data.title, data.topic and
     data.cwd where the session gives them; meta.parent_uid where it names one.
     """
 
-    type, subtype = "session", None
+    type = "session"
 
     RECOGNIZERS = (
         ("cx", "_is_codex"), ("gemini", "_is_gemini"), ("cc", "_is_claude_code"),
@@ -670,7 +663,7 @@ class SessionHandler(FileHandler):
         mainline = any(message.get("isSidechain") is False for message in messages)
         sidechain = any(message.get("isSidechain") is True for message in messages)
         span = cls.spanning(times)
-        record.subtype, record.uid, record.name, record.span = harness, uid, cls._topic(turns) or uid, span
+        record.type, record.uid, record.name, record.span = harness, uid, cls._topic(turns) or uid, span
         record.data.update(subagent=subagent, sidechain_only=sidechain and not mainline, turns=len(turns),
                               normalized_name=cls.normalized_name(path, uid, turns, span))
         if parent_uid:
@@ -716,12 +709,12 @@ class SessionHandler(FileHandler):
 
     @classmethod
     def parse_messages(cls, harness: str, messages: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...],
-                       offset: int = 0, uid: str | None = None) -> tuple[dict[str, Any], list[Event]]:
+                       offset: int = 0, uid: str | None = None) -> tuple[dict[str, Any], list[Record]]:
         """The session and its session messages from the messages a harness wrote: the whole file, or the messages
         after the offset ones read before, each numbered by its place in the file, counted from 1. Every message is a
         session message: user, agent, thinking, tool_use or tool_result as Linked Data reads them, else the type its
         harness gives it, such as system, attachment or ai-title. A Codex delta names no session, so its uid is given. The session's times are the first and last of its
-        session messages of Linked Data's subtypes (a resumed session's copied messages are out of time order); with none, its
+        session messages of Linked Data's message types (a resumed session's copied messages are out of time order); with none, its
         messages', a moment when they are one (a Codex session opened and left). Linked Data's sessions API reads
         what a session hook sends through this, as SessionHandler.parse reads its file."""
         if harness == "cc":
@@ -730,7 +723,7 @@ class SessionHandler(FileHandler):
             session, session_messages = cls._codex_messages(messages, offset, uid)
         else:
             raise NotImplementedError(f"the messages of cc and cx are read into session messages, not those of {harness}")
-        times = [message.ts for message in session_messages if message.subtype in MESSAGE_SUBTYPES] or [
+        times = [message.ts for message in session_messages if message.type in MESSAGE_TYPES] or [
             datetime.fromisoformat(message["timestamp"]) for message in messages if message.get("timestamp")]
         session["times"] = [min(times), max(times)] if times else []
         return session, session_messages
@@ -777,14 +770,14 @@ class SessionHandler(FileHandler):
         return value if isinstance(value, str) else None
 
     @classmethod
-    def _session_message(cls, uid: str | None, message: Mapping[str, Any], n: int, subtype: str | None,
-                         text: str) -> Event:
-        """A session message as Linked Data holds it (session_message 31), an event: its subtype, its time, its name
+    def _session_message(cls, uid: str | None, message: Mapping[str, Any], n: int, message_type: str | None,
+                         text: str) -> Record:
+        """A session message as Linked Data holds it (# sessions, Message): its type what the line is, its time, its name
         the first line of its text, the message as its data, and in meta its id in its harness and its place in the
         file. The data drops the NUL character, which Postgres holds in no text or JSON, as a name does."""
-        return Event(type="session_message", subtype=subtype,
-                     ts=datetime.fromisoformat(message["timestamp"]) if message.get("timestamp") else None,
-                     name=cls.first_line(text) or subtype, data=cls._without_nul(dict(message)), meta={"uid": uid, "line": n})
+        return Record(type=message_type,
+                      span=TimeSpan(ts=datetime.fromisoformat(message["timestamp"])) if message.get("timestamp") else None,
+                      name=cls.first_line(text) or message_type, data=cls._without_nul(dict(message)), meta={"uid": uid, "line": n})
 
     @classmethod
     def _without_nul(cls, value: Any) -> Any:
@@ -798,8 +791,8 @@ class SessionHandler(FileHandler):
         return value
 
     @classmethod
-    def _claude_messages(cls, messages, offset: int, uid: str | None) -> tuple[dict[str, Any], list[Event]]:
-        """A user or an assistant message has a subtype, its id its uuid. A subagent run's messages name the run,
+    def _claude_messages(cls, messages, offset: int, uid: str | None) -> tuple[dict[str, Any], list[Record]]:
+        """A user or an assistant message has a type, its id its uuid. A subagent run's messages name the run,
         agentId, and the session that spawned it, sessionId. A message marked isMeta is not a prompt. An ai-title,
         agent-name or custom-title message names the session."""
         session = {"uid": uid, "parent_uid": None, "title": None, "topic": None, "name": None, "cwd": None, "models": set()}
@@ -832,17 +825,17 @@ class SessionHandler(FileHandler):
             types = {block.get("type") for block in blocks}
             if kind == "user" and not message.get("isMeta") and "text" in types:
                 cls._prompted(session, cls._text_of(blocks, ("text",)))
-            subtype = ("tool_result" if "tool_result" in types else "user" if kind == "user"
+            message_type = ("tool_result" if "tool_result" in types else "user" if kind == "user"
                        else "tool_use" if "tool_use" in types else "agent" if "text" in types else "thinking")
             text = (" ".join(block.get("name", "") for block in blocks if block.get("type") == "tool_use")
-                    if subtype == "tool_use" else cls._text_of(blocks))
-            session_messages.append(cls._session_message(message["uuid"], message, n, subtype, text))
+                    if message_type == "tool_use" else cls._text_of(blocks))
+            session_messages.append(cls._session_message(message["uuid"], message, n, message_type, text))
         return session, session_messages
 
     @classmethod
-    def _codex_messages(cls, messages, offset: int, uid: str | None) -> tuple[dict[str, Any], list[Event]]:
+    def _codex_messages(cls, messages, offset: int, uid: str | None) -> tuple[dict[str, Any], list[Record]]:
         """The first session_meta message names the session, its folder and the session that spawned it. A
-        response_item of a message, a tool call or a tool's output has a subtype. Codex gives a message no id, so its
+        response_item of a message, a tool call or a tool's output has a type. Codex gives a message no id, so its
         id is made from the session's uid and its place. The AGENTS.md Codex reads into a session is not a prompt."""
         session = {"uid": uid, "parent_uid": None, "title": None, "topic": None, "name": None, "cwd": None, "models": set()}
         session_messages, named = [], False
@@ -861,16 +854,16 @@ class SessionHandler(FileHandler):
                 session_messages.append(cls._session_message(message_uid, message, n, own, ""))
                 continue
             if payload["type"] == "message":
-                subtype, text = CODEX_ROLES[payload["role"]], cls._text_of(payload.get("content"))
+                message_type, text = CODEX_ROLES[payload["role"]], cls._text_of(payload.get("content"))
                 if payload["role"] == "user" and not text.startswith(CODEX_INSTRUCTIONS):
                     cls._prompted(session, cls._text_of(payload.get("content"), ("text",)))
             elif payload["type"].endswith("_output"):
-                subtype, text = "tool_result", cls._text_of(payload.get("output"))
+                message_type, text = "tool_result", cls._text_of(payload.get("output"))
             elif payload["type"] == "agent_message":
-                subtype, text = "agent", cls._text_of(payload.get("content") or payload.get("text"))
+                message_type, text = "agent", cls._text_of(payload.get("content") or payload.get("text"))
             else:
-                subtype, text = "tool_use", payload.get("name") or ""
-            session_messages.append(cls._session_message(message_uid, message, n, subtype, text))
+                message_type, text = "tool_use", payload.get("name") or ""
+            session_messages.append(cls._session_message(message_uid, message, n, message_type, text))
         return session, session_messages
 
     @classmethod
@@ -1440,15 +1433,15 @@ class ExportHandler(FileHandler):
     content is text or multimodal_text; Anthropic's (claude) have a uuid and chat_messages, and are read in order. A
     list of anything else, or of both, raises.
 
-    sessions(path) gives each conversation as a Session: subtype the harness; uid its id; name its title, else its
+    sessions(path) gives each conversation as a Session: type the harness; uid its id; name its title, else its
     topic, else its uid; created and updated its own times; span from the first of its times and its messages' to the
     last; data.title, data.topic, data.turns, data.models and data.normalized_name, as SessionHandler names a session.
 
-    Returns: an Activity, Handler's record with subtype export; data.harness and data.sessions, how many
+    Returns: Handler's record with type export; data.harness and data.sessions, how many
     conversations; span from the first of its sessions to the last.
     """
 
-    type, subtype = "fs_node", "export"
+    type = "export"
 
     # harness -> what its conversations have, the keys of a conversation's id and its own times
     SHAPES = {"chatgpt": (("mapping", Mapping), ("current_node", str)), "claude": (("chat_messages", list), ("uuid", str))}
@@ -1456,10 +1449,10 @@ class ExportHandler(FileHandler):
     TIMES = {"chatgpt": ("create_time", "update_time"), "claude": ("created_at", "updated_at")}
 
     @classmethod
-    def parse(cls, path: str | Path) -> Activity:
-        record = Activity(**vars(super().parse(path)))
+    def parse(cls, path: str | Path) -> Record:
+        record = super().parse(path)
         sessions = list(cls.sessions(path))
-        record.data.update(harness=sessions[0].subtype, sessions=len(sessions))
+        record.data.update(harness=sessions[0].type, sessions=len(sessions))
         record.span = cls.spanning([time for session in sessions if session.span for time in (session.span.start, session.span.end)])
         return record
 
@@ -1487,7 +1480,7 @@ class ExportHandler(FileHandler):
             data = {"title": title or None, "topic": topic or None, "turns": len(turns),
                     "models": list(SessionHandler._models((conversation,))) or None,
                     "normalized_name": SessionHandler.normalized_name(path, uid, turns, span)}
-            yield Session(type=SessionHandler.type, subtype=harness, uid=uid, name=title or topic or uid, span=span,
+            yield Session(type=harness, uid=uid, name=title or topic or uid, span=span,
                           created=created, updated=updated, data={key: value for key, value in data.items() if value is not None})
 
     @classmethod
@@ -1524,16 +1517,16 @@ class SessionFolderHandler(FolderHandler):
     session folder in .gemini/antigravity-cli/brain. Its sessions are the session files below it at any depth, all of
     one harness: their harness, their uid when they agree on one, how many there are and their span are its data.
 
-    Returns: FolderHandler's record, an Activity, with subtype sessionfolder; data.harness, data.sessions, how many, and data.uid
+    Returns: FolderHandler's record, with type sessionfolder; data.harness, data.sessions, how many, and data.uid
     where they agree on one; span from the first of its sessions to the last.
     """
 
     @classmethod
-    def parse(cls, path: str | Path) -> Activity:
+    def parse(cls, path: str | Path) -> Record:
         record = super().parse(path)
         path = Path(path).absolute()
         sessions = list(cls._sessions(path))
-        harnesses = SessionHandler._uniq([session.subtype for session in sessions] + [SessionHandler._home_harness(path)])
+        harnesses = SessionHandler._uniq([session.type for session in sessions] + [SessionHandler._home_harness(path)])
         if len(harnesses) != 1:
             raise ValueError(f"{path}: a session folder holds one harness, not {harnesses}")
         uids = {session.uid for session in sessions if session.uid}
@@ -1549,28 +1542,27 @@ class SessionFolderHandler(FolderHandler):
         .system_generated/logs/chunks holds pieces of the transcripts beside it, cut mid-message, and is not entered."""
         for member in sorted(path.iterdir()):
             found = probe(member)
-            if found.subtype in FOLDERS and not member.match(AGY_CHUNKS):
+            if found.type in FOLDERS and not member.match(AGY_CHUNKS):
                 yield from cls._sessions(member)
             elif found.type == "session":
                 yield SessionHandler.parse(member)
 
 
-# The handler that reads a record of a type and subtype; a link, a junction, an offline file or an ignored path has none.
-HANDLERS: dict[tuple[str, str | None], type[Handler]] = {
-    (handler.type, handler.subtype): handler
+# The handler that reads a file of a type; a link, a junction, an offline file or an ignored path has none.
+HANDLERS: dict[str, type[Handler]] = {
+    handler.type: handler
     for handler in (FolderHandler, FileHandler, SqliteHandler, MarkdownHandler, CSVHandler, LogHandler, EmailHandler,
                     SessionHandler, ExportHandler, SessionFolderHandler, WorkFolderHandler, ProjectsFolderHandler)
 }
-# The subtypes of the handlers that read a folder.
-FOLDERS = tuple(handler.subtype for handler in HANDLERS.values() if issubclass(handler, FolderHandler))
+# The types of the handlers that read a folder.
+FOLDERS = tuple(handler.type for handler in HANDLERS.values() if issubclass(handler, FolderHandler))
 
 
 def probe(path: str | Path) -> Record:
-    """gppu's probe_path as a Record: nothing read. A path probe_path gives a handler is that handler's type and
-    subtype; a link, a junction, an offline file and an ignored path are fs_node with that as subtype, and no handler
-    reads them.
+    """gppu's probe_path as a Record: nothing read. A path probe_path gives a handler is that handler's type; a link, a
+    junction, an offline file and an ignored path are that type, and no handler reads them.
 
-    Returns: type and subtype; name the path's name; updated, and created where the stat has a birth time, each a time valid_time takes, in local
+    Returns: type; name the path's name; updated, and created where the stat has a birth time, each a time valid_time takes, in local
     time; meta.size a file's size; data.target a link's or a junction's target."""
     path = Path(path).absolute()
     probed = probe_path(path)
@@ -1583,7 +1575,7 @@ def probe(path: str | Path) -> Record:
         record.data["target"] = str(probed["target"])
     if probed["handler"]:
         handler = next(handler for handler in HANDLERS.values() if handler.__name__ == probed["handler"])
-        record.type, record.subtype = handler.type, handler.subtype
+        record.type = handler.type
     else:
-        record.type, record.subtype = "fs_node", probed["status"]
+        record.type = probed["status"]
     return record

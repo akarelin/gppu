@@ -275,8 +275,8 @@ def test_a_folder_stored_before_its_handler_existed_is_identified_again(tmp_path
 
     def before(path):   # as gppufs read Work before WorkFolderHandler existed
         record = probe(path)
-        if record.subtype == handlers.WorkFolderHandler.subtype:
-            record.subtype = handlers.FolderHandler.subtype
+        if record.type == handlers.WorkFolderHandler.type:
+            record.type = handlers.FolderHandler.type
         return record
     monkeypatch.setattr(handlers, 'probe', before)
     fs = DesktopFileSystem({'D': GppuFileSystem(tmp_path)})
