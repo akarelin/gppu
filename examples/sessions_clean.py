@@ -7,25 +7,24 @@ from pathlib import Path, PurePosixPath
 
 from gppu import Env, glob
 from gppu.fs.gppufs import GppuFileSystem
+from gppu.fs.handlers import SessionHandler
 
 
-def sessions(fs: GppuFileSystem, keep: float) -> dict[str, dict]:
+def sessions(fs: GppuFileSystem) -> dict[str, dict]:
     """The finished sessions in a harness's folder, each with its files and its subagents', by the session's uid. The
-    listing probes, reading nothing; each finished session is read whole by its handler once, the index keeping it."""
+    listing probes, reading nothing; each session is read whole by its handler once, the index keeping it."""
     found = {}
     rows = {fs._key(row['name']): row for row in fs.ls('', recurse=True) if row['type'] == 'file'}
     for path, row in rows.items():
-        if row['gppu']['record']['type'] != 'session':
-            continue
+        if row['gppu']['record']['type'] not in ('session', *SessionHandler.UID):
+            continue   # a session is probed as one and read as its harness's
         if any(f'{folder}.jsonl' in rows for folder in PurePosixPath(path).parents):
             continue   # in a session's own folder, which moves with it
         hours = (time.time() - row['mtime']) / 3600
-        if hours < keep:
-            continue
         parsed = fs.info(path, refresh=True)['gppu']   # its handler reads it once; the index keeps what it read
         record, unread = parsed.get('record') or {}, parsed.get('unread')
         subagent = (record.get('data') or {}).get('subagent')
-        uid = record['meta'].get('parent_uid') if subagent else record.get('uid') or path
+        uid = (record['meta'].get('parent_uid') if subagent else record.get('uid')) or path
         session = found.setdefault(uid, {'paths': [], 'root': False, 'typed': False, 'unread': None, 'hours': hours, 'turns': 0})
         session['paths'].append(path)
         session['unread'] = session['unread'] or unread
@@ -53,8 +52,8 @@ def main() -> None:
     for folder in glob('sessions'):
         fs = GppuFileSystem(Path(glob('home')).expanduser() / folder, cache=False)   # the harness watches its folder: no index file in it
         archive = {to: GppuFileSystem(Path(glob('archive')) / glob(f'buckets/{to}') / folder) for to in ('human', 'orphan', 'damaged')}
-        for uid, session in sorted(sessions(fs, keep).items()):
-            if (to := bucket(session)) is None:
+        for uid, session in sorted(sessions(fs).items()):
+            if (to := bucket(session)) is None or session['hours'] < keep:   # a session is finished when none of its files changed for keep_hours
                 continue
             print(f'{to:8} {session["hours"]:7.0f}h {session["turns"]:5} turns {folder} {uid} {session["unread"] or ""}')
             if run:
