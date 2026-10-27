@@ -195,7 +195,9 @@ class GppuFileSystem(AbstractFileSystem):
         AND coalesce(metadata->>'$.gppu.record.type', '') NOT IN ({", ".join(f"'{s}'" for s in handlers.IGNORED)}))'''
 
   def __init__(self, location: str | Path, locations: Mapping[str, Mapping[str, str]] | None = None,
-               index: GppuIndex | None = None, **storage_options: Any) -> None:
+               index: GppuIndex | None = None, cache: bool = True, **storage_options: Any) -> None:
+    """`cache=False` writes no index file into the location: a folder another program watches, such as a harness's
+    sessions, holds its index in memory for this instance, as another host's share does."""
     if location is None:
       raise ValueError('location is required')
     if '://' not in str(location) and not Path(location).is_absolute():
@@ -209,7 +211,7 @@ class GppuFileSystem(AbstractFileSystem):
     self._index = index              # the index that answers first; the file beside the location is a cache
     # Only the host a location belongs to writes its indexes: an index file is written only on this host's own disk. Another
     # host's share and every other store hold theirs in memory for this instance, read from the store and never written back.
-    self._cacheless = not isinstance(self.fs, LocalFileSystem) or _remote(self.root)
+    self._cacheless = not cache or not isinstance(self.fs, LocalFileSystem) or _remote(self.root)
     self._memory: dict[str, sqlite3.Connection] = {}   # a remote store's index, held for this instance
     self._working: dict[str, list] = {}   # an index's path -> [its copy in the cache, the file it was copied from, changed]
     self._scratch: tempfile.TemporaryDirectory | None = None   # where the copies are, made at the first write
@@ -1334,8 +1336,8 @@ class GppuFileSystem(AbstractFileSystem):
         row = cached[0]
         if recurse and (row['gppu']['type'] == 'folder' or (row['gppu']['is_container'] and cached[1] is not None)):
           # a recursion enters folders, and an archive only when the index holds its listing: it never opens one
-          below = self.ls_sync(row['name'], recurse=True, live=live)
-          result.append(row)
+          below = self.ls_sync(row['name'], recurse=True, refresh=refresh, live=live)
+          result.append(self._stored(child['path'])[0])   # the folder as reading it left it
           result.extend(below)
         else:
           result.append(row)

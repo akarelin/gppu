@@ -43,7 +43,7 @@ def main() -> None:
     Env.from_argv(sys.argv[1:])
     run, keep = glob('run') is True, float(glob('keep_hours'))
     for folder in glob('sessions'):
-        fs = GppuFileSystem(Path(glob('home')).expanduser() / folder)
+        fs = GppuFileSystem(Path(glob('home')).expanduser() / folder, cache=False)   # the harness watches its folder: no index file in it
         archive = {to: GppuFileSystem(Path(glob('archive')) / glob(f'buckets/{to}') / folder) for to in ('human', 'orphan', 'damaged')}
         for uid, session in sorted(sessions(fs).items()):
             hours = (time.time() - session['modified']) / 3600
