@@ -32,7 +32,7 @@ def test_file_provider_is_available_from_env_without_registration(tmp_path):
   Env.from_dict({'connections': {'disk': {'provider': 'file'}}, 'locations': {
     'files': {'canonical': tmp_path.as_uri(), 'connection': 'disk'},
   }})
-  catalog = GppuCatalog()
+  catalog = GppuCatalog(Env.glob_dict(''))
   assert catalog.schemas == [{'scheme': 'file://', 'implementation': 'FileSystem'}]
   container = catalog.location('files').container()
   with container.read('item.txt').content as stream:
@@ -54,7 +54,7 @@ def test_configured_provider_loads_without_application_registration(monkeypatch)
     'remote': {'provider': 'test_external_provider.External'},
   }, 'locations': {'remote': {'canonical': 'external://tenant', 'connection': 'remote'},
                    'other': {'canonical': 'external://tenant/other', 'connection': 'remote'}}})
-  catalog = GppuCatalog()
+  catalog = GppuCatalog(Env.glob_dict(''))
   location = catalog.location('remote')
   assert isinstance(location.provider, External)
   assert catalog.location('other').provider is location.provider

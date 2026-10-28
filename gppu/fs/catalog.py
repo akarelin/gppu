@@ -1,7 +1,7 @@
 r"""The catalog: where every location is and what is in each.
 
   GppuCatalog             the locations as Location objects, each with the Provider of its connection
-  connect(), catalog()    the locations from Linked Data's /fs/locations, through its API at the address connect() is given
+  catalog(records)        the catalog of Linked Data's location records, as its user read them from /fs/locations
   Catalog(dsn)            what is in the locations: the index in Postgres (schema lake), its API /lake/catalog, and
   CatalogFileSystem(url)  the index through that API as an fsspec filesystem, read-only"""
 import importlib
@@ -10,7 +10,7 @@ import os
 import re
 import socket
 from collections import Counter
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from copy import deepcopy
 from datetime import date, datetime
 from pathlib import Path, PurePosixPath
@@ -19,12 +19,11 @@ from typing import Any
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 from uuid import UUID
 
-import httpx
 import yaml
 from fsspec.spec import AbstractFileSystem
 
 from ..app import glob
-from ..gppu import Env, TemplateSet, TimeSpan, full_path, sync, y2path, y2uri
+from ..gppu import TemplateSet, TimeSpan, full_path, sync, y2path, y2uri
 from . import FileSystem, Location, Provider
 from .gppufs import GppuFileSystem
 
@@ -34,11 +33,11 @@ from .gppufs import GppuFileSystem
 class GppuCatalog(AbstractFileSystem):
   """A catalog of Locations keyed by uid.
 
-  After ``Env.from_env(...)`` or ``Env.from_dict(...)``, ``GppuCatalog()``
-  resolves the configured connections and nested Locations. ``ls(recurse=True)``
-  walks that configuration tree. ``location(uid)`` returns the Location whose
-  ``ls`` and ``walk`` enumerate its child Locations. An explicit mapping
-  accepts the same data from another configuration loader.
+  ``GppuCatalog(rows)`` resolves the connections and nested Locations its user
+  gives it: the rows are loaded by whoever uses the catalog, from its
+  configuration or from Linked Data. ``ls(recurse=True)`` walks that tree.
+  ``location(uid)`` returns the Location whose ``ls`` and ``walk`` enumerate
+  its child Locations.
 
   FileSystem is built in. A connection's ``provider`` can name an external
   Provider by its Python module and class; configuration loading imports it and
@@ -70,19 +69,15 @@ class GppuCatalog(AbstractFileSystem):
   protocol = 'gppu-catalog'
   cachable = False
 
-  def __init__(self, catalog: str | Path | Mapping | None = None, host: str | None = None,
+  def __init__(self, catalog: str | Path | Mapping, host: str | None = None,
                location_types: Mapping | None = None, templates: Mapping[str, str] | None = None) -> None:
     self.location_types = {'file': FileSystem}
     if location_types is not None:
       self.location_types.update(location_types)
     self.templates = templates
     self._providers: dict[str | None, Provider] = {}
-    self._configuration = catalog is None or isinstance(catalog, Mapping)
+    self._configuration = isinstance(catalog, Mapping)
     if self._configuration:
-      if catalog is None:
-        if not Env.initialized:
-          raise RuntimeError('load configuration with Env before constructing GppuCatalog')
-        catalog = Env.glob_dict('')
       super().__init__()
       self.host = host or socket.gethostname().split('.')[0].lower()
       self.root = 'gppu-catalog://'
@@ -129,9 +124,9 @@ class GppuCatalog(AbstractFileSystem):
   def _load_configuration(self) -> None:
     """Resolve configured Locations without opening any provider or index.
 
-    The input is the tree already loaded by Env, or the same plain data returned
-    by a database loader. Nested paths are provider-relative, never appended to
-    their parent's path. Loading does not mutate Env or the supplied mapping.
+    The input is the tree the catalog's user loaded, from its configuration or
+    from a database. Nested paths are provider-relative, never appended to
+    their parent's path. Loading does not mutate the supplied mapping.
     """
     config = self._config
     definitions = config['connections']
@@ -447,25 +442,7 @@ class GppuCatalog(AbstractFileSystem):
 # endregion
 # region Linked Data
 
-client: httpx.Client   # the API, opened by connect()
 NOT_IN_USE = ('discarded', 'rejected')   # the statuses of a location not in use; an archived one is out of sight (# Flags)
-
-
-def connect(url: str) -> None:
-    """Open Linked Data's API at url. One connection serves every call: a connection a call left 11,811 sockets waiting after one walk
-    and ran this host out of ports (WinError 10048)."""
-    global client
-    if not url:
-        raise ValueError("Linked Data's API address is required")
-    client = httpx.Client(base_url=url, timeout=300)
-
-
-def ld(method: str, path: str, body: Any = None, **params: Any) -> Any:
-    """One call to the API, its answer as JSON; a refusal raises with what the API said (a 422 carries Postgres' reason), a 404 as LookupError."""
-    r = client.request(method, path, json=body, params=params)
-    if r.is_error:
-        raise (LookupError if r.status_code == 404 else ValueError)(f'{method} {path}: {r.status_code} {r.text}')
-    return r.json()
 
 
 class Drives(FileSystem):
@@ -482,14 +459,14 @@ class Drives(FileSystem):
         return super().local(uri)
 
 
-def catalog(**location_types: Any) -> GppuCatalog:
-    """gppufs's catalog of Linked Data's locations (GET /fs/locations): every location in use that has a uid and a
+def catalog(records: list[dict], **location_types: Any) -> GppuCatalog:
+    """gppufs's catalog of Linked Data's location records, the items of GET /fs/locations as the catalog's user read them: every location in use that has a uid and a
     canonical uri, the two a gppufs Location is known and reached by, as a row of gppufs's configuration table, its data with its id,
     name, parent's uid and tags. A location in use is not discarded or rejected, inside locations that are in use too, since
     a location is part of the location above it; its connection is its root location, whose data.handler holds the connection's
     parameters. location_types are the Providers a caller adds by scheme, as GppuCatalog takes them; gppufs's FileSystem reaches
     file://, and in a Windows host's WSL, Drives does."""
-    records = {r['id']: r for r in ld('GET', '/fs/locations')['items']
+    records = {r['id']: r for r in records
                if r['status'] not in NOT_IN_USE and r['data'].get('uid') and r['data'].get('canonical')}
 
     def root(r: dict) -> dict | None:
@@ -614,12 +591,14 @@ def where(tree: dict[str, dict[str, Any]], path: str) -> tuple[dict[str, Any] | 
 
 
 class Catalog:
-    """The catalog in the database at dsn, read only."""
+    """The catalog in the database at dsn, read only; records reads Linked Data's location records, the items of GET /fs/locations,
+    as the catalog's user reaches Linked Data."""
 
-    def __init__(self, dsn: str) -> None:
+    def __init__(self, dsn: str, records: Callable[[], list[dict]]) -> None:
         if not dsn:
             raise ValueError("the catalog's database is required")
         self.dsn = dsn
+        self.records = records
         self.lake_ids: dict[str, int] = {}   # each location's Linked Data id -> the catalog's id for it, as locations() last read them
         self._columns: list[str] | None = None   # columns(), read once
 
@@ -631,8 +610,7 @@ class Catalog:
     def locations(self) -> list[dict[str, Any]]:
         """Linked Data's locations in use whose entries are in the catalog, with every location above them, so they make one tree:
         each its id, name, parent's id and, where it has entries, the catalog's id for it."""
-        records = {r['id']: r for r in ld('GET', '/fs/locations')['items']
-                   if r['status'] not in NOT_IN_USE}
+        records = {r['id']: r for r in self.records() if r['status'] not in NOT_IN_USE}
         kept: set[str] = set()
         for r in records.values():
             if 'lake_id' in r['meta']:
@@ -787,7 +765,7 @@ class CatalogFileSystem(AbstractFileSystem):
     def __init__(self, url: str = '', client: Any = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         import httpx
-        self.client = client or httpx.Client(base_url=url.rstrip('/'), timeout=300)   # as gppu.fs.catalog.connect gives each call
+        self.client = client or httpx.Client(base_url=url.rstrip('/'), timeout=300)
         self._tree: dict[str, dict[str, Any]] | None = None   # Linked Data's locations by path, read once
         self._listed: dict[str, dict[str, dict[str, Any]]] = {}   # each folder listed -> its entries by name
 

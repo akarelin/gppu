@@ -2,6 +2,8 @@
 reaches, with its index beside it, the sources desktop.yaml names, and the catalog through its API, as the Catalog folder."""
 from pathlib import Path
 
+import httpx
+
 from gppu import App, Env, Info
 from gppu.fs import catalog as locations
 from gppu.fs.catalog import CatalogFileSystem
@@ -11,8 +13,8 @@ from gppu.fs.gppufs import GppuFileSystem
 
 class Desktop(App):
     def run(self):
-        locations.connect(self.my('ld'))
-        catalog = locations.catalog()
+        records = httpx.get(f"{self.my('ld')}/fs/locations", timeout=300).raise_for_status().json()['items']
+        catalog = locations.catalog(records)
         folders = locations.reached(catalog)
         sources = {catalog.locations[row['location']]['name']: locations.filesystem(catalog, row['location'], folders)
                    for row in folders.values()}

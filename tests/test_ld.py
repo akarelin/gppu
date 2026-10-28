@@ -135,7 +135,6 @@ def test_gppufs_makes_its_catalog_from_the_locations(api):
                                        'data': {'uid': 'cat-inner', 'canonical': 'file:///cat-root/inner'}}))
     ok(api.post('/fs/locations', json={'type': 'location', 'parent_id': root['id'], 'flags': 16,
                                        'data': {'uid': 'cat-archived', 'canonical': 'file:///cat-root/archived'}}))
-    locations.client = api
-    catalog = locations.catalog()
+    catalog = locations.catalog(ok(api.get('/fs/locations'))['items'])
     assert {'cat-root', 'cat-inner'} <= catalog.locations.keys() and 'cat-archived' not in catalog.locations
     assert catalog.locations['cat-inner']['parent'] == 'cat-root'

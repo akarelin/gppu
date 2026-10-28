@@ -39,10 +39,10 @@ def refuse_filesystem(monkeypatch):
   monkeypatch.setattr(GppuFileSystem, '__init__', opened)
 
 
-def test_native_env_catalog_preserves_input_and_resolves_nested_templates():
+def test_a_catalog_of_env_rows_preserves_input_and_resolves_nested_templates():
   before = deepcopy(CONFIG)
   Env.from_dict(CONFIG)
-  catalog = GppuCatalog(location_types={'m365': Provider, 'lake': Provider})
+  catalog = GppuCatalog(Env.glob_dict(''), location_types={'m365': Provider, 'lake': Provider})
   assert CONFIG == before
   assert Env.glob_dict('') == before
   assert catalog.ls_sync(detail=False) == ['m365', 'lake']
