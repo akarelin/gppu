@@ -772,7 +772,9 @@ class GppuFileSystem(ChainedFileSystem):
     # fsspec's archive info omits an empty archive root; it is still listable.
     native = {root: {'name': root, 'type': 'directory', 'size': 0}
       if isinstance(fs, AbstractArchiveFileSystem) and root in ('', '/') else fs.info(root)}
-    if native[root]['type'] != 'directory' or native[root].get('islink'):
+    local = isinstance(fs, LocalFileSystem)
+    linked = lambda item: item.get('islink') or (local and os.path.isjunction(item['name']))   # a junction is a link fsspec does not see
+    if native[root]['type'] != 'directory' or linked(native[root]):
       return native
     if _probe_name(PurePosixPath(root).name, True).type == 'ignored':
       return native
@@ -781,8 +783,8 @@ class GppuFileSystem(ChainedFileSystem):
         if not self._index_name.fullmatch(PurePosixPath(item['name']).name):
           native[item['name'].rstrip('/')] = fs.info(item['name'])
       for name in tuple(directories):
-        if _probe_name(PurePosixPath(name).name, True).type == 'ignored' or directories[name].get('islink'):
-          del directories[name]
+        if _probe_name(PurePosixPath(name).name, True).type == 'ignored' or linked(directories[name]):
+          del directories[name]   # listed, never entered: a link or a junction is not followed
     return native
 
   def _live(self, key: str, *, container: bool = False) -> None:
@@ -1290,7 +1292,8 @@ class GppuFileSystem(ChainedFileSystem):
         row = cached[0]
         if recurse and (row['gppu']['type'] == 'folder' or (row['gppu']['is_container'] and cached[1] is not None)):
           # a recursion enters folders, and an archive only when the index holds its listing: it never opens one
-          below = self.ls_sync(row['name'], recurse=True, refresh=refresh, live=live)
+          # a refresh here read everything below already: the folders below are listed from what it wrote, not read again
+          below = self.ls_sync(row['name'], recurse=True, live=live and not refresh)
           result.append(self._stored(child['path'])[0])   # the folder as reading it left it
           result.extend(below)
         else:
