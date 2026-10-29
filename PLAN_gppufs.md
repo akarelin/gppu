@@ -35,7 +35,9 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - Host tools (RAN `Hosts/preservator`, `Hosts/tui` session scripts): done, preservator saving through the Lake, `platform_for_os` restored
 - Releases and deploys of the stacks: a gppu release from ld-standard, Alex's
 - with a catalog, gppufs lists and opens through it what it holds no index for, SharePoint and archives among them: done; the catalog's address is the `catalog` option, from fsspec's configuration (`FSSPEC_GPPU_CATALOG`), none by default; bytes come from the Lake at the entry's address
-- each index row carries its file's UUID (`uuid_create(0x10, 0x02)`, fs.files in `Linked Data.md`), kept through a refresh, a change and a move: done; an index on a store this host does not own holds its ids in memory until its own host writes it; finding a file by its UUID: not started
+- each index row carries a UUID, made by gppufs (`uuid_create(0x1002)`), kept through a refresh, a change and a move: done; an index on a store this host does not own holds its ids in memory until its own host writes it; finding an entry by its UUID: not started
+- the handler generates the UUID, an instance's or a file's by its target: not started; which handlers target which is in the gppufs note's "For Alex to decide"
+- the gppufs and Lake notes in `Linked Data.md`'s style, conventions from the spec and the code, then their processes, life cycles and types as unverified details; the earlier text of each its Implementation note: done
 - gppufs on fsspec's `AsyncFileSystem`, its callers moved: done in gppu and RAN, the suite passes, the session cleaner's dry run finds the same sessions; the admin API's inventory readers await `_ls` and `_info`: done
 - the catalog's Location binds this host's folder for a location reached through `handler.access`, not the canonical's: done
 - the Lake keeps its index at its root, never in its day folders: done, as the Lake on s1 already has it

@@ -9,6 +9,7 @@ What Alex instructed for gppufs, its catalog and their users, as plain statement
 - Settings are options; the cache folder holds an index only when asked to.
 - A URI initializes gppufs: it says what file system gppufs wraps and which parts of gppufs to start. After that gppufs is called with a path in any form.
 - Inside gppufs everything is a UUID. A URI determines its UUID and carries more information; URIs are for initializing gppufs and for handlers.
+- The handler generates the UUID of what it reads. It is an instance's or a file's by the handler's target; an instance is one copy of a file at one path.
 - gppufs works without the database and knows nothing about locations or the database.
 - gppufs can read where the catalog is from configuration; by default there is no catalog. With a catalog, gppufs lists and opens through it what it holds no index for, SharePoint and archives among them.
 - gppufs and the gppufs catalog are two file systems.
