@@ -40,7 +40,7 @@ async def clean(fs: GppuFileSystem, base: str, keep: float) -> list[tuple[str, s
     is not read and keeps its subagents; any other is read whole by its handler once, the index keeping it. A subagent
     goes where the session at the top of it went, which the listing gives before it."""
     went, parent, active, moves = {}, {}, set(), []
-    async for entry in fs.ls_iter(base):
+    async for entry in (entry async for _, _, files in fs._walk(base, detail=True) for entry in files.values()):
         if entry['type'] != 'file' or entry['gppu']['record']['type'] not in SESSION:
             continue
         path = entry['name']
@@ -51,7 +51,7 @@ async def clean(fs: GppuFileSystem, base: str, keep: float) -> list[tuple[str, s
             active.add(PurePosixPath(path).stem)   # a harness names a session's file by its uid
             row('active', entry['gppu']['record']['type'], hours, 0, PurePosixPath(path).name)
             continue
-        gppu = (await fs.info(path, refresh=True))['gppu']   # its handler reads it once; the index keeps what it read
+        gppu = (await fs._info(path, refresh=True))['gppu']   # its handler reads it once; the index keeps what it read
         record = gppu.get('record') or {}
         data = record.get('data') or {}
         if gppu.get('unread'):

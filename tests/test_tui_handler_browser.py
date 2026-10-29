@@ -54,7 +54,7 @@ def test_tui_tree_expands_folders_and_archives_shows_metadata_and_refreshes(tmp_
     async with app.run_test(size=(130, 40)) as pilot:
       await settled(app, pilot)
       assert labels(app) == [tmp_path.name, '.git', 'child', 'bundle.zip']
-      assert app.current['name'] == (await fs.info(tmp_path.as_posix()))['name']
+      assert app.current['name'] == (await fs._info(tmp_path.as_posix()))['name']
       await select(app, pilot, 'child')
       await pilot.press('right')
       await settled(app, pilot)
@@ -95,7 +95,7 @@ def test_tui_tree_expands_folders_and_archives_shows_metadata_and_refreshes(tmp_
       assert labels(app) == [tmp_path.name, '.git', 'child', 'added.txt', 'note.md', 'bundle.zip']
       async def denied(*args, **kwargs):
         raise PermissionError('source unavailable')
-      monkeypatch.setattr(fs, 'ls', denied)
+      monkeypatch.setattr(fs, '_ls', denied)
       await select(app, pilot, 'child')
       await pilot.press('r')
       await settled(app, pilot)
@@ -129,7 +129,7 @@ def test_tui_shows_the_catalog_as_a_tree_of_locations(tmp_path):
       await pilot.press('right')
       await settled(app, pilot)
       assert labels(app) == ['.catalog', 'outer', 'inner', 'a.txt']
-      assert app.listing.location_addresses == {row['name'] for row in await catalog.ls()}
+      assert app.listing.location_addresses == {row['name'] for row in await catalog._ls()}
       await select(app, pilot, 'inner')
       await pilot.press('right')
       await settled(app, pilot)
@@ -157,12 +157,12 @@ def test_tui_stays_responsive_while_a_listing_is_awaited(tmp_path):
     delegate = GppuFileSystem()
     entered, release = asyncio.Event(), asyncio.Event()
     class Filesystem:
-      async def ls(self, *args, **kwargs):
+      async def _ls(self, *args, **kwargs):
         entered.set()
         await release.wait()
-        return await delegate.ls(*args, **kwargs)
-      async def info(self, *args, **kwargs):
-        return await delegate.info(*args, **kwargs)
+        return await delegate._ls(*args, **kwargs)
+      async def _info(self, *args, **kwargs):
+        return await delegate._info(*args, **kwargs)
     app = HandlerBrowser(Filesystem(), tmp_path.as_posix())
     async with app.run_test(size=(130, 40)) as pilot:
       await asyncio.wait_for(entered.wait(), 5)

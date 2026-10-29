@@ -27,7 +27,7 @@ descendants = gppufs.ls(recurse=True)
 fresh_children = gppufs.ls(refresh=True)
 ```
 
-Inside a running event loop the same calls are awaited: `await gppufs.ls()`. The reading runs in a worker thread either way.
+Inside a running event loop the coroutines fsspec builds these calls on are awaited: `await gppufs._ls()`, `await gppufs._info()`. The reading runs in a worker thread either way.
 
 `ls` reads the folder live. Every entry it has not seen is identified: native attributes, the handlers that match, and for a file its byte count and name span. Nothing is parsed. A folder's file, folder and byte totals and span are null until that folder is refreshed, and `gppu.probed` is false. `ls(refresh=True)` probes the folder and everything below it; `info(file)` probes that one file the first time its details are asked for. Entries already in the index keep their indexed metadata until a refresh. An entry that is gone from the folder is dropped from the listing; its row is removed by the next refresh of that folder. Entering an archive lists its members the same way: identified from their names and bytes, none probed, folder totals null. A member is probed when its details are asked for; refreshing the archive probes all of them.
 

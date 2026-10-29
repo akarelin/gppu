@@ -141,11 +141,11 @@ class HandlerBrowser(TUIApp):
     try:
       address = self.address(entry)
       if entry.is_container:
-        rows = await self.gppufs.ls(address, refresh=refresh)
-        current = await self.gppufs.info(address)
+        rows = await self.gppufs._ls(address, refresh=refresh)
+        current = await self.gppufs._info(address)
         updated = self.listing.store(entry.id, current, rows)
       else:
-        current = await self.gppufs.info(address, refresh=refresh)
+        current = await self.gppufs._info(address, refresh=refresh)
         updated = self.listing.entry(current)
       tree.refresh_entry(entry.id, entry=updated, reload_children=entry.is_container)
       if tree.selected_entry is not None and tree.selected_entry.id == entry.id:
@@ -164,9 +164,9 @@ class HandlerBrowser(TUIApp):
   @work(exclusive=True, group='info')
   async def show_info(self, entry: TreeEntry) -> None:
     try:
-      metadata = await self.gppufs.info(self.address(entry))
+      metadata = await self.gppufs._info(self.address(entry))
       if metadata['type'] != 'directory' and not metadata['gppu']['probed']:
-        metadata = await self.gppufs.info(self.address(entry), refresh=True)  # a file selected is a file parsed
+        metadata = await self.gppufs._info(self.address(entry), refresh=True)  # a file selected is a file parsed
       self.show_metadata(metadata)
       self.query_one('#status', Static).update(self.current['name'])
     except Exception as error:

@@ -116,7 +116,7 @@ class Lake:
         here = self._here(uri)
         if here is None or not Path(here).is_file():
             raise LookupError(f'{uri}: the Lake holds no file there')
-        return self._row(self.files.info_sync(here, True))   # plainly, as an async route calls save too
+        return self._row(self.files.info(here, refresh=True))   # plainly, as an async route calls save too
 
     def path(self, uri: y2uri | str) -> str:
         """Where uri is below the Lake, as a client that has the Lake mounted joins it to the mount."""

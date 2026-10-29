@@ -4,6 +4,7 @@ r"""The catalog: where every location is and what is in each.
   catalog(records)        the catalog of Linked Data's location records, as its user read them from /fs/locations
   Catalog(dsn)            what is in the locations: the index in Postgres (schema lake), its API /lake/catalog, and
   CatalogFileSystem(url)  the index through that API as an fsspec filesystem, read-only"""
+import asyncio
 import functools
 import importlib
 import json
@@ -22,18 +23,19 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 from uuid import UUID
 
 import yaml
+from fsspec.asyn import AsyncFileSystem
 from fsspec.core import split_protocol
 from fsspec.spec import AbstractFileSystem
 
 from ..app import glob
-from ..gppu import TemplateSet, TimeSpan, full_path, sync, y2path, y2uri
+from ..gppu import TemplateSet, TimeSpan, full_path, y2path, y2uri
 from . import FileSystem, Location, Provider, _address, _below
 from .gppufs import GppuFileSystem
 
 
 # region locations
 
-class GppuCatalog(AbstractFileSystem):
+class GppuCatalog(AsyncFileSystem):
   """A catalog of Locations keyed by uid.
 
   ``GppuCatalog(rows)`` resolves the connections and nested Locations its user
@@ -383,13 +385,13 @@ class GppuCatalog(AbstractFileSystem):
       extra['source'] = source
     return {**row, 'gppu': {**row['gppu'], **extra}} if extra else row
 
-  @sync
-  async def info(self, path: str | Path | None = None, refresh: bool = False, **kwargs) -> dict:
-    """The catalog itself, or one entry served by its Location; awaited in a loop, called plainly outside one."""
-    return self.info_sync(path, refresh)
+  async def _info(self, path: str | Path | None = None, refresh: bool = False, **kwargs) -> dict:
+    """The catalog itself, or one entry served by its Location: fsspec's ``info``; inside an event loop
+    ``await catalog._info(path)``, read off the event loop either way."""
+    return await asyncio.to_thread(self._entry, path, refresh)
 
-  def info_sync(self, path: str | Path | None = None, refresh: bool = False) -> dict:
-    """``info`` on the calling thread."""
+  def _entry(self, path: str | Path | None = None, refresh: bool = False) -> dict:
+    """``info`` on the calling thread, what ``_info`` runs off the event loop."""
     with self._lock:
       if self._configuration:
         if refresh:
@@ -401,22 +403,21 @@ class GppuCatalog(AbstractFileSystem):
           self._load()
         return self._catalog_row()
       location = self._location(path)
-      return self._served(location, self.files.info_sync(path, refresh=refresh))
+      return self._served(location, self.files._entry(path, refresh=refresh))
 
-  @sync
-  async def ls(self, path: str | Path | None = None, detail: bool = True,
-               recurse: bool = False, refresh: bool = False, **kwargs) -> list:
+  async def _ls(self, path: str | Path | None = None, detail: bool = True,
+                recurse: bool = False, refresh: bool = False, **kwargs) -> list:
     """The Locations at the catalog root, otherwise the listing the owning Location gives.
 
-    Awaited inside an event loop, called plainly outside one. ``refresh=True``
+    fsspec's ``ls``; inside an event loop ``await catalog._ls(path)``, read off the event loop either way. ``refresh=True``
     at the root rereads ``locations.yaml``. Recursion from the root descends
     the Locations that have no parent Location; their subtrees hold the rest.
     """
-    return self.ls_sync(path, detail, recurse, refresh)
+    return await asyncio.to_thread(self._listing, path, detail, recurse, refresh)
 
-  def ls_sync(self, path: str | Path | None = None, detail: bool = True,
-              recurse: bool = False, refresh: bool = False) -> list:
-    """``ls`` on the calling thread."""
+  def _listing(self, path: str | Path | None = None, detail: bool = True,
+               recurse: bool = False, refresh: bool = False) -> list:
+    """``ls`` on the calling thread, what ``_ls`` runs off the event loop."""
     with self._lock:
       if self._configuration:
         return self._configured_listing(path, detail, recurse, refresh)
@@ -429,10 +430,10 @@ class GppuCatalog(AbstractFileSystem):
             continue
           result.append(self._location_row(location))
           if recurse:
-            result.extend(self.files.ls_sync(self._roots[location], recurse=True))
+            result.extend(self.files._listing(self._roots[location], recurse=True))
       else:
         location = self._location(path)
-        result = [self._served(location, row) for row in self.files.ls_sync(path, recurse=recurse, refresh=refresh)]
+        result = [self._served(location, row) for row in self.files._listing(path, recurse=recurse, refresh=refresh)]
       return result if detail else [row['name'] for row in result]
 
 # endregion

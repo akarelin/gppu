@@ -45,11 +45,11 @@ def test_a_catalog_of_env_rows_preserves_input_and_resolves_nested_templates():
   catalog = GppuCatalog(Env.glob_dict(''), location_types={'m365': Provider, 'lake': Provider})
   assert CONFIG == before
   assert Env.glob_dict('') == before
-  assert catalog.ls_sync(detail=False) == ['m365', 'lake']
-  assert catalog.ls_sync('m365', detail=False, recurse=True) == [
+  assert catalog.ls(detail=False) == ['m365', 'lake']
+  assert catalog.ls('m365', detail=False, recurse=True) == [
     'm365-karelin-graph', 'm365-karelin-graph/alex/contacts']
   location = catalog.location('m365-karelin-graph/alex/contacts')
-  contact = catalog.info_sync(location.uid)['gppu']
+  contact = catalog.info(location.uid)['gppu']
   assert location.parent.uid == 'm365-karelin-graph'
   assert str(location.uri) == 'm365://karelin/alex/contacts'
   assert contact['parent'] == 'm365-karelin-graph'
@@ -58,10 +58,10 @@ def test_a_catalog_of_env_rows_preserves_input_and_resolves_nested_templates():
   assert contact['canonical'] == 'm365://karelin/alex/contacts'
   assert catalog.connections[contact['connection']]['provider'] == 'm365'
   assert str(catalog.location('lake').uri_of('Contacts/person.json')) == 'lake://Contacts/person.json'
-  assert catalog.info_sync(contact['uid'])['gppu'] == contact
-  assert catalog.ls_sync('lake') == []
+  assert catalog.info(contact['uid'])['gppu'] == contact
+  assert catalog.ls('lake') == []
   contact['name'] = 'Changed outside catalog'
-  assert catalog.info_sync(contact['uid'])['gppu']['name'] == 'Contacts'
+  assert catalog.info(contact['uid'])['gppu']['name'] == 'Contacts'
 
 
 def test_plain_database_records_use_the_same_catalog_without_templates(tmp_path):
@@ -71,10 +71,10 @@ def test_plain_database_records_use_the_same_catalog_without_templates(tmp_path)
       'local-contacts': {'id': 123, 'path': '', 'connection': 'file', 'canonical': tmp_path.as_uri()},
     },
   })
-  assert catalog.info_sync('local-contacts')['gppu']['id'] == 123
+  assert catalog.info('local-contacts')['gppu']['id'] == 123
   container = catalog.location('local-contacts').container('Contacts')
   assert container.provider.local(container.uri) == tmp_path / 'Contacts'
-  assert catalog.ls_sync(detail=False, recurse=True) == ['local-contacts']
+  assert catalog.ls(detail=False, recurse=True) == ['local-contacts']
 
 
 @pytest.mark.parametrize('relative', ['../elsewhere', 'Contacts/../../elsewhere', '/etc/passwd', 'smb://s1/other'])
@@ -114,13 +114,13 @@ def test_duplicate_and_cyclic_locations_are_errors():
 def test_refresh_is_not_an_implicit_indexing_request():
   catalog = GppuCatalog(CONFIG, location_types={'m365': Provider, 'lake': Provider})
   with pytest.raises(ValueError, match='reload configuration explicitly'):
-    catalog.ls_sync(refresh=True)
+    catalog.ls(refresh=True)
   with pytest.raises(ValueError, match='reload configuration explicitly'):
-    catalog.info_sync('lake', refresh=True)
+    catalog.info('lake', refresh=True)
 
 
 def test_nested_paths_are_not_appended_twice():
   config = deepcopy(CONFIG)
   config['locations'][0]['locations'][0]['path'] = 'alex'
   catalog = GppuCatalog(config, location_types={'m365': Provider, 'lake': Provider})
-  assert catalog.info_sync('m365-karelin-graph/alex/contacts')['gppu']['path'] == 'alex/contacts'
+  assert catalog.info('m365-karelin-graph/alex/contacts')['gppu']['path'] == 'alex/contacts'

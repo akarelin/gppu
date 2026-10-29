@@ -13,6 +13,14 @@ from gppu.fs.gppufs import GppuFileSystem
 from gppu.fs.vfs import GppuIndexedFileSystem
 
 
+def refused(message):
+    """A listing that must not run: it raises AssertionError, which reaches the caller through fsspec's loop where pytest.fail,
+    not an Exception, would be returned as None."""
+    def listing(*args, **kwargs):
+        raise AssertionError(message)
+    return listing
+
+
 def test_desktop_archive_navigation_and_reads(tmp_path):
     inner = io.BytesIO()
     with zipfile.ZipFile(inner, 'w') as archive:
@@ -57,7 +65,7 @@ def test_unrelated_copied_index_is_preserved(tmp_path):
     original.mkdir()
     copied.mkdir()
     (original / 'note.txt').write_text('original')
-    GppuFileSystem().ls_sync(str(original))
+    GppuFileSystem().ls(str(original))
     old_index = copied / '.original.gppufs.sqlite'
     shutil.copyfile(original / '.original.gppufs.sqlite', old_index)
     before = old_index.read_bytes()
@@ -80,12 +88,12 @@ def test_index_view_reads_deep_entries_without_listing_source(tmp_path, monkeypa
     (folder / 'note.txt').write_text('deep indexed content')
     (root / 'other').mkdir()
     (root / 'other' / 'note.txt').write_text('another note')
-    GppuFileSystem().ls_sync(str(root), recurse=True)
+    GppuFileSystem().ls(str(root), recurse=True)
     fs = DesktopFileSystem({'Data': f'gppu::{root}'})
     views = fs.ls('/Indexed', detail=False)
     assert '/Indexed/Data › source' in views
     view = '/Indexed/Data › source'
-    monkeypatch.setattr(GppuFileSystem, 'ls_sync', lambda *a, **k: pytest.fail('indexed listing touched source hierarchy'))
+    monkeypatch.setattr(GppuFileSystem, '_listing', refused('indexed listing touched source hierarchy'))
     names = fs.ls(view, detail=False)
     assert view + '/day › note.txt' in names   # named by the fewest folders that tell the two notes apart
     assert view + '/other › note.txt' in names
@@ -99,14 +107,14 @@ def test_synced_index_is_read_without_renaming_or_touching_content(tmp_path, mon
     folder = root / 'a' / 'b' / 'c'
     folder.mkdir(parents=True)
     (folder / 'note.txt').write_text('the source')
-    GppuFileSystem().ls_sync(str(root), recurse=True)
+    GppuFileSystem().ls(str(root), recurse=True)
     synced = tmp_path / 'synced'
     synced.mkdir()
     index = synced / '.original.gppufs.sqlite'
     shutil.copyfile(root / '.original.gppufs.sqlite', index)
     before = index.read_bytes()
     view = GppuIndexedFileSystem(index)
-    monkeypatch.setattr(GppuFileSystem, 'ls_sync', lambda *a, **k: pytest.fail('read original hierarchy'))
+    monkeypatch.setattr(GppuFileSystem, '_listing', refused('read original hierarchy'))
     assert view.ls(detail=False) == ['/note.txt']
     assert view.info('/note.txt')['size'] == len('the source')
     with pytest.raises(FileNotFoundError):
@@ -121,7 +129,7 @@ def test_index_view_names_archive_members_for_windows_and_leaves_out_ignored(tmp
     (root / 'note.txt').write_text('a note')
     with zipfile.ZipFile(root / 'bundle.zip', 'w') as archive:
         archive.writestr('inner/member.txt', 'from the archive')
-    GppuFileSystem().ls_sync(str(root))
+    GppuFileSystem().ls(str(root))
     index = root / '.original.gppufs.sqlite'
     with sqlite3.connect(index) as db:   # rows an earlier gppufs wrote: archive members chained as fsspec chains them, an ignored file
         metadata = db.execute("SELECT metadata FROM gppufs_entries WHERE path='note.txt'").fetchone()[0]
@@ -141,7 +149,7 @@ def test_a_time_an_index_holds_as_text_reaches_windows_in_seconds(tmp_path):
     root = tmp_path / 'original'
     root.mkdir()
     (root / 'note.txt').write_text('a note')
-    GppuFileSystem().ls_sync(str(root))
+    GppuFileSystem().ls(str(root))
     with sqlite3.connect(root / '.original.gppufs.sqlite') as db:   # an archive member's row: its time as text
         metadata = db.execute("SELECT metadata FROM gppufs_entries WHERE path='note.txt'").fetchone()[0]
         member = re.sub(r'"mtime": [0-9.]+', '"mtime": "2026-08-05 16:08:05-07:00"', metadata)
@@ -156,7 +164,7 @@ def test_a_name_longer_than_windows_holds_keeps_the_end_nearest_the_file(tmp_pat
     root = tmp_path / 'original'
     root.mkdir()
     (root / 'note.txt').write_text('a note')
-    GppuFileSystem().ls_sync(str(root))
+    GppuFileSystem().ls(str(root))
     index = root / '.original.gppufs.sqlite'
     with sqlite3.connect(index) as db:   # two notes told apart only by folders whose names together pass 255 characters
         metadata = db.execute("SELECT metadata FROM gppufs_entries WHERE path='note.txt'").fetchone()[0]
@@ -177,7 +185,7 @@ def test_transported_snapshot_never_reads_unrelated_sibling_files(tmp_path):
     root = tmp_path / 'original'
     root.mkdir()
     (root / 'note.txt').write_text('original')
-    GppuFileSystem().ls_sync(str(root))
+    GppuFileSystem().ls(str(root))
     destination = tmp_path / 'destination'
     destination.mkdir()
     (destination / 'note.txt').write_text('unrelated')
@@ -281,5 +289,5 @@ def test_a_folder_stored_before_its_handler_existed_is_identified_again(tmp_path
     fs = DesktopFileSystem({'D': f'gppu::{tmp_path}'})
     assert fs.ls('/D/Work', detail=False) == ['/D/Work/10']
     monkeypatch.setattr(handlers, 'probe', probe)
-    GppuFileSystem().ls_sync(str(tmp_path))   # listed live, as a FileIndexer run lists it
+    GppuFileSystem().ls(str(tmp_path))   # listed live, as a FileIndexer run lists it
     assert DesktopFileSystem({'D': f'gppu::{tmp_path}'}).ls('/D/Work', detail=False) == ['/D/Work/task']

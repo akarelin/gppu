@@ -20,7 +20,7 @@ def test_catalog_uses_location_uid_separately_from_uri():
   assert location.uid == uid
   assert catalog.location(uid) is location
   assert location.data['path'] == 'users/alex/contacts'
-  assert catalog.ls_sync(detail=False) == [uid]
+  assert catalog.ls(detail=False) == [uid]
   with pytest.raises(KeyError):
     catalog.location(str(location.uri))
 

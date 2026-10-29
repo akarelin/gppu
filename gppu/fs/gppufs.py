@@ -16,20 +16,20 @@ import tempfile
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
 from datetime import datetime, timezone
-from itertools import islice
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, BinaryIO
 from urllib.parse import quote
 from threading import RLock
 from fsspec import filesystem, register_implementation
 from fsspec.archive import AbstractArchiveFileSystem
+from fsspec.asyn import AsyncFileSystem
 from fsspec.core import split_protocol, url_to_fs
 from fsspec.implementations.chained import ChainedFileSystem
 from fsspec.implementations.local import LocalFileSystem
 from fsspec.spec import AbstractFileSystem
 from fsspec.utils import stringify_path
 from fsspec.utils import tokenize
-from ..gppu import TimeSpan, full_path, sync, uuid_create, Warn
+from ..gppu import TimeSpan, full_path, uuid_create, Warn
 from . import handlers, CACHE, UNSAFE, _display_order, _metadata_text, _modified, _probe_name, _scratch
 
 
@@ -113,7 +113,7 @@ def _signature(path: str | None) -> tuple[int, int] | None:
   return status.st_mtime_ns, status.st_size
 
 
-class GppuFileSystem(ChainedFileSystem):
+class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
   """fsspec listings enriched by handlers and stored beside the folders they list.
 
   gppufs wraps another fsspec filesystem, as fsspec's caching filesystems wrap
@@ -1242,15 +1242,14 @@ class GppuFileSystem(ChainedFileSystem):
       self._store(key, rows, listing)
     return listing
 
-  @sync
-  async def info(self, path: str | Path, refresh: bool = False, **kwargs) -> dict:
+  async def _info(self, path: str | Path, refresh: bool = False, **kwargs) -> dict:
     """Return one native entry with its handler metadata.
 
-    Awaited inside an event loop, called plainly outside one, as gppu's sync makes it.
+    fsspec's ``info``; inside an event loop ``await fs._info(path)``. Either way it is read off the event loop.
     A physical entry the index has not seen is identified by probe, nothing read;
     ``refresh=True`` parses it. A folder's totals come from the last refresh of that folder.
     """
-    return self.info_sync(path, refresh)
+    return await asyncio.to_thread(self._entry, path, refresh)
 
   def stored(self, path: str | Path) -> tuple[dict, list[dict] | None] | None:
     """What the index holds of path, its metadata and the listing of what is in it, touching no filesystem; None when it holds
@@ -1327,8 +1326,9 @@ class GppuFileSystem(ChainedFileSystem):
           value is not None for value in (held[i], below[i])) else None
     return held
 
-  def info_sync(self, path: str | Path, refresh: bool = False) -> dict:
-    """``info`` on the calling thread."""
+  def _entry(self, path: str | Path, refresh: bool = False) -> dict:
+    """``info`` on the calling thread: what ``_info`` runs off the event loop, and what gppufs calls inside itself, never
+    ``info``, whose wrapper waits on fsspec's loop."""
     if (address := self._catalogued(path)) is not None:
       return self._from_catalog(self.catalog.info(address))
     with self._lock:
@@ -1364,12 +1364,11 @@ class GppuFileSystem(ChainedFileSystem):
         raise FileNotFoundError(key)
       return cached[0]
 
-  @sync
-  async def ls(self, path: str | Path, detail: bool = True,
-               recurse: bool = False, refresh: bool = False, live: bool = True, **kwargs) -> list:
+  async def _ls(self, path: str | Path, detail: bool = True,
+                recurse: bool = False, refresh: bool = False, live: bool = True, **kwargs) -> list:
     """List entries, optionally descending, from the live folder and the colocated SQLite index.
 
-    Awaited inside an event loop, called plainly outside one, as gppu's sync makes it.
+    fsspec's ``ls``; inside an event loop ``await fs._ls(path)``. Either way it is read off the event loop.
     Every entry the listing finds is identified, nothing read. Entries already
     indexed keep their indexed metadata. ``refresh=True`` parses the folder and
     everything below it. An archive is opened only when it is listed itself;
@@ -1377,11 +1376,11 @@ class GppuFileSystem(ChainedFileSystem):
     parses them one at a time. A recursion enters an archive whose listing the
     index holds, and opens none.
     """
-    return self.ls_sync(path, detail, recurse, refresh, live)
+    return await asyncio.to_thread(self._listing, path, detail, recurse, refresh, live)
 
-  def ls_sync(self, path: str | Path, detail: bool = True,
-              recurse: bool = False, refresh: bool = False, live: bool = True) -> list:
-    """``ls`` on the calling thread.
+  def _listing(self, path: str | Path, detail: bool = True,
+               recurse: bool = False, refresh: bool = False, live: bool = True) -> list:
+    """``ls`` on the calling thread: what ``_ls`` runs off the event loop, and what gppufs calls inside itself, never ``ls``.
 
     ``live`` reads the folder and reconciles the index with it. ``live=False`` answers from the
     index alone and touches no filesystem, so what was indexed is listed wherever this runs, and
@@ -1394,9 +1393,15 @@ class GppuFileSystem(ChainedFileSystem):
     with self._lock:
       key = self._key(path)
       if recurse and live and not refresh and self._walkable(key):
-        return [row if detail else row['name'] for row in self._walking(key)]
+        below = dict(self._walking(key))
+        def flat(folder: str) -> Iterator[dict]:   # each entry, then what is in it
+          for row in below[folder]:
+            yield row
+            if row['name'] in below:
+              yield from flat(row['name'])
+        return [row if detail else row['name'] for row in flat(key)]
       if live:
-        metadata = self.info_sync(path, refresh=refresh)
+        metadata = self._entry(path, refresh=refresh)
         if 'archive' in metadata['gppu']['handlers']:
           if refresh:
             self._live(key, container=True)
@@ -1432,7 +1437,7 @@ class GppuFileSystem(ChainedFileSystem):
         if recurse and (row['gppu']['type'] == 'folder' or (row['gppu']['is_container'] and cached[1] is not None)):
           # a recursion enters folders, and an archive only when the index holds its listing: it never opens one
           # a refresh here read everything below already: the folders below are listed from what it wrote, not read again
-          below = self.ls_sync(row['name'], recurse=True, live=live and not refresh)
+          below = self._listing(row['name'], recurse=True, live=live and not refresh)
           result.append(self._stored(child['path'])[0])   # the folder as reading it left it
           result.extend(below)
         else:
@@ -1445,27 +1450,45 @@ class GppuFileSystem(ChainedFileSystem):
     return (isinstance(self.fs, LocalFileSystem) and not _remote(key)
             and self._archive_parent(key) is None and os.path.isdir(self._path(key)))
 
-  async def ls_iter(self, path: str | Path) -> AsyncIterator[dict]:
-    """Everything below a folder, each entry given as its folder is read, a folder's entries before what is in its
-    folders: ``async for row in fs.ls_iter(path)``. The disk is read off the event loop, a batch of entries at a time. On
-    this host's disk it is one walk, one query of the index for everything below and one write of what changed
-    (`_walking`); anywhere else it is what ``ls`` gives."""
-    if self._catalogued(path) is not None:
-      rows = iter(self.ls_sync(path, recurse=True))
-    else:
-      key = self._key(path)
-      rows = self._walking(key) if self._walkable(key) else iter(self.ls_sync(path, recurse=True))
-    while batch := await asyncio.to_thread(lambda: list(islice(rows, 1000))):
-      for row in batch:
-        yield row
+  async def _walk(self, path: str | Path, maxdepth: int | None = None, topdown: bool = True, on_error: str = 'omit',
+                  **kwargs) -> AsyncIterator[tuple]:
+    """fsspec's walk: each folder below path with its folders and its files, the folder before what is in its folders,
+    ``async for folder, folders, files in fs._walk(path, detail=True)``. The disk is read off the event loop, a folder at a
+    time. On this host's disk it is one walk, one query of the index for everything below and one write of what changed
+    (`_walking`); anywhere else, to a depth or from the bottom up, it is fsspec's walk of what ``ls`` gives."""
+    key = None if self._catalogued(path) is not None else self._key(path)
+    if key is None or maxdepth is not None or not topdown or not await asyncio.to_thread(self._walkable, key):
+      async for found in super()._walk(path, maxdepth, topdown, on_error, **kwargs):
+        yield found
+      return
+    detail, folders = kwargs.get('detail', False), self._walking(key)
+    while (found := await asyncio.to_thread(next, folders, None)) is not None:
+      folder, rows = found
+      below = {PurePosixPath(row['name']).name: row for row in rows if row['type'] == 'directory'}
+      files = {PurePosixPath(row['name']).name: row for row in rows if row['type'] != 'directory'}
+      yield folder, below if detail else list(below), files if detail else list(files)
 
-  def _walking(self, key: str) -> Iterator[dict]:
-    """An entry the index holds with the time and size the disk gives it now is given as the index holds it; a new or
-    changed one is identified by probe, nothing read. A folder is entered when it is one, an archive when the index holds
-    its listing, and a folder holding an index of its own is walked with that index. What changed is written when the
-    walk ends, however it ends."""
+  @staticmethod
+  def _folders(top: str, rows: list[dict]) -> Iterator[tuple[str, list[dict]]]:
+    """A recursive listing of top given a folder at a time, as `_walking` gives it: top with its entries, then each folder
+    the listing entered."""
+    held: dict[str, list[dict]] = {}
+    for row in rows:
+      held.setdefault(row['gppu']['parent'], []).append(row)
+    def below(folder: str) -> Iterator[tuple[str, list[dict]]]:
+      yield folder, held.get(folder, [])
+      for row in held.get(folder, ()):
+        if row['gppu']['type'] == 'folder' or row['name'] in held:
+          yield from below(row['name'])
+    return below(top)
+
+  def _walking(self, key: str) -> Iterator[tuple[str, list[dict]]]:
+    """Each folder at and below key with its entries, the folder before what is in its folders. An entry the index holds
+    with the time and size the disk gives it now is given as the index holds it; a new or changed one is identified by
+    probe, nothing read. A folder is entered when it is one, an archive when the index holds its listing, and a folder
+    holding an index of its own is walked with that index. What changed is written when the walk ends, however it ends."""
     with self._lock:
-      self.info_sync(key)   # the folder itself, identified once
+      self._entry(key)   # the folder itself, identified once
       owner = self._owner(key)
       here = self._relative(key, owner)
       relative = lambda child: self._relative(child, owner)
@@ -1522,16 +1545,16 @@ class GppuFileSystem(ChainedFileSystem):
       gone.extend(entry['path'] for entry in before or () if entry['path'] not in now)
       return rows
 
-    def below_rows(folder: str, rows: list[tuple[str, dict]]) -> Iterator[dict]:
+    def below_rows(folder: str, rows: list[tuple[str, dict]]) -> Iterator[tuple[str, list[dict]]]:
+      yield folder, [self._addressed(child, row) for child, row in rows]
       for child, row in rows:
-        yield self._addressed(child, row)
         if row['gppu']['type'] == 'folder':
           if (inside := read(child)) is None:
             yield from self._walking(child)   # a folder with an index of its own
             continue
           yield from below_rows(child, inside)
         elif row['gppu']['is_container'] and child in stored and stored[child][1] is not None:
-          yield from self.ls_sync(child, recurse=True)
+          yield from self._folders(child, self._listing(child, recurse=True))
 
     try:
       yield from below_rows(key, read(key))
@@ -1709,6 +1732,26 @@ class GppuFileSystem(ChainedFileSystem):
       raise ValueError(f'{key}: a member of an archive is read-only')
     with self._filesystem(key) as (fs, source):
       return io.BytesIO(fs.cat_file(source))
+
+  # fsspec's async base reads, writes, copies and removes through these; each is what gppufs did before it, the base
+  # class's own through `_open` and gppufs's `cp_file` and `rm_file`, run off the event loop.
+  async def _cat_file(self, path: str | Path, start: int | None = None, end: int | None = None, **kwargs: Any) -> bytes:
+    return await asyncio.to_thread(AbstractFileSystem.cat_file, self, path, start, end, **kwargs)
+
+  async def _pipe_file(self, path: str | Path, value: bytes, mode: str = 'overwrite', **kwargs: Any) -> None:
+    return await asyncio.to_thread(AbstractFileSystem.pipe_file, self, path, value, mode, **kwargs)
+
+  async def _get_file(self, rpath: str | Path, lpath: str | Path, **kwargs: Any) -> None:
+    return await asyncio.to_thread(AbstractFileSystem.get_file, self, rpath, lpath, **kwargs)
+
+  async def _put_file(self, lpath: str | Path, rpath: str | Path, **kwargs: Any) -> None:
+    return await asyncio.to_thread(AbstractFileSystem.put_file, self, lpath, rpath, **kwargs)
+
+  async def _cp_file(self, path1: str | Path, path2: str | Path, **kwargs: Any) -> None:
+    return await asyncio.to_thread(self.cp_file, path1, path2, **kwargs)
+
+  async def _rm_file(self, path: str | Path, **kwargs: Any) -> None:
+    return await asyncio.to_thread(self.rm_file, path)
 
 
 class PostgresFileSystem(AbstractFileSystem):

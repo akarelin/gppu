@@ -9,8 +9,8 @@ This is what changed in gppu on the `ld-standard` branch, and how code that uses
 - **The index is found from the path:** the deepest folder at or above it that holds `.<folder>.gppufs.sqlite`. With none above, a listing makes the index beside the folder listed, or beside a file's folder.
 - **`cache=[folders]`** replaces `cache=False`. It names the folders whose index is kept in the cache instead of beside them, such as a folder another program watches or a synced folder. The one gppufs keeps every folder any of its users names.
 - **Gone:** `fs.root`, `fs.location`, the `locations=` and `index=` options, the `GppuIndex` hook, and `move_into` (use `fs.makedirs(parent, exist_ok=True)`, then `fs.mv(source, destination, recursive=True)`).
-- **gppufs's own operations, all with full paths:** `stored(path)`, `stats(path, apart=[folders])`, `spans(path, depth)`, `split(path)` (give a folder its own index), `preserve(path, folder)`, `ls_iter(path)`.
-- **Use fsspec's methods** (`ls`, `info`, `find`, `walk`, `exists`, `open`, `cat_file`, `mv`, `makedirs`), not `ls_sync` or `info_sync`. Those two will go when gppufs moves onto fsspec's async base.
+- **gppufs's own operations, all with full paths:** `stored(path)`, `stats(path, apart=[folders])`, `spans(path, depth)`, `split(path)` (give a folder its own index), `preserve(path, folder)`.
+- **Use fsspec's methods** (`ls`, `info`, `find`, `walk`, `exists`, `open`, `cat_file`, `mv`, `makedirs`). gppufs and the catalog are fsspec async file systems: inside a running event loop await their coroutines, `await fs._ls(path)`, `await fs._info(path)`, and `async for folder, folders, files in fs._walk(path, detail=True)`, which replaces `ls_iter`. `ls_sync` and `info_sync` are gone.
 
 ## Locations: the catalog, `gppu.fs.catalog`
 - **`GppuCatalog(rows, ...)`** takes the location and connection rows its user loaded. It no longer reads gppu's configuration by itself; to use that configuration, pass `Env.glob_dict('')`.

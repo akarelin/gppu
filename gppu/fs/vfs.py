@@ -211,7 +211,7 @@ class DesktopFileSystem(AbstractFileSystem):
             if not isinstance(fs, GppuFileSystem):
                 continue
             self._discover(fs, root, name)
-            for row in fs.ls_sync(root):   # gppufs's listing: an ignored folder, a junction or a link is not entered
+            for row in fs.ls(root):   # gppufs's listing: an ignored folder, a junction or a link is not entered
                 if row['gppu']['type'] == 'folder' and not set(row['gppu']['handlers']) & set(IGNORED):
                     child = PurePosixPath(row['gppu']['path'].replace('\\', '/')).name
                     self._discover(fs, posixpath.join(root, child), name + ' › ' + child)
@@ -260,7 +260,7 @@ class DesktopFileSystem(AbstractFileSystem):
         view shows left out: answered from the index alone once it holds the folder's listing, and the folder read, and so
         indexed, only while it does not."""
         stored = fs.stored(folder)
-        return [(row, posixpath.join(folder, self._name(row))) for row in fs.ls_sync(folder, live=stored is None or stored[1] is None)
+        return [(row, posixpath.join(folder, self._name(row))) for row in fs.ls(folder, live=stored is None or stored[1] is None)
                 if 'ignored' not in row['gppu']['handlers']
                 and fs.fs._strip_protocol(row['gppu']['path']).replace('\\', '/').casefold() not in self._index_paths]
 
@@ -270,7 +270,7 @@ class DesktopFileSystem(AbstractFileSystem):
 
     def _handler(self, fs, folder):
         """The handler the index says reads a real folder."""
-        return handlers.HANDLERS.get(fs.info_sync(folder)['gppu']['record']['type'])
+        return handlers.HANDLERS.get(fs.info(folder)['gppu']['record']['type'])
 
     def _things(self, fs, folder, handler, level=0):
         """What a partitioned folder holds: in place of a partition, what the partition holds."""
@@ -370,7 +370,7 @@ class DesktopFileSystem(AbstractFileSystem):
             return fs.info(real) | {'name': '/' + '/'.join(parts)}
         if (listed := self._rows.get(('/' + '/'.join(parts)).casefold())) is not None:   # as the folder's listing showed it
             return listed | {'name': '/' + '/'.join(parts)}
-        return self._row(fs.info_sync(real), '/' + '/'.join(parts))
+        return self._row(fs.info(real), '/' + '/'.join(parts))
 
     def ls(self, path='', detail=True, **kwargs):
         if not self._parts(path):

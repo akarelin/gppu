@@ -93,7 +93,7 @@ def test_stats_are_aggregated_in_the_index(tmp_path, monkeypatch):
   (tmp_path / '.DS_Store').write_bytes(b'ignored')
   fs = GppuFileSystem()
   fs.ls(tmp_path, recurse=True)
-  monkeypatch.setattr(GppuFileSystem, 'ls_sync', no_live)
+  monkeypatch.setattr(GppuFileSystem, '_listing', no_live)
   stats = fs.stats(tmp_path)
   assert (stats['folders'], stats['files'], stats['notes'], stats['sessions']) == (1, 3, 1, 1)
   assert stats['bytes'] == sum(path.stat().st_size for path in (folder / 'note.md', folder / 'session.jsonl', tmp_path / 'added.txt'))
@@ -146,14 +146,14 @@ def test_a_run_puts_its_indexes_into_their_folders_when_it_ends(tmp_path):
   with fs.run():
     fs.ls(tmp_path, recurse=True)
     assert not index(tmp_path).exists()
-    assert [row['gppu']['name'] for row in fs.ls_sync(tmp_path, recurse=True, live=False)] == ['notes', 'note.md']
+    assert [row['gppu']['name'] for row in fs.ls(tmp_path, recurse=True, live=False)] == ['notes', 'note.md']
   before = index(tmp_path).read_bytes()
   (tmp_path / 'notes' / 'added.md').write_text('More', encoding='utf-8')
   with pytest.raises(KeyboardInterrupt), fs.run():
     fs.ls(tmp_path / 'notes', refresh=True)
     assert index(tmp_path).read_bytes() == before
     raise KeyboardInterrupt
-  assert [row['gppu']['name'] for row in GppuFileSystem().ls_sync(tmp_path / 'notes', live=False)] == ['added.md', 'note.md']
+  assert [row['gppu']['name'] for row in GppuFileSystem().ls(tmp_path / 'notes', live=False)] == ['added.md', 'note.md']
 
 
 def test_ls_identifies_without_probing_and_refresh_probes(tmp_path, monkeypatch):
@@ -446,7 +446,7 @@ def test_nonlocal_fsspec_location_is_read_and_never_written(tmp_path, monkeypatc
   GppuFileSystem().ls(local, refresh=True)
   native.pipe_file(root + '/.' + tmp_path.name + '.gppufs.sqlite', index(local).read_bytes())
   reader = anew(target_protocol='memory')   # the store was asked for its index before this one was put there
-  assert reader.ls_sync(root, live=False)[0]['gppu']['record']['data']['title'] == 'Remote'
+  assert reader.ls(root, live=False)[0]['gppu']['record']['data']['title'] == 'Remote'
 
 
 @pytest.mark.parametrize('extension', ['zip', 'tar.gz'])
@@ -1124,7 +1124,7 @@ def test_a_store_that_lists_enough_is_identified_without_its_bytes(monkeypatch):
   monkeypatch.setattr(MemoryFileSystem, 'get_file', refuse)
 
   fs = GppuFileSystem(target_protocol='memory')
-  listed = {row['name'].rsplit('/', 1)[-1]: row['gppu'] for row in fs.ls_sync('/library')}
+  listed = {row['name'].rsplit('/', 1)[-1]: row['gppu'] for row in fs.ls('/library')}
   assert set(listed) == {'notes.md', 'rows.csv', 'deeper'}
   assert listed['notes.md']['handlers'] == ['markdown'], 'a name and a type are enough to identify'
   assert listed['rows.csv']['handlers'] == ['csv']
