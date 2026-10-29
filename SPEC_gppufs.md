@@ -25,7 +25,7 @@ What Alex instructed for gppufs, its catalog and their users, as plain statement
 - Linked Data and the file system stay separate, each in its own submodule.
 - Writes to Linked Data go through its API, never directly into the database.
 - Objects are retrieved and saved by uri; the Lake decides where an object goes.
-- The Lake holds only exact copies of what it preserves.
+- The Lake is storage for all file-like objects: the main lake `\\s1\Lake`, the text lake `D:\TextLake`, which is part of it, and lake-in-place at various locations.
 
 ## Users
 - Every user of gppufs is moved to it: the Lake, the admin UI and its APIs, Linked Data, Session Manager, and every service deployed in Docker that uses it. The web services gppu implements and its users deploy keep working.
