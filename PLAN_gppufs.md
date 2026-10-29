@@ -33,7 +33,7 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - Admin UI and its APIs (CRAP `Systems/admin_ui`; RAN `Services/admin-ui`, `Services/admin-priors`): done; its configuration routes answer as the live API does, its tests pass as the running image's do, its docs page renders; its Linked Data record pages on the new API: done, drawn in a browser against a scratch database; the work, project and knowledge pages wait for `/work`'s schema, Systems and Processes for the entity types they filter by
 - gppu.ld: a sort by span, a type's update without its slug and shard, a link's type checked against the store's types, removed again as a rule Alex did not write: done, its tests pass on Postgres
 - Host tools (RAN `Hosts/preservator`, `Hosts/tui` session scripts): done, preservator saving through the Lake, `platform_for_os` restored
-- Releases and deploys of the stacks: a gppu release from ld-standard, Alex's
+- Releases and deploys of the stacks: a gppu release from master, Alex's
 - with a catalog, gppufs lists and opens through it what it holds no index for, SharePoint and archives among them: done; the catalog's address is the `catalog` option, from fsspec's configuration (`FSSPEC_GPPU_CATALOG`), none by default; bytes come from the Lake at the entry's address
 - each index row carries a UUID, made by gppufs (`uuid_create(0x1002)`), kept through a refresh, a change and a move: done; an index on a store this host does not own holds its ids in memory until its own host writes it; finding an entry by its UUID: not started
 - the handler generates the UUID, an instance's or a file's by its target: not started; which handlers target which is in the gppufs note's "For Alex to decide"
@@ -42,14 +42,12 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - the catalog's Location binds this host's folder for a location reached through `handler.access`, not the canonical's: done
 - the Lake keeps its index at its root, never in its day folders: done, as the Lake on s1 already has it
 
-## In progress: full paths
-- `_key` normalizes a full path; `_path` is identity; `root` and `location` go.
-- A row is named by its path, as fsspec names entries; no URI is built per row.
-- `_owner` walks the path's folders up to the store's root; the deepest index there owns the entry.
-- No index at or above: the index goes beside the folder listed, a file's beside its folder.
-- `cache=False` keeps every owner's index in the cache, by the same rule.
+## In progress: gppufs and gppu.ld on master
+What matters is gppufs working, and its code merged so the new Linked Data, gppu.ld, works on top of it.
+- `ld-standard` is ahead of master and not behind; it goes into master as a fast-forward once the whole suite passes on the scratch database.
+- No workflow runs on a push; a release stays Alex's.
 
-/goal gppufs is `fsspec.filesystem('gppu')` and `gppu::<url>` with full paths and the index found from each path; proven by the gppufs tests passing and the session cleaner's dry run listing both folders in seconds; RAN and CRAP untouched.
+/goal gppufs and gppu.ld are on gppu's master; proven by the whole gppu suite passing on master against the scratch database; no release, deploy or production write.
 
 ## Found, not this task
 - WSL's mirrored networking gives its VM no network device on this host; WSL runs in NAT mode, reaches Windows and is reached at localhost, and Windows does not forward its traffic further.
