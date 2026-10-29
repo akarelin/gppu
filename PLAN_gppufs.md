@@ -10,7 +10,8 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - Rows are named by URI (`file://D:/...`); fsspec names entries by path. Removed with full paths.
 - `refresh=True` re-reads what is not read as it is now, with the handlers: fsspec's meaning applied to what gppufs caches. Settled by the agent.
 - With a catalog, gppufs lists and opens what its wrapped store does not hold: `catalog://` paths and any other store's address go to the catalog. Alex's instruction.
-- `ls_sync`, `info_sync`, `ls_iter`, `move_into` and the `@sync` decorator: names and an async scheme fsspec does not have (`ls`, `info`, `_walk`, `mv`, `AsyncFileSystem`). Replaced by fsspec's in the async step.
+- `ls_sync`, `info_sync`, `ls_iter`, `move_into` and the `@sync` decorator: names and an async scheme fsspec does not have (`ls`, `info`, `_walk`, `mv`, `AsyncFileSystem`). Removed: gppufs and the catalog are fsspec `AsyncFileSystem`s; inside an event loop a caller awaits `_ls` and `_info`.
+- `ls(path, recurse=True)` is gppufs's own recursion: an ignored folder listed and not entered, an archive whose listing is held entered. fsspec's `walk`, `find`, `copy -r` and `rm -r` keep fsspec's meaning.
 
 ## Tasks
 - gppufs is `ChainedFileSystem` registered as `gppu`, takes full paths, finds the index from each path: done; the session cleaner's dry run lists both folders on it
@@ -33,9 +34,9 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - Releases and deploys of the stacks: a gppu release from ld-standard, Alex's
 - with a catalog, gppufs lists and opens through it what it holds no index for, SharePoint and archives among them: done; the catalog's address is the `catalog` option, from fsspec's configuration (`FSSPEC_GPPU_CATALOG`), none by default; bytes come from the Lake at the entry's address
 - each index row carries its file's UUID (`uuid_create(0x10, 0x02)`, fs.files as Linked Data - FS has it), kept through a refresh, a change and a move: done; an index on a store this host does not own holds its ids in memory until its own host writes it; finding a file by its UUID: not started
-- gppufs on fsspec's `AsyncFileSystem`, its callers moved: in progress
-- the catalog's Location binds this host's folder for a location reached through `handler.access`, not the canonical's: after the async step
-- the Lake keeps its index at its root, never in its day folders: after the async step
+- gppufs on fsspec's `AsyncFileSystem`, its callers moved: done in gppu and RAN, the suite passes, the session cleaner's dry run finds the same sessions; the admin API's inventory readers: in progress
+- the catalog's Location binds this host's folder for a location reached through `handler.access`, not the canonical's: in progress
+- the Lake keeps its index at its root, never in its day folders: next
 
 ## In progress: full paths
 - `_key` normalizes a full path; `_path` is identity; `root` and `location` go.
