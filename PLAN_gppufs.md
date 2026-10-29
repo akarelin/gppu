@@ -48,13 +48,13 @@ What matters is gppufs working, and its code merged so the new Linked Data, gppu
 - Every user of gppufs on master and pushed: done; vfs, the desktop, the handler browser, the session cleaner, the Lake and Dagster, the Linked Data service, the session hook, Session Manager, FileIndexer and its TUI, the admin UI and the host tools already ran on it, their tests passing; CRAP `Projects/FileIndexer`'s tests import `GppuCatalog` from `gppu.fs.catalog`; RAN `Systems/ld/ld.sql` is gppu.ld's SQL, and the Linked Data image installs every module gppu.ld needs from master
 - RAN `.github/workflows/ld.yml` building from `Systems/ld`: on RAN's master; it runs only when Alex starts it, and has not run
 - The `fs` (File System) schema's records back in `gppu.fs.files`, where the standard puts files, and every importer moved to it: done; the gppu suite and FileIndexer's tests pass on the scratch database, the Linked Data API imports
+- Production Linked Data, https://api.karel.in/ld/v1, serves the API from before the standard, with no `/fs`: checked 2026-10-29; gppu.ld and gppu.fs.files run on the scratch database only.
 - No workflow runs on a push; a release and the deploys stay Alex's. RAN's Linked Data and Lake images install gppu from master, so their next build takes gppufs and gppu.ld, which need gppu.ld's SQL on `linked_data` first.
 
 /goal gppufs and gppu.ld are on gppu's master and every user of gppufs is updated to it and pushed; proven by the gppu suite and each user's tests passing against the scratch database; no release, deploy or production write.
 
 ## Found, not this task
 - `examples/handler_ls.py` and the handler browser's `main` stop: `D:\TextLake\.catalog`, the catalog `examples/handlers.yaml` names, has no folder for this host, which the host-folder catalog has required since 2026-09-08, the day the folder was last written.
-- RAN `Projects/linkml/checks/test_current_standard.py` fails on more than its import of `gppu.fs.files`; another session is working in that folder.
 - The admin API's image installs gppu from the `gppu/latest` tag; the Linked Data and Lake images install it from master.
 - WSL's mirrored networking gives its VM no network device on this host; WSL runs in NAT mode, reaches Windows and is reached at localhost, and Windows does not forward its traffic further.
 - The admin's Linked Data pages count records with one request per type, about 60 on a store made from gppu.ld's SQL.
