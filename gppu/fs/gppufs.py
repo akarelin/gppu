@@ -1437,10 +1437,26 @@ class GppuFileSystem(ChainedFileSystem):
       source, destination = self._key(path1), self._key(path2)
       if source == destination:
         return
+      owner = self._owner(source)
       self._let_go(source)
       self.fs.mv(self._path(source), self._path(destination), recursive=recursive,
                  maxdepth=maxdepth, **kwargs)
-      self._move_rows(source, destination)
+      self._moved_indexes(source, destination)
+      if owner is not None and not self._within(owner, source) and owner == self._owner(destination):
+        self._move_rows(source, destination)   # one index holds both places: its rows are rewritten, not read again
+      else:
+        self._forget_below(source)   # the index moved with the folder, or another index holds where it went
+
+  def _moved_indexes(self, source: str, destination: str) -> None:
+    """What this process knows of the indexes at and below a folder that moved, dropped at both places: the indexes went
+    with the folder, and the next lookup finds them where they are now."""
+    for folder in (source, destination):
+      self._forget_indexes(self._path(folder))
+      for held in [held for held in self._memory if self._within(held, folder)]:
+        self._memory.pop(held).close()
+        self._tabled.discard(held)
+      for known in [known for known in self._cache_held if self._within(known, folder)]:
+        del self._cache_held[known]
 
   def _forget_below(self, key: str) -> None:
     """Forget the stored rows at and under one key, and the listing of the folder it was in."""
@@ -1491,11 +1507,8 @@ class GppuFileSystem(ChainedFileSystem):
     return kept
 
   def _move_rows(self, source: str, destination: str) -> None:
-    """Rewrite every stored row at and under `source` to sit under `destination`."""
-    owner = self._owner(source)
-    if owner is None or owner != self._owner(destination):
-      self._forget(source)                       # two indexes; the new place identifies what arrived
-      return
+    """Rewrite every stored row at and under `source` to sit under `destination`, in the one index that holds both."""
+    owner = self._owner(destination)
     with self._database(owner, write=True) as database:
       if database is None:
         return
