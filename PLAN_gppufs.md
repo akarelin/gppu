@@ -16,8 +16,16 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - catalog, desktop, Lake, TUI and session cleaner on full paths: done, their tests pass
 - one gppufs in a process; `cache` names the folders whose index stays in the cache: done
 - locations and the database index out of gppufs; the location map in the catalog (`locate`, `resolve`): done
-- the session cleaner in gppu's TUI: launcher manifest with modes, background runs, rows in colour: in progress
-- gppufs's own tests on full paths: next
+- the session cleaner in gppu's TUI: done
+- gppufs's own tests on full paths: in progress
+
+## Users of gppufs, moved in parallel (docs/gppufs-users.md)
+- Lake service and Dagster (RAN `Systems/lake`, stacks `lake` and `dagster` on trix): in progress
+- Linked Data service (RAN `Systems/ld`, stack `linked-data` on five): in progress
+- FileIndexer (RAN `Systems/ld/fileindexer`; CRAP `Projects/FileIndexer`): in progress
+- Admin UI and its APIs (CRAP `Systems/admin_ui`; RAN `Services/admin-ui`, `Services/admin-priors`): in progress
+- Host tools (RAN `Hosts/preservator`, `Hosts/tui` session scripts): in progress
+- Releases and deploys of the stacks: a gppu release from ld-standard, Alex's
 - each index row carries its file's UUID (`uuid_create`, the file shard as Linked Data's code has it, 0x13); code finds files by UUID, not URI: not started
 - gppufs on fsspec's `AsyncFileSystem`: not started
 
