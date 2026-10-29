@@ -13,7 +13,7 @@ import socket
 import sqlite3
 import time
 import tempfile
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Generator, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -1453,20 +1453,32 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
   async def _walk(self, path: str | Path, maxdepth: int | None = None, topdown: bool = True, on_error: str = 'omit',
                   **kwargs) -> AsyncIterator[tuple]:
     """fsspec's walk: each folder below path with its folders and its files, the folder before what is in its folders,
-    ``async for folder, folders, files in fs._walk(path, detail=True)``. The disk is read off the event loop, a folder at a
-    time. On this host's disk it is one walk, one query of the index for everything below and one write of what changed
-    (`_walking`); anywhere else, to a depth or from the bottom up, it is fsspec's walk of what ``ls`` gives."""
+    ``async for folder, folders, files in fs._walk(path, detail=True)``. It means what fsspec's walk of what ``ls`` gives
+    means: every folder is entered, an ignored one too, an archive is a file, the folders a caller leaves in ``folders``
+    are the ones entered, and a folder that cannot be read is given empty unless on_error says otherwise. gppufs's own
+    recursion is ``ls(path, recurse=True)``. The disk is read off the event loop, a folder at a time. On this host's disk
+    it is one walk, one query of the index for everything below and one write of what changed (`_walking`); anywhere
+    else, to a depth or from the bottom up, it is fsspec's walk of what ``ls`` gives."""
     key = None if self._catalogued(path) is not None else self._key(path)
     if key is None or maxdepth is not None or not topdown or not await asyncio.to_thread(self._walkable, key):
       async for found in super()._walk(path, maxdepth, topdown, on_error, **kwargs):
         yield found
       return
-    detail, folders = kwargs.get('detail', False), self._walking(key)
-    while (found := await asyncio.to_thread(next, folders, None)) is not None:
+    detail, folders = kwargs.get('detail', False), self._walking(key, on_error or 'omit')   # fsspec omits for any other value
+
+    def step(kept: list[str] | None) -> tuple[str, list[dict]] | None:   # the next folder, given those kept of the last
+      try:
+        return folders.send(kept)
+      except StopIteration:
+        return None
+    kept = None
+    while (found := await asyncio.to_thread(step, kept)) is not None:
       folder, rows = found
       below = {PurePosixPath(row['name']).name: row for row in rows if row['type'] == 'directory'}
       files = {PurePosixPath(row['name']).name: row for row in rows if row['type'] != 'directory'}
-      yield folder, below if detail else list(below), files if detail else list(files)
+      below = below if detail else list(below)
+      yield folder, below, files if detail else list(files)
+      kept = list(below)   # as the caller left them
 
   @staticmethod
   def _folders(top: str, rows: list[dict]) -> Iterator[tuple[str, list[dict]]]:
@@ -1482,11 +1494,14 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
           yield from below(row['name'])
     return below(top)
 
-  def _walking(self, key: str) -> Iterator[tuple[str, list[dict]]]:
+  def _walking(self, key: str, on_error: str | Callable | None = None) -> Generator[tuple[str, list[dict]], list[str] | None]:
     """Each folder at and below key with its entries, the folder before what is in its folders. An entry the index holds
     with the time and size the disk gives it now is given as the index holds it; a new or changed one is identified by
-    probe, nothing read. A folder is entered when it is one, an archive when the index holds its listing, and a folder
-    holding an index of its own is walked with that index. What changed is written when the walk ends, however it ends."""
+    probe, nothing read. Without on_error it is gppufs's recursion, ``ls(recurse=True)``'s: a folder is entered when it is
+    one, an archive when the index holds its listing. With it, fsspec's walk: every directory is entered and no archive,
+    the names sent back for a folder are the folders below it entered, in their order, and a folder that cannot be read is
+    given empty, passed to on_error or raised, as on_error says. A folder holding an index of its own is walked with that
+    index. What changed is written when the walk ends, however it ends."""
     with self._lock:
       self._entry(key)   # the folder itself, identified once
       owner = self._owner(key)
@@ -1545,19 +1560,33 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
       gone.extend(entry['path'] for entry in before or () if entry['path'] not in now)
       return rows
 
-    def below_rows(folder: str, rows: list[tuple[str, dict]]) -> Iterator[tuple[str, list[dict]]]:
-      yield folder, [self._addressed(child, row) for child, row in rows]
+    def readable(folder: str) -> list[tuple[str, dict]] | None:
+      """read(folder); in fsspec's walk a folder that cannot be read is empty, unless on_error says to raise."""
+      try:
+        return read(folder)
+      except OSError as error:
+        if on_error in (None, 'raise'):
+          raise
+        if callable(on_error):
+          on_error(error)
+        return []
+
+    def below_rows(folder: str, rows: list[tuple[str, dict]]) -> Generator[tuple[str, list[dict]], list[str] | None]:
+      kept = yield folder, [self._addressed(child, row) for child, row in rows]
+      if kept is not None:   # fsspec's walk enters the folders its caller kept, in the caller's order
+        named = {PurePosixPath(child).name: (child, row) for child, row in rows}
+        rows = [named[name] for name in kept if name in named]
       for child, row in rows:
-        if row['gppu']['type'] == 'folder':
-          if (inside := read(child)) is None:
-            yield from self._walking(child)   # a folder with an index of its own
+        if (row['gppu']['type'] == 'folder') if on_error is None else (row['type'] == 'directory'):
+          if (inside := readable(child)) is None:
+            yield from self._walking(child, on_error)   # a folder with an index of its own
             continue
           yield from below_rows(child, inside)
-        elif row['gppu']['is_container'] and child in stored and stored[child][1] is not None:
+        elif on_error is None and row['gppu']['is_container'] and child in stored and stored[child][1] is not None:
           yield from self._folders(child, self._listing(child, recurse=True))
 
     try:
-      yield from below_rows(key, read(key))
+      yield from below_rows(key, readable(key))
     finally:
       if values or children or gone:
         with self._lock, self.run():
