@@ -684,6 +684,24 @@ class SessionHandler(FileHandler):
         return record
 
     @classmethod
+    def lines(cls, path: str | Path) -> tuple[Mapping[str, Any], ...]:
+        """Every message object of a session file, in file order; a blank, truncated or non-object line is skipped."""
+        return cls._messages(Path(path).absolute())
+
+    @classmethod
+    def turns(cls, lines: tuple[Mapping[str, Any], ...]) -> tuple[SessionTurn, ...]:
+        """A session's turns from its lines, in file order, as its harness gives them; lines naming no harness raise."""
+        harness = cls._harness(lines[:SNIFF])
+        if harness is None:
+            raise ValueError("its messages name no harness")
+        return getattr(cls, cls.TURNS[harness])(lines)
+
+    @classmethod
+    def models(cls, lines: tuple[Mapping[str, Any], ...]) -> tuple[str, ...]:
+        """The models a session's lines name, in the order first named."""
+        return cls._models(lines)
+
+    @classmethod
     def human_messages(cls, turns: tuple[SessionTurn, ...]) -> tuple[str, ...]:
         """What a person typed: the mainline user messages that are not meta, without their envelopes, leaving
         out generated ones."""
