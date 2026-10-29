@@ -40,7 +40,7 @@ async def clean(fs: GppuFileSystem, base: str, keep: float) -> list[tuple[str, s
     is not read and keeps its subagents; any other is read whole by its handler once, the index keeping it. A subagent
     goes where the session at the top of it went, which the listing gives before it."""
     went, parent, active, moves = {}, {}, set(), []
-    async for entry in (entry async for _, _, files in fs._walk(base, detail=True) for entry in files.values()):
+    async for entry in (entry async for _, _, files in fs._walk(base, detail=True, on_error='raise') for entry in files.values()):
         if entry['type'] != 'file' or entry['gppu']['record']['type'] not in SESSION:
             continue
         path = entry['name']
