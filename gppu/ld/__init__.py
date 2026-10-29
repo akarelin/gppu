@@ -5,8 +5,8 @@ and the shard its ids start with (`__shard__`), shard1 its schema and shard2 the
 `ld.nodes` 0x0001, `ld.links` 0x0010, `ld.events` 0x0020.
 A record's `flags` say what can change it and whether it is in sight (`Flags`). `operations()` gives a path its tables' create, read,
 update, delete and search; `app` is the core, `/records`, `/types` and `/links`; `api_at()`, another schema's API with its own
-documentation; `serve()`, the APIs at one address, on the store of the app that serves them. The tables are made by the standard's
-SQL, and how they inherit is Postgres'. The store is the app's: a `gppu.data._SQABase` gives the engine and each request's database
+documentation; `serve()`, the APIs at one address, on the store of the app that serves them. The tables are made by gppu's
+SQL, `tests/ld.sql`, and how they inherit is Postgres'. The store is the app's: a `gppu.data._SQABase` gives the engine and each request's database
 session.
 
 Needs the `ld` extra, and fastapi-querybuilder installed with `--no-deps`: its metadata lists poetry, uvicorn and aiosqlite as runtime
@@ -72,7 +72,8 @@ Params = Page.__params_type__
 
 class Flags(IntFlag):
     """A record's `flags` (# Flags): `ro` and `system` are read only, `deleted` and `archived` read only and out of sight,
-    `system` and `hidden` out of sight. A record out of sight is read by its id, and no list or search returns it."""
+    `system` and `hidden` out of sight. A record out of sight is read by its id, and no list or search returns it. Flags change
+    only by their transitions (`transitions`)."""
     RO = 0x01
     SYSTEM = 0x02
     DELETED = 0x04
@@ -82,6 +83,21 @@ class Flags(IntFlag):
 
 READ_ONLY = Flags.RO | Flags.SYSTEM | Flags.DELETED | Flags.ARCHIVED
 UNSEEN = Flags.SYSTEM | Flags.DELETED | Flags.HIDDEN | Flags.ARCHIVED
+NONE_SET = {Flags.DELETED: 'delete', Flags.ARCHIVED: 'archive', Flags.HIDDEN: 'toggle hidden', Flags.RO: 'toggle ro'}
+OWN = {Flags.RO: 'toggle ro', Flags.DELETED: 'un-delete', Flags.HIDDEN: 'toggle hidden', Flags.ARCHIVED: 'un-archive'}   # system has none
+
+
+def transitions(flags: int) -> dict[Flags, str]:
+    """The flag each transition of a record's `flags` toggles, by its name (# Flags): with none set, delete, archive, toggle hidden
+    and toggle ro; with flags set, each one's own."""
+    return NONE_SET if not flags else {f: name for f, name in OWN.items() if flags & f}
+
+
+def flagged(id: UUID, flags: int, to: int) -> int:
+    """`to`, the record's flags changed by one of their transitions, or not changed; any other change is refused, 422 naming them."""
+    if to != flags and to ^ flags not in (allowed := transitions(flags)):
+        raise HTTPException(422, f"{id}'s flags, {Flags(flags).name or 'none'}, change only by {', '.join(allowed.values()) or 'no transition'}")
+    return to
 
 
 def utc(t: Any) -> datetime | None:
@@ -202,7 +218,8 @@ class _Record(SQLModel):
     @classmethod
     async def update(cls, id: UUID | None, sent: '_Record') -> Self:
         """Merged into the record of that id when it is there, `data` and `meta` merged and a null removing a key; created with that id
-        when it is not: an insert is an upsert. A read-only record (# Flags) changes only its `flags`. Written at once, so what
+        when it is not: an insert is an upsert. A read-only record (# Flags) changes only its `flags`, and flags change only by
+        their transitions. Written at once, so what
         Postgres fills comes back, and stored at the commit. The columns Postgres fills and a field its table has not are refused;
         Postgres refuses an id of another table."""
         if filled := sent.model_fields_set & set(STORE):
@@ -213,6 +230,8 @@ class _Record(SQLModel):
             change = {k: getattr(sent, k) for k in sent.model_fields_set}   # what was sent, a span still a Span
             if row.flags & READ_ONLY and change.keys() - {'flags'}:
                 raise HTTPException(422, f'{id} is read only ({Flags(row.flags & READ_ONLY)!r}): only its flags change')
+            if 'flags' in change:
+                flagged(id, row.flags, change['flags'])
             for key in ('data', 'meta'):
                 if key in change:
                     change[key] = {k: v for k, v in (getattr(row, key) | change[key]).items() if v is not None}
@@ -225,9 +244,10 @@ class _Record(SQLModel):
 
     @classmethod
     async def delete(cls, id: UUID) -> None:
-        """Marked `deleted` (# Flags): out of sight and read only until its flags are changed back. 404 when there is none."""
+        """Marked `deleted` (# Flags), a transition of a record with no flags set: out of sight and read only until un-deleted. 404
+        when there is none; one with other flags set is refused, 422."""
         row = await cls.read(id)
-        row.flags |= Flags.DELETED
+        row.flags = flagged(id, row.flags, row.flags | Flags.DELETED)
         await cls.db().flush()
 
     @classmethod
@@ -372,7 +392,8 @@ def operations(path: str, body: type[_Record], name: str, *models: type[_Record]
 
     @routes.delete(path + '/{id}', status_code=204, summary=f'Delete {a} {name}')
     async def delete(id: UUID):
-        """Marked `deleted`: out of sight and read only until its flags are changed back. 404 when there is none."""
+        """Marked `deleted`, a record with no flags set: out of sight and read only until un-deleted. 404 when there is none; 422
+        when it has flags set."""
         await own.get(shard(id), base).delete(id)
 
     @routes.get(path, response_model=Page[One], summary=f'Search {names}')
@@ -397,7 +418,7 @@ router = APIRouter()
 
 
 @router.get('/records/{id}/records', response_model=list[Record], tags=['record'], summary="List a record's children")
-async def record_list(id: UUID, type: str | None = None):
+async def records_list(id: UUID, type: str | None = None):
     """`list`, a simple select of like records: the records in sight whose parent it is, of one `type` or of every type, in the
     order they were made. No query, that is search, and not paged: more than `LIST` children, or more than `LIST_BYTES` of their
     `data` and `meta`, are refused with their count and size, and search pages them."""

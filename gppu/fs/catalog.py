@@ -445,7 +445,7 @@ class GppuCatalog(AsyncFileSystem):
 # endregion
 # region Linked Data
 
-DISCARDED = 'discarded'   # a location's status when it is not in use; the other is active (Linked Data - FS)
+DISCARDED = 'discarded'   # a location's status when it is not in use; the other is active (gppu.ld.fs)
 
 class Drives(FileSystem):
     """gppufs's FileSystem in a Windows host's WSL: a file uri naming a drive, file://alex-pc/D:/Dev, is that drive as WSL mounts it,
@@ -464,7 +464,7 @@ class Drives(FileSystem):
 def catalog(records: list[dict], **location_types: Any) -> GppuCatalog:
     """gppufs's catalog of Linked Data's location records, the items of GET /fs/locations as the catalog's user read them: every location
     in use that has a uid and a canonical uri, the two a gppufs Location is known and reached by, as a row of gppufs's configuration
-    table, its data with its id, name, parent's uid and tags. A location is active or discarded (Linked Data - FS); one out of sight is
+    table, its data with its id, name, parent's uid and tags. A location is active or discarded (gppu.ld.fs); one out of sight is
     not listed at all, and a location below one not in use is not in use either, since a location is part of the location above it; its
     connection is its root location, whose data.handler holds the connection's parameters. location_types are the Providers a caller
     adds by scheme, as GppuCatalog takes them; gppufs's FileSystem reaches file://, and in a Windows host's WSL, Drives does."""
@@ -500,7 +500,7 @@ def here(catalog: GppuCatalog, uri: str) -> Path | None:
 
 
 def accessed(row: Mapping[str, Any]) -> Path | None:
-    """The folder a location's handler says it is at on this host, `handler.access` by host (Linked Data - FS); none when it
+    """The folder a location's handler says it is at on this host, `handler.access` by host (gppu.ld.fs); none when it
     names none here."""
     access = (row.get('handler') or {}).get('access') or {}
     path = access.get(socket.gethostname().split('.')[0].casefold()) if isinstance(access, Mapping) else None

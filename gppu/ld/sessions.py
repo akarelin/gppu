@@ -1,4 +1,4 @@
-"""The sessions' records (_Standards/Linked Data/Linked Data - Sessions): schema `sessions`, shard1 0x20, built on Linked Data's
+"""The sessions' records (_Standards/Linked Data/Linked Data.md, # sessions): schema `sessions`, shard1 0x20, built on Linked Data's
 record (gppu.ld) and served at /ld/v1/sessions, documented at /ld/v1/sessions/docs.
 
 A session's type is its harness, and it is known by its type and `uid`, the id its harness gives it; a message is one line its

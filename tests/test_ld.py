@@ -36,7 +36,7 @@ async def messages(id: UUID, params: Params = Depends()):
 
 @pytest.fixture(scope='module')
 def api():
-    """The core, the fs API and the sessions API, and a session's messages in order, on a database made from the standard's SQL."""
+    """The core, the fs API and the sessions API, and a session's messages in order, on a database made from gppu.ld's SQL (ld.sql)."""
     with psycopg.connect(DSN, autocommit=True) as server:
         server.execute(f'CREATE DATABASE {DB}')
     dsn = DSN.rsplit('/', 1)[0] + '/' + DB
@@ -132,6 +132,21 @@ def test_a_deleted_record_is_out_of_sight_and_read_by_its_id(api):
     assert ok(api.get('/records', params={'filters': f'{{"parent_id": {{"$eq": "{parent["id"]}"}}}}'}))['total'] == 0
     assert ok(api.get(f"/records/{hidden['id']}"))['flags'] == 8
     assert 'read only' in ok(api.put(f"/records/{child['id']}", json={'data': {'a': 1}}), 422)['detail']
+
+
+def test_flags_change_only_by_their_transitions(api):
+    node = ok(api.post('/records', json={'type': 'node'}))
+    assert 'change only by delete, archive, toggle hidden, toggle ro' in ok(api.put(f"/records/{node['id']}", json={'flags': 3}), 422)['detail']
+    assert ok(api.put(f"/records/{node['id']}", json={'flags': 16}))['flags'] == 16   # archive
+    assert 'change only by un-archive' in ok(api.put(f"/records/{node['id']}", json={'flags': 20}), 422)['detail']
+    assert 'change only by un-archive' in ok(api.delete(f"/records/{node['id']}"), 422)['detail']
+    assert ok(api.put(f"/records/{node['id']}", json={'flags': 0}))['flags'] == 0   # un-archive
+    hidden = ok(api.post('/records', json={'type': 'node', 'flags': 8}))
+    assert 'change only by toggle hidden' in ok(api.delete(f"/records/{hidden['id']}"), 422)['detail']
+    system = ok(api.post('/records', json={'type': 'node', 'flags': 2}))
+    assert 'no transition' in ok(api.put(f"/records/{system['id']}", json={'flags': 0}), 422)['detail']
+    ok(api.delete(f"/records/{node['id']}"), 204)
+    assert ok(api.put(f"/records/{node['id']}", json={'flags': 0}))['flags'] == 0   # un-delete
 
 
 def test_types_are_searched_by_slug_in_every_schema(api):

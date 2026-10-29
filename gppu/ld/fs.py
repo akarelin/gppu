@@ -1,4 +1,4 @@
-"""The file system's records (_Standards/Linked Data/Linked Data - FS): schema `fs`, shard1 0x10, built on Linked Data's record
+"""The file system's records (_Standards/Linked Data/Linked Data.md, # fs): schema `fs`, shard1 0x10, built on Linked Data's record
 (gppu.ld) and served at /ld/v1/fs, documented at /ld/v1/fs/docs.
 
 A location is one place in the configured hierarchy, a host among them; a file is a file or a folder in a location, its type its

@@ -162,7 +162,7 @@ SESSION_UID = re.compile(
 
 @dataclass
 class Record:
-    """A record as Linked Data's standard has it (_Standards/Linked Data, # Record) and gppu.ld holds it: id, flags, type,
+    """A record as gppu.ld holds it (_Standards/Linked Data/Linked Data.md, # Records): id, flags, type,
     status, name, parent_id, span, data, meta, created and updated; ts is the start of its span. Handlers import neither
     Postgres nor gppu.ld, so this is its shape without the store; a record read from disk has no id until it is stored, so
     nothing read carries a parent_id."""

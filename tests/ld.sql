@@ -1,4 +1,4 @@
--- Linked Data's standard (_Standards/Linked Data), the SQL of its files LD, FS and Sessions in that order, copied verbatim for the tests.
+-- gppu.ld's tables, schemas ld, fs and sessions, to Linked Data's standard (_Standards/Linked Data/Linked Data.md); the tests make their database from it.
 
 CREATE SCHEMA ld;
 
