@@ -4,18 +4,18 @@ from datetime import datetime, timezone
 from gppu import uuid_create
 
 
-def test_header_is_the_shard_then_zeros():
-    assert uuid_create(0x13).bytes[:8] == bytes([0x13]) + bytes(7)
+def test_header_is_the_shards_then_version_1_then_zeros():
+    assert uuid_create(0x10, 0x02).bytes[:8] == bytes([0x10, 0x02, 1]) + bytes(5)
 
 
 def test_time_is_uuidv7s_milliseconds():
     before = int(datetime.now(timezone.utc).timestamp() * 1000)
-    made = int.from_bytes(uuid_create(0x13).bytes[8:14])
+    made = int.from_bytes(uuid_create(0x10, 0x02).bytes[8:14])
     after = int(datetime.now(timezone.utc).timestamp() * 1000)
     assert before <= made <= after
 
 
 def test_ids_differ_and_sort_by_time():
-    ids = [uuid_create(0x13) for _ in range(1000)]
+    ids = [uuid_create(0x10, 0x02) for _ in range(1000)]
     assert len(set(ids)) == len(ids)
     assert [i.bytes[8:14] for i in ids] == sorted(i.bytes[8:14] for i in ids)

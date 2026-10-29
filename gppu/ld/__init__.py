@@ -1,7 +1,8 @@
 """Linked Data: records and the links between them, on Postgres (_Standards/Linked Data/Linked Data.md), schema `ld`, and what
 another schema's API is built from. `_Record`, every record's columns and its operations (create, read, update, delete, list,
 search), with no table; `_Type` and `_Link`, the columns a type and a link add; and each table's class, which only defines its table
-and the shard its ids start with (`__shard__`): `ld.records`, `ld.types` 0x00, `ld.nodes` 0x01, `ld.links` 0x02, `ld.events` 0x03.
+and the shard its ids start with (`__shard__`), shard1 its schema and shard2 the table (# UUID): `ld.records`, `ld.types` 0x0000,
+`ld.nodes` 0x0001, `ld.links` 0x0010, `ld.events` 0x0020.
 A record's `flags` say what can change it and whether it is in sight (`Flags`). `operations()` gives a path its tables' create, read,
 update, delete and search; `app` is the core, `/records`, `/types` and `/links`; `api_at()`, another schema's API with its own
 documentation; `serve()`, the APIs at one address, on the store of the app that serves them. The tables are made by the standard's
@@ -29,7 +30,7 @@ from psycopg.errors import UndefinedFunction
 from pydantic import ConfigDict, GetCoreSchemaHandler, GetJsonSchemaHandler, TypeAdapter, ValidationError
 from pydantic_core import core_schema
 from sqlakeyset import custom_bookmark_type
-from sqlalchemy import DateTime, FetchedValue, SmallInteger, String, TypeDecorator
+from sqlalchemy import Computed, DateTime, FetchedValue, SmallInteger, String, TypeDecorator, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, TSTZRANGE, Range
 from sqlalchemy.exc import DataError, IntegrityError, StatementError
 from sqlalchemy.sql.elements import UnaryExpression
@@ -146,31 +147,30 @@ custom_bookmark_type(Span, 'span', deserializer=SPAN.validate_json, serializer=l
 
 class _Record(SQLModel):
     """Everything stored is a record (# Record), and every type is built on it: its columns and its operations, with no table of
-    its own. A table's class is made from it and only defines its table, its schema and the shard its ids start with,
+    its own. A table's class is made from it and only defines its table, its schema and the two bytes its ids start with,
     `class Node(_Record, table=True)`, so it is created, read, updated, deleted, listed and searched in its own table by its own
     rules. What a caller sends is a record without the columns Postgres fills (`STORE`); a field its table has not is refused."""
     model_config = ConfigDict(extra='forbid')
     db: ClassVar[Any] = None   # the store's scoped session, set once by serve(): called, the session of the request being served
-    __shard__: ClassVar[int]   # the first byte of every id in its table (# UUID)
+    __shard__: ClassVar[int]   # the first two bytes of every id in its table, shard1 its schema and shard2 the table (# UUID)
     __mapper_args__ = {'eager_defaults': True}   # the id, name, ts and times the table makes come back with the insert
     id: UUID | None = Field(None, primary_key=True, sa_column_kwargs={'server_default': FetchedValue()},
-                            description="The record's identity; its first byte is the shard, the table it is in.")
-    flags: int | None = Field(None, sa_type=SmallInteger, sa_column_kwargs={'server_default': FetchedValue(), 'nullable': False},
-                              description='ro 1, system 2, deleted 4, hidden 8, archived 16.')
+                            description="The record's identity; its first byte is shard1, its schema, and its second shard2, its table.")
+    flags: int = Field(0, sa_type=SmallInteger, description='ro 1, system 2, deleted 4, hidden 8, archived 16.')
     # String, not SQLModel's own AutoString: search looks for its text only in String columns
     type: str | None = Field(None, sa_type=String, description='Slug of its type.')
     status: str | None = Field(None, sa_type=String, description="Slug of its status, one of its type's or its type's parent's.")
-    name: str | None = Field(None, sa_type=String, sa_column_kwargs={'server_default': FetchedValue()},
+    name: str | None = Field(None, sa_type=String, sa_column_kwargs={'server_default': FetchedValue(), 'server_onupdate': FetchedValue()},
                              description='`data.name` when it has one, else `{type}-{id}`, unless one is sent.')
     parent_id: UUID | None = Field(None, description='The record it belongs to.')
     span: Span | None = Field(None, sa_type=SpanColumn, description='Its timespan: `start` and `end`; `date` and `duration`; a `date` alone, one day; a `ts` alone, one second.')
     # DateTime, not SQLModel's own: filters read a time they are given only for DateTime columns
-    ts: datetime | None = Field(None, sa_type=DateTime(timezone=True), sa_column_kwargs={'server_default': FetchedValue(), 'server_onupdate': FetchedValue()},
+    ts: datetime | None = Field(None, sa_type=DateTime(timezone=True), sa_column_args=[Computed('lower(span)', persisted=False)],
                                 description='The start of `span`. Read only.')
     data: dict = Field(default_factory=dict, sa_type=JSONB, description='What the record says about the thing. On update, merged into what is there; a null removes a key.')
     meta: dict = Field(default_factory=dict, sa_type=JSONB, description='How the record came to be: who made it, from what, when it was seen. Merged on update as `data` is.')
     created: datetime | None = Field(None, sa_type=DateTime(timezone=True), sa_column_kwargs={'server_default': FetchedValue(), 'nullable': False}, description='When the record was made.')
-    updated: datetime | None = Field(None, sa_type=DateTime(timezone=True), sa_column_kwargs={'server_default': FetchedValue(), 'server_onupdate': FetchedValue()}, description='When the record was last changed.')
+    updated: datetime | None = Field(None, sa_type=DateTime(timezone=True), sa_column_kwargs={'server_onupdate': FetchedValue()}, description='When the record was last changed.')
 
     @classmethod
     def __get_pydantic_json_schema__(cls, schema: core_schema.CoreSchema, handler: GetJsonSchemaHandler) -> dict:
@@ -257,10 +257,11 @@ class _Record(SQLModel):
 
 
 class _Type(_Record):
-    """A type's columns: its slug, unique in its shard, and the shard its records are in. A status is a type of type `status`
-    whose parent is the type it belongs to. Every schema's types are a table made from it."""
-    slug: str | None = Field(None, sa_type=String, sa_column_kwargs={'nullable': False}, description='Its slug, unique in its shard.')
-    shard: int | None = Field(None, sa_type=SmallInteger, sa_column_kwargs={'nullable': False}, description='The shard its records are in.')
+    """A type's columns: its slug, unique in its shard, and the shard its records are in, shard2 of their table in its schema;
+    its schema, shard1, is its own id's. A status is a type of type `status` whose parent is the type it belongs to; a type's parent
+    is the type it extends, in its schema or in `ld`. Every schema's types are a table made from it."""
+    slug: str = Field(sa_type=String, description='Its slug, unique in its shard.')
+    shard: int = Field(sa_type=SmallInteger, description='shard2 of the table its records are in, in its schema.')
 
 
 class _Link(_Record):
@@ -282,7 +283,7 @@ class Fields(_Link):
     """A record as a caller sends it to `/records`: a record's columns and a link's ends; each table takes those it has."""
 
 
-# ++     The core's tables: schema `ld`, shards 0x00-0x09
+# ++     The core's tables: schema `ld`, shard1 0x00
 
 class Record(_Record, table=True):
     """Every table inherits it, and it holds none of its own: reading `ld.records` returns every table's rows with these columns."""
@@ -291,39 +292,44 @@ class Record(_Record, table=True):
 
 class Type(_Type, table=True):
     """What a record is, and its statuses."""
-    __tablename__, __table_args__, __shard__ = 'types', {'schema': 'ld'}, 0x00
+    __tablename__, __table_args__, __shard__ = 'types', (UniqueConstraint('shard', 'slug'), {'schema': 'ld'}), 0x0000
 
 
 class Node(_Record, table=True):
     """A node (vertex) or a row; most belong to a container, their `parent_id`."""
-    __tablename__, __table_args__, __shard__ = 'nodes', {'schema': 'ld'}, 0x01
+    __tablename__, __table_args__, __shard__ = 'nodes', {'schema': 'ld'}, 0x0001
 
 
 class Link(_Link, table=True):
     """An edge that links two records."""
-    __tablename__, __table_args__, __shard__ = 'links', {'schema': 'ld'}, 0x02
+    __tablename__, __table_args__, __shard__ = 'links', {'schema': 'ld'}, 0x0010
 
 
 class Event(_Record, table=True):
     """Something that happened: an `event` at one moment, an `activity` over its span."""
-    __tablename__, __table_args__, __shard__ = 'events', {'schema': 'ld'}, 0x03
+    __tablename__, __table_args__, __shard__ = 'events', {'schema': 'ld'}, 0x0020
 
 
 def operations(path: str, body: type[_Record], name: str, *models: type[_Record]) -> APIRouter:
     """A path for its tables: create, read, update, delete and search, each table its own, `body` what a caller sends. A create's
-    table is the one the shard of its `type` names (`ld.types`); a read, an update or a delete's `id` says its table by its first
-    byte, and one of a table the path has not is read and changed through the first, with its columns."""
+    table is the one its `type` names (`ld.types`); a read, an update or a delete's `id` says its table by its first two bytes,
+    shard1 and shard2, and one of a table the path has not is read and changed through the first, with its columns."""
     routes, base = APIRouter(tags=[name]), models[0]
-    own = {m.__shard__: m for m in models if hasattr(m, '__shard__')}   # an id's first byte to its table
+    own = {m.__shard__: m for m in models if hasattr(m, '__shard__')}   # an id's first two bytes to its table
     One = Union[models]   # a record of the path, read with its own table's columns
     a, names = 'an' if name[0] in 'aeiou' else 'a', name[:-1] + 'ies' if name.endswith('y') else name + 's'   # an entity, entities
 
+    def shard(id: UUID) -> int:
+        """The table an id is in: its first two bytes, shard1 its schema and shard2 the table."""
+        return int.from_bytes(id.bytes[:2])
+
     async def table(record: _Record) -> type[_Record]:
-        """The table of the shard of the record's `type`, one of the path's."""
+        """The table of the record's `type`, one of the path's: the type's own id says its schema, shard1, and its `shard` the
+        table in it, shard2. Every schema's types are read in `ld.types`, which they inherit."""
         if len(own) == 1:
             return next(iter(own.values()))
-        shards = (await _Record.db().exec(select(Type.shard).where(Type.slug == record.type, Type.type.is_distinct_from('status')))).all()
-        if len(found := {s for s in shards if s in own}) != 1:
+        types = (await _Record.db().exec(select(Type.id, Type.shard).where(Type.slug == record.type, Type.type.is_distinct_from('status')))).all()
+        if len(found := {s for id, shard2 in types if (s := id.bytes[0] << 8 | shard2) in own}) != 1:
             raise HTTPException(422, f'{record.type!r} is a type of {len(found) or "no"} table{"" if len(found) == 1 else "s"} of {path}: '
                                      + ', '.join(m.__table__.fullname for m in own.values()))
         return own[found.pop()]
@@ -336,20 +342,20 @@ def operations(path: str, body: type[_Record], name: str, *models: type[_Record]
     @routes.get(path + '/{id}', response_model=One, summary=f'Read {a} {name}')
     async def read(id: UUID):
         """404 when there is none."""
-        return await own.get(id.bytes[0], base).read(id)
+        return await own.get(shard(id), base).read(id)
 
     @routes.put(path + '/{id}', response_model=One, summary=f'Update {a} {name}')
     async def update(id: UUID, record: body):
         """Merged with what is sent when the `id` is there, created with that `id` when it is not; an `id` of a table the path has
         not is refused when it is not there."""
-        if id.bytes[0] not in own and not await base.db().get(base, id):
+        if shard(id) not in own and not await base.db().get(base, id):
             raise HTTPException(422, f'{path} has {", ".join(m.__table__.fullname for m in own.values())}; no record {id} is there to update')
-        return await own.get(id.bytes[0], base).update(id, record)
+        return await own.get(shard(id), base).update(id, record)
 
     @routes.delete(path + '/{id}', status_code=204, summary=f'Delete {a} {name}')
     async def delete(id: UUID):
         """Marked `deleted`: out of sight and read only until its flags are changed back. 404 when there is none."""
-        await own.get(id.bytes[0], base).delete(id)
+        await own.get(shard(id), base).delete(id)
 
     @routes.get(path, response_model=Page[One], summary=f'Search {names}')
     async def search(type: str | None = None, conditions: QueryParams = Depends(), params: Params = Depends()):
