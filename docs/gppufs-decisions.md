@@ -42,6 +42,31 @@ Recommendation: A.
 
 Answer:
 
+## 4. Who writes into the Lake
+
+**Holds up:** the Lake's place in the new structure, as a library and as a service.
+
+The Lake has three parts, all in `gppu/fs/lake.py`:
+- **The library, `Lake`:** decides where an object goes, saves it, and reads it with the handlers.
+- **The service:** `/lake`, run by RAN `Systems/lake/serve.py`.
+- **`LakeFileSystem`:** a read-only fsspec file system over that API, for browsing from anywhere.
+
+The Lake folder lives on s1, and every machine reaches it as a share, trix included. gppufs never writes an index into a share. That's why the Lake's index is its catalog in Postgres, which the service keeps.
+
+- **A (works):** only the Lake service writes into the Lake and its catalog. The library runs inside the service, and every other program saves through `/lake`. That matches answer A to question 3.
+- **B (works):** any program that reaches the share uses the library and saves directly. Each one then writes the Lake catalog's database itself, which is answer B to question 3.
+
+Recommendation: A. The Lake keeps one writer, and the client copy (a session hook growing its own copy) already goes through the API.
+
+Answer:
+
+## What changed for the Lake in this rework
+
+- **Locations:** the Lake no longer fetches its locations from Linked Data inside gppu. The service reads Linked Data's location records and gives them to the catalog: `catalog(records)` for the locations, `Catalog(dsn, records)` for the Lake catalog. RAN's `Systems/lake/serve.py` has to pass them; that's a change to the service, waiting for your approval of gppu's structure.
+- **Addresses:** the Lake names every row by its Lake address, the store's URI plus the path below it. gppufs used to do that through the location map. The catalog now holds that map (`locate`, `resolve`) for anything else that needs a location's address on a row.
+- **One gppufs:** the Lake lists its folder on the process's single gppufs, the same one the catalog uses.
+- **The Lake standard is out of date** in three places. It names `gppu.ld.gppufs.catalog()`, which is now `gppu.fs.catalog.catalog(records)`, fed by the service. It names `gppu/lake.py` and `gppu.catalog`, which are now `gppu/fs/lake.py` and `gppu.fs.catalog`. And it says the Lake's index is gppufs's index beside the Lake, which can't be, because the Lake is a share that gppufs doesn't write. Its index is the Lake catalog.
+
 ## Settled by what you said, not questions
 
 - **A file's UUID is computed from its URI**, because you said a URI determines its UUID and nothing assigns itself an identifier. The same URI gives the same UUID on every machine without asking anything. When `mv` moves a file, gppufs carries what it read to the new UUID, the way it carries index rows today. The UUID starts with the shard of `fs.files`, `0x1002`, from your Linked Data FS standard.
