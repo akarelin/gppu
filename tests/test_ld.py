@@ -102,7 +102,7 @@ def test_an_update_merges_data_and_a_null_removes_a_key(api):
 
 
 def test_a_put_of_an_id_not_there_creates_it(api):
-    id = uuid_create(0x00, 0x01)   # made offline as the store makes them
+    id = uuid_create(0x0001)   # made offline as the store makes them
     assert ok(api.put(f'/records/{id}', json={'type': 'node'}))['id'] == str(id)
     assert ok(api.get(f'/records/{id}'))['type'] == 'node'
 
@@ -150,9 +150,9 @@ def test_flags_change_only_by_their_transitions(api):
 
 def test_types_are_searched_by_slug_in_every_schema(api):
     found = ok(api.get('/types', params={'filters': '{"slug": {"$eq": "node"}}'}))['items']
-    assert [(t['slug'], t['shard']) for t in found] == [('node', 0x01)]
+    assert [(t['slug'], t['shard']) for t in found] == [('node', 0x0001)]
     cc = ok(api.get('/types', params={'filters': '{"slug": {"$eq": "cc"}}'}))['items']   # a file's type in fs, a session's in sessions
-    assert sorted((UUID(t['id']).bytes[0], t['shard']) for t in cc) == [(0x10, 0x02), (0x20, 0x01)]
+    assert sorted((UUID(t['id']).bytes[0], t['shard']) for t in cc) == [(0x10, 0x1002), (0x20, 0x2001)]
 
 
 def test_the_file_system_is_in_its_own_schema(api):
@@ -183,12 +183,12 @@ def test_a_session_is_known_by_its_type_and_uid(api):
     assert [m['id'] for m in ok(api.get(f"/records/{session['id']}/records"))] == [message['id']]
     nxt = ok(api.post('/sessions/links', json={'type': 'next', 'status': 'new', 'from_id': session['id'], 'to_id': other['id']}))
     assert header(nxt)[:2] == bytes([0x20, 0x10])
-    assert [t['shard'] for t in ok(api.get('/sessions/types', params={'filters': '{"slug": {"$eq": "next"}}'}))['items']] == [0x10]
+    assert [t['shard'] for t in ok(api.get('/sessions/types', params={'filters': '{"slug": {"$eq": "next"}}'}))['items']] == [0x2010]
 
 
 def test_a_sessions_messages_are_read_in_the_order_of_their_lines_a_page_at_a_time(api):
     session = ok(api.post('/sessions', json={'type': 'cx', 'uid': 'ordered'}))
-    ids = sorted(uuid_create(0x20, 0x02) for _ in range(5))
+    ids = sorted(uuid_create(0x2002) for _ in range(5))
     for id, line in zip(ids, (11, 10, 9, 2, 1)):   # the ids sort against the lines, and 10 and 11 sort before 9 and 2 as text
         ok(api.put(f'/sessions/messages/{id}', json={'type': 'agent', 'parent_id': session['id'], 'meta': {'line': line}}))
     lineless = ok(api.post('/sessions/messages', json={'type': 'user', 'parent_id': session['id']}))   # read as line 0
@@ -221,10 +221,10 @@ def test_a_search_sorts_by_span_a_page_at_a_time_an_empty_span_least(api):
 
 
 def test_a_type_is_made_with_its_slug_and_shard_and_changed_without_them(api):
-    made = ok(api.post('/types', json={'slug': 'testing', 'shard': 0x01, 'name': 'Testing'}))
+    made = ok(api.post('/types', json={'slug': 'testing', 'shard': 0x0001, 'name': 'Testing'}))
     changed = ok(api.put(f"/types/{made['id']}", json={'data': {'x': 1}}))
-    assert (changed['slug'], changed['shard'], changed['name'], changed['data']) == ('testing', 0x01, 'Testing', {'x': 1})
-    assert '"slug"' in ok(api.post('/types', json={'shard': 0x01, 'name': 'No slug'}), 422)['detail']
+    assert (changed['slug'], changed['shard'], changed['name'], changed['data']) == ('testing', 0x0001, 'Testing', {'x': 1})
+    assert '"slug"' in ok(api.post('/types', json={'shard': 0x0001, 'name': 'No slug'}), 422)['detail']
     assert '"shard"' in ok(api.post('/types', json={'slug': 'no-shard', 'name': 'No shard'}), 422)['detail']
 
 

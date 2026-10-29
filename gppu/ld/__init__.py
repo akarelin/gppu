@@ -30,7 +30,7 @@ from psycopg.errors import UndefinedFunction
 from pydantic import ConfigDict, GetCoreSchemaHandler, GetJsonSchemaHandler, TypeAdapter, ValidationError
 from pydantic_core import core_schema
 from sqlakeyset import custom_bookmark_type
-from sqlalchemy import Computed, DateTime, FetchedValue, SmallInteger, String, TypeDecorator, UniqueConstraint, literal
+from sqlalchemy import Computed, DateTime, FetchedValue, Integer, SmallInteger, String, TypeDecorator, UniqueConstraint, literal
 from sqlalchemy.dialects.postgresql import JSONB, TSTZRANGE, Range
 from sqlalchemy.exc import DataError, IntegrityError, StatementError
 from sqlalchemy.sql.elements import UnaryExpression
@@ -289,13 +289,13 @@ class _Record(SQLModel):
 
 
 class _Type(_Record):
-    """A type's columns: its slug, unique in its shard, and the shard its records are in, shard2 of their table in its schema;
-    its schema, shard1, is its own id's. A status is a type of type `status` whose parent is the type it belongs to; a type's parent
+    """A type's columns: its slug, unique in its shard, and the shard its records are in, the two bytes of their table, shard1
+    its schema and shard2 the table (# UUID). A status is a type of type `status` whose parent is the type it belongs to; a type's parent
     is the type of its schema it is under, and a root type, with none, says what one of its schema's tables holds. Every schema's
     types are a table made from it."""
     # required to make a type, which its table refuses without them, not to change one: an update takes only what changes
     slug: str | None = Field(None, sa_type=String, sa_column_kwargs={'nullable': False}, description='Its slug, unique in its shard.')
-    shard: int | None = Field(None, sa_type=SmallInteger, sa_column_kwargs={'nullable': False}, description='shard2 of the table its records are in, in its schema.')
+    shard: int | None = Field(None, sa_type=Integer, sa_column_kwargs={'nullable': False}, description='The shard of the table its records are in, two bytes: shard1 its schema, shard2 the table.')
 
 
 class _Link(_Record):
@@ -349,12 +349,12 @@ def operations(path: str, body: type[_Record], name: str, *models: type[_Record]
         return int.from_bytes(id.bytes[:2])
 
     async def table(record: _Record) -> type[_Record]:
-        """The table of the record's `type`, one of the path's: the type's own id says its schema, shard1, and its `shard` the
-        table in it, shard2. Every schema's types are read in `ld.types`, which they inherit."""
+        """The table of the record's `type`, one of the path's: the type's `shard`. Every schema's types are read in `ld.types`,
+        which they inherit."""
         if len(own) == 1:
             return next(iter(own.values()))
-        types = (await _Record.db().exec(select(Type.id, Type.shard).where(Type.slug == record.type, Type.type.is_distinct_from('status')))).all()
-        if len(found := {s for id, shard2 in types if (s := id.bytes[0] << 8 | shard2) in own}) != 1:
+        shards = (await _Record.db().exec(select(Type.shard).where(Type.slug == record.type, Type.type.is_distinct_from('status')))).all()
+        if len(found := {s for s in shards if s in own}) != 1:
             raise HTTPException(422, f'{record.type!r} is a type of {len(found) or "no"} table{"" if len(found) == 1 else "s"} of {path}: '
                                      + ', '.join(m.__table__.fullname for m in own.values()))
         return own[found.pop()]
