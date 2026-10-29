@@ -437,9 +437,6 @@ class GppuCatalog(AbstractFileSystem):
 # endregion
 # region Linked Data
 
-NOT_IN_USE = ('discarded', 'rejected')   # the statuses of a location not in use; an archived one is out of sight (# Flags)
-
-
 class Drives(FileSystem):
     """gppufs's FileSystem in a Windows host's WSL: a file uri naming a drive, file://alex-pc/D:/Dev, is that drive as WSL mounts it,
     /mnt/d/Dev (`drives` in the app's configuration), so a location configured on the host is walked from its WSL as it is configured."""
@@ -455,17 +452,16 @@ class Drives(FileSystem):
 
 
 def catalog(records: list[dict], **location_types: Any) -> GppuCatalog:
-    """gppufs's catalog of Linked Data's location records, the items of GET /fs/locations as the catalog's user read them: every location in use that has a uid and a
-    canonical uri, the two a gppufs Location is known and reached by, as a row of gppufs's configuration table, its data with its id,
-    name, parent's uid and tags. A location in use is not discarded or rejected, inside locations that are in use too, since
-    a location is part of the location above it; its connection is its root location, whose data.handler holds the connection's
-    parameters. location_types are the Providers a caller adds by scheme, as GppuCatalog takes them; gppufs's FileSystem reaches
-    file://, and in a Windows host's WSL, Drives does."""
-    records = {r['id']: r for r in records
-               if r['status'] not in NOT_IN_USE and r['data'].get('uid') and r['data'].get('canonical')}
+    """gppufs's catalog of Linked Data's location records, the items of GET /fs/locations as the catalog's user read them: every location
+    listed that has a uid and a canonical uri, the two a gppufs Location is known and reached by, as a row of gppufs's configuration
+    table, its data with its id, name, parent's uid and tags. A location not in use is flagged out of sight and not listed (# Flags), and
+    a location below one not listed is not in use either, since a location is part of the location above it; its connection is its
+    root location, whose data.handler holds the connection's parameters. location_types are the Providers a caller adds by scheme, as
+    GppuCatalog takes them; gppufs's FileSystem reaches file://, and in a Windows host's WSL, Drives does."""
+    records = {r['id']: r for r in records if r['data'].get('uid') and r['data'].get('canonical')}
 
     def root(r: dict) -> dict | None:
-        """The root location above it; none when one above it is not in use, so it is not in use either."""
+        """The root location above it; none when one above it is not listed, so it is not in use either."""
         while r['parent_id']:
             if not (r := records.get(r['parent_id'])):
                 return None
@@ -624,9 +620,9 @@ class Catalog:
         return psycopg.connect(self.dsn, options='-c default_transaction_read_only=on', row_factory=dict_row, connect_timeout=30)
 
     def locations(self) -> list[dict[str, Any]]:
-        """Linked Data's locations in use whose entries are in the catalog, with every location above them, so they make one tree:
+        """Linked Data's locations listed whose entries are in the catalog, with every location above them, so they make one tree:
         each its id, name, parent's id and, where it has entries, the catalog's id for it."""
-        records = {r['id']: r for r in self.records() if r['status'] not in NOT_IN_USE}
+        records = {r['id']: r for r in self.records()}   # a location not in use is flagged out of sight and not listed
         kept: set[str] = set()
         for r in records.values():
             if 'lake_id' in r['meta']:
