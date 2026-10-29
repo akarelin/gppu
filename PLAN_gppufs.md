@@ -27,9 +27,10 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - Lake service and Dagster (RAN `Systems/lake`, stacks `lake` and `dagster` on trix): done; both code locations build, 118 tests pass
 - Linked Data service (RAN `Systems/ld`, stack `linked-data` on five), session hook and Session Manager: done; serving waits on gppu.ld's two-byte ids and the standard's SQL on its database
 - FileIndexer (RAN `Systems/ld/fileindexer`): done; 4 of 5 tests pass on a scratch database, the TUI test waits on WSL's network
-- Admin UI and its APIs (CRAP `Systems/admin_ui`; RAN `Services/admin-ui`, `Services/admin-priors`): in progress
+- Admin UI and its APIs (CRAP `Systems/admin_ui`; RAN `Services/admin-ui`, `Services/admin-priors`): moved, its configuration routes answer as the live API does; its session tests wait on its evidence hash and the standard's session span
 - Host tools (RAN `Hosts/preservator`, `Hosts/tui` session scripts): in progress
 - Releases and deploys of the stacks: a gppu release from ld-standard, Alex's
+- with a catalog, gppufs lists and opens through it what it holds no index for, SharePoint and archives among them: in progress
 - each index row carries its file's UUID (`uuid_create(0x10, 0x02)`, fs.files as Linked Data - FS has it); code finds files by UUID, not URI: not started
 - gppufs on fsspec's `AsyncFileSystem`: not started
 
