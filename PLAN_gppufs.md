@@ -8,7 +8,7 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - `cachable = False`: fsspec reuses an instance for the same options. Removed.
 - `locations=` and `index=`: gppufs knows locations and a database index. Moved to the catalog, as its own step.
 - Rows are named by URI (`file://D:/...`); fsspec names entries by path. Removed with full paths.
-- `refresh=True` runs the handlers; fsspec's `refresh` reads the store again. Kept until Alex decides.
+- `refresh=True` re-reads what is not read as it is now, with the handlers: fsspec's meaning applied to what gppufs caches. Settled by the agent.
 - `ls_sync`, `info_sync`, `ls_iter`, `move_into` and the `@sync` decorator: names and an async scheme fsspec does not have (`ls`, `info`, `_walk`, `mv`, `AsyncFileSystem`). Replaced by fsspec's in the async step.
 
 ## Tasks
@@ -18,6 +18,8 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - locations and the database index out of gppufs; the location map in the catalog (`locate`, `resolve`): done
 - the session cleaner in gppu's TUI: done
 - gppufs's own tests on full paths: in progress
+- refresh: never follows a junction, reads below once on a recursive refresh: done
+- refresh of a folder of millions: read and written in batches, not held whole in memory: next
 
 ## Users of gppufs, moved in parallel (docs/gppufs-users.md)
 - Lake service and Dagster (RAN `Systems/lake`, stacks `lake` and `dagster` on trix): in progress
