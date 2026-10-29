@@ -1,6 +1,6 @@
 # Moving a user of gppufs to the new gppufs
 
-This is what changed in gppu on the `ld-standard` branch, and how code that uses it moves over. The design is in the gppufs standard, section The file system (`D:\_\_Standards\Systems\gppufs.md`). Open decisions are in [gppufs-decisions.md](gppufs-decisions.md).
+This is what changed in gppu on the `ld-standard` branch, and how code that uses it moves over. Alex's instructions are in [SPEC_gppufs.md](../SPEC_gppufs.md). His rulings with their sources are in [gppufs-decisions.md](gppufs-decisions.md).
 
 ## gppufs
 - **One gppufs in a process.** `GppuFileSystem()`, `fsspec.filesystem('gppu')` and `gppu::D:/TextLake` all give the same object, which wraps this host's files. `gppu::smb://...` or `GppuFileSystem(target_protocol=..., target_options=...)` wraps another store. Nothing makes a second one. Constructing it again with different options raises an error.

@@ -1,6 +1,6 @@
 # gppufs as an fsspec file system
 
-A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desktop and the session cleaner are moved to it. What gppufs must be is in the gppufs standard, section The file system (`D:\_\_Standards\Systems\gppufs.md`); the rest of that standard is untrusted, and so is the Lake's.
+A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desktop and the session cleaner are moved to it. What gppufs must be is in [SPEC_gppufs.md](SPEC_gppufs.md). `D:\_\_Standards\Systems\gppufs.md` and `Lake.md` are generated, not specification; the Linked Data standard's `byAlex` files are canonical for Linked Data.
 
 ## Deviations from fsspec today
 - The constructor takes one folder and every path is read below it; fsspec gives one file system every path. Removed.
