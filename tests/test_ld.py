@@ -112,7 +112,6 @@ def test_a_link_joins_two_records(api):
     link = ok(api.post('/links', json={'type': 'link', 'from_id': a['id'], 'to_id': b['id']}))
     assert header(link)[:2] == bytes([0x00, 0x10])
     assert [l['id'] for l in ok(api.get(f"/records/{a['id']}/links"))['items']] == [link['id']]
-    assert 'is not a record' in ok(api.post('/links', json={'type': 'link', 'from_id': a['id'], 'to_id': str(uuid4())}), 422)['detail']
 
 
 def test_a_read_only_record_changes_only_its_flags(api):
@@ -229,14 +228,10 @@ def test_a_type_is_made_with_its_slug_and_shard_and_changed_without_them(api):
     assert '"shard"' in ok(api.post('/types', json={'slug': 'no-shard', 'name': 'No shard'}), 422)['detail']
 
 
-def test_a_links_type_is_one_of_its_schemas_types(api):
+def test_a_link_is_written_with_its_relation_as_its_type(api):
     a, b = (ok(api.post('/records', json={'type': 'node'})) for _ in range(2))
-    for type in ('nothing', 'next'):   # no type, and a sessions link's
-        assert repr(type) in ok(api.post('/links', json={'type': type, 'from_id': a['id'], 'to_id': b['id']}), 422)['detail']
-    link = ok(api.post('/links', json={'type': 'link', 'from_id': a['id'], 'to_id': b['id']}))
-    assert "'nothing'" in ok(api.put(f"/links/{link['id']}", json={'type': 'nothing'}), 422)['detail']
-    assert ok(api.get(f"/links/{link['id']}"))['type'] == 'link'
-    assert "'nothing'" in ok(api.post('/sessions/links', json={'type': 'nothing', 'from_id': a['id'], 'to_id': b['id']}), 422)['detail']
+    link = ok(api.post('/links', json={'type': 'implements', 'from_id': a['id'], 'to_id': b['id']}))
+    assert ok(api.get(f"/links/{link['id']}"))['type'] == 'implements'
 
 
 def test_gppufs_makes_its_catalog_from_the_locations(api):

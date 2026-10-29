@@ -24,14 +24,14 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - refresh of a folder of millions: read a folder at a time, written in batches of 1,000 rows: done
 - catalog() reads location records as gppu.ld.fs has them; a location is on this host by its handler's access, or below the location above it: done
 - gppu.ld to the Linked Data standard as it is now (two-byte ids, shard1 the schema and shard2 the table, from `Linked Data.md`; its SQL and Python first copied from the LD, FS and Sessions notes, which are generated): done, its tests pass on Postgres
-- gppu.ld checked against `Linked Data.md` alone: flags change only by its transitions, `delete` among them; a record's children listed by `records_list`; every schema's root types at the root of their schema, none under another schema's types; code and SQL cite `Linked Data.md` and gppu.ld, not the generated notes; `type` stays text; ids, span, shard codes and slugs already matched: done, the gppu, FileIndexer and admin suites pass on the scratch database
+- gppu.ld checked against `Linked Data.md` alone: flags change only by its transitions, `delete` among them; a record's children listed by `records_list`; every schema's root types at the root of their schema, none under another schema's types; a link written as any record is, its ends and its type not checked, which were the agents' rules; code and SQL cite `Linked Data.md` and gppu.ld, not the generated notes; `type` stays text; ids, span, shard codes and slugs already matched: done, the gppu, FileIndexer and admin suites pass on the scratch database
 
 ## Users of gppufs, moved in parallel (docs/gppufs-users.md)
 - Lake service and Dagster (RAN `Systems/lake`, stacks `lake` and `dagster` on trix): done; both code locations build, 118 tests pass
 - Linked Data service (RAN `Systems/ld`, stack `linked-data` on five), session hook and Session Manager: done, its sessions on gppu.ld.sessions and its checks on `/fs` pass on a scratch database; a session's messages read in their file's order: done; its core check, its pages (stack linked-data's `admin`) and `structure.py` (knowledge, a node type) on the new records: done, the pages built and type-checked, their browser check waiting on WSL's network; Session Manager's plain links are type `link`; serving waits on the gppu release and gppu.ld's SQL on its database
 - FileIndexer (RAN `Systems/ld/fileindexer`): done, posting locations as gppu.ld.fs has them; its tests pass on Windows against a scratch database
 - Admin UI and its APIs (CRAP `Systems/admin_ui`; RAN `Services/admin-ui`, `Services/admin-priors`): done; its configuration routes answer as the live API does, its tests pass as the running image's do, its docs page renders; its Linked Data record pages on the new API: done, drawn in a browser against a scratch database; the work, project and knowledge pages wait for `/work`'s schema, Systems and Processes for the entity types they filter by
-- gppu.ld: a sort by span, a type's update without its slug and shard, a link's type checked against the store's types: done, its tests pass on Postgres in WSL
+- gppu.ld: a sort by span, a type's update without its slug and shard, a link's type checked against the store's types, removed again as a rule Alex did not write: done, its tests pass on Postgres
 - Host tools (RAN `Hosts/preservator`, `Hosts/tui` session scripts): done, preservator saving through the Lake, `platform_for_os` restored
 - Releases and deploys of the stacks: a gppu release from ld-standard, Alex's
 - with a catalog, gppufs lists and opens through it what it holds no index for, SharePoint and archives among them: done; the catalog's address is the `catalog` option, from fsspec's configuration (`FSSPEC_GPPU_CATALOG`), none by default; bytes come from the Lake at the entry's address
@@ -56,6 +56,7 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - FileIndexer could write files to Linked Data with `PUT /fs/files/{gppu.id}`; it writes none today.
 - gppu.ld has what `Linked Data.md` does not define, from the generated notes: the `ld.records` parent table, the columns `name`, `data`, `meta`, `created` and `updated`, and the API's routes.
 - A record's status is not checked against its type's statuses.
+- The Systems collector's runs were activities of subtype `collection`, which is the core's node type, so `POST /records` cannot tell their table; they need a slug of their own before the production migration makes them.
 - No code reads a file type's `data.class`; gppufs picks a file's handler from gppu's own list, and gppufs works without the database.
 - Session Manager and the admin's session pages cite `Linked Data - Sessions and work`, a superseded generated note.
 - gppu has no public field for the first line a person typed; the session tools read it from `normalized_name`.

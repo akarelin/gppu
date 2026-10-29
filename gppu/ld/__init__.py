@@ -303,20 +303,6 @@ class _Link(_Record):
     from_id: UUID | None = Field(None, description='The record where it starts.')
     to_id: UUID | None = Field(None, description='The record where it ends.')
 
-    @classmethod
-    async def update(cls, id: UUID | None, sent: _Record) -> Self:
-        """As a record is written; an end it is sent that is not a record is refused, and so is a type it is sent that is not one of
-        its schema's types for its table, which its id says (# UUID)."""
-        row = await super().update(id, sent)
-        for end in (getattr(row, k) for k in ('from_id', 'to_id') if k in sent.model_fields_set):
-            if end and not await cls.db().get(Record, end):   # every table inherits ld.records
-                raise HTTPException(422, f'{end} is not a record')
-        if 'type' in sent.model_fields_set and row.type is not None:
-            types = (await cls.db().exec(select(Type.id).where(Type.slug == row.type, Type.shard == row.id.bytes[1], Type.type.is_distinct_from('status')))).all()
-            if not any(t.bytes[0] == row.id.bytes[0] for t in types):   # every schema's types are read in ld.types
-                raise HTTPException(422, f'{row.type!r} is not a type of the links of its schema')
-        return row
-
 
 class Fields(_Link):
     """A record as a caller sends it to `/records`: a record's columns and a link's ends; each table takes those it has."""
