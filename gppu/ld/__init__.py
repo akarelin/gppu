@@ -30,7 +30,7 @@ from psycopg.errors import UndefinedFunction
 from pydantic import ConfigDict, GetCoreSchemaHandler, GetJsonSchemaHandler, TypeAdapter, ValidationError
 from pydantic_core import core_schema
 from sqlakeyset import custom_bookmark_type
-from sqlalchemy import Computed, DateTime, FetchedValue, SmallInteger, String, TypeDecorator, UniqueConstraint
+from sqlalchemy import Computed, DateTime, FetchedValue, SmallInteger, String, TypeDecorator, UniqueConstraint, literal
 from sqlalchemy.dialects.postgresql import JSONB, TSTZRANGE, Range
 from sqlalchemy.exc import DataError, IntegrityError, StatementError
 from sqlalchemy.sql.elements import UnaryExpression
@@ -68,7 +68,6 @@ Page = CustomizedPage[CursorPage[T], UseName('Page'), UseIncludeTotal(True), Use
                       UseExcludedFields('current_page', 'current_page_backwards'),
                       UseFieldsAliases(next_page='next', previous_page='previous')]   # `limit` records after `cursor`, the total, and `next`
 Params = Page.__params_type__
-LEAST = {str: '', int: 0, UUID: UUID(int=0), datetime: datetime.min.replace(tzinfo=ZoneInfo('UTC'))}   # what an empty column is sorted as
 
 
 class Flags(IntFlag):
@@ -130,6 +129,10 @@ class SpanColumn(TypeDecorator):
     impl = TSTZRANGE
     cache_ok = True
 
+    @property
+    def python_type(self):
+        return Span
+
     def process_bind_param(self, span, dialect):
         if span is None:
             return None
@@ -142,6 +145,8 @@ class SpanColumn(TypeDecorator):
 
 
 custom_bookmark_type(Span, 'span', deserializer=SPAN.validate_json, serializer=lambda s: SPAN.dump_json(s).decode())   # a page sorted by span carries one in its cursor
+LEAST = {str: '', int: 0, UUID: UUID(int=0), datetime: datetime.min.replace(tzinfo=ZoneInfo('UTC'))}   # what an empty column is sorted as
+LEAST[Span] = Span(*[LEAST[datetime] + timedelta(days=1)] * 2)   # a span at the least time it holds in any zone: TimeSpan reads its times in gppu's
 
 
 # ++     _Record: every record's columns and its operations; a table's class only defines its table
@@ -254,7 +259,7 @@ class _Record(SQLModel):
             typed = column if isinstance(key.element.type, NullType) else key.element   # lower() has no type of its own
             if not column.nullable and typed is column:
                 return key
-            return UnaryExpression(func.coalesce(key.element, LEAST[typed.type.python_type]), modifier=key.modifier)
+            return UnaryExpression(func.coalesce(key.element, literal(LEAST[typed.type.python_type], typed.type)), modifier=key.modifier)
         keys = [after(k) for k in (*query._order_by_clauses, *order)]   # querybuilder's sort, then the caller's, read as sqlakeyset reads them
         query = query.order_by(None).order_by(*keys, cls.id)
         if params.size is None:
@@ -267,8 +272,9 @@ class _Type(_Record):
     """A type's columns: its slug, unique in its shard, and the shard its records are in, shard2 of their table in its schema;
     its schema, shard1, is its own id's. A status is a type of type `status` whose parent is the type it belongs to; a type's parent
     is the type it extends, in its schema or in `ld`. Every schema's types are a table made from it."""
-    slug: str = Field(sa_type=String, description='Its slug, unique in its shard.')
-    shard: int = Field(sa_type=SmallInteger, description='shard2 of the table its records are in, in its schema.')
+    # required to make a type, which its table refuses without them, not to change one: an update takes only what changes
+    slug: str | None = Field(None, sa_type=String, sa_column_kwargs={'nullable': False}, description='Its slug, unique in its shard.')
+    shard: int | None = Field(None, sa_type=SmallInteger, sa_column_kwargs={'nullable': False}, description='shard2 of the table its records are in, in its schema.')
 
 
 class _Link(_Record):
@@ -278,11 +284,16 @@ class _Link(_Record):
 
     @classmethod
     async def update(cls, id: UUID | None, sent: _Record) -> Self:
-        """As a record is written; an end it is sent that is not a record is refused."""
+        """As a record is written; an end it is sent that is not a record is refused, and so is a type it is sent that is not one of
+        its schema's types for its table, which its id says (# UUID)."""
         row = await super().update(id, sent)
         for end in (getattr(row, k) for k in ('from_id', 'to_id') if k in sent.model_fields_set):
             if end and not await cls.db().get(Record, end):   # every table inherits ld.records
                 raise HTTPException(422, f'{end} is not a record')
+        if 'type' in sent.model_fields_set and row.type is not None:
+            types = (await cls.db().exec(select(Type.id).where(Type.slug == row.type, Type.shard == row.id.bytes[1], Type.type.is_distinct_from('status')))).all()
+            if not any(t.bytes[0] == row.id.bytes[0] for t in types):   # every schema's types are read in ld.types
+                raise HTTPException(422, f'{row.type!r} is not a type of the links of its schema')
         return row
 
 

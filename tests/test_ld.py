@@ -187,6 +187,42 @@ def test_a_sessions_messages_are_read_in_the_order_of_their_lines_a_page_at_a_ti
     assert read == [lineless['id'], *map(str, reversed(ids))]
 
 
+def pages(api, path: str, **params) -> list[dict]:
+    """Every record a search finds, read a page at a time, each page after the cursor of the one before."""
+    read, cursor = [], None
+    while True:
+        page = ok(api.get(path, params=params | ({'cursor': cursor} if cursor else {})))
+        read += page['items']
+        if not (cursor := page['next']):
+            return read
+
+
+def test_a_search_sorts_by_span_a_page_at_a_time_an_empty_span_least(api):
+    starts = {'s1': '2026-10-28T10:00:00Z', 's2': '2026-10-28T12:00:00Z', 's3': None, 's4': '2026-10-28T11:00:00Z'}
+    for uid, start in starts.items():
+        ok(api.post('/sessions', json={'type': 'gemini', 'uid': uid} | ({'span': {'ts': start}} if start else {})))
+    assert [s['uid'] for s in pages(api, '/sessions', type='gemini', sort='span:asc', limit=1)] == ['s3', 's1', 's4', 's2']
+    assert [s['uid'] for s in pages(api, '/sessions', type='gemini', sort='span:desc', limit=1)] == ['s2', 's4', 's1', 's3']
+
+
+def test_a_type_is_made_with_its_slug_and_shard_and_changed_without_them(api):
+    made = ok(api.post('/types', json={'slug': 'testing', 'shard': 0x01, 'name': 'Testing'}))
+    changed = ok(api.put(f"/types/{made['id']}", json={'data': {'x': 1}}))
+    assert (changed['slug'], changed['shard'], changed['name'], changed['data']) == ('testing', 0x01, 'Testing', {'x': 1})
+    assert '"slug"' in ok(api.post('/types', json={'shard': 0x01, 'name': 'No slug'}), 422)['detail']
+    assert '"shard"' in ok(api.post('/types', json={'slug': 'no-shard', 'name': 'No shard'}), 422)['detail']
+
+
+def test_a_links_type_is_one_of_its_schemas_types(api):
+    a, b = (ok(api.post('/records', json={'type': 'node'})) for _ in range(2))
+    for type in ('nothing', 'next'):   # no type, and a sessions link's
+        assert repr(type) in ok(api.post('/links', json={'type': type, 'from_id': a['id'], 'to_id': b['id']}), 422)['detail']
+    link = ok(api.post('/links', json={'type': 'link', 'from_id': a['id'], 'to_id': b['id']}))
+    assert "'nothing'" in ok(api.put(f"/links/{link['id']}", json={'type': 'nothing'}), 422)['detail']
+    assert ok(api.get(f"/links/{link['id']}"))['type'] == 'link'
+    assert "'nothing'" in ok(api.post('/sessions/links', json={'type': 'nothing', 'from_id': a['id'], 'to_id': b['id']}), 422)['detail']
+
+
 def test_gppufs_makes_its_catalog_from_the_locations(api):
     root = ok(api.post('/fs/locations', json={'type': 'host', 'status': 'active', 'name': 'Root',
                                               'data': {'uid': 'cat-root', 'canonical': 'file:///cat-root', 'handler': {'kind': 'fileSystem'}}}))
