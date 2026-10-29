@@ -470,7 +470,7 @@ def catalog(records: list[dict], **location_types: Any) -> GppuCatalog:
                 return None
         return r
     rows = [r['data'] | {'id': r['id'], 'name': r['name'], 'parent': r['parent_id'] and records[r['parent_id']]['data']['uid'],
-                         'connection': top['data']['uid']} | ({'tags': r['meta']['tags']} if 'tags' in r['meta'] else {})
+                         'connection': top['data']['uid']}
             for r in records.values() if (top := root(r))]
     roots = [r for r in rows if r['connection'] == r['uid']]
     if missing := [r['uid'] for r in roots if r.get('handler') is None]:
@@ -491,11 +491,31 @@ def here(catalog: GppuCatalog, uri: str) -> Path | None:
         return None
 
 
+def accessed(row: Mapping[str, Any]) -> Path | None:
+    """The folder a location's handler says it is at on this host, `handler.access` by host (Linked Data - FS); none when it
+    names none here."""
+    access = (row.get('handler') or {}).get('access') or {}
+    path = access.get(socket.gethostname().split('.')[0].casefold()) if isinstance(access, Mapping) else None
+    return None if path is None else Path(path)
+
+
 def reached(catalog: GppuCatalog) -> dict[str, dict[str, str]]:
-    """The folders on this host the catalog's locations are: the location map locate() and resolve() take. Each is looked for
-    once, so a caller reads it once."""
+    """The folders on this host the catalog's locations are: where its handler's access says, else where its file uri names, else
+    below the folder of the location above it, by its uri below that one's; the location map locate() and resolve() take. Each is
+    looked for once, so a caller reads it once."""
+    found: dict[str, Path] = {}
+
+    def folder(uid: str) -> Path | None:
+        if uid not in found:
+            row = catalog.locations[uid]
+            path = accessed(row) or here(catalog, row['canonical'])
+            if path is None and (parent := row.get('parent')) and (above := folder(parent)) is not None:
+                rest = _below(str(catalog.locations[parent]['canonical']), str(row['canonical']))
+                path = None if rest is None else above / unquote(rest)
+            found[uid] = path
+        return found[uid]
     return {full_path(path).as_posix(): {'location': uid, 'canonical': row['canonical']}
-            for uid, row in catalog.locations.items() if (path := here(catalog, row['canonical'])) and path.is_dir()}
+            for uid, row in catalog.locations.items() if (path := folder(uid)) is not None and path.is_dir()}
 
 
 @functools.lru_cache(maxsize=4096)
