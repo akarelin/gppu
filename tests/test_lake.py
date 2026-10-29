@@ -46,6 +46,7 @@ def test_a_session_is_placed_by_what_its_handler_reads(tmp_path):
     assert [row['name'] for row in listed] == [str(uri)] and listed[0]['gppu']['record']['type'] == 'cc'
     with lake.open(uri) as stream:
         assert stream.read() == SESSION.encode()
+    assert [index.parent for index in outer.rglob('*.gppufs.sqlite')] == [outer]   # one index, at the Lake's root
 
 
 def test_an_original_is_placed_under_its_system_and_account(tmp_path):

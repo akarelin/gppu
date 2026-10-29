@@ -43,6 +43,7 @@ class Lake:
         self.templates = TemplateSet(named={'lake': dict(templates)})
         self.files = GppuFileSystem()
         self.root = self.files._key(location.provider.local(self.store.uri).as_posix())   # the Lake on this host, as gppufs names it
+        self.files.ls(self.root)   # the Lake's index is at its root, so what it saves is indexed there and never beside a day folder
 
     def _here(self, uri: y2uri | str) -> str | None:
         """The Lake folder or file a uri names, as gppufs takes it; none for a uri outside the Lake."""
