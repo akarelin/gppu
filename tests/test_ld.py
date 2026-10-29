@@ -1,6 +1,7 @@
 """gppu.ld, gppu.ld.fs and gppu.ld.sessions on Postgres: the standard's schemas ld, fs and sessions (tests/ld.sql) in a database
 of their own, made for these tests and dropped after them; every call goes through the API to Postgres and back. LD_TEST_DSN is the
 Postgres server to make it on."""
+import asyncio
 import os
 from uuid import UUID, uuid4
 
@@ -45,7 +46,7 @@ def api():
             db.execute((Path(__file__).parent / 'ld.sql').read_text(encoding='utf-8'))
         Env._load_dict({'db': dsn})   # the store's `db`, as an app's configuration gives it
         apis = {'/fs': files.app, '/sessions': sessions.app, '/ordered': api_at('/ordered', 'ordered', "A session's messages in order.", ordered)}
-        with TestClient(serve(apis, _SQABase())) as client:
+        with TestClient(serve(apis, _SQABase()), backend_options={'loop_factory': asyncio.SelectorEventLoop}) as client:   # psycopg's async connections need the selector loop on Windows, as RAN's api.py runs it
             yield client
     finally:
         Env.reset()

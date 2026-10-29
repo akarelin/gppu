@@ -50,7 +50,6 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 
 ## Found, not this task
 - WSL's mirrored networking gives its VM no network device on this host; WSL runs in NAT mode, reaches Windows and is reached at localhost, and Windows does not forward its traffic further.
-- gppu.ld's async psycopg cannot run on Windows' default event loop, so its tests run in WSL.
 - The admin's Linked Data pages count records with one request per type, about 60 on a store made from the standard.
 - The Lake API has no batch route: preservator makes two calls per file on every run, files already preserved included.
 - FileIndexer could write files to Linked Data with `PUT /fs/files/{gppu.id}`; it writes none today.
