@@ -9,6 +9,7 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - `locations=` and `index=`: gppufs knows locations and a database index. Moved to the catalog, as its own step.
 - Rows are named by URI (`file://D:/...`); fsspec names entries by path. Removed with full paths.
 - `refresh=True` re-reads what is not read as it is now, with the handlers: fsspec's meaning applied to what gppufs caches. Settled by the agent.
+- With a catalog, gppufs lists and opens what its wrapped store does not hold: `catalog://` paths and any other store's address go to the catalog. Alex's instruction.
 - `ls_sync`, `info_sync`, `ls_iter`, `move_into` and the `@sync` decorator: names and an async scheme fsspec does not have (`ls`, `info`, `_walk`, `mv`, `AsyncFileSystem`). Replaced by fsspec's in the async step.
 
 ## Tasks
@@ -30,7 +31,7 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - Admin UI and its APIs (CRAP `Systems/admin_ui`; RAN `Services/admin-ui`, `Services/admin-priors`): moved, its configuration routes answer as the live API does; its session tests wait on its evidence hash and the standard's session span
 - Host tools (RAN `Hosts/preservator`, `Hosts/tui` session scripts): in progress
 - Releases and deploys of the stacks: a gppu release from ld-standard, Alex's
-- with a catalog, gppufs lists and opens through it what it holds no index for, SharePoint and archives among them: in progress
+- with a catalog, gppufs lists and opens through it what it holds no index for, SharePoint and archives among them: done; the catalog's address is the `catalog` option, from fsspec's configuration (`FSSPEC_GPPU_CATALOG`), none by default; bytes come from the Lake at the entry's address
 - each index row carries its file's UUID (`uuid_create(0x10, 0x02)`, fs.files as Linked Data - FS has it); code finds files by UUID, not URI: not started
 - gppufs on fsspec's `AsyncFileSystem`: not started
 

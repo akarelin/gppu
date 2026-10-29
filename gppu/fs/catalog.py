@@ -22,6 +22,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 from uuid import UUID
 
 import yaml
+from fsspec.core import split_protocol
 from fsspec.spec import AbstractFileSystem
 
 from ..app import glob
@@ -644,7 +645,7 @@ class Catalog:
 
     def locations(self) -> list[dict[str, Any]]:
         """Linked Data's locations in use whose entries are in the catalog, with every location above them, so they make one tree:
-        each its id, name, parent's id and, where it has entries, the catalog's id for it."""
+        each its id, name, canonical address, parent's id and, where it has entries, the catalog's id for it."""
         records = {r['id']: r for r in self.records() if r['status'] != DISCARDED}
         kept: set[str] = set()
         for r in records.values():
@@ -654,6 +655,7 @@ class Catalog:
                     r = records.get(r['parent_id'])
         self.lake_ids = {id: records[id]['meta']['lake_id'] for id in kept if 'lake_id' in records[id]['meta']}
         return [{'id': id, 'name': records[id]['name'], 'uid': records[id]['data'].get('uid'),
+                 'canonical': records[id]['data'].get('canonical'),
                  'parent': records[id]['parent_id'] if records[id]['parent_id'] in kept else None, 'lake_id': self.lake_ids.get(id)}
                 for id in kept]
 
@@ -791,8 +793,9 @@ class CatalogFileSystem(AbstractFileSystem):
     """The catalog through its API, an fsspec filesystem: Linked Data's locations are folders, each under the one above it, and in
     each is what the catalog holds at its root. ls reads a folder a line at a time and keeps what it read, which info answers from;
     an entry is shown modified when its source last changed it and created when its source says it was, SharePoint's Created.
-    Read-only, and without bytes: the catalog holds what an entry is, not its content. client is the API's, made from url, or one a
-    caller gives, such as a test's."""
+    A path is the catalog's own, or the address of what a location holds, `m365://karelin/sharepoint/...`, read as its location's
+    path and the path below it. Read-only: the catalog holds what an entry is, and its bytes are what the Lake gives at the entry's
+    address. client is the API's, made from url, or one a caller gives, such as a test's."""
 
     protocol = 'catalog'
     cachable = False
@@ -820,6 +823,17 @@ class CatalogFileSystem(AbstractFileSystem):
     def _where(self, path: str) -> tuple[dict[str, Any] | None, str]:
         return where(self._locations(), path)
 
+    def _named(self, path: str) -> str:
+        """A path as the catalog shows it: an address as the path of the location whose canonical address holds it, the deepest,
+        and the path below that; the catalog's own path as it is."""
+        path = self._strip_protocol(path)
+        if split_protocol(path)[0] is None:
+            return path.strip('/')
+        for key, location in sorted(self._locations().items(), key=lambda item: len(item[1].get('canonical') or ''), reverse=True):
+            if location.get('canonical') and (below := _below(location['canonical'], path)) is not None:
+                return f'{key}/{below}' if below else key
+        raise FileNotFoundError(f'{path}: no location of the catalog holds it')
+
     @staticmethod
     def _entry(row: dict[str, Any], name: str) -> dict[str, Any]:
         """A catalog row as fsspec has an entry; its uid is `id`, since a FUSE bridge reads `uid` as the owner's."""
@@ -832,7 +846,7 @@ class CatalogFileSystem(AbstractFileSystem):
         return entry
 
     def ls(self, path: str = '', detail: bool = True, **kwargs: Any) -> list[dict[str, Any]] | list[str]:
-        path = self._strip_protocol(path).strip('/')
+        path = self._named(path)
         location, below = self._where(path)
         rows = [{'name': key, 'type': 'directory', 'size': 0} for key in self._locations()
                 if key.rpartition('/')[0] == path and key != path]
@@ -861,7 +875,7 @@ class CatalogFileSystem(AbstractFileSystem):
         return self._get(f"/locations/{location['id']}/entry", path=below).json()['id']
 
     def info(self, path: str = '', **kwargs: Any) -> dict[str, Any]:
-        path = self._strip_protocol(path).strip('/')
+        path = self._named(path)
         if not path or path in self._locations():
             return {'name': path, 'type': 'directory', 'size': 0}
         folder, _, name = path.rpartition('/')
@@ -872,6 +886,14 @@ class CatalogFileSystem(AbstractFileSystem):
         return self._listed[folder][name]
 
     def _open(self, path: str, mode: str = 'rb', **kwargs: Any):
-        raise PermissionError(f'{path}: the catalog holds what an entry is, not its content')
+        """The bytes of an entry, as the Lake gives them at its address: its location's canonical address and its path there."""
+        if mode != 'rb':
+            raise PermissionError(f'{path}: the catalog is read-only')
+        path = self._named(path)
+        location, below = self._where(path)
+        if location is None or not below or not location.get('canonical'):
+            raise FileNotFoundError(f'{path}: the catalog holds no entry with an address there')
+        from .lake import LakeFileSystem   # the Lake's module imports the catalog's
+        return LakeFileSystem(root=_address(location['canonical'], below), client=self.client)._open('', mode)
 
 # endregion

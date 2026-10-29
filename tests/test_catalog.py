@@ -5,10 +5,12 @@ from uuid import UUID
 import pytest
 
 pytest.importorskip('fastapi')
-from fastapi import FastAPI
+import fsspec
+from fastapi import FastAPI, Response
 from fastapi.testclient import TestClient
 
 from gppu.fs.catalog import CatalogFileSystem, _text, api, label, paths, where
+from gppu.fs.gppufs import GppuFileSystem
 from gppu.fs.vfs import DesktopFileSystem
 
 LIBRARY, ROOT, FOLDER, FILE = (UUID(f'00000000-0000-0000-0000-00000000000{n}') for n in range(1, 5))
@@ -21,10 +23,11 @@ class Held:
         self.asked = []
 
     def locations(self):
-        return [{'id': 'tenant', 'name': 'Karelin', 'uid': 'box-karelin', 'parent': None, 'lake_id': None},
-                {'id': 'library', 'name': 'Statements', 'uid': None, 'parent': 'tenant', 'lake_id': 142},
-                {'id': 'one', 'name': 'github', 'uid': 'github', 'parent': None, 'lake_id': None},
-                {'id': 'two', 'name': 'github', 'uid': 'system-github', 'parent': None, 'lake_id': 226}]
+        return [{'id': 'tenant', 'name': 'Karelin', 'uid': 'box-karelin', 'canonical': 'm365://karelin', 'parent': None, 'lake_id': None},
+                {'id': 'library', 'name': 'Statements', 'uid': None, 'canonical': 'm365://karelin/sharepoint/Statements',
+                 'parent': 'tenant', 'lake_id': 142},
+                {'id': 'one', 'name': 'github', 'uid': 'github', 'canonical': None, 'parent': None, 'lake_id': None},
+                {'id': 'two', 'name': 'github', 'uid': 'system-github', 'canonical': None, 'parent': None, 'lake_id': 226}]
 
     def columns(self):
         return ['ContentType', '_StartDate', 'TaxYear']
@@ -54,10 +57,24 @@ class Held:
         return {'id': uid, 'kind': 'folder', 'name': 'x', 'instances': []}
 
 
-def browsed(held):
+PDF = 'm365://karelin/sharepoint/Statements/Statements/2019 Statements.pdf'
+
+
+def served(held):
+    """/lake/catalog, and the Lake at /lake giving the bytes of the one object it holds."""
     app = FastAPI()
     app.mount('/lake/catalog', api(held))
-    return CatalogFileSystem(client=TestClient(app))
+
+    @app.get('/lake/{uri:path}')
+    def content(uri: str):
+        if uri != PDF:
+            return Response(status_code=404)
+        return Response(b'%PDF statements')
+    return TestClient(app)
+
+
+def browsed(held):
+    return CatalogFileSystem(client=served(held))
 
 
 def test_locations_are_folders_and_a_shared_name_is_told_apart_by_uid():
@@ -118,10 +135,50 @@ def test_a_path_is_in_the_location_whose_path_it_starts_with_longest():
     assert where(tree, 'Nowhere/x') == (None, 'Nowhere/x')
 
 
-def test_the_catalog_holds_no_content():
+def test_an_entry_is_read_as_the_lake_gives_it_at_its_address():
     fs = browsed(Held())
+    assert fs.cat_file('Karelin/Statements/Statements/2019 Statements.pdf') == b'%PDF statements'
     with pytest.raises(PermissionError):
-        fs.open('Karelin/Statements/Statements/2019 Statements.pdf').read()
+        fs.open('Karelin/Statements/Statements/new.pdf', 'wb')
+
+
+def test_an_address_is_read_as_its_locations_path():
+    fs = browsed(Held())
+    assert fs.ls('m365://karelin/sharepoint/Statements/Statements', detail=False) == fs.ls('Karelin/Statements/Statements', detail=False)
+    assert fs.info(PDF)['name'] == 'Karelin/Statements/Statements/2019 Statements.pdf'
+    assert fs.cat_file(PDF) == b'%PDF statements'
+    with pytest.raises(FileNotFoundError):
+        fs.ls('m365://tulaco/sharepoint/Other')
+
+
+def with_catalog(held, tmp_path, monkeypatch):
+    """The one gppufs, its catalog's address from fsspec's configuration, as FSSPEC_GPPU_CATALOG gives it."""
+    monkeypatch.setitem(fsspec.config.conf, 'gppu', {'catalog': 'http://testserver'})
+    fs = fsspec.filesystem('gppu')
+    fs.catalog.client = served(held)
+    return fs
+
+
+def test_gppufs_lists_and_opens_through_the_catalog_what_it_holds_no_index_for(tmp_path, monkeypatch):
+    fs = with_catalog(Held(), tmp_path, monkeypatch)
+    assert fs is GppuFileSystem() and fs.catalog is not None
+    names = fs.ls('catalog://Karelin/Statements/Statements', detail=False)
+    assert names == ['catalog://Karelin/Statements/Statements/2019 Statements.pdf', 'catalog://Karelin/Statements/Statements/Tax Forms']
+    assert fs.ls('m365://karelin/sharepoint/Statements/Statements', detail=False) == names
+    assert fs.info(PDF)['name'] == names[0] and fs.cat_file(names[0]) == b'%PDF statements'
+    with fs.open(PDF) as file:
+        assert file.read() == b'%PDF statements'
+    (tmp_path / 'note.md').write_text('# here')
+    assert [row['name'] for row in fs.ls(tmp_path.as_posix())] == [(tmp_path / 'note.md').as_posix()]   # its own store is its own
+
+
+def test_gppufs_has_no_catalog_unless_one_is_named_and_reaches_only_one(tmp_path, monkeypatch):
+    assert GppuFileSystem().catalog is None
+    GppuFileSystem.clear_instance_cache()
+    fs = with_catalog(Held(), tmp_path, monkeypatch)
+    assert GppuFileSystem(catalog='http://testserver') is fs
+    with pytest.raises(ValueError):
+        GppuFileSystem(catalog='https://elsewhere')
 
 
 def test_the_desktop_shows_the_catalog_beside_its_other_sources():

@@ -23,7 +23,7 @@ from urllib.parse import quote
 from threading import RLock
 from fsspec import filesystem, register_implementation
 from fsspec.archive import AbstractArchiveFileSystem
-from fsspec.core import url_to_fs
+from fsspec.core import split_protocol, url_to_fs
 from fsspec.implementations.chained import ChainedFileSystem
 from fsspec.implementations.local import LocalFileSystem
 from fsspec.spec import AbstractFileSystem
@@ -118,8 +118,13 @@ class GppuFileSystem(ChainedFileSystem):
   relative to their index's folder, so moving a folder with its index
   preserves its listings. ``cache`` names folders whose index is kept in the
   cache instead of beside them, as a folder another program watches needs.
+  ``catalog`` is the address of the catalog's API; with it, what gppufs holds
+  no index for, the catalog's own paths (``catalog://``) and the address of
+  any store gppufs does not wrap, SharePoint and archives among them, is
+  listed and opened through the catalog. By default there is no catalog.
   There is one gppufs for each filesystem it wraps; constructing it again
-  gives the same one, and its options are fsspec's configuration for ``gppu``.
+  gives the same one, and its options are fsspec's configuration for ``gppu``
+  (``FSSPEC_GPPU_CATALOG`` among them).
 
   ``ls`` and ``info`` return the same metadata dictionaries from SQLite or
   live parsing. ``refresh=True`` requests live data. An absent cached row
@@ -180,11 +185,14 @@ class GppuFileSystem(ChainedFileSystem):
       return cls._cache[key]
 
   def __init__(self, target_protocol: str | None = None, target_options: Mapping[str, Any] | None = None,
-               fs: AbstractFileSystem | None = None, cache: Sequence[str] | None = None, **kwargs: Any) -> None:
+               fs: AbstractFileSystem | None = None, cache: Sequence[str] | None = None, catalog: str | None = None,
+               **kwargs: Any) -> None:
     """cache: folders whose index is kept in the cache, not beside them. A folder is kept there whoever names it: the one gppufs
-    keeps every folder any of its users names, its index found anew under the cache."""
+    keeps every folder any of its users names, its index found anew under the cache. catalog: the address of the catalog's API,
+    set by whoever names it first; another address for the one gppufs raises."""
     if self._cached:   # the one gppufs, made already
       with self._lock:
+        self._reach(catalog)
         for folder in [self._key(folder) for folder in cache or ()]:
           if folder not in self._cache:
             self._cache.append(folder)
@@ -204,6 +212,30 @@ class GppuFileSystem(ChainedFileSystem):
     self._scratch: tempfile.TemporaryDirectory | None = None   # where the copies are, made at the first write
     self._copies = 0                 # how many copies were made there
     self._running = 0                # how many runs are open: their writes reach the folders when the last one ends
+    self.catalog: AbstractFileSystem | None = None   # the catalog's file system, with its address
+    self._reach(catalog)
+
+  def _reach(self, catalog: str | None) -> None:
+    if catalog is None:
+      return
+    if self.catalog is None:
+      from .catalog import CatalogFileSystem   # the catalog's module imports gppufs
+      self.catalog = CatalogFileSystem(catalog)
+      self._catalog = catalog
+    elif catalog != self._catalog:
+      raise ValueError(f'{catalog}: gppufs reaches the catalog at {self._catalog}')
+
+  def _catalogued(self, path: str | Path) -> str | None:
+    """path, when it is the catalog's to answer: with a catalog, a path naming a store gppufs does not wrap."""
+    if self.catalog is None:
+      return None
+    protocol, _ = split_protocol(stringify_path(path))
+    wrapped = self.fs.protocol if isinstance(self.fs.protocol, (tuple, list)) else (self.fs.protocol,)
+    return None if protocol is None or protocol in (*wrapped, self.protocol) else stringify_path(path)
+
+  def _from_catalog(self, row: dict) -> dict:
+    """A catalog entry named as gppufs gives it back to the catalog."""
+    return row | {'name': self.catalog.unstrip_protocol(row['name'])}
 
   def _database_path(self, folder: str) -> str:
     name = folder.rstrip('/').rsplit('/', 1)[-1].rstrip(':')
@@ -1279,6 +1311,8 @@ class GppuFileSystem(ChainedFileSystem):
 
   def info_sync(self, path: str | Path, refresh: bool = False) -> dict:
     """``info`` on the calling thread."""
+    if (address := self._catalogued(path)) is not None:
+      return self._from_catalog(self.catalog.info(address))
     with self._lock:
       key = self._key(path)
       cached = None if refresh else self._stored(key)
@@ -1335,6 +1369,10 @@ class GppuFileSystem(ChainedFileSystem):
     index alone and touches no filesystem, so what was indexed is listed wherever this runs, and
     a folder the index has never seen lists nothing.
     """
+    if (address := self._catalogued(path)) is not None:
+      rows = (self.catalog.find(address, withdirs=True, detail=True).values() if recurse
+              else self.catalog.ls(address, detail=True))
+      return [self._from_catalog(row) if detail else self._from_catalog(row)['name'] for row in rows]
     with self._lock:
       key = self._key(path)
       if recurse and live and not refresh and self._walkable(key):
@@ -1394,8 +1432,11 @@ class GppuFileSystem(ChainedFileSystem):
     folders: ``async for row in fs.ls_iter(path)``. The disk is read off the event loop, a batch of entries at a time. On
     this host's disk it is one walk, one query of the index for everything below and one write of what changed
     (`_walking`); anywhere else it is what ``ls`` gives."""
-    key = self._key(path)
-    rows = self._walking(key) if self._walkable(key) else iter(self.ls_sync(path, recurse=True))
+    if self._catalogued(path) is not None:
+      rows = iter(self.ls_sync(path, recurse=True))
+    else:
+      key = self._key(path)
+      rows = self._walking(key) if self._walkable(key) else iter(self.ls_sync(path, recurse=True))
     while batch := await asyncio.to_thread(lambda: list(islice(rows, 1000))):
       for row in batch:
         yield row
@@ -1640,6 +1681,8 @@ class GppuFileSystem(ChainedFileSystem):
     was identified stands until the folder is read again with `refresh=True`, exactly as it does for a
     file some other writer changed.
     """
+    if (address := self._catalogued(path)) is not None:
+      return self.catalog._open(address, mode, **kwargs)
     key = self._key(path)
     if self._archive_parent(key) is None:
       return self.fs._open(self._path(key), mode, **kwargs)
