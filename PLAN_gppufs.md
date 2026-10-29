@@ -14,8 +14,10 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 ## Tasks
 - gppufs is `ChainedFileSystem` registered as `gppu`, takes full paths, finds the index from each path: done; the session cleaner's dry run lists both folders on it
 - catalog, desktop, Lake, TUI and session cleaner on full paths: done, their tests pass
-- gppufs's own tests on full paths: in progress
-- `locations=` and `index=` out of gppufs into the catalog: not started
+- one gppufs in a process; `cache` names the folders whose index stays in the cache: done
+- locations and the database index out of gppufs; the location map in the catalog (`locate`, `resolve`): done
+- the session cleaner in gppu's TUI: launcher manifest with modes, background runs, rows in colour: in progress
+- gppufs's own tests on full paths: next
 - each index row carries its file's UUID (`uuid_create`, the file shard as Linked Data's code has it, 0x13); code finds files by UUID, not URI: not started
 - gppufs on fsspec's `AsyncFileSystem`: not started
 

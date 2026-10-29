@@ -34,6 +34,7 @@ from pathlib import Path
 from gppu import Env, App, mixin_Config, dict_from_yml
 from gppu.gppu import Logger, _EmptyMessageFilter, _LogColorizer
 from gppu.gppu import OSType
+from rich.text import Text
 from textual.app import App as TextualApp, ComposeResult
 from textual.binding import Binding
 from textual.command import Hit, Hits, Provider
@@ -214,6 +215,7 @@ def _child_env(app_def: dict | None = None) -> dict[str, str]:
     env = dict(os.environ)
     env['PYTHONUTF8'] = '1'
     env['PYTHONIOENCODING'] = 'utf-8'
+    env['FORCE_COLOR'] = '1'   # a sub-app run in the background colours its output as on a terminal; the launcher shows the colours
     return env
 
 
@@ -1084,14 +1086,16 @@ class TUILauncher(TUIApp):
         row = self._processes.get(proc_id)
         if not row:
             return
-        row.log_lines.append(line)
-        display = line if len(line) <= 70 else line[:67] + '…'
+        text = Text.from_ansi(line) if '\x1b[' in line else line   # a script's colours, as its terminal would show them
+        row.log_lines.append(text)
+        plain = text.plain if isinstance(text, Text) else line
+        display = plain if len(plain) <= 70 else plain[:67] + '…'
         display = display.replace('[', '\\[')
         row._status.update(f' [dim]{display}[/dim]')
         # Live-append if this process's logs are currently shown
         if self._active_log == proc_id:
             panel = self.query_one('#output-panel', RichLog)
-            panel.write(line)
+            panel.write(text)
 
     def _process_done(self, proc_id: int, rc: int | None = None) -> None:
         """Called when a background process finishes."""

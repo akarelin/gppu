@@ -1,5 +1,27 @@
 # sessions-clean: where each harness keeps its sessions below the profile, and where a finished session goes,
 # as RAN Hosts' sessions_clean has them. --run moves the files; --keep_hours overrides the window for one run.
+manifest:   # the TUI launcher's entry: each mode runs in the background, its rows in their colours
+  name: sessions-clean
+  description: Move finished Claude Code and Codex sessions into the archive, on gppufs
+  nav: Sessions
+  icon: 🧹
+  platform: [W11]
+  script: sessions_clean.py
+  modes:
+    default:
+      name: Dry run — show what would move
+      inline: true
+    run:
+      name: Move the files
+      args: [--run]
+      inline: true
+    keep:
+      name: Move, custom protection window
+      args: [--run]
+      inline: true
+      ask_for:
+        - name: keep_hours
+          default: 24
 home: '~'   # the profile the harnesses keep their sessions in
 sessions: [.claude/projects, .codex/sessions]
 archive: D:/SD.agents/claude.not
