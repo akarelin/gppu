@@ -30,3 +30,9 @@ This is what changed in gppu on the `ld-standard` branch, and how code that uses
 
 ## Tests
 - `tests/conftest.py` clears the one gppufs before each test: `GppuFileSystem.clear_instance_cache()` and `gppu.fs.gppufs._INDEXES.clear()`.
+
+## Removed from gppu before this rework
+- **`State`** and its tables (`Env.locations`, `Env.connections`, `Env.<table>.<rule>`) are gone (f6d80a7). Configuration is in Env (`glob`, `Env.glob_dict`, `self.my`). Locations and connections are `GppuCatalog(rows)`. Other tables and their rules, the `dsn` macro among them, are rendered by `TemplateSet` from the configuration.
+- **`SessionFile`, `SessionFolder`, `HandlerError`, `_MetadataHandlers` and the callable `SessionHandler()`** are gone (f749092). A session is read by `SessionHandler.parse(path)`. Its message objects come from `SessionHandler.lines(path)`, its turns from `SessionHandler.turns(lines)` and its models from `SessionHandler.models(lines)`. What a person typed comes from `SessionHandler.human_messages(turns)`. Linked Data's session messages come from `SessionHandler.parse_messages(harness, lines)`. A path's handler comes from `handlers.probe(path)` and `handlers.HANDLERS`.
+- **`CliApp`** is archived (c0a3e12). A program sets `APP['cli'] = True`, or is an `App` with `Env.from_argv` laid over its configuration.
+- **`init_logger`** is the environment's (`Env.init_logger`), and the program's log is `Logger` (9bb507d). **`is_table_key`** is gone (cba50f0).
