@@ -1,6 +1,6 @@
 # gppufs: Alex's instructions
 
-What Alex instructed for gppufs, its catalog and their users, as plain statements. The Linked Data standard (`D:\_\_Standards\Linked Data\`, the files marked `byAlex`) is canonical for Linked Data itself; how gppufs uses Linked Data is gppu's product. `D:\_\_Standards\Systems\gppufs.md` and `Lake.md` are generated and are not specification.
+What Alex instructed for gppufs, its catalog and their users, as plain statements. The Linked Data standard is `D:\_\_Standards\Linked Data\Linked Data.md`, the one note marked active, and it alone is canonical for Linked Data itself; the other notes there are not specification; how gppufs uses Linked Data is gppu's product. `D:\_\_Standards\Systems\gppufs.md` and `Lake.md` are generated and are not specification.
 
 ## The file system
 - gppufs is an fsspec file system, registered as `gppu`. It wraps any file system fsspec reaches, as fsspec's caching file systems wrap theirs.
@@ -12,6 +12,10 @@ What Alex instructed for gppufs, its catalog and their users, as plain statement
 - gppufs works without the database and knows nothing about locations or the database.
 - gppufs can read where the catalog is from configuration; by default there is no catalog. With a catalog, gppufs lists and opens through it what it holds no index for, SharePoint and archives among them.
 - gppufs and the gppufs catalog are two file systems.
+
+## Linked Data in gppu
+- A record's type is its type's slug, text.
+- Status is a Constrained Vocabulary stored in Linked Data, and each type has its own list of statuses.
 
 ## The catalog and its users
 - gppu provides the catalog; the catalog's users load its locations.

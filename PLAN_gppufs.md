@@ -1,6 +1,6 @@
 # gppufs as an fsspec file system
 
-A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desktop and the session cleaner are moved to it. What gppufs must be is in [SPEC_gppufs.md](SPEC_gppufs.md). `D:\_\_Standards\Systems\gppufs.md` and `Lake.md` are generated, not specification; the Linked Data standard's `byAlex` files are canonical for Linked Data.
+A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desktop and the session cleaner are moved to it. What gppufs must be is in [SPEC_gppufs.md](SPEC_gppufs.md). `D:\_\_Standards\Systems\gppufs.md` and `Lake.md` are generated, not specification; the Linked Data standard is `Linked Data.md`, the one note marked active; its LD, FS and Sessions notes are generated drafts, not specification.
 
 ## Deviations from fsspec today
 - The constructor takes one folder and every path is read below it; fsspec gives one file system every path. Removed.
@@ -22,19 +22,20 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - gppufs's own tests on full paths: done, the whole suite passes
 - refresh: never follows a junction, reads below once on a recursive refresh: done
 - refresh of a folder of millions: read a folder at a time, written in batches of 1,000 rows: done
-- catalog() reads location records as Linked Data - FS has them; a location is on this host by its handler's access, or below the location above it: done
-- gppu.ld to the Linked Data standard as it is now (two-byte ids, shard1 the schema and shard2 the table, from `Linked Data.md`, the one `byAlex` file; the SQL and Python blocks of the LD, FS and Sessions notes, which are generated): done, its tests pass on Postgres
+- catalog() reads location records as gppu.ld.fs has them; a location is on this host by its handler's access, or below the location above it: done
+- gppu.ld to the Linked Data standard as it is now (two-byte ids, shard1 the schema and shard2 the table, from `Linked Data.md`; its SQL and Python first copied from the LD, FS and Sessions notes, which are generated): done, its tests pass on Postgres
+- gppu.ld checked against `Linked Data.md` alone: flags change only by its transitions, `delete` among them; a record's children listed by `records_list`; code and SQL cite `Linked Data.md` and gppu.ld, not the generated notes; `type` stays text; ids, span, shard codes and slugs already matched: done, the gppu, FileIndexer and admin suites pass on the scratch database
 
 ## Users of gppufs, moved in parallel (docs/gppufs-users.md)
 - Lake service and Dagster (RAN `Systems/lake`, stacks `lake` and `dagster` on trix): done; both code locations build, 118 tests pass
-- Linked Data service (RAN `Systems/ld`, stack `linked-data` on five), session hook and Session Manager: done, its sessions on gppu.ld.sessions and its checks on `/fs` pass on a scratch database; a session's messages read in their file's order: done; its core check, its pages (stack linked-data's `admin`) and `structure.py` (knowledge, a node type) on the new records: done, the pages built and type-checked, their browser check waiting on WSL's network; Session Manager's plain links are type `link`; serving waits on the gppu release and the standard's SQL on its database
-- FileIndexer (RAN `Systems/ld/fileindexer`): done, posting locations as Linked Data - FS has them; 4 of 5 tests pass on a scratch database, the TUI test waits on WSL's network
+- Linked Data service (RAN `Systems/ld`, stack `linked-data` on five), session hook and Session Manager: done, its sessions on gppu.ld.sessions and its checks on `/fs` pass on a scratch database; a session's messages read in their file's order: done; its core check, its pages (stack linked-data's `admin`) and `structure.py` (knowledge, a node type) on the new records: done, the pages built and type-checked, their browser check waiting on WSL's network; Session Manager's plain links are type `link`; serving waits on the gppu release and gppu.ld's SQL on its database
+- FileIndexer (RAN `Systems/ld/fileindexer`): done, posting locations as gppu.ld.fs has them; its tests pass on Windows against a scratch database
 - Admin UI and its APIs (CRAP `Systems/admin_ui`; RAN `Services/admin-ui`, `Services/admin-priors`): done; its configuration routes answer as the live API does, its tests pass as the running image's do, its docs page renders; its Linked Data record pages on the new API: done, drawn in a browser against a scratch database; the work, project and knowledge pages wait for `/work`'s schema, Systems and Processes for the entity types they filter by
 - gppu.ld: a sort by span, a type's update without its slug and shard, a link's type checked against the store's types: done, its tests pass on Postgres in WSL
 - Host tools (RAN `Hosts/preservator`, `Hosts/tui` session scripts): done, preservator saving through the Lake, `platform_for_os` restored
 - Releases and deploys of the stacks: a gppu release from ld-standard, Alex's
 - with a catalog, gppufs lists and opens through it what it holds no index for, SharePoint and archives among them: done; the catalog's address is the `catalog` option, from fsspec's configuration (`FSSPEC_GPPU_CATALOG`), none by default; bytes come from the Lake at the entry's address
-- each index row carries its file's UUID (`uuid_create(0x10, 0x02)`, fs.files as Linked Data - FS has it), kept through a refresh, a change and a move: done; an index on a store this host does not own holds its ids in memory until its own host writes it; finding a file by its UUID: not started
+- each index row carries its file's UUID (`uuid_create(0x10, 0x02)`, fs.files in `Linked Data.md`), kept through a refresh, a change and a move: done; an index on a store this host does not own holds its ids in memory until its own host writes it; finding a file by its UUID: not started
 - gppufs on fsspec's `AsyncFileSystem`, its callers moved: done in gppu and RAN, the suite passes, the session cleaner's dry run finds the same sessions; the admin API's inventory readers await `_ls` and `_info`: done
 - the catalog's Location binds this host's folder for a location reached through `handler.access`, not the canonical's: done
 - the Lake keeps its index at its root, never in its day folders: done, as the Lake on s1 already has it
@@ -50,10 +51,13 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 
 ## Found, not this task
 - WSL's mirrored networking gives its VM no network device on this host; WSL runs in NAT mode, reaches Windows and is reached at localhost, and Windows does not forward its traffic further.
-- The admin's Linked Data pages count records with one request per type, about 60 on a store made from the standard.
+- The admin's Linked Data pages count records with one request per type, about 60 on a store made from gppu.ld's SQL.
 - The Lake API has no batch route: preservator makes two calls per file on every run, files already preserved included.
 - FileIndexer could write files to Linked Data with `PUT /fs/files/{gppu.id}`; it writes none today.
-- WSL has no network, so FileIndexer's TUI test cannot run there; Windows does not reach the scratch database.
+- gppu.ld has what `Linked Data.md` does not define, from the generated notes: the `ld.records` parent table, the columns `name`, `data`, `meta`, `created` and `updated`, and the API's routes.
+- A record's status is not checked against its type's statuses.
+- No code reads a file type's `data.class`; gppufs picks a file's handler from gppu's own list, and gppufs works without the database.
+- Session Manager and the admin's session pages cite `Linked Data - Sessions and work`, a superseded generated note.
 - gppu has no public field for the first line a person typed; the session tools read it from `normalized_name`.
 - RAN `Systems/lake/plaud/test_dagster_incremental.py` calls `download_recordings` with the signature CRAP d1091211 (2026-09-24) replaced.
 - RAN `Systems/lake/m365/locations/karelin.py` and `tulaco.py` need a `lake.yaml` that is not in the repository; their compose services are commented out.
