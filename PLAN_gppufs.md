@@ -17,10 +17,11 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - one gppufs in a process; `cache` names the folders whose index stays in the cache: done
 - locations and the database index out of gppufs; the location map in the catalog (`locate`, `resolve`): done
 - the session cleaner in gppu's TUI: done
-- gppufs's own tests on full paths: in progress
+- gppufs's own tests on full paths: done, the whole suite passes
 - refresh: never follows a junction, reads below once on a recursive refresh: done
 - refresh of a folder of millions: read and written in batches, not held whole in memory: next
-- gppu.ld to the Linked Data standard as it is now (`byAlex` files: two-byte ids, shard1 the schema and shard2 the table; LD, FS and Sessions SQL and Python blocks): next; no other session works on it
+- catalog() reads location records as Linked Data - FS has them (data.handler: kind, service, access, connection), and a location is on this host by its access: next
+- gppu.ld to the Linked Data standard as it is now (`byAlex` files: two-byte ids, shard1 the schema and shard2 the table; LD, FS and Sessions SQL and Python blocks): in progress
 
 ## Users of gppufs, moved in parallel (docs/gppufs-users.md)
 - Lake service and Dagster (RAN `Systems/lake`, stacks `lake` and `dagster` on trix): in progress
