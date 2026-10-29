@@ -23,6 +23,7 @@ from typing import Any, BinaryIO, Mapping
 from urllib.parse import unquote, urlsplit
 
 from fsspec import AbstractFileSystem
+from jinja2 import UndefinedError
 
 from . import handlers
 from . import CACHE, Container, DataObject, Location, _address, _below
@@ -75,9 +76,12 @@ class Lake:
         account and path of the uri it came from."""
         span = getattr(record, 'span', None) or handlers.Handler.named(obj.name)
         source = urlsplit(str(obj.uri))
-        path = self.templates.render_template(type if type in self.templates.named else 'source',
-            record=record, name=obj.name, start=span.start if span else None, system=source.scheme, account=source.netloc,
-            path=unquote(source.path).strip('/'))
+        try:
+            path = self.templates.render_template(type if type in self.templates.named else 'source',
+                record=record, name=obj.name, start=span.start if span else None, system=source.scheme, account=source.netloc,
+                path=unquote(source.path).strip('/'))
+        except UndefinedError as error:   # the template asks for what obj does not say, such as the date of a session with no time
+            raise ValueError(f'{obj.name}: the Lake has no place for a {type} from {obj.uri}: {error}') from error
         path = str(path or '').strip()
         if not path:
             raise ValueError(f'{obj.name}: the Lake has no place for a {type} from {obj.uri}')

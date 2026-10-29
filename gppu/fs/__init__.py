@@ -240,6 +240,9 @@ class Container:
 
     Args:
       path (y2path | str): Relative object path; empty selects the Container root.
+
+    Returns:
+      dict: The object's record as its Provider gives it, without its content.
     """
     return self.provider.info(self._uri(path))
 

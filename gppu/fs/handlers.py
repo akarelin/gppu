@@ -731,8 +731,8 @@ class SessionHandler(FileHandler):
         after the offset ones read before, each numbered by its place in the file, counted from 1. Every message is a
         session message: user, agent, thinking, tool_use or tool_result as Linked Data reads them, else the type its
         harness gives it, such as system, attachment or ai-title. A Codex delta names no session, so its uid is given. The session's times are the first and last of its
-        session messages of Linked Data's message types (a resumed session's copied messages are out of time order); with none, its
-        messages', a moment when they are one (a Codex session opened and left). Linked Data's sessions API reads
+        session messages of Linked Data's message types that have a time (a resumed session's copied messages are out of time order);
+        with none, the first and last of every time its messages carry, a moment when they are one (a Codex session opened and left). Linked Data's sessions API reads
         what a session hook sends through this, as SessionHandler.parse reads its file."""
         if harness == "cc":
             session, session_messages = cls._claude_messages(messages, offset, uid)
@@ -740,8 +740,8 @@ class SessionHandler(FileHandler):
             session, session_messages = cls._codex_messages(messages, offset, uid)
         else:
             raise NotImplementedError(f"the messages of cc and cx are read into session messages, not those of {harness}")
-        times = [message.ts for message in session_messages if message.type in MESSAGE_TYPES] or [
-            datetime.fromisoformat(message["timestamp"]) for message in messages if message.get("timestamp")]
+        times = [message.ts for message in session_messages if message.type in MESSAGE_TYPES and message.ts is not None] or list(
+            cls._timestamps(messages))
         session["times"] = [min(times), max(times)] if times else []
         return session, session_messages
 
@@ -793,7 +793,7 @@ class SessionHandler(FileHandler):
         the first line of its text, the message as its data, and in meta its id in its harness and its place in the
         file. The data drops the NUL character, which Postgres holds in no text or JSON, as a name does."""
         return Record(type=message_type,
-                      span=TimeSpan(ts=datetime.fromisoformat(message["timestamp"])) if message.get("timestamp") else None,
+                      span=TimeSpan(ts=stamp) if (stamp := cls._stamp(message.get("timestamp"))) else None,
                       name=cls.first_line(text) or message_type, data=cls._without_nul(dict(message)), meta={"uid": uid, "line": n})
 
     @classmethod
@@ -846,7 +846,7 @@ class SessionHandler(FileHandler):
                        else "tool_use" if "tool_use" in types else "agent" if "text" in types else "thinking")
             text = (" ".join(block.get("name", "") for block in blocks if block.get("type") == "tool_use")
                     if message_type == "tool_use" else cls._text_of(blocks))
-            session_messages.append(cls._session_message(message["uuid"], message, n, message_type, text))
+            session_messages.append(cls._session_message(message.get("uuid"), message, n, message_type, text))
         return session, session_messages
 
     @classmethod

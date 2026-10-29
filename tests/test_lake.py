@@ -75,7 +75,7 @@ def test_the_api_at_lake_answers_what_the_lake_answers(tmp_path):
     taken = client.post('/lake/', params={'name': f'{UID}.jsonl'}, content=SESSION.replace('hello', 'other').encode())
     assert taken.status_code == 409 and 'error' in taken.json()
     unread = client.post('/lake/', params={'name': f'{UID}.jsonl'}, content=b'{"type": "user", "sessionId": "' + UID.encode() + b'"}\n')
-    assert unread.status_code == 400 and 'cannot read' in unread.json()['error']
+    assert unread.status_code == 400 and 'no place' in unread.json()['error']   # a session with no time has no date to be placed by
     assert client.post('/lake/', params={'name': 'note.txt'}, content=b'text').status_code == 400
 
 
