@@ -4,9 +4,11 @@ r"""The catalog: where every location is and what is in each.
   catalog(records)        the catalog of Linked Data's location records, as its user read them from /fs/locations
   Catalog(dsn)            what is in the locations: the index in Postgres (schema lake), its API /lake/catalog, and
   CatalogFileSystem(url)  the index through that API as an fsspec filesystem, read-only"""
+import functools
 import importlib
 import json
 import os
+import posixpath
 import re
 import socket
 from collections import Counter
@@ -24,7 +26,7 @@ from fsspec.spec import AbstractFileSystem
 
 from ..app import glob
 from ..gppu import TemplateSet, TimeSpan, full_path, sync, y2path, y2uri
-from . import FileSystem, Location, Provider
+from . import FileSystem, Location, Provider, _address, _below
 from .gppufs import GppuFileSystem
 
 
@@ -491,10 +493,39 @@ def here(catalog: GppuCatalog, uri: str) -> Path | None:
 
 
 def reached(catalog: GppuCatalog) -> dict[str, dict[str, str]]:
-    """The folders on this host the catalog's locations are, as GppuFileSystem's locations map takes them: what addresses its entries.
-    Each is looked for once, so a caller reads it once and gives it to filesystem()."""
+    """The folders on this host the catalog's locations are: the location map locate() and resolve() take. Each is looked for
+    once, so a caller reads it once."""
     return {full_path(path).as_posix(): {'location': uid, 'canonical': row['canonical']}
             for uid, row in catalog.locations.items() if (path := here(catalog, row['canonical'])) and path.is_dir()}
+
+
+@functools.lru_cache(maxsize=4096)
+def _on_host(folder: str) -> str:
+    """A folder as the location map names folders: resolved, once for each folder."""
+    return full_path(folder).as_posix()
+
+
+def locate(folders: dict[str, dict[str, str]], row: dict[str, Any]) -> dict[str, Any]:
+    """A gppufs row with the configured location it is in, the deepest of folders containing it: its location, its canonical
+    address, the entry's address and its folder in it, and `location` among its handlers; outside them, the row as it is."""
+    parent, _, name = row['name'].rpartition('/')
+    here = f"{_on_host(parent).rstrip('/')}/{name}" if parent and name else _on_host(row['name'])
+    base = max((folder for folder in folders if here == folder or here.startswith(folder.rstrip('/') + '/')), key=len, default=None)
+    if base is None:
+        return row
+    location, folder = folders[base], '' if here == base else here[len(base.rstrip('/')) + 1:]
+    found = {'location': str(location['location']), 'canonical': str(location['canonical']),
+             'address': _address(str(location['canonical']), folder), 'folder': folder}
+    return row | {'gppu': row['gppu'] | {'location': found, 'handlers': [*row['gppu']['handlers'], 'location']}}
+
+
+def resolve(folders: dict[str, dict[str, str]], address: str) -> str:
+    """The path on this host a configured location's address names, `sd://SD.agents/memory/MEMORY.md` among them, the deepest
+    location winning; any other address as it is."""
+    for folder, location in sorted(folders.items(), key=lambda item: len(str(item[1]['canonical'])), reverse=True):
+        if (rest := _below(str(location['canonical']), address)) is not None:
+            return posixpath.join(folder, rest) if rest else folder
+    return address
 
 
 # endregion
