@@ -27,7 +27,7 @@ gppufs can't keep an index beside a folder it doesn't own: SharePoint, OneDrive,
 
 Recommendation: B. gppufs stays a file system that knows nothing about the database, as you said, and FileIndexer remains the one thing that decides what goes into the catalog. C can be added on top later.
 
-Answer:
+Answer: not B. Without the catalog, `ls` and the desktop never reach SharePoint or archives. gppufs lists and opens through the catalog what it holds no index for (C).
 
 ## 3. Does the gppu library talk to databases directly, or only through the services' APIs?
 
