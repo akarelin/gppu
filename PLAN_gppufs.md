@@ -12,8 +12,9 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - `ls_sync`, `info_sync`, `ls_iter`, `move_into` and the `@sync` decorator: names and an async scheme fsspec does not have (`ls`, `info`, `_walk`, `mv`, `AsyncFileSystem`). Replaced by fsspec's in the async step.
 
 ## Tasks
-- gppufs is `ChainedFileSystem` registered as `gppu`, takes full paths, finds the index from each path: in progress
-- tests, catalog, desktop, Lake and session cleaner on full paths: next
+- gppufs is `ChainedFileSystem` registered as `gppu`, takes full paths, finds the index from each path: done; the session cleaner's dry run lists both folders on it
+- catalog, desktop, Lake, TUI and session cleaner on full paths: done, their tests pass
+- gppufs's own tests on full paths: in progress
 - `locations=` and `index=` out of gppufs into the catalog: not started
 - each index row carries its file's UUID (`uuid_create`, the file shard as Linked Data's code has it, 0x13); code finds files by UUID, not URI: not started
 - gppufs on fsspec's `AsyncFileSystem`: not started
