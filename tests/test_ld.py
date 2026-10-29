@@ -1,4 +1,4 @@
-"""gppu.ld, gppu.ld.fs and gppu.ld.sessions on Postgres: the standard's schemas ld, fs and sessions (tests/ld.sql) in a database
+"""gppu.ld, gppu.fs.files and gppu.ld.sessions on Postgres: the standard's schemas ld, fs and sessions (tests/ld.sql) in a database
 of their own, made for these tests and dropped after them; every call goes through the API to Postgres and back. LD_TEST_DSN is the
 Postgres server to make it on."""
 import asyncio
@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from gppu import Env, uuid_create
 from gppu.data import _SQABase
 from gppu.fs import catalog as locations
-from gppu.ld import fs as files
+from gppu.fs import files
 from gppu.ld import Page, Params, api_at, serve, sessions
 
 DSN = os.environ['LD_TEST_DSN']

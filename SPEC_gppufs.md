@@ -15,6 +15,7 @@ What Alex instructed for gppufs, its catalog and their users, as plain statement
 - gppufs and the gppufs catalog are two file systems.
 
 ## Linked Data in gppu
+- Files are in the `fs` (File System) schema; its records are `gppu.fs.files`.
 - A record's type is its type's slug, text.
 - Inside every schema, types describe how the rest of the schema works: a root type says what one of the schema's tables holds, and the types under it are its kinds.
 - A type's parent is the type it is under, a container of types, not inheritance.

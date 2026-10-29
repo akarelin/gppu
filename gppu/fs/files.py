@@ -7,7 +7,7 @@ created, read, updated, deleted and searched at its own path, `/fs/locations`, `
 the file system's types at `/fs/types`; gppufs makes its catalog from the locations (gppu.fs.catalog)."""
 from sqlalchemy import UniqueConstraint
 
-from . import _Link, _Record, _Type, api_at, operations
+from ..ld import _Link, _Record, _Type, api_at, operations
 
 
 class Type(_Type, table=True):

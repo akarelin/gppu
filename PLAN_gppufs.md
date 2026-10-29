@@ -22,14 +22,14 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - gppufs's own tests on full paths: done, the whole suite passes
 - refresh: never follows a junction, reads below once on a recursive refresh: done
 - refresh of a folder of millions: read a folder at a time, written in batches of 1,000 rows: done
-- catalog() reads location records as gppu.ld.fs has them; a location is on this host by its handler's access, or below the location above it: done
+- catalog() reads location records as gppu.fs.files has them; a location is on this host by its handler's access, or below the location above it: done
 - gppu.ld to the Linked Data standard as it is now (two-byte ids, shard1 the schema and shard2 the table, from `Linked Data.md`; its SQL and Python first copied from the LD, FS and Sessions notes, which are generated): done, its tests pass on Postgres
 - gppu.ld checked against `Linked Data.md` alone: flags change only by its transitions, `delete` among them; a record's children listed by `records_list`; every schema's root types at the root of their schema, none under another schema's types; a link written as any record is, its ends and its type not checked, which were the agents' rules; code and SQL cite `Linked Data.md` and gppu.ld, not the generated notes; `type` stays text; ids, span, shard codes and slugs already matched: done, the gppu, FileIndexer and admin suites pass on the scratch database
 
 ## Users of gppufs, moved in parallel (docs/gppufs-users.md)
 - Lake service and Dagster (RAN `Systems/lake`, stacks `lake` and `dagster` on trix): done; both code locations build, 118 tests pass
 - Linked Data service (RAN `Systems/ld`, stack `linked-data` on five), session hook and Session Manager: done, its sessions on gppu.ld.sessions and its checks on `/fs` pass on a scratch database; a session's messages read in their file's order: done; its core check, its pages (stack linked-data's `admin`) and `structure.py` (knowledge, a node type) on the new records: done, the pages built and type-checked, their browser check waiting on WSL's network; Session Manager's plain links are type `link`; serving waits on the gppu release and gppu.ld's SQL on its database
-- FileIndexer (RAN `Systems/ld/fileindexer`): done, posting locations as gppu.ld.fs has them; its tests pass on Windows against a scratch database
+- FileIndexer (RAN `Systems/ld/fileindexer`): done, posting locations as gppu.fs.files has them; its tests pass on Windows against a scratch database
 - Admin UI and its APIs (CRAP `Systems/admin_ui`; RAN `Services/admin-ui`, `Services/admin-priors`): done; its configuration routes answer as the live API does, its tests pass as the running image's do, its docs page renders; its Linked Data record pages on the new API: done, drawn in a browser against a scratch database; the work, project and knowledge pages wait for `/work`'s schema, Systems and Processes for the entity types they filter by
 - gppu.ld: a sort by span, a type's update without its slug and shard, a link's type checked against the store's types, removed again as a rule Alex did not write: done, its tests pass on Postgres
 - Host tools (RAN `Hosts/preservator`, `Hosts/tui` session scripts): done, preservator saving through the Lake, `platform_for_os` restored
@@ -47,13 +47,14 @@ What matters is gppufs working, and its code merged so the new Linked Data, gppu
 - `ld-standard` into master as a fast-forward, the whole suite passing on the scratch database: done; gppu's work goes to master.
 - Every user of gppufs on master and pushed: done; vfs, the desktop, the handler browser, the session cleaner, the Lake and Dagster, the Linked Data service, the session hook, Session Manager, FileIndexer and its TUI, the admin UI and the host tools already ran on it, their tests passing; CRAP `Projects/FileIndexer`'s tests import `GppuCatalog` from `gppu.fs.catalog`; RAN `Systems/ld/ld.sql` is gppu.ld's SQL, and the Linked Data image installs every module gppu.ld needs from master
 - RAN `.github/workflows/ld.yml` building from `Systems/ld`: on RAN's master; it runs only when Alex starts it, and has not run
+- The `fs` (File System) schema's records back in `gppu.fs.files`, where the standard puts files, and every importer moved to it: done; the gppu suite and FileIndexer's tests pass on the scratch database, the Linked Data API imports
 - No workflow runs on a push; a release and the deploys stay Alex's. RAN's Linked Data and Lake images install gppu from master, so their next build takes gppufs and gppu.ld, which need gppu.ld's SQL on `linked_data` first.
 
 /goal gppufs and gppu.ld are on gppu's master and every user of gppufs is updated to it and pushed; proven by the gppu suite and each user's tests passing against the scratch database; no release, deploy or production write.
 
 ## Found, not this task
 - `examples/handler_ls.py` and the handler browser's `main` stop: `D:\TextLake\.catalog`, the catalog `examples/handlers.yaml` names, has no folder for this host, which the host-folder catalog has required since 2026-09-08, the day the folder was last written.
-- RAN `Projects/linkml/checks/test_current_standard.py` imports `gppu.fs.files`, now `gppu.ld.fs`, and fails on more than the import; another session is working in that folder.
+- RAN `Projects/linkml/checks/test_current_standard.py` fails on more than its import of `gppu.fs.files`; another session is working in that folder.
 - The admin API's image installs gppu from the `gppu/latest` tag; the Linked Data and Lake images install it from master.
 - WSL's mirrored networking gives its VM no network device on this host; WSL runs in NAT mode, reaches Windows and is reached at localhost, and Windows does not forward its traffic further.
 - The admin's Linked Data pages count records with one request per type, about 60 on a store made from gppu.ld's SQL.
