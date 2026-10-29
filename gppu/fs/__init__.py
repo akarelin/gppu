@@ -480,9 +480,10 @@ class Location:
 
   def __init__(self, row: Mapping[str, Any], *, provider: Provider | None = None, parent: 'Location | None' = None,
                children: Callable[[], Iterable['Location']] | None = None,
-               templates: Mapping[str, str] | None = None) -> None:
+               templates: Mapping[str, str] | None = None, here: tuple[Provider, y2uri] | None = None) -> None:
     """A Location from its configuration row. children lists the configured Locations below it; templates name
-    where DataObjects go in its Container."""
+    where DataObjects go in its Container. here is the Provider and uri this host reads it through, its folder on this
+    host, when it has one."""
     self.uid = row['uid']
     if not isinstance(self.uid, str) or not self.uid:
       raise ValueError('every Location requires a nonempty uid')
@@ -492,6 +493,7 @@ class Location:
     self.parent = parent
     self.templates = deepcopy(dict(templates)) if templates is not None else None
     self._children = children
+    self.here = here
 
   @property
   def data(self) -> dict[str, Any]:
@@ -537,11 +539,13 @@ class Location:
       path (y2path | str): Relative path below this Location; empty selects its root.
 
     Returns:
-      Container: Container bound to the Location Provider, canonical URI and naming templates. A Location without a Provider raises ValueError.
+      Container: Container bound to the Location's folder on this host when it has one, else to its Provider and canonical URI,
+        with its naming templates. A Location without a Provider raises ValueError.
     """
-    if self.provider is None:
+    provider, uri = self.here or (self.provider, self.uri)
+    if provider is None:
       raise ValueError(f'{self.uid}: no Provider reaches this Location')
-    return Container(self.provider, self.provider.join(self.uri, self.relative(path)), templates=self.templates)
+    return Container(provider, provider.join(uri, self.relative(path)), templates=self.templates)
 
   def uri_of(self, path: y2path | str = '') -> y2uri:
     """The canonical uri of path below this Location, each name uri-escaped. Caller: FileIndexer.

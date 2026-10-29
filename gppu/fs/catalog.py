@@ -89,6 +89,7 @@ class GppuCatalog(AsyncFileSystem):
       self._lock = RLock()
       self._config = deepcopy(dict(catalog))
       self._bound_locations = {}
+      self._here: dict[str, str] | None = None   # each location's folder on this host, found once (`reached`)
       self._load_configuration()
       return
     if not Path(catalog).is_absolute():
@@ -223,7 +224,8 @@ class GppuCatalog(AsyncFileSystem):
     return self._providers[key]
 
   def location(self, uid: str) -> Location:
-    """Return the Location with this UID, with the Provider of its connection.
+    """Return the Location with this UID, with the Provider of its connection, and its folder on this host when it has one
+    (`reached`), which its Container reads.
 
     Args:
       uid (str): Location UID from the configured tree.
@@ -238,11 +240,15 @@ class GppuCatalog(AsyncFileSystem):
       if uid not in self._bound_locations:
         row = self.locations[uid]
         parent = self._parents[uid]
+        if self._here is None:
+          self._here = {found['location']: folder for folder, found in reached(self).items()}
+        folder = self._here.get(uid)
         self._bound_locations[uid] = Location(row,
           provider=self._provider(urlsplit(row['canonical']).scheme, row.get('connection')),
           parent=self.location(parent) if parent is not None else None,
           children=lambda: (self.location(child) for child, owner in self._parents.items() if owner == uid),
-          templates=self.templates)
+          templates=self.templates,
+          here=None if folder is None else (self._provider('file', None), y2uri(Path(folder).as_uri())))
       return self._bound_locations[uid]
 
   def location_of(self, uri: y2uri | str) -> tuple[Location, y2path]:

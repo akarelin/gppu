@@ -1,5 +1,6 @@
 """gppu.fs.catalog: /lake/catalog served from a catalog held in memory, browsed through CatalogFileSystem and the desktop."""
 import json
+import socket
 from uuid import UUID
 
 import pytest
@@ -10,6 +11,7 @@ from fastapi import FastAPI, Response
 from fastapi.testclient import TestClient
 
 from gppu.fs.catalog import CatalogFileSystem, _text, api, label, paths, where
+from gppu.fs.catalog import catalog as locations
 from gppu.fs.gppufs import GppuFileSystem
 from gppu.fs.vfs import DesktopFileSystem
 
@@ -188,3 +190,20 @@ def test_the_desktop_shows_the_catalog_beside_its_other_sources():
     assert (row['name'], row['type'], row['size']) == ('/Catalog/Karelin/Statements/Statements/2019 Statements.pdf', 'file', 100)
     names = desktop.ls('/Catalog/Karelin/Statements/Statements', detail=False)
     assert names == ['/Catalog/Karelin/Statements/Statements/2019 Statements.pdf', '/Catalog/Karelin/Statements/Statements/Tax Forms']
+
+
+def test_a_location_on_this_host_by_its_handlers_access_is_read_in_its_folder(tmp_path):
+    """A location whose canonical address names another host is read on this host in the folder its handler's access names here,
+    and still named by its canonical address."""
+    host = socket.gethostname().split('.')[0].casefold()
+    (tmp_path / 'sub').mkdir()
+    (tmp_path / 'sub' / 'note.md').write_text('# note')
+    records = [{'id': 'top', 'name': 'Top', 'parent_id': None, 'status': 'active', 'flags': 0, 'meta': {},
+                'data': {'uid': 'top', 'canonical': 'file://elsewhere/srv/top',
+                         'handler': {'kind': 'fileSystem', 'access': {host: tmp_path.as_posix()}}}},
+               {'id': 'inner', 'name': 'Inner', 'parent_id': 'top', 'status': 'active', 'flags': 0, 'meta': {},
+                'data': {'uid': 'inner', 'canonical': 'file://elsewhere/srv/top/sub'}}]
+    found = locations(records)
+    assert str(found.location('top').uri_of('sub')) == 'file://elsewhere/srv/top/sub'
+    assert found.location('top').container('sub').ls(detail=False) == ['note.md']
+    assert found.location('inner').container().ls(detail=False) == ['note.md']   # below the folder of the location above it
