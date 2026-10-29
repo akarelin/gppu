@@ -52,14 +52,14 @@ CREATE TABLE ld.types (
 ) INHERITS (ld.records);
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON ld.types FOR EACH ROW EXECUTE FUNCTION ld.record();
 
--- parent is a type of this schema, or of `ld` when parent_schema is 'ld'
-CREATE PROCEDURE ld.type_create(slug text, shard int, name text, parent text DEFAULT NULL, parent_schema text DEFAULT 'ld',
+-- parent is the type of `ld` it is under; a root type has none and says what one of the schema's tables holds
+CREATE PROCEDURE ld.type_create(slug text, shard int, name text, parent text DEFAULT NULL,
                                   flags smallint DEFAULT 0, status text DEFAULT NULL, span tstzrange DEFAULT NULL, data jsonb DEFAULT '{}', meta jsonb DEFAULT '{}')
 LANGUAGE sql
 AS $$
     INSERT INTO ld.types (slug, shard, name, parent_id, flags, status, span, data, meta)
     VALUES (type_create.slug, type_create.shard, type_create.name,
-            (SELECT p.id FROM ld.types p WHERE p.slug = type_create.parent AND p.type IS NULL AND p.tableoid = (type_create.parent_schema || '.types')::regclass),
+            (SELECT p.id FROM ONLY ld.types p WHERE p.slug = type_create.parent AND p.type IS NULL),
             type_create.flags, type_create.status, type_create.span, type_create.data, type_create.meta);
 $$;
 
@@ -115,14 +115,14 @@ CREATE TABLE fs.types (
 ) INHERITS (ld.types);
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON fs.types FOR EACH ROW EXECUTE FUNCTION ld.record();
 
--- parent is a type of `fs`, or of `ld` when parent_schema is 'ld'
-CREATE PROCEDURE fs.type_create(slug text, shard int, name text, parent text DEFAULT NULL, parent_schema text DEFAULT 'fs',
+-- parent is the type of `fs` it is under; a root type has none and says what one of the schema's tables holds
+CREATE PROCEDURE fs.type_create(slug text, shard int, name text, parent text DEFAULT NULL,
                                   flags smallint DEFAULT 0, status text DEFAULT NULL, span tstzrange DEFAULT NULL, data jsonb DEFAULT '{}', meta jsonb DEFAULT '{}')
 LANGUAGE sql
 AS $$
     INSERT INTO fs.types (slug, shard, name, parent_id, flags, status, span, data, meta)
     VALUES (type_create.slug, type_create.shard, type_create.name,
-            (SELECT p.id FROM ld.types p WHERE p.slug = type_create.parent AND p.type IS NULL AND p.tableoid = (type_create.parent_schema || '.types')::regclass),
+            (SELECT p.id FROM fs.types p WHERE p.slug = type_create.parent AND p.type IS NULL),
             type_create.flags, type_create.status, type_create.span, type_create.data, type_create.meta);
 $$;
 
@@ -136,9 +136,9 @@ AS $$
             status_create.flags, status_create.status, status_create.span, status_create.data, status_create.meta);
 $$;
 
-CALL fs.type_create(slug => 'location', shard => x'01'::int, name => 'Location', parent => 'node', parent_schema => 'ld');
-CALL fs.type_create(slug => 'file', shard => x'02'::int, name => 'File', parent => 'node', parent_schema => 'ld', data => '{"class": "gppu.fs.handlers.FileHandler"}');
-CALL fs.type_create(slug => 'instance', shard => x'03'::int, name => 'Instance', parent => 'node', parent_schema => 'ld');
+CALL fs.type_create(slug => 'location', shard => x'01'::int, name => 'Location');
+CALL fs.type_create(slug => 'file', shard => x'02'::int, name => 'File', data => '{"class": "gppu.fs.handlers.FileHandler"}');
+CALL fs.type_create(slug => 'instance', shard => x'03'::int, name => 'Instance');
 
 CALL fs.status_create(slug => 'active', shard => x'01'::int, name => 'Active', type => 'location');
 CALL fs.status_create(slug => 'discarded', shard => x'01'::int, name => 'Discarded', type => 'location');
@@ -194,7 +194,7 @@ CREATE TABLE fs.links (
 ) INHERITS (ld.links);
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON fs.links FOR EACH ROW EXECUTE FUNCTION ld.record();
 
-CALL fs.type_create(slug => 'link', shard => x'10'::int, name => 'Link', parent => 'link', parent_schema => 'ld');
+CALL fs.type_create(slug => 'link', shard => x'10'::int, name => 'Link');
 
 CREATE SCHEMA sessions;
 
@@ -204,14 +204,14 @@ CREATE TABLE sessions.types (
 ) INHERITS (ld.types);
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON sessions.types FOR EACH ROW EXECUTE FUNCTION ld.record();
 
--- parent is a type of `sessions`, or of `ld` when parent_schema is 'ld'
-CREATE PROCEDURE sessions.type_create(slug text, shard int, name text, parent text DEFAULT NULL, parent_schema text DEFAULT 'sessions',
+-- parent is the type of `sessions` it is under; a root type has none and says what one of the schema's tables holds
+CREATE PROCEDURE sessions.type_create(slug text, shard int, name text, parent text DEFAULT NULL,
                                         flags smallint DEFAULT 0, status text DEFAULT NULL, span tstzrange DEFAULT NULL, data jsonb DEFAULT '{}', meta jsonb DEFAULT '{}')
 LANGUAGE sql
 AS $$
     INSERT INTO sessions.types (slug, shard, name, parent_id, flags, status, span, data, meta)
     VALUES (type_create.slug, type_create.shard, type_create.name,
-            (SELECT p.id FROM ld.types p WHERE p.slug = type_create.parent AND p.type IS NULL AND p.tableoid = (type_create.parent_schema || '.types')::regclass),
+            (SELECT p.id FROM sessions.types p WHERE p.slug = type_create.parent AND p.type IS NULL),
             type_create.flags, type_create.status, type_create.span, type_create.data, type_create.meta);
 $$;
 
@@ -225,9 +225,9 @@ AS $$
             status_create.flags, status_create.status, status_create.span, status_create.data, status_create.meta);
 $$;
 
-CALL sessions.type_create(slug => 'session', shard => x'01'::int, name => 'Session', parent => 'activity', parent_schema => 'ld');
-CALL sessions.type_create(slug => 'message', shard => x'02'::int, name => 'Message', parent => 'message', parent_schema => 'ld');
-CALL sessions.type_create(slug => 'link', shard => x'10'::int, name => 'Link', parent => 'link', parent_schema => 'ld');
+CALL sessions.type_create(slug => 'session', shard => x'01'::int, name => 'Session');
+CALL sessions.type_create(slug => 'message', shard => x'02'::int, name => 'Message');
+CALL sessions.type_create(slug => 'link', shard => x'10'::int, name => 'Link');
 
 CALL sessions.status_create(slug => 'active', shard => x'01'::int, name => 'Active', type => 'session');
 CALL sessions.status_create(slug => 'completed', shard => x'01'::int, name => 'Completed', type => 'session');

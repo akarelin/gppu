@@ -24,7 +24,7 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - refresh of a folder of millions: read a folder at a time, written in batches of 1,000 rows: done
 - catalog() reads location records as gppu.ld.fs has them; a location is on this host by its handler's access, or below the location above it: done
 - gppu.ld to the Linked Data standard as it is now (two-byte ids, shard1 the schema and shard2 the table, from `Linked Data.md`; its SQL and Python first copied from the LD, FS and Sessions notes, which are generated): done, its tests pass on Postgres
-- gppu.ld checked against `Linked Data.md` alone: flags change only by its transitions, `delete` among them; a record's children listed by `records_list`; code and SQL cite `Linked Data.md` and gppu.ld, not the generated notes; `type` stays text; ids, span, shard codes and slugs already matched: done, the gppu, FileIndexer and admin suites pass on the scratch database
+- gppu.ld checked against `Linked Data.md` alone: flags change only by its transitions, `delete` among them; a record's children listed by `records_list`; every schema's root types at the root of their schema, none under another schema's types; code and SQL cite `Linked Data.md` and gppu.ld, not the generated notes; `type` stays text; ids, span, shard codes and slugs already matched: done, the gppu, FileIndexer and admin suites pass on the scratch database
 
 ## Users of gppufs, moved in parallel (docs/gppufs-users.md)
 - Lake service and Dagster (RAN `Systems/lake`, stacks `lake` and `dagster` on trix): done; both code locations build, 118 tests pass

@@ -291,7 +291,8 @@ class _Record(SQLModel):
 class _Type(_Record):
     """A type's columns: its slug, unique in its shard, and the shard its records are in, shard2 of their table in its schema;
     its schema, shard1, is its own id's. A status is a type of type `status` whose parent is the type it belongs to; a type's parent
-    is the type it extends, in its schema or in `ld`. Every schema's types are a table made from it."""
+    is the type of its schema it is under, and a root type, with none, says what one of its schema's tables holds. Every schema's
+    types are a table made from it."""
     # required to make a type, which its table refuses without them, not to change one: an update takes only what changes
     slug: str | None = Field(None, sa_type=String, sa_column_kwargs={'nullable': False}, description='Its slug, unique in its shard.')
     shard: int | None = Field(None, sa_type=SmallInteger, sa_column_kwargs={'nullable': False}, description='shard2 of the table its records are in, in its schema.')

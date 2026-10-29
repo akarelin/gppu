@@ -15,6 +15,8 @@ What Alex instructed for gppufs, its catalog and their users, as plain statement
 
 ## Linked Data in gppu
 - A record's type is its type's slug, text.
+- Inside every schema, types describe how the rest of the schema works: a root type says what one of the schema's tables holds, and the types under it are its kinds.
+- A type's parent is the type it is under, a container of types, not inheritance.
 - Status is a Constrained Vocabulary stored in Linked Data, and each type has its own list of statuses.
 
 ## The catalog and its users
