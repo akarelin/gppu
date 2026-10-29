@@ -18,13 +18,14 @@ async def clean(folder: str, keep: float) -> list[tuple[str, str]]:
     """Each session of a harness's folder as the listing gives it, and where it goes. A session changed within keep hours
     is not read and keeps its subagents; any other is read whole by its handler once, the index keeping it. A subagent
     goes where the session at the top of it went, which the listing gives before it."""
-    fs = GppuFileSystem(Path(glob('home')).expanduser() / folder, cache=False)   # the harness watches its folder: no index file in it
+    fs = GppuFileSystem(cache=False)   # the harness watches its folder: no index file in it
+    base = (Path(glob('home')).expanduser() / folder).as_posix()
     went, parent, active, moves = {}, {}, set(), []
-    async for row in fs.ls_iter():
+    async for row in fs.ls_iter(base):
         if row['type'] != 'file' or row['gppu']['record']['type'] not in SESSION:
             continue
-        path = fs._key(row['name'])
-        if any(os.path.isfile(fs._path(f'{above}.jsonl')) for above in PurePosixPath(path).parents[:-1]):
+        path = row['name']
+        if any(os.path.isfile(f'{base}/{above}.jsonl') for above in PurePosixPath(path).relative_to(base).parents[:-1]):
             continue   # in a session's own folder, which moves with it
         hours = (time.time() - row['mtime']) / 3600
         if hours < keep:
@@ -44,7 +45,7 @@ async def clean(folder: str, keep: float) -> list[tuple[str, str]]:
             to = went[record['uid']] = None if ' - ' in data['normalized_name'] else 'human'   # the handler names a session by what a person typed in it, when anyone did
         if to is not None:
             print(f'{to:8} {hours:7.0f}h {data.get("turns") or 0:5} turns {folder} {path} {gppu.get("unread") or ""}')
-            moves.append((to, path))
+            moves.append((to, PurePosixPath(path).relative_to(base).as_posix()))
     return moves
 
 
@@ -55,12 +56,12 @@ def main() -> None:
     for folder in glob('sessions'):
         moves = asyncio.run(clean(folder, keep))
         if run:
-            fs = GppuFileSystem(Path(glob('home')).expanduser() / folder, cache=False)
-            archive = {to: GppuFileSystem(Path(glob('archive')) / glob(f'buckets/{to}') / folder) for to in ('human', 'orphan', 'damaged')}
+            fs, archive = GppuFileSystem(cache=False), GppuFileSystem()
+            base = (Path(glob('home')).expanduser() / folder).as_posix()
             for to, path in moves:
                 for entry in (path, str(PurePosixPath(path).with_suffix(''))):   # Claude Code keeps a session's other files in a folder by its uid
-                    if fs.exists(entry):
-                        fs.move_into(archive[to], entry, entry)
+                    if fs.exists(f'{base}/{entry}'):
+                        fs.move_into(archive, f'{base}/{entry}', (Path(glob('archive')) / glob(f'buckets/{to}') / folder / entry).as_posix())
     print('moved' if run else 'nothing moved: --run moves them')
 
 

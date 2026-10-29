@@ -8,17 +8,14 @@ from gppu import App, Env, Info
 from gppu.fs import catalog as locations
 from gppu.fs.catalog import CatalogFileSystem
 from gppu.fs.vfs import mount
-from gppu.fs.gppufs import GppuFileSystem
 
 
 class Desktop(App):
     def run(self):
         records = httpx.get(f"{self.my('ld')}/fs/locations", timeout=300).raise_for_status().json()['items']
         catalog = locations.catalog(records)
-        folders = locations.reached(catalog)
-        sources = {catalog.locations[row['location']]['name']: locations.filesystem(catalog, row['location'], folders)
-                   for row in folders.values()}
-        sources |= {name: GppuFileSystem(location) for name, location in self.my('sources').items()}
+        sources = {catalog.locations[row['location']]['name']: f'gppu::{folder}' for folder, row in locations.reached(catalog).items()}
+        sources |= {name: f'gppu::{location}' for name, location in self.my('sources').items()}
         sources['Catalog'] = CatalogFileSystem(self.my('catalog'))
         Info('Desktop', self.my('mount_point'), ', '.join(sources))
         mount(sources, self.my('mount_point'))

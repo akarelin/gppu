@@ -42,7 +42,7 @@ class Lake:
         self.templates = TemplateSet(named={'lake': dict(templates)})
         self.root = location.provider.local(self.store.uri).as_posix().rstrip('/')   # the Lake on this host, as gppufs names
         # a folder: a share's root, \\s1\Lake\, without the slash its Path keeps
-        self.files = GppuFileSystem(self.root, locations={self.root: {'location': location.uid, 'canonical': str(self.store.uri)}})
+        self.files = GppuFileSystem(locations={self.root: {'location': location.uid, 'canonical': str(self.store.uri)}})
 
     def _here(self, uri: y2uri | str) -> str | None:
         """The Lake folder or file a uri names, as gppufs takes it; none for a uri outside the Lake."""

@@ -49,12 +49,12 @@ def test_tui_tree_expands_folders_and_archives_shows_metadata_and_refreshes(tmp_
     with zipfile.ZipFile(tmp_path / 'bundle.zip', 'w') as archive:
       archive.writestr('inside.txt', 'inside')
     (tmp_path / '.git').mkdir()
-    fs = GppuFileSystem(tmp_path)
-    app = HandlerBrowser(fs)
+    fs = GppuFileSystem(skip_instance_cache=True)
+    app = HandlerBrowser(fs, tmp_path.as_posix())
     async with app.run_test(size=(130, 40)) as pilot:
       await settled(app, pilot)
       assert labels(app) == [tmp_path.name, '.git', 'child', 'bundle.zip']
-      assert app.current['name'] == (await fs.info())['name']
+      assert app.current['name'] == (await fs.info(tmp_path.as_posix()))['name']
       await select(app, pilot, 'child')
       await pilot.press('right')
       await settled(app, pilot)
@@ -154,7 +154,7 @@ def test_tui_shows_the_catalog_as_a_tree_of_locations(tmp_path):
 def test_tui_stays_responsive_while_a_listing_is_awaited(tmp_path):
   async def exercise():
     (tmp_path / 'note.txt').write_text('content')
-    delegate = GppuFileSystem(tmp_path)
+    delegate = GppuFileSystem(skip_instance_cache=True)
     entered, release = asyncio.Event(), asyncio.Event()
     class Filesystem:
       async def ls(self, *args, **kwargs):
@@ -163,7 +163,7 @@ def test_tui_stays_responsive_while_a_listing_is_awaited(tmp_path):
         return await delegate.ls(*args, **kwargs)
       async def info(self, *args, **kwargs):
         return await delegate.info(*args, **kwargs)
-    app = HandlerBrowser(Filesystem())
+    app = HandlerBrowser(Filesystem(), tmp_path.as_posix())
     async with app.run_test(size=(130, 40)) as pilot:
       await asyncio.wait_for(entered.wait(), 5)
       await pilot.pause()

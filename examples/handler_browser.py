@@ -18,7 +18,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.widgets import Checkbox, DataTable, Footer, Static, TextArea
 
-ROOT = ''  # the tree root stands for gppufs.ls(None) and gppufs.info(None)
+ROOT = ''  # the tree root stands for the folder browsed, or the catalog's root
 LOADING = '\x00loading'
 FAILED = '\x00failed'
 COLUMNS = (TreeTableColumn('handlers', 'Handlers', 22), TreeTableColumn('files', 'Files', 9),
@@ -110,9 +110,11 @@ class HandlerBrowser(TUIApp):
     Binding('q', 'tuiapp_done', 'Quit'),
   ]
 
-  def __init__(self, gppufs: GppuCatalog | GppuFileSystem) -> None:
+  def __init__(self, gppufs: GppuCatalog | GppuFileSystem, root: str | None = None) -> None:
+    """root is the folder a gppufs is browsed from; a catalog's root is its own."""
     super().__init__()
     self.gppufs = gppufs
+    self.root = root
     self.listing = Listing(self.load)
     self.current: dict | None = None
 
@@ -128,9 +130,8 @@ class HandlerBrowser(TUIApp):
   def on_mount(self) -> None:
     self.query_one(TreeTable).query_one(DataTable).focus()
 
-  @staticmethod
-  def address(entry: TreeEntry) -> str | None:
-    return None if entry.id == ROOT else entry.id
+  def address(self, entry: TreeEntry) -> str | None:
+    return self.root if entry.id == ROOT else entry.id
 
   @work(exclusive=False, group='listing')
   async def load(self, entry: TreeEntry, *, refresh: bool = False) -> None:

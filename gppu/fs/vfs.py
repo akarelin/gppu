@@ -44,7 +44,8 @@ class GppuIndexedFileSystem(AbstractFileSystem):
         self.index = Path(index)
         # A colocated index moves or syncs with its folder. A provenance-named
         # snapshot is only an index; its parent is not the original data root.
-        self.source = GppuFileSystem(self.index.parent) if self.index.name.startswith('.') else None
+        self.source = GppuFileSystem() if self.index.name.startswith('.') else None
+        self.root = self.index.parent.as_posix()   # the folder the index is beside, which its paths are below
         self._paths: dict[str, str] = {}  # display name -> original relative path; metadata stays in SQLite
         self._stamp, self._aliases = None, {}   # the index file's modified time and size when its names were read
         self._uri = self.index.as_uri()
@@ -144,9 +145,9 @@ class GppuIndexedFileSystem(AbstractFileSystem):
             raise FileNotFoundError(f'{self.index}: this index snapshot has no bound original source for {path}')
         member, _, archive = self._relative(path).partition('::')
         if archive:   # the member, read from its archive in the location; an archive that is not there is not found
-            files, inside = fsspec.core.url_to_fs(f"{member}::{self.source.root.rstrip('/')}/{archive}")
+            files, inside = fsspec.core.url_to_fs(f"{member}::{self.root.rstrip('/')}/{archive}")
             return io.BytesIO(files.cat_file(inside))   # whole: the archive closes when its filesystem goes
-        return self.source.open(self.source.root.rstrip('/') + '/' + member, mode=mode, **kwargs)
+        return self.source.open(self.root.rstrip('/') + '/' + member, mode=mode, **kwargs)
 
 
 def indexes(files: GppuFileSystem, folder: str):
@@ -168,12 +169,13 @@ class Thing(NamedTuple):
 
 
 class DesktopFileSystem(AbstractFileSystem):
-    """Project named gppufs roots into one ordinary filesystem namespace."""
+    """Project named sources into one ordinary filesystem namespace: a source is the address of a folder gppufs lists,
+    `gppu::D:/TextLake`, or a filesystem served by an API, whose paths are its own."""
 
     protocol = 'gppu-desktop'
     cachable = False
 
-    def __init__(self, sources: dict[str, AbstractFileSystem]):
+    def __init__(self, sources: dict[str, str | AbstractFileSystem]):
         super().__init__()
         if not sources:
             raise ValueError('desktop sources are required')
@@ -184,7 +186,8 @@ class DesktopFileSystem(AbstractFileSystem):
                 raise ValueError('Indexed is the desktop index view')
         if len({name.casefold() for name in sources}) != len(sources):
             raise ValueError('desktop source names must be distinct on Windows')
-        self.sources = dict(sources)
+        self.sources = {name: fsspec.core.url_to_fs(source) if isinstance(source, str) else (source, '')
+                        for name, source in sources.items()}   # each its filesystem and the folder shown
         self.indexed: dict[str, GppuIndexedFileSystem] = {}
         self._index_paths: set[str] = set()
         # a listed folder, as shown -> each name shown in it -> the real path it stands for, or the thing it is
@@ -204,14 +207,14 @@ class DesktopFileSystem(AbstractFileSystem):
             self._index_paths.add(view.index.as_posix().casefold())
 
     def _discover_roots(self):
-        for name, fs in self.sources.items():
+        for name, (fs, root) in self.sources.items():
             if not isinstance(fs, GppuFileSystem):
                 continue
-            self._discover(fs, fs.root, name)
-            for row in fs.ls_sync(fs.root):   # gppufs's listing: an ignored folder, a junction or a link is not entered
+            self._discover(fs, root, name)
+            for row in fs.ls_sync(root):   # gppufs's listing: an ignored folder, a junction or a link is not entered
                 if row['gppu']['type'] == 'folder' and not set(row['gppu']['handlers']) & set(IGNORED):
                     child = PurePosixPath(row['gppu']['path'].replace('\\', '/')).name
-                    self._discover(fs, posixpath.join(fs.root, child), name + ' › ' + child)
+                    self._discover(fs, posixpath.join(root, child), name + ' › ' + child)
 
     def _index_view(self, parts):
         label = next((name for name in self.indexed if name.casefold() == parts[1].casefold()), None)
@@ -238,11 +241,11 @@ class DesktopFileSystem(AbstractFileSystem):
         name = next((name for name in self.sources if name.casefold() == parts[0].casefold()), None)
         if name is None:
             raise FileNotFoundError(path)
-        fs = self.sources[name]
+        fs, root = self.sources[name]
         if not isinstance(fs, GppuFileSystem):   # a source served by an API: its paths are its own
             return fs, '/'.join(parts[1:])
         if len(parts) == 1:
-            return fs, fs.root
+            return fs, root
         folder = '/' + '/'.join(parts[:-1])
         if folder.casefold() not in self._shown_as:
             self.ls(folder, detail=False)
@@ -408,7 +411,7 @@ class DesktopFileSystem(AbstractFileSystem):
         return fs.open(real, mode=mode, **kwargs)
 
 
-def mount(sources: dict[str, AbstractFileSystem], mount_point: str) -> None:
+def mount(sources: dict[str, str | AbstractFileSystem], mount_point: str) -> None:
     """Mount in this process; WinFsp owns the Windows mount lifecycle."""
     from fsspec.fuse import FUSEr
     from fuse import FUSE, FuseOSError
