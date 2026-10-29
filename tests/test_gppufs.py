@@ -16,8 +16,9 @@ import yaml
 from fsspec.implementations.memory import MemoryFileSystem
 
 import gppu.fs
+import gppu.fs.catalog
 import gppu.fs.gppufs
-from gppu.fs.catalog import GppuCatalog
+from gppu.fs.catalog import GppuCatalog, locate, resolve
 from gppu.fs.gppufs import GppuFileSystem
 from gppu.fs import _RarFileSystem
 
@@ -36,6 +37,13 @@ def session(path: Path) -> None:
 
 def no_live(*args, **kwargs):
   raise AssertionError('Cached metadata was reparsed')
+
+
+def anew(**options) -> GppuFileSystem:
+  """gppufs made again, as a new process makes it: what it answers comes from the indexes alone."""
+  GppuFileSystem.clear_instance_cache()
+  gppu.fs.gppufs._INDEXES.clear()
+  return GppuFileSystem(**options)
 
 
 def rename(source: Path, destination: Path, boundary: Path) -> None:
@@ -151,12 +159,12 @@ def test_ls_identifies_without_probing_and_refresh_probes(tmp_path, monkeypatch)
   folder = tmp_path / 'notes'
   folder.mkdir()
   (folder / 'note.md').write_text('---\ntitle: Handlers\n---\nText', encoding='utf-8')
-  fs = GppuFileSystem(tmp_path)
-  root = fs.info()
+  fs = GppuFileSystem()
+  root = fs.info(tmp_path)
   assert root['gppu']['probed'] is False
   assert root['gppu']['files'] is None
   assert index(tmp_path).is_file()
-  listed = fs.ls(recurse=True)
+  listed = fs.ls(tmp_path, recurse=True)
   assert [row['gppu']['name'] for row in listed] == ['notes', 'note.md']
   assert all(row['gppu']['probed'] is False for row in listed)
   note = listed[1]
@@ -167,7 +175,7 @@ def test_ls_identifies_without_probing_and_refresh_probes(tmp_path, monkeypatch)
   assert 'markdown' not in note['gppu']
   assert listed[0]['gppu']['files'] is None
   (tmp_path / 'added.txt').write_text('added')
-  assert [row['gppu']['name'] for row in fs.ls()] == ['notes', 'added.txt']
+  assert [row['gppu']['name'] for row in fs.ls(tmp_path)] == ['notes', 'added.txt']
   assert note['gppu']['probed_at'] is None
   detail = fs.info(note['name'], refresh=True)
   assert detail['gppu']['probed'] is True
@@ -176,38 +184,38 @@ def test_ls_identifies_without_probing_and_refresh_probes(tmp_path, monkeypatch)
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
   assert fs.info(note['name']) == detail
   monkeypatch.undo()
-  fs.ls(refresh=True, recurse=True)
-  assert fs.info()['gppu']['files'] == 2
-  assert fs.info('notes')['gppu']['probed'] is True
+  fs.ls(tmp_path, refresh=True, recurse=True)
+  assert fs.info(tmp_path)['gppu']['files'] == 2
+  assert fs.info(folder)['gppu']['probed'] is True
 
 
 def test_ls_lists_removed_and_added_entries_and_refresh_forgets_removed(tmp_path):
   source = tmp_path / 'old.txt'
   source.write_text('old')
-  fs = GppuFileSystem(tmp_path)
-  fs.ls()
+  fs = GppuFileSystem()
+  fs.ls(tmp_path)
   source.unlink()
   (tmp_path / 'new.txt').write_text('new content')
-  listed = fs.ls()
+  listed = fs.ls(tmp_path)
   assert [row['gppu']['name'] for row in listed] == ['new.txt']
   assert listed[0]['gppu']['probed'] is False
-  fresh = fs.ls(refresh=True)
+  fresh = fs.ls(tmp_path, refresh=True)
   assert [row['gppu']['name'] for row in fresh] == ['new.txt']
-  assert fs.info()['gppu']['bytes'] == len('new content')
+  assert fs.info(tmp_path)['gppu']['bytes'] == len('new content')
   with pytest.raises(FileNotFoundError):
-    fs.info('old.txt')
+    fs.info(source)
 
 
 def test_failed_refresh_does_not_destroy_snapshot(tmp_path, monkeypatch):
   (tmp_path / 'note.txt').write_text('cached')
-  fs = GppuFileSystem(tmp_path)
-  before = fs.ls()
+  fs = GppuFileSystem()
+  before = fs.ls(tmp_path)
   def denied(*args, **kwargs):
     raise PermissionError('source unavailable')
   monkeypatch.setattr(fs, '_inventory', denied)
   with pytest.raises(PermissionError, match='source unavailable'):
-    fs.ls(refresh=True)
-  assert fs.ls() == before
+    fs.ls(tmp_path, refresh=True)
+  assert fs.ls(tmp_path) == before
 
 
 @pytest.mark.parametrize('shard', [False, True])
@@ -217,11 +225,11 @@ def test_child_refresh_updates_ancestor_totals_from_cached_siblings(tmp_path, mo
   (child / 'old-2020-01-01.txt').write_text('old')
   sibling = tmp_path / 'sibling.txt'
   sibling.write_text('cached sibling')
+  fs = GppuFileSystem()
   if shard:
-    GppuFileSystem(child).ls()
-  fs = GppuFileSystem(tmp_path)
-  fs.ls(recurse=True, refresh=True)
-  sibling_before = fs.info('sibling.txt')
+    fs.ls(child)
+  fs.ls(tmp_path, recurse=True, refresh=True)
+  sibling_before = fs.info(sibling)
   sibling.write_text('changed but not refreshed')
   (child / 'old-2020-01-01.txt').unlink()
   nested = child / 'nested'
@@ -232,46 +240,47 @@ def test_child_refresh_updates_ancestor_totals_from_cached_siblings(tmp_path, mo
   live = fs._live
   def scoped_live(key):
     calls.append(key)
-    assert key == 'outer/child', 'Refresh reparsed outside the requested subtree'
+    assert key == child.as_posix(), 'Refresh reparsed outside the requested subtree'
     live(key)
   monkeypatch.setattr(fs, '_live', scoped_live)
-  fs.ls('outer/child', refresh=True)
-  assert calls == ['outer/child']
-  assert fs.info('sibling.txt') == sibling_before
+  fs.ls(child, refresh=True)
+  assert calls == [child.as_posix()]
+  assert fs.info(sibling) == sibling_before
   for path, expected in (
-    ('outer/child', (2, 1, 17)),
-    ('outer', (2, 2, 17)),
-    (None, (3, 3, 31)),
+    (child, (2, 1, 17)),
+    (child.parent, (2, 2, 17)),
+    (tmp_path, (3, 3, 31)),
   ):
     metadata = fs.info(path)['gppu']
     assert tuple(metadata[field] for field in ('files', 'folders', 'bytes')) == expected
     assert metadata['span'][0].startswith('2026-01-01')
+  before = fs.info(tmp_path)
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
-  assert GppuFileSystem(tmp_path).info() == fs.info()
+  assert anew().info(tmp_path) == before
 
 
 def test_caching_a_new_child_updates_its_cached_parent_listing(tmp_path):
   (tmp_path / 'before.txt').write_text('before')
-  fs = GppuFileSystem(tmp_path)
-  fs.ls()
+  fs = GppuFileSystem()
+  fs.ls(tmp_path)
   (tmp_path / 'added.txt').write_text('added')
-  added = fs.info('added.txt', refresh=True)
+  added = fs.info(tmp_path / 'added.txt', refresh=True)
   assert added['gppu']['probed'] is True
-  assert [row['gppu']['name'] for row in fs.ls()] == ['added.txt', 'before.txt']
-  assert fs.info()['gppu']['files'] == 2
-  assert fs.info()['gppu']['bytes'] == 11
+  assert [row['gppu']['name'] for row in fs.ls(tmp_path)] == ['added.txt', 'before.txt']
+  assert fs.info(tmp_path)['gppu']['files'] == 2
+  assert fs.info(tmp_path)['gppu']['bytes'] == 11
 
 
 def test_refresh_rereads_metadata_when_size_and_mtime_are_unchanged(tmp_path):
   note = tmp_path / 'note.md'
   note.write_text('---\ntitle: Before\n---\nText', encoding='utf-8')
-  fs = GppuFileSystem(tmp_path)
-  before, = fs.ls()
+  fs = GppuFileSystem()
+  before, = fs.ls(tmp_path)
   status = note.stat()
   note.write_text('---\ntitle: After!\n---\nText', encoding='utf-8')
   os.utime(note, ns=(status.st_atime_ns, status.st_mtime_ns))
-  assert fs.ls() == [before]
-  assert fs.info('note.md', refresh=True)['gppu']['record']['data']['title'] == 'After!'
+  assert fs.ls(tmp_path) == [before]
+  assert fs.info(note, refresh=True)['gppu']['record']['data']['title'] == 'After!'
 
 
 @pytest.mark.parametrize('shard', [False, True])
@@ -283,24 +292,24 @@ def test_folder_rename_preserves_rows(tmp_path, monkeypatch, shard, method):
   old.mkdir()
   session(old / 'session.jsonl')
   (old / 'note.md').write_text('---\npath: old/user-authored-value\n---\nText')
+  fs = GppuFileSystem()
   if shard:
-    GppuFileSystem(old).ls()
-  fs = GppuFileSystem(tmp_path)
-  fs.ls(recurse=True, refresh=True)
-  before = fs.info('outer/old/session.jsonl')
+    fs.ls(old)
+  fs.ls(tmp_path, recurse=True, refresh=True)
+  before = fs.info(old / 'session.jsonl')
   new = outer / 'renamed'
   rename(old, new, tmp_path)
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
   if method == 'ls':
-    rows = fs.ls('outer')
+    rows = fs.ls(outer)
     assert [row['gppu']['name'] for row in rows] == ['renamed']
   else:
-    assert fs.info('outer/renamed')['gppu']['name'] == 'renamed'
-  after = fs.info('outer/renamed/session.jsonl')
+    assert fs.info(new)['gppu']['name'] == 'renamed'
+  after = fs.info(new / 'session.jsonl')
   assert after['ino'] == before['ino']
   assert after['gppu']['record']['uid'] == 'codex-demo'
-  assert '/outer/renamed/' in after['name']
-  assert fs.info('outer/renamed/note.md')['gppu']['record']['data']['frontmatter']['path'] == 'old/user-authored-value'
+  assert after['name'] == (new / 'session.jsonl').as_posix()
+  assert fs.info(new / 'note.md')['gppu']['record']['data']['frontmatter']['path'] == 'old/user-authored-value'
   if not shard:
     with sqlite3.connect(index(tmp_path)) as database:
       value = json.loads(database.execute(
@@ -317,14 +326,14 @@ def test_location_rename_renames_database_without_reindexing(tmp_path, monkeypat
   old = tmp_path / 'original'
   old.mkdir()
   session(old / 'session.jsonl')
-  GppuFileSystem(old).ls(refresh=True)
+  GppuFileSystem().ls(old, refresh=True)
   contents = index(old).read_bytes()
   new = tmp_path / 'renamed'
   rename(old, new, tmp_path)
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
-  fs = GppuFileSystem(new)
-  assert fs.info()['gppu']['name'] == 'renamed'
-  assert fs.ls()[0]['gppu']['record']['uid'] == 'codex-demo'
+  fs = anew()
+  assert fs.info(new)['gppu']['name'] == 'renamed'
+  assert fs.ls(new)[0]['gppu']['record']['uid'] == 'codex-demo'
   assert index(new).read_bytes() == contents
   assert not (new / '.original.gppufs.sqlite').exists()
 
@@ -333,11 +342,11 @@ def test_location_rename_after_info_without_root_listing(tmp_path, monkeypatch):
   old = tmp_path / 'old'
   old.mkdir()
   (old / 'file.txt').write_text('cached')
-  GppuFileSystem(old).info('file.txt')
+  GppuFileSystem().info(old / 'file.txt')
   new = tmp_path / 'new'
   rename(old, new, tmp_path)
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
-  assert GppuFileSystem(new).info('file.txt')['gppu']['bytes'] == 6
+  assert anew().info(new / 'file.txt')['gppu']['bytes'] == 6
   assert index(new).is_file()
 
 
@@ -345,29 +354,29 @@ def test_refresh_renamed_folder_updates_existing_paths(tmp_path):
   old = tmp_path / 'old'
   old.mkdir()
   (old / 'file.txt').write_text('cached')
-  fs = GppuFileSystem(tmp_path)
-  fs.ls()
+  fs = GppuFileSystem()
+  fs.ls(tmp_path)
   new = tmp_path / 'new'
   rename(old, new, tmp_path)
   (new / 'file.txt').write_text('changed')
-  assert fs.ls('new', refresh=True)[0]['gppu']['bytes'] == 7
-  assert [row['gppu']['name'] for row in fs.ls()] == ['new']
+  assert fs.ls(new, refresh=True)[0]['gppu']['bytes'] == 7
+  assert [row['gppu']['name'] for row in fs.ls(tmp_path)] == ['new']
 
 
 def test_case_only_folder_rename_updates_index_filename(tmp_path, monkeypatch):
   old = tmp_path / 'MixedCase'
   old.mkdir()
   (old / 'file.txt').write_text('cached')
-  GppuFileSystem(old).ls()
-  fs = GppuFileSystem(tmp_path)
-  fs.ls()
+  fs = GppuFileSystem()
+  fs.ls(old)
+  fs.ls(tmp_path)
   new = tmp_path / 'MIXEDCASE'
   rename(old, new, tmp_path)
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
-  assert fs.ls()[0]['gppu']['name'] == 'MIXEDCASE'
+  assert fs.ls(tmp_path)[0]['gppu']['name'] == 'MIXEDCASE'
   assert index(new).name in [path.name for path in new.iterdir()]
   assert '.MixedCase.gppufs.sqlite' not in [path.name for path in new.iterdir()]
-  assert fs.ls('MIXEDCASE')[0]['gppu']['bytes'] == 6
+  assert fs.ls(new)[0]['gppu']['bytes'] == 6
 
 
 @pytest.mark.parametrize('extension', ['zip', 'tar.gz'])
@@ -382,36 +391,37 @@ def test_entering_an_archive_identifies_members_and_refresh_probes_them(tmp_path
       member = tarfile.TarInfo('inside/note.md')
       member.size = len(content)
       archive.addfile(member, io.BytesIO(content))
-  fs = GppuFileSystem(tmp_path)
-  rows = fs.ls(path.name, recurse=True)
+  fs = GppuFileSystem()
+  rows = fs.ls(path, recurse=True)
   assert [row['gppu']['name'] for row in rows] == ['inside', 'note.md']
   folder, note = rows
-  container_uri = fs.location + '/' + path.name
-  assert folder['name'] == container_uri + '/inside'
-  assert note['name'] == container_uri + '/inside/note.md'
-  assert folder['gppu']['parent'] == container_uri
+  container = path.as_posix()
+  assert folder['name'] == container + '/inside'
+  assert note['name'] == container + '/inside/note.md'
+  assert folder['gppu']['parent'] == container
   assert note['gppu']['parent'] == folder['name']
   assert all(row['gppu']['probed'] is False for row in rows)
   assert folder['gppu']['files'] is None
   assert note['gppu']['handlers'] == ['markdown']
   assert note['gppu']['bytes'] == len(content)
   assert 'markdown' not in note['gppu']
-  assert fs.info(path.name)['gppu']['is_container']
+  assert fs.info(path)['gppu']['is_container']
   assert fs.info(note['gppu']['parent'])['type'] == 'directory'
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
-  assert GppuFileSystem(tmp_path).ls(path.name, recurse=True) == rows
+  fs = anew()
+  assert fs.ls(path, recurse=True) == rows
   assert fs.ls(folder['name']) == [note]
   monkeypatch.undo()
   detail = fs.info(note['name'], refresh=True)
   assert detail['gppu']['probed'] is True
   assert detail['gppu']['record']['data']['title'] == 'Inside archive'
   assert fs.info(folder['name'])['gppu']['files'] is None
-  probed = fs.ls(path.name, recurse=True, refresh=True)
+  probed = fs.ls(path, recurse=True, refresh=True)
   assert all(row['gppu']['probed'] is True for row in probed)
   assert probed[0]['gppu']['files'] == 1
   assert probed[1]['gppu']['record']['data']['title'] == 'Inside archive'
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
-  assert GppuFileSystem(tmp_path).ls(path.name, recurse=True) == probed
+  assert anew().ls(path, recurse=True) == probed
 
 
 def test_nonlocal_fsspec_location_is_read_and_never_written(tmp_path, monkeypatch):
@@ -421,22 +431,21 @@ def test_nonlocal_fsspec_location_is_read_and_never_written(tmp_path, monkeypatc
   root = '/' + tmp_path.name
   native.makedirs(root)
   native.pipe_file(root + '/note.md', b'---\ntitle: Remote\n---\nText')
-  fs = GppuFileSystem('memory://' + root)
-  assert 'title' not in fs.ls()[0]['gppu']['record']['data']   # a listing identifies; it fetches nothing
-  before = fs.ls(refresh=True)
+  fs = GppuFileSystem(target_protocol='memory')
+  assert 'title' not in fs.ls(root)[0]['gppu']['record']['data']   # a listing identifies; it fetches nothing
+  before = fs.ls(root, refresh=True)
   assert before[0]['gppu']['record']['data']['title'] == 'Remote'
   assert not native.exists(root + '/.' + tmp_path.name + '.gppufs.sqlite')
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
-  assert fs.ls() == before
+  assert fs.ls(root) == before
   monkeypatch.undo()
   local = tmp_path / tmp_path.name
   local.mkdir()
   (local / 'note.md').write_bytes(native.cat_file(root + '/note.md'))
-  GppuFileSystem(local).ls(refresh=True)
+  GppuFileSystem().ls(local, refresh=True)
   native.pipe_file(root + '/.' + tmp_path.name + '.gppufs.sqlite', index(local).read_bytes())
-  reader = GppuFileSystem('memory://' + root)
-  reader._forget_indexes(reader.root)   # the store was asked for its index before this one was put there
-  assert reader.ls_sync(live=False)[0]['gppu']['record']['data']['title'] == 'Remote'
+  reader = anew(target_protocol='memory')   # the store was asked for its index before this one was put there
+  assert reader.ls_sync(root, live=False)[0]['gppu']['record']['data']['title'] == 'Remote'
 
 
 @pytest.mark.parametrize('extension', ['zip', 'tar.gz'])
@@ -448,7 +457,7 @@ def test_empty_archive_is_an_empty_listing(tmp_path, extension):
   else:
     with tarfile.open(path, 'w:gz'):
       pass
-  assert GppuFileSystem(tmp_path).ls(path.name) == []
+  assert GppuFileSystem().ls(path) == []
 
 
 def test_nested_archives_retain_addresses_after_folder_rename(tmp_path, monkeypatch):
@@ -459,23 +468,23 @@ def test_nested_archives_retain_addresses_after_folder_rename(tmp_path, monkeypa
     archive.writestr('note.md', '---\ntitle: Nested\n---\nText')
   with zipfile.ZipFile(old / 'outer.zip', 'w') as archive:
     archive.writestr('inner.zip', nested.getvalue())
-  fs = GppuFileSystem(tmp_path)
-  assert [row['gppu']['name'] for row in fs.ls(recurse=True)] == ['old', 'outer.zip']   # a recursion opens no archive
-  fs.ls('old/outer.zip')
-  fs.ls('old/outer.zip/inner.zip')   # listed, each archive's listing is in the index, and a recursion enters it
-  before = fs.ls(recurse=True)
+  fs = GppuFileSystem()
+  assert [row['gppu']['name'] for row in fs.ls(tmp_path, recurse=True)] == ['old', 'outer.zip']   # a recursion opens no archive
+  fs.ls(old / 'outer.zip')
+  fs.ls(old / 'outer.zip' / 'inner.zip')   # listed, each archive's listing is in the index, and a recursion enters it
+  before = fs.ls(tmp_path, recurse=True)
   assert [row['gppu']['name'] for row in before] == ['old', 'outer.zip', 'inner.zip', 'note.md']
-  assert [row['name'] for row in before] == [fs.location + '/' + path for path in
+  assert [row['name'] for row in before] == [tmp_path.as_posix() + '/' + path for path in
     ('old', 'old/outer.zip', 'old/outer.zip/inner.zip', 'old/outer.zip/inner.zip/note.md')]
   assert [row['gppu']['parent'] for row in before[1:]] == [row['name'] for row in before[:-1]]
   assert before[-1]['gppu']['handlers'] == ['markdown']
   new = tmp_path / 'new'
   rename(old, new, tmp_path)
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
-  after = fs.ls(recurse=True)
+  after = fs.ls(tmp_path, recurse=True)
   assert all('/old/' not in row['name'] for row in after)
   assert [row['gppu']['name'] for row in after] == ['new', 'outer.zip', 'inner.zip', 'note.md']
-  assert after[-1]['name'] == fs.location + '/new/outer.zip/inner.zip/note.md'
+  assert after[-1]['name'] == tmp_path.as_posix() + '/new/outer.zip/inner.zip/note.md'
   assert fs.cat_file(after[-1]['name']) == b'---\ntitle: Nested\n---\nText'
   monkeypatch.undo()
   assert fs.info(after[-1]['name'], refresh=True)['gppu']['record']['data']['title'] == 'Nested'
@@ -491,15 +500,15 @@ def test_rar_members_use_existing_handler(tmp_path, monkeypatch):
   (folder / 'note.md').write_text('---\ntitle: RAR metadata\n---\nText')
   subprocess.run([str(executable), 'a', '-idq', 'bundle.rar', 'inside'], cwd=tmp_path,
     check=True, capture_output=True)
-  fs = GppuFileSystem(tmp_path)
-  listed = fs.ls('bundle.rar', recurse=True)
+  fs = GppuFileSystem()
+  listed = fs.ls(tmp_path / 'bundle.rar', recurse=True)
   note = next(row for row in listed if row['gppu']['name'] == 'note.md')
   assert note['gppu']['handlers'] == ['markdown']
   assert note['gppu']['probed'] is False
   assert fs.info(note['name'], refresh=True)['gppu']['record']['data']['title'] == 'RAR metadata'
-  after = fs.ls('bundle.rar', recurse=True)
+  after = fs.ls(tmp_path / 'bundle.rar', recurse=True)
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
-  assert GppuFileSystem(tmp_path).ls('bundle.rar', recurse=True) == after
+  assert anew().ls(tmp_path / 'bundle.rar', recurse=True) == after
 
 
 def test_session_paths_inside_archives_are_source_uris(tmp_path):
@@ -507,17 +516,17 @@ def test_session_paths_inside_archives_are_source_uris(tmp_path):
   session(path)
   with zipfile.ZipFile(tmp_path / 'sessions.zip', 'w') as archive:
     archive.writestr('session.jsonl', path.read_bytes())
-  fs = GppuFileSystem(tmp_path)
-  row, = fs.ls('sessions.zip')
+  fs = GppuFileSystem()
+  row, = fs.ls(tmp_path / 'sessions.zip')
   assert row['gppu']['handlers'] == ['session']
   detail = fs.info(row['name'], refresh=True)
-  assert detail['name'] == fs.location + '/sessions.zip/session.jsonl'
+  assert detail['name'] == tmp_path.as_posix() + '/sessions.zip/session.jsonl'
   container = fs.info(detail['gppu']['parent'])
-  assert container['name'] == fs.location + '/sessions.zip'
+  assert container['name'] == tmp_path.as_posix() + '/sessions.zip'
   assert container['gppu']['is_container']
   assert container['gppu']['bytes'] == (tmp_path / 'sessions.zip').stat().st_size
-  fs.ls('sessions.zip', refresh=True)
-  refreshed = fs.info('sessions.zip')
+  fs.ls(tmp_path / 'sessions.zip', refresh=True)
+  refreshed = fs.info(tmp_path / 'sessions.zip')
   assert refreshed['gppu']['files'] == 1
   assert refreshed['gppu']['bytes'] == container['gppu']['bytes']
 
@@ -532,16 +541,16 @@ def test_nested_archive_uris_read_without_prior_listing(tmp_path, provider):
     archive.writestr('inside/inner.zip', inner.getvalue())
   if provider == 'file':
     (tmp_path / 'outer.zip').write_bytes(outer.getvalue())
-    fs = GppuFileSystem(tmp_path)
+    fs, root = GppuFileSystem(), tmp_path.as_posix()
   else:
     native = MemoryFileSystem()
     root = '/' + tmp_path.name
     native.makedirs(root)
     native.pipe_file(root + '/outer.zip', outer.getvalue())
-    fs = GppuFileSystem('memory://' + root)
-  uri = fs.location + '/outer.zip/inside/inner.zip/notes/note.md'
+    fs = GppuFileSystem(target_protocol='memory')
+  uri = root + '/outer.zip/inside/inner.zip/notes/note.md'
   assert fs.cat_file(uri) == content
-  assert fs.cat_file(fs.location + '/outer.zip/inside/inner.zip') == inner.getvalue()
+  assert fs.cat_file(root + '/outer.zip/inside/inner.zip') == inner.getvalue()
   assert fs.info(uri)['gppu']['handlers'] == ['markdown']   # identified from its archives' listings, nothing read
   detail = fs.info(uri, refresh=True)
   assert detail['name'] == uri
@@ -550,15 +559,15 @@ def test_nested_archive_uris_read_without_prior_listing(tmp_path, provider):
   assert fs.ls(uri.rsplit('/', 1)[0], detail=False) == [uri]
 
 
-def test_an_archive_can_be_the_filesystem_root(tmp_path):
+def test_an_archive_is_listed_by_its_own_path(tmp_path):
   path = tmp_path / 'root.zip'
   with zipfile.ZipFile(path, 'w') as archive:
     archive.writestr('note.md', 'Text')
-  fs = GppuFileSystem(path)
-  row, = fs.ls()
-  assert row['name'] == fs.location + '/note.md'
-  assert row['gppu']['parent'] == fs.location
-  assert fs.info()['gppu']['is_container']
+  fs = GppuFileSystem()
+  row, = fs.ls(path)
+  assert row['name'] == path.as_posix() + '/note.md'
+  assert row['gppu']['parent'] == path.as_posix()
+  assert fs.info(path)['gppu']['is_container']
   assert fs.cat_file(row['name']) == b'Text'
 
 
@@ -566,38 +575,41 @@ def test_a_folder_named_zip_remains_a_folder(tmp_path):
   folder = tmp_path / 'notes.zip'
   folder.mkdir()
   (folder / 'note.txt').write_bytes(b'Text')
-  fs = GppuFileSystem(tmp_path)
+  fs = GppuFileSystem()
   assert fs.info(folder)['type'] == 'directory'
-  assert fs.ls(folder, detail=False) == [fs.location + '/notes.zip/note.txt']
-  assert fs.cat_file(fs.location + '/notes.zip/note.txt') == b'Text'
+  assert fs.ls(folder, detail=False) == [folder.as_posix() + '/note.txt']
+  assert fs.cat_file(folder.as_posix() + '/note.txt') == b'Text'
 
 
 def test_archive_refresh_replaces_members_at_the_same_container_uri(tmp_path):
   path = tmp_path / 'notes.zip'
   with zipfile.ZipFile(path, 'w') as archive:
     archive.writestr('old.md', '---\ntitle: Old\n---\nText')
-  fs = GppuFileSystem(tmp_path)
-  fs.ls(refresh=True)
-  old, = fs.ls('notes.zip', detail=False)
+  fs = GppuFileSystem()
+  fs.ls(tmp_path, refresh=True)
+  old, = fs.ls(path, detail=False)
   with zipfile.ZipFile(path, 'w') as archive:
     archive.writestr('one.md', '---\ntitle: One\n---\nText')
     archive.writestr('two.md', '---\ntitle: Two\n---\nText')
-  rows = fs.ls('notes.zip', refresh=True)
-  assert [row['name'] for row in rows] == [fs.location + '/notes.zip/' + name for name in ('one.md', 'two.md')]
+  rows = fs.ls(path, refresh=True)
+  assert [row['name'] for row in rows] == [path.as_posix() + '/' + name for name in ('one.md', 'two.md')]
   assert [row['gppu']['record']['data']['title'] for row in rows] == ['One', 'Two']
-  assert {row['gppu']['parent'] for row in rows} == {fs.location + '/notes.zip'}
-  assert fs.info()['gppu']['files'] == 1
-  assert fs.info()['gppu']['bytes'] == path.stat().st_size
+  assert {row['gppu']['parent'] for row in rows} == {path.as_posix()}
+  assert fs.info(tmp_path)['gppu']['files'] == 1
+  assert fs.info(tmp_path)['gppu']['bytes'] == path.stat().st_size
   with pytest.raises(FileNotFoundError):
     fs.info(old)
 
 
 @pytest.mark.parametrize('location', ['.', 'folder'])
-def test_relative_location_is_refused_and_creates_nothing(tmp_path, monkeypatch, location):
+def test_a_relative_path_is_read_from_the_working_directory(tmp_path, monkeypatch, location):
+  """A relative path names what is below the working directory, as fsspec reads it."""
+  (tmp_path / 'folder').mkdir()
+  (tmp_path / 'folder' / 'note.md').write_text('Text', encoding='utf-8')
   monkeypatch.chdir(tmp_path)
-  with pytest.raises(ValueError, match='absolute'):
-    GppuFileSystem(location)
-  assert list(tmp_path.iterdir()) == []
+  fs = GppuFileSystem()
+  assert fs.info(location)['name'] == (tmp_path / location).as_posix()
+  assert fs.ls(location) == fs.ls(tmp_path / location)
 
 
 def test_a_folder_the_account_cannot_list_is_still_listed_by_its_parent(tmp_path, monkeypatch):
@@ -611,16 +623,16 @@ def test_a_folder_the_account_cannot_list_is_still_listed_by_its_parent(tmp_path
       raise PermissionError(5, 'Access is denied', str(path))
     return original(self, path, detail=detail, **kwargs)
   monkeypatch.setattr(LocalFileSystem, 'ls', denied)
-  rows = GppuFileSystem(tmp_path).ls()
+  rows = GppuFileSystem().ls(tmp_path)
   assert [row['gppu']['name'] for row in rows] == ['System Volume Information', 'open.txt']
   with pytest.raises(PermissionError):
-    GppuFileSystem(tmp_path).ls('System Volume Information')
+    GppuFileSystem().ls(locked)
 
 
-def test_parent_traversal_cannot_escape_location(tmp_path):
-  fs = GppuFileSystem(tmp_path)
-  for path in ('../outside', fs.location + '/../outside'):
-    with pytest.raises(ValueError, match='outside'):
+def test_parent_traversal_is_refused(tmp_path):
+  fs = GppuFileSystem()
+  for path in ('../outside', tmp_path.as_posix() + '/../outside', str(tmp_path / '..' / 'outside')):
+    with pytest.raises(ValueError, match='parent traversal'):
       fs.info(path)
 
 
@@ -781,7 +793,7 @@ def test_fsspec_initializes_the_instance(tmp_path):
   `AbstractFileSystem.__init__` returns on a truthy `_cached` and leaves the instance without the
   three attributes every read and every transaction goes through.
   """
-  fs = GppuFileSystem(tmp_path)
+  fs = GppuFileSystem()
   assert fs._intrans is False
   assert fs._transaction is None
   assert fs.dircache is not None
@@ -789,47 +801,41 @@ def test_fsspec_initializes_the_instance(tmp_path):
 
 def test_a_located_file_is_read_and_written_through_the_fsspec_surface(tmp_path):
   text = b'---\ntitle: Read me\n---\nText'
-  (tmp_path / 'note.md').write_bytes(text)
-  fs = GppuFileSystem(tmp_path)
-  assert fs.info('note.md', refresh=True)['gppu']['record']['data']['title'] == 'Read me'
-  assert fs.cat_file('note.md') == text
-  assert fs.head('note.md', 3) == b'---'
-  with fs.open('note.md', 'rb') as handle:
+  note, written = tmp_path / 'note.md', tmp_path / 'written.md'
+  note.write_bytes(text)
+  fs = GppuFileSystem()
+  assert fs.info(note, refresh=True)['gppu']['record']['data']['title'] == 'Read me'
+  assert fs.cat_file(note) == text
+  assert fs.head(note, 3) == b'---'
+  with fs.open(note, 'rb') as handle:
     assert handle.read() == text
-  fs.pipe_file('written.md', b'---\ntitle: Written\n---\nText')
-  assert (tmp_path / 'written.md').read_bytes() == b'---\ntitle: Written\n---\nText'
-  assert fs.info('written.md', refresh=True)['gppu']['record']['data']['title'] == 'Written'
+  fs.pipe_file(written, b'---\ntitle: Written\n---\nText')
+  assert written.read_bytes() == b'---\ntitle: Written\n---\nText'
+  assert fs.info(written, refresh=True)['gppu']['record']['data']['title'] == 'Written'
 
 
 def test_an_archive_member_reads_its_bytes_and_refuses_a_write(tmp_path):
   content = b'---\ntitle: Inside archive\n---\nText'
   with zipfile.ZipFile(tmp_path / 'bundle.zip', 'w') as archive:
     archive.writestr('inside/note.md', content)
-  fs = GppuFileSystem(tmp_path)
-  note = fs.ls('bundle.zip', recurse=True)[1]
+  fs = GppuFileSystem()
+  note = fs.ls(tmp_path / 'bundle.zip', recurse=True)[1]
   assert fs.cat_file(note['name']) == content
   with pytest.raises(ValueError, match='read-only'):
     fs.pipe_file(note['name'], b'no')
-
-
-def test_a_row_the_index_has_dropped_is_not_read_as_unlocated(tmp_path):
-  """`_unlocated` asks the index about one entry; the index can hold nothing for it."""
-  (tmp_path / 'note.md').write_text('Text', encoding='utf-8')
-  fs = GppuFileSystem(tmp_path, locations={tmp_path.as_posix(): {'location': 'work', 'canonical': 'work://'}})
-  assert fs.ls()[0]['gppu']['location']['address'] == 'work://note.md'
-  fs._forget('note.md')
-  assert fs._unlocated('note.md') is False
 
 
 def test_info_identifies_again_a_row_from_before_the_location(tmp_path):
   """A folder indexed before the configuration named its location answers with the location, the folder itself as its children."""
   (tmp_path / 'notes').mkdir()
   (tmp_path / 'notes' / 'note.md').write_text('Text', encoding='utf-8')
-  GppuFileSystem(tmp_path).ls(recurse=True)
-  fs = GppuFileSystem(tmp_path, locations={tmp_path.as_posix(): {'location': 'work', 'canonical': 'work://'}})
-  assert fs.info()['gppu']['location']['address'] == 'work://'
-  assert fs.info('notes')['gppu']['location']['address'] == 'work://notes'
-  assert [row['gppu']['location']['address'] for row in fs.ls(recurse=True)] == ['work://notes', 'work://notes/note.md']
+  fs = GppuFileSystem()
+  fs.ls(tmp_path, recurse=True)
+  folders = {tmp_path.as_posix(): {'location': 'work', 'canonical': 'work://'}}
+  assert locate(folders, fs.info(tmp_path))['gppu']['location']['address'] == 'work://'
+  assert locate(folders, fs.info(tmp_path / 'notes'))['gppu']['location']['address'] == 'work://notes'
+  assert [locate(folders, row)['gppu']['location']['address'] for row in fs.ls(tmp_path, recurse=True)] == \
+         ['work://notes', 'work://notes/note.md']
 
 
 def test_an_ignored_file_is_neither_indexed_nor_listed(tmp_path):
@@ -839,40 +845,44 @@ def test_an_ignored_file_is_neither_indexed_nor_listed(tmp_path):
   (tmp_path / '.DS_Store').write_bytes(b'\0')
   (tmp_path / '__pycache__').mkdir()
   (tmp_path / '__pycache__' / 'x.pyc').write_bytes(b'\0')
-  fs = GppuFileSystem(tmp_path)
-  assert [row['gppu']['name'] for row in fs.ls(recurse=True)] == ['__pycache__', 'note.md']
-  assert [row['gppu']['name'] for row in fs.ls(refresh=True)] == ['__pycache__', 'note.md']
-  assert fs.info('.DS_Store')['gppu']['handlers'] == ['ignored']
-  assert fs.info('.DS_Store', refresh=True)['gppu']['handlers'] == ['ignored']
-  assert fs.stored('.DS_Store') is None
+  fs = GppuFileSystem()
+  assert [row['gppu']['name'] for row in fs.ls(tmp_path, recurse=True)] == ['__pycache__', 'note.md']
+  assert [row['gppu']['name'] for row in fs.ls(tmp_path, refresh=True)] == ['__pycache__', 'note.md']
   path = tmp_path / '.DS_Store'
-  earlier = fs._row('.DS_Store', fs.fs.info(str(path)), gppu.fs.handlers.probe(path), path)
-  fs._store('.', {'.DS_Store': (earlier, None)}, fs.stored()[1] + [{'path': '.DS_Store', 'type': 'file', 'ino': None}])
-  assert fs.stored('.DS_Store') is not None
-  assert [row['gppu']['name'] for row in fs.ls()] == ['__pycache__', 'note.md']
-  assert fs.stored('.DS_Store') is None
+  assert fs.info(path)['gppu']['handlers'] == ['ignored']
+  assert fs.info(path, refresh=True)['gppu']['handlers'] == ['ignored']
+  assert fs.stored(path) is None
+  earlier = fs._row(path.as_posix(), fs.fs.info(str(path)), gppu.fs.handlers.probe(path), path)
+  fs._store(tmp_path.as_posix(), {path.as_posix(): (earlier, None)},
+            fs.stored(tmp_path)[1] + [{'path': path.as_posix(), 'type': 'file', 'ino': None}])
+  assert fs.stored(path) is not None
+  assert [row['gppu']['name'] for row in fs.ls(tmp_path)] == ['__pycache__', 'note.md']
+  assert fs.stored(path) is None
   with sqlite3.connect(index(tmp_path)) as database:
     assert {row[0] for row in database.execute('SELECT path FROM gppufs_entries')} == {'.', '__pycache__', 'note.md'}
 
 
 def test_a_folder_is_asked_once_whether_it_holds_an_index(tmp_path, monkeypatch):
   """On a share every ask is a round trip: a folder is asked once in a process whether it holds an index, not again for
-  each entry below it, and the root is resolved once, not for each entry's location."""
+  each entry below it, and a folder is resolved once for the location map, not for each entry in it."""
   deep = tmp_path / 'a' / 'b'
   deep.mkdir(parents=True)
   for name in ('one.md', 'two.md'):
     (deep / name).write_text('Text', encoding='utf-8')
   asked, resolved = [], []
-  index_at, full_path = GppuFileSystem._index_at, gppu.fs.gppufs.full_path
+  index_at, full_path = GppuFileSystem._index_at, gppu.fs.catalog.full_path
   monkeypatch.setattr(GppuFileSystem, '_index_at', lambda self, folder: asked.append(folder) or index_at(self, folder))
-  monkeypatch.setattr(gppu.fs.gppufs, 'full_path', lambda path, *args, **kwargs: resolved.append(path) or full_path(path, *args, **kwargs))
-  fs = GppuFileSystem(tmp_path, locations={tmp_path.as_posix(): {'location': 'work', 'canonical': 'work://'}})
-  fs.ls(recurse=True)
-  assert len(asked) == len(set(asked)) and len(resolved) == 1
+  monkeypatch.setattr(gppu.fs.catalog, 'full_path', lambda path, *args, **kwargs: resolved.append(path) or full_path(path, *args, **kwargs))
+  gppu.fs.catalog._on_host.cache_clear()
+  folders = {tmp_path.as_posix(): {'location': 'work', 'canonical': 'work://'}}
+  fs = GppuFileSystem()
+  rows = [locate(folders, row) for row in fs.ls(tmp_path, recurse=True)]
+  fs.info(deep / 'one.md')
+  assert len(asked) == len(set(asked)) and len(resolved) == len(set(resolved)) < len(rows)
   asked.clear()
   resolved.clear()
-  fs.ls(recurse=True)
-  assert fs.info('a/b/one.md')['gppu']['location']['address'] == 'work://a/b/one.md'
+  [locate(folders, row) for row in fs.ls(tmp_path, recurse=True)]
+  assert locate(folders, fs.info(deep / 'one.md'))['gppu']['location']['address'] == 'work://a/b/one.md'
   assert asked == [] and resolved == []
 
 
@@ -880,26 +890,27 @@ def test_a_location_address_is_an_address_gppufs_answers_to(tmp_path):
   """The permalink is on every row the location handler identifies, so asking for it back must reach the entry."""
   (tmp_path / 'notes').mkdir()
   (tmp_path / 'notes' / 'note.md').write_bytes(b'---\ntitle: Permalink\n---\nText')
-  fs = GppuFileSystem(tmp_path, locations={tmp_path.as_posix(): {'location': 'perma', 'canonical': 'perma://Test'}})
-  assert [row['gppu']['location']['address'] for row in fs.ls(recurse=True)] == \
+  folders = {tmp_path.as_posix(): {'location': 'perma', 'canonical': 'perma://Test'}}
+  fs = GppuFileSystem()
+  assert [locate(folders, row)['gppu']['location']['address'] for row in fs.ls(tmp_path, recurse=True)] == \
          ['perma://Test/notes', 'perma://Test/notes/note.md']
-  assert fs.info('perma://Test/notes/note.md', refresh=True)['gppu']['record']['data']['title'] == 'Permalink'
-  assert fs.cat_file('perma://Test/notes/note.md') == b'---\ntitle: Permalink\n---\nText'
-  assert fs.ls('perma://Test/notes') == fs.ls('notes')
-  assert fs.info('perma://Test') == fs.info()
-  with pytest.raises(ValueError, match='outside location'):
-    fs.info('elsewhere://Other/note.md')
+  assert fs.info(resolve(folders, 'perma://Test/notes/note.md'), refresh=True)['gppu']['record']['data']['title'] == 'Permalink'
+  assert fs.cat_file(resolve(folders, 'perma://Test/notes/note.md')) == b'---\ntitle: Permalink\n---\nText'
+  assert fs.ls(resolve(folders, 'perma://Test/notes')) == fs.ls(tmp_path / 'notes')
+  assert fs.info(resolve(folders, 'perma://Test')) == fs.info(tmp_path)
+  assert resolve(folders, 'elsewhere://Other/note.md') == 'elsewhere://Other/note.md'
 
 
 def test_the_deepest_location_address_names_the_entry(tmp_path):
   inner = tmp_path / 'inner'
   inner.mkdir()
   (inner / 'note.md').write_bytes(b'Text')
-  fs = GppuFileSystem(tmp_path, locations={
-    tmp_path.as_posix(): {'location': 'outer', 'canonical': 'outer://'},
-    inner.as_posix(): {'location': 'inner', 'canonical': 'outer://inner-store'}})
-  assert fs.info('outer://inner-store/note.md') == fs.info('inner/note.md')
-  assert fs.info('outer://inner')['type'] == 'directory'
+  folders = {tmp_path.as_posix(): {'location': 'outer', 'canonical': 'outer://'},
+             inner.as_posix(): {'location': 'inner', 'canonical': 'outer://inner-store'}}
+  fs = GppuFileSystem()
+  assert fs.info(resolve(folders, 'outer://inner-store/note.md')) == fs.info(inner / 'note.md')
+  assert fs.info(resolve(folders, 'outer://inner'))['type'] == 'directory'
+  assert locate(folders, fs.info(inner / 'note.md'))['gppu']['location']['address'] == 'outer://inner-store/note.md'
 
 
 def test_a_store_that_refuses_the_index_is_still_read(tmp_path, monkeypatch):
@@ -915,14 +926,13 @@ def test_a_store_that_refuses_the_index_is_still_read(tmp_path, monkeypatch):
   native.makedirs(root)
   native.pipe_file(root + '/note.md', b'---\ntitle: Read only\n---\nText')
   monkeypatch.setattr(MemoryFileSystem, 'pipe_file', refuse)
-  fs = GppuFileSystem('memory://' + root)
-  rows = fs.ls(refresh=True)
+  fs = GppuFileSystem(target_protocol='memory')
+  rows = fs.ls(root, refresh=True)
   assert [row['gppu']['name'] for row in rows] == ['note.md']
   assert rows[0]['gppu']['record']['data']['title'] == 'Read only'
-  assert fs._cacheless is True
   assert not native.exists(root + '/.' + tmp_path.name + '-readonly.gppufs.sqlite')
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
-  assert fs.ls() == rows
+  assert fs.ls(root) == rows
 
 
 def test_a_folder_that_cannot_hold_the_index_is_still_listed(tmp_path):
@@ -932,115 +942,32 @@ def test_a_folder_that_cannot_hold_the_index_is_still_listed(tmp_path):
   (tmp_path / 'notes').mkdir()
   (tmp_path / 'notes' / 'note.md').write_bytes(b'---\ntitle: No cache\n---\nText')
   index(tmp_path).mkdir()                      # a directory where the database would go
-  fs = GppuFileSystem(tmp_path)
-  rows = fs.ls(recurse=True)
+  fs = GppuFileSystem()
+  rows = fs.ls(tmp_path, recurse=True)
   assert [row['gppu']['name'] for row in rows] == ['notes', 'note.md']
-  assert fs.info('notes/note.md', refresh=True)['gppu']['record']['data']['title'] == 'No cache'
-  assert fs.cat_file('notes/note.md') == b'---\ntitle: No cache\n---\nText'
-  assert fs._cacheless is True
+  note = tmp_path / 'notes' / 'note.md'
+  assert fs.info(note, refresh=True)['gppu']['record']['data']['title'] == 'No cache'
+  assert fs.cat_file(note) == b'---\ntitle: No cache\n---\nText'
   assert index(tmp_path).is_dir(), 'nothing may be written where the cache cannot go'
-
-
-class Remembering:
-  """An index that answers from what it was given, and records every lookup and every write."""
-
-  def __init__(self) -> None:
-    self.held: dict[str, tuple[dict | None, list | None]] = {}
-    self.asked: list[str] = []
-
-  def entry(self, address):
-    self.asked.append(address)
-    return self.held.get(address)
-
-  def put(self, entries):
-    for address, (metadata, children) in entries.items():
-      before = self.held.get(address, (None, None))
-      self.held[address] = (metadata if metadata is not None else before[0],
-                            children if children is not None else before[1])
 
 
 def test_archive_members_use_the_same_location_addresses_in_the_index(tmp_path, monkeypatch):
   with zipfile.ZipFile(tmp_path / 'notes.zip', 'w') as archive:
     archive.writestr('note.md', '---\ntitle: Indexed member\n---\nText')
-  locations = {tmp_path.as_posix(): {'location': 'work', 'canonical': 'work://'}}
-  remembered = Remembering()
-  fs = GppuFileSystem(tmp_path, locations=locations, index=remembered)
-  row, = fs.ls('work://notes.zip')
-  assert row['name'] == fs.location + '/notes.zip/note.md'
-  assert fs.info('work://notes.zip/note.md', refresh=True)['gppu']['record']['data']['title'] == 'Indexed member'
-  assert set(remembered.held) == {'work://notes.zip', 'work://notes.zip/note.md'}
-  metadata, children = remembered.held['work://notes.zip']
-  assert metadata['gppu']['is_container']
-  assert [child['path'] for child in children] == ['work://notes.zip/note.md']
+  folders = {tmp_path.as_posix(): {'location': 'work', 'canonical': 'work://'}}
+  fs = GppuFileSystem()
+  row, = fs.ls(resolve(folders, 'work://notes.zip'))
+  assert row['name'] == tmp_path.as_posix() + '/notes.zip/note.md'
+  assert locate(folders, row)['gppu']['location']['address'] == 'work://notes.zip/note.md'
+  assert fs.info(resolve(folders, 'work://notes.zip/note.md'), refresh=True)['gppu']['record']['data']['title'] == 'Indexed member'
   with sqlite3.connect(index(tmp_path)) as database:
     assert {row[0] for row in database.execute('SELECT path FROM gppufs_entries')} == {
       'notes.zip', 'notes.zip/note.md'}
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
   monkeypatch.setattr(GppuFileSystem, '_identify_members', no_live)
-  again = GppuFileSystem(tmp_path, locations=locations, index=remembered)
-  assert again.ls('work://notes.zip', detail=False, live=False) == [row['name']]
-  assert again.info('work://notes.zip/note.md')['gppu']['record']['data']['title'] == 'Indexed member'
-
-
-def test_the_index_answers_first_and_the_handler_runs_for_what_it_lacks(tmp_path, monkeypatch):
-  """Alex, 2026-09-17 03:45: "If metadata is already in database - handler is not involved"."""
-  (tmp_path / 'note.md').write_bytes(b'---\ntitle: Indexed\n---\nText')
-  index = Remembering()
-  fs = GppuFileSystem(tmp_path, index=index)
-  rows = fs.ls()
-  assert [row['gppu']['name'] for row in rows] == ['note.md']
-  assert fs.info('note.md', refresh=True)['gppu']['record']['data']['title'] == 'Indexed'
-  assert index.asked, 'the index is asked'
-  assert any(address.endswith('/note.md') for address in index.held), 'what the handler read is kept'
-
-  # A second filesystem, handed the same index, must not run a handler for what the index holds.
-  monkeypatch.setattr(GppuFileSystem, '_live', no_live)
-  monkeypatch.setattr(GppuFileSystem, '_identify_entry', no_live)
-  again = GppuFileSystem(tmp_path, index=index)
-  assert [row['gppu']['name'] for row in again.ls()] == ['note.md']
-  assert again.info('note.md')['gppu']['record']['data']['title'] == 'Indexed'
-  assert again.info()['gppu']['name'] == tmp_path.name
-
-
-class Empty:
-  """An index that holds nothing, so every lookup falls to what is beside the location."""
-
-  def entry(self, address):
-    return None
-
-  def put(self, entries):
-    pass
-
-
-def test_the_file_beside_a_location_is_kept_and_answers_when_the_index_has_nothing(tmp_path, monkeypatch):
-  """Alex, 2026-09-17 04:47: the index beside a folder is not a throwaway. It is written wherever the
-  place will hold it, and a folder the database has nothing for is answered from it rather than read
-  again — which is how a folder archived a year ago is still known without opening what is in it."""
-  (tmp_path / 'notes').mkdir()
-  (tmp_path / 'notes' / 'note.md').write_bytes(b'---\ntitle: Kept\n---\nText')
-  fs = GppuFileSystem(tmp_path)
-  rows = fs.ls(recurse=True)
-  assert index(tmp_path).is_file(), 'a writable folder keeps its index'
-  assert index(tmp_path).stat().st_size > 0
-
-  monkeypatch.setattr(GppuFileSystem, '_live', no_live)
-  monkeypatch.setattr(GppuFileSystem, '_identify_entry', no_live)
-  again = GppuFileSystem(tmp_path, index=Empty())
-  assert again.ls(recurse=True) == rows
-
-
-class Watching(Remembering):
-  """An index that also records the moves it is told about."""
-
-  def __init__(self) -> None:
-    super().__init__()
-    self.moves: list[tuple[str, str]] = []
-
-  def moved(self, source, destination):
-    self.moves.append((source, destination))
-    held = self.held.pop(source, None)
-    if held is not None:
-      self.held[destination] = held
+  again = anew()
+  assert again.ls(resolve(folders, 'work://notes.zip'), detail=False, live=False) == [row['name']]
+  assert again.info(resolve(folders, 'work://notes.zip/note.md'))['gppu']['record']['data']['title'] == 'Indexed member'
 
 
 def test_a_move_carries_what_is_held_of_the_thing_moved(tmp_path):
@@ -1049,59 +976,45 @@ def test_a_move_carries_what_is_held_of_the_thing_moved(tmp_path):
   (tmp_path / 'a').mkdir()
   (tmp_path / 'b').mkdir()
   (tmp_path / 'a' / 'note.md').write_bytes(b'---\ntitle: Moved\n---\nText')
-  watching = Watching()
-  fs = GppuFileSystem(tmp_path, locations={tmp_path.as_posix(): {'location': 'work', 'canonical': 'work://'}},
-                      index=watching)
-  fs.ls(recurse=True)
-  assert fs.info('a/note.md', refresh=True)['gppu']['record']['data']['title'] == 'Moved'
+  fs = GppuFileSystem()
+  fs.ls(tmp_path, recurse=True)
+  assert fs.info(tmp_path / 'a' / 'note.md', refresh=True)['gppu']['record']['data']['title'] == 'Moved'
 
-  fs.mv('a/note.md', 'b/note.md')
+  fs.mv(tmp_path / 'a' / 'note.md', tmp_path / 'b' / 'note.md')
   assert (tmp_path / 'b' / 'note.md').is_file()
   assert not (tmp_path / 'a' / 'note.md').exists()
-  assert watching.moves == [('work://a/note.md', 'work://b/note.md')]
 
   # Nothing is read again: the row that was there is the row that is here.
   fs._live = no_live
   fs._identify_entry = no_live
-  assert fs.info('b/note.md')['gppu']['record']['data']['title'] == 'Moved'
-  assert [row['gppu']['name'] for row in fs.ls('b')] == ['note.md']
+  assert fs.info(tmp_path / 'b' / 'note.md')['gppu']['record']['data']['title'] == 'Moved'
+  assert [row['gppu']['name'] for row in fs.ls(tmp_path / 'b')] == ['note.md']
+  assert fs.stored(tmp_path / 'a' / 'note.md') is None
 
 
-class Carrying(Watching):
-  """An index that carries an entry and everything under it when it is told the thing moved."""
-
-  def moved(self, source, destination):
-    self.moves.append((source, destination))
-    def carried(address):
-      return destination + address[len(source):] if address == source or address.startswith(source + '/') else address
-    for address in [held for held in self.held if held == source or held.startswith(source + '/')]:
-      row, children = self.held.pop(address)
-      self.held[carried(address)] = (
-        row, None if children is None else [{**child, 'path': carried(child['path'])} for child in children])
-
-
-def test_a_folder_moved_between_two_locations_keeps_its_index(tmp_path):
+def test_a_folder_moved_between_two_locations_keeps_its_index(tmp_path, monkeypatch):
   """Alex's headline case for the file manager: a folder carried between two indexed places, where
-  what the index says about it goes with it rather than being read again."""
+  what the index says about it goes with it rather than being read again: the folder's own index."""
   one, two = tmp_path / 'SD.agents', tmp_path / 'SD.Lake'
   (one / 'work').mkdir(parents=True)
   two.mkdir()
   (one / 'work' / 'note.md').write_bytes(b'---\ntitle: Carried\n---\nText')
-  locations = {one.as_posix(): {'location': 'a', 'canonical': 'a://'},
-               two.as_posix(): {'location': 'b', 'canonical': 'b://'}}
-  carrying = Carrying()
-  source = GppuFileSystem(one, locations=locations, index=carrying)
-  destination = GppuFileSystem(two, locations=locations, index=carrying)
-  source.ls(recurse=True)
-  assert source.info('work/note.md', refresh=True)['gppu']['record']['data']['title'] == 'Carried'
+  fs = GppuFileSystem()
+  fs.ls(one, recurse=True)
+  fs.ls(two)
+  fs.split(one / 'work')
+  assert fs.info(one / 'work' / 'note.md', refresh=True)['gppu']['record']['data']['title'] == 'Carried'
 
-  assert source.move_into(destination, 'work', 'work') == 'b://work'
+  fs.makedirs(two, exist_ok=True)
+  fs.mv(one / 'work', two / 'work', recursive=True)
   assert (two / 'work' / 'note.md').is_file()
   assert not (one / 'work').exists()
-  assert carrying.moves == [('a://work', 'b://work')]
-  assert carrying.entry('b://work/note.md')[0]['gppu']['record']['data']['title'] == 'Carried'
-  assert carrying.entry('a://work/note.md') is None
-  assert [row['gppu']['name'] for row in destination.ls(recurse=True)] == ['work', 'note.md']
+  monkeypatch.setattr(GppuFileSystem, '_live', no_live)
+  monkeypatch.setattr(GppuFileSystem, '_identify_entry', no_live)
+  assert fs.info(two / 'work' / 'note.md')['gppu']['record']['data']['title'] == 'Carried'
+  assert fs.stored(one / 'work' / 'note.md') is None
+  monkeypatch.undo()
+  assert [row['gppu']['name'] for row in fs.ls(two, recurse=True)] == ['work', 'note.md']
 
 
 def test_a_postgres_location_is_addressed_like_any_other():
@@ -1131,17 +1044,18 @@ def test_a_folder_read_from_its_index_alone_keeps_what_is_no_longer_there(tmp_pa
   (tmp_path / 'notes').mkdir()
   (tmp_path / 'notes' / 'kept.md').write_bytes(b'---\ntitle: Kept\n---\nText')
   (tmp_path / 'notes' / 'gone.md').write_bytes(b'---\ntitle: Gone\n---\nText')
-  fs = GppuFileSystem(tmp_path)
-  assert [row['gppu']['name'] for row in fs.ls('notes')] == ['gone.md', 'kept.md']
-  assert fs.info('notes/gone.md', refresh=True)['gppu']['record']['data']['title'] == 'Gone'
+  notes = tmp_path / 'notes'
+  fs = GppuFileSystem()
+  assert [row['gppu']['name'] for row in fs.ls(notes)] == ['gone.md', 'kept.md']
+  assert fs.info(notes / 'gone.md', refresh=True)['gppu']['record']['data']['title'] == 'Gone'
 
-  (tmp_path / 'notes' / 'gone.md').unlink()        # as far as the folder knows, it is inside an archive now
-  again = GppuFileSystem(tmp_path)
-  assert [row['gppu']['name'] for row in again.ls('notes', live=False)] == ['gone.md', 'kept.md']
-  assert again.info('notes/gone.md')['gppu']['record']['data']['title'] == 'Gone'
+  (notes / 'gone.md').unlink()        # as far as the folder knows, it is inside an archive now
+  again = anew()
+  assert [row['gppu']['name'] for row in again.ls(notes, live=False)] == ['gone.md', 'kept.md']
+  assert again.info(notes / 'gone.md')['gppu']['record']['data']['title'] == 'Gone'
 
   # A folder that is still live is still read live, and there the record goes.
-  assert [row['gppu']['name'] for row in again.ls('notes')] == ['kept.md']
+  assert [row['gppu']['name'] for row in again.ls(notes)] == ['kept.md']
 
 
 def test_an_index_is_preserved_and_the_location_left_clean(tmp_path):
@@ -1152,16 +1066,16 @@ def test_an_index_is_preserved_and_the_location_left_clean(tmp_path):
   repo.mkdir()
   lake.mkdir()
   (repo / 'note.md').write_bytes(b'---\ntitle: In a repo\n---\nText')
-  fs = GppuFileSystem(repo)
-  fs.ls(recurse=True)
+  fs = GppuFileSystem()
+  fs.ls(repo, recurse=True)
   assert index(repo).is_file(), 'the walk writes one while it works'
 
-  kept = fs.preserve(lake)
+  kept = fs.preserve(repo, lake)
   assert kept is not None and kept.parent == lake
   assert kept.name.endswith('RAN.gppufs.sqlite') and kept.name[:6].isdigit()
   assert sorted(path.name for path in repo.iterdir()) == ['note.md'], 'the location is left clean'
   assert kept.read_bytes()
-  assert fs.preserve(lake) is None, 'there is nothing left to preserve'
+  assert fs.preserve(repo, lake) is None, 'there is nothing left to preserve'
 
 
 def test_a_store_that_lists_enough_is_identified_without_its_bytes(monkeypatch):
@@ -1178,8 +1092,8 @@ def test_a_store_that_lists_enough_is_identified_without_its_bytes(monkeypatch):
   monkeypatch.setattr(MemoryFileSystem, 'cat_file', refuse)
   monkeypatch.setattr(MemoryFileSystem, 'get_file', refuse)
 
-  fs = GppuFileSystem('memory://library')
-  listed = {row['name'].rsplit('/', 1)[-1]: row['gppu'] for row in fs.ls_sync()}
+  fs = GppuFileSystem(target_protocol='memory')
+  listed = {row['name'].rsplit('/', 1)[-1]: row['gppu'] for row in fs.ls_sync('/library')}
   assert set(listed) == {'notes.md', 'rows.csv', 'deeper'}
   assert listed['notes.md']['handlers'] == ['markdown'], 'a name and a type are enough to identify'
   assert listed['rows.csv']['handlers'] == ['csv']
@@ -1212,10 +1126,10 @@ def test_an_index_in_a_repository_is_left_out_of_it(tmp_path):
   (repo / 'note.md').write_text('Text', encoding='utf-8')
   git('-c', 'user.name=t', '-c', 'user.email=t@t', 'add', 'note.md')
   git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'note')
-  GppuFileSystem(repo).ls(recurse=True)
+  GppuFileSystem().ls(repo, recurse=True)
   assert index(repo).is_file() and git('status', '--porcelain') == ''
   assert not (repo / '.gitignore').exists()
   git('worktree', 'add', '-q', str(tmp_path / 'tree'))
-  GppuFileSystem(tmp_path / 'tree').ls(recurse=True)
+  GppuFileSystem().ls(tmp_path / 'tree', recurse=True)
   assert index(tmp_path / 'tree').is_file() and git('status', '--porcelain', cwd=tmp_path / 'tree') == ''
   assert (repo / '.git' / 'info' / 'exclude').read_text(encoding='utf-8').splitlines().count(gppu.fs.gppufs.GIT_EXCLUDE) == 1

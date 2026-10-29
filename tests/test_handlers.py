@@ -1035,6 +1035,6 @@ def test_gppufs_reads_an_export_inside_a_zip(tmp_path: Path) -> None:
   with zipfile.ZipFile(tmp_path / 'chatgpt.zip', 'w') as archive:
     archive.writestr('conversations.json', json.dumps([_chatgpt('one')]))
     archive.writestr('chat.html', '<html></html>')
-  fs = GppuFileSystem(tmp_path)
-  assert fs.info('chatgpt.zip/conversations.json')['gppu']['handlers'] == ['export']
-  assert fs.info('chatgpt.zip/conversations.json', refresh=True)['gppu']['record']['data'] == {'harness': 'chatgpt', 'sessions': 1}
+  fs = GppuFileSystem()
+  assert fs.info(tmp_path / 'chatgpt.zip' / 'conversations.json')['gppu']['handlers'] == ['export']
+  assert fs.info(tmp_path / 'chatgpt.zip' / 'conversations.json', refresh=True)['gppu']['record']['data'] == {'harness': 'chatgpt', 'sessions': 1}
