@@ -3,11 +3,11 @@
 This is what changed in gppu on the `ld-standard` branch, and how code that uses it moves over. Alex's instructions are in [SPEC_gppufs.md](../SPEC_gppufs.md). His rulings with their sources are in [gppufs-decisions.md](gppufs-decisions.md).
 
 ## gppufs
-- **One gppufs in a process.** `GppuFileSystem()`, `fsspec.filesystem('gppu')` and `gppu::D:/TextLake` all give the same object, which wraps this host's files. `gppu::smb://...` or `GppuFileSystem(target_protocol=..., target_options=...)` wraps another store. Nothing makes a second one. Constructing it again with different options raises an error.
+- **One gppufs in a process.** `GppuFileSystem()`, `fsspec.filesystem('gppu')` and `gppu::D:/TextLake` all give the same object, which wraps this host's files. `gppu::smb://...` or `GppuFileSystem(target_protocol=..., target_options=...)` wraps another store. Nothing makes a second one.
 - **Full paths.** Every call takes the full path as the wrapped file system names it: `fs.ls('D:/TextLake/notes')`, `fs.info('C:/Users/Alex/.codex/sessions/x.jsonl')`. There's no root, and no `ls()` or `info()` without a path.
 - **Rows are named by path.** A row's `name` and `gppu.path` are its full path, and `gppu.parent` is its parent's path, or None at a store root. URIs are no longer built for every row.
 - **The index is found from the path:** the deepest folder at or above it that holds `.<folder>.gppufs.sqlite`. With none above, a listing makes the index beside the folder listed, or beside a file's folder.
-- **`cache=[folders]`** replaces `cache=False`. It names the folders whose index is kept in the cache instead of beside them, such as a folder another program watches or a synced folder. Set it on the first construction, or through fsspec's configuration for `gppu`.
+- **`cache=[folders]`** replaces `cache=False`. It names the folders whose index is kept in the cache instead of beside them, such as a folder another program watches or a synced folder. The one gppufs keeps every folder any of its users names.
 - **Gone:** `fs.root`, `fs.location`, the `locations=` and `index=` options, the `GppuIndex` hook, and `move_into` (use `fs.makedirs(parent, exist_ok=True)`, then `fs.mv(source, destination, recursive=True)`).
 - **gppufs's own operations, all with full paths:** `stored(path)`, `stats(path, apart=[folders])`, `spans(path, depth)`, `split(path)` (give a folder its own index), `preserve(path, folder)`, `ls_iter(path)`.
 - **Use fsspec's methods** (`ls`, `info`, `find`, `walk`, `exists`, `open`, `cat_file`, `mv`, `makedirs`), not `ls_sync` or `info_sync`. Those two will go when gppufs moves onto fsspec's async base.
