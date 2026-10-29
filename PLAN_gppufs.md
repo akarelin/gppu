@@ -45,20 +45,16 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 ## In progress: gppufs and gppu.ld on master
 What matters is gppufs working, and its code merged so the new Linked Data, gppu.ld, works on top of it.
 - `ld-standard` into master as a fast-forward, the whole suite passing on the scratch database: done; gppu's work goes to master.
-- Every user of gppufs brought up to master and pushed, in parallel: in progress
-  - vfs, the desktop, HandlerBrowser and the session cleaner in gppu
-  - the Lake service and Dagster, RAN `Systems/lake`
-  - the Linked Data service, the session hook, Session Manager and `structure.py`, RAN `Systems/ld`
-  - FileIndexer and its TUI, RAN `Systems/ld/fileindexer`
-  - the admin UI and its APIs, CRAP `Systems/admin_ui`, RAN `Services/admin-ui` and `admin-priors`
-  - host tools, RAN `Hosts/preservator` and `Hosts/tui`
-  - gppu.ld as the Linked Data images install it from master
-  - any other user in RAN and CRAP
+- Every user of gppufs on master and pushed: done; vfs, the desktop, the handler browser, the session cleaner, the Lake and Dagster, the Linked Data service, the session hook, Session Manager, FileIndexer and its TUI, the admin UI and the host tools already ran on it, their tests passing; CRAP `Projects/FileIndexer`'s tests import `GppuCatalog` from `gppu.fs.catalog`; RAN `Systems/ld/ld.sql` is gppu.ld's SQL, and the Linked Data image installs every module gppu.ld needs from master
+- RAN `.github/workflows/ld.yml` building from `Systems/ld`: committed in RAN, not pushed; its push was refused as a production deploy, and workflow code is Alex's
 - No workflow runs on a push; a release and the deploys stay Alex's. RAN's Linked Data and Lake images install gppu from master, so their next build takes gppufs and gppu.ld, which need gppu.ld's SQL on `linked_data` first.
 
 /goal gppufs and gppu.ld are on gppu's master and every user of gppufs is updated to it and pushed; proven by the gppu suite and each user's tests passing against the scratch database; no release, deploy or production write.
 
 ## Found, not this task
+- `examples/handler_ls.py` and the handler browser's `main` stop: `D:\TextLake\.catalog`, the catalog `examples/handlers.yaml` names, has no folder for this host, which the host-folder catalog has required since 2026-09-08, the day the folder was last written.
+- RAN `Projects/linkml/checks/test_current_standard.py` imports `gppu.fs.files`, now `gppu.ld.fs`, and fails on more than the import; another session is working in that folder.
+- The admin API's image installs gppu from the `gppu/latest` tag; the Linked Data and Lake images install it from master.
 - WSL's mirrored networking gives its VM no network device on this host; WSL runs in NAT mode, reaches Windows and is reached at localhost, and Windows does not forward its traffic further.
 - The admin's Linked Data pages count records with one request per type, about 60 on a store made from gppu.ld's SQL.
 - The Lake API has no batch route: preservator makes two calls per file on every run, files already preserved included.
