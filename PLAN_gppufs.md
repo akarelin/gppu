@@ -44,10 +44,19 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 
 ## In progress: gppufs and gppu.ld on master
 What matters is gppufs working, and its code merged so the new Linked Data, gppu.ld, works on top of it.
-- `ld-standard` is ahead of master and not behind; it goes into master as a fast-forward once the whole suite passes on the scratch database.
-- No workflow runs on a push; a release stays Alex's.
+- `ld-standard` into master as a fast-forward, the whole suite passing on the scratch database: done; gppu's work goes to master.
+- Every user of gppufs brought up to master and pushed, in parallel: in progress
+  - vfs, the desktop, HandlerBrowser and the session cleaner in gppu
+  - the Lake service and Dagster, RAN `Systems/lake`
+  - the Linked Data service, the session hook, Session Manager and `structure.py`, RAN `Systems/ld`
+  - FileIndexer and its TUI, RAN `Systems/ld/fileindexer`
+  - the admin UI and its APIs, CRAP `Systems/admin_ui`, RAN `Services/admin-ui` and `admin-priors`
+  - host tools, RAN `Hosts/preservator` and `Hosts/tui`
+  - gppu.ld as the Linked Data images install it from master
+  - any other user in RAN and CRAP
+- No workflow runs on a push; a release and the deploys stay Alex's. RAN's Linked Data and Lake images install gppu from master, so their next build takes gppufs and gppu.ld, which need gppu.ld's SQL on `linked_data` first.
 
-/goal gppufs and gppu.ld are on gppu's master; proven by the whole gppu suite passing on master against the scratch database; no release, deploy or production write.
+/goal gppufs and gppu.ld are on gppu's master and every user of gppufs is updated to it and pushed; proven by the gppu suite and each user's tests passing against the scratch database; no release, deploy or production write.
 
 ## Found, not this task
 - WSL's mirrored networking gives its VM no network device on this host; WSL runs in NAT mode, reaches Windows and is reached at localhost, and Windows does not forward its traffic further.
