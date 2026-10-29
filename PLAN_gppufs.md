@@ -24,9 +24,9 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - gppu.ld to the Linked Data standard as it is now (`byAlex` files: two-byte ids, shard1 the schema and shard2 the table; LD, FS and Sessions SQL and Python blocks): in progress
 
 ## Users of gppufs, moved in parallel (docs/gppufs-users.md)
-- Lake service and Dagster (RAN `Systems/lake`, stacks `lake` and `dagster` on trix): in progress
-- Linked Data service (RAN `Systems/ld`, stack `linked-data` on five): in progress
-- FileIndexer (RAN `Systems/ld/fileindexer`; CRAP `Projects/FileIndexer`): in progress
+- Lake service and Dagster (RAN `Systems/lake`, stacks `lake` and `dagster` on trix): done; both code locations build, 118 tests pass
+- Linked Data service (RAN `Systems/ld`, stack `linked-data` on five), session hook and Session Manager: done; serving waits on gppu.ld's two-byte ids and the standard's SQL on its database
+- FileIndexer (RAN `Systems/ld/fileindexer`): done; 4 of 5 tests pass on a scratch database, the TUI test waits on WSL's network
 - Admin UI and its APIs (CRAP `Systems/admin_ui`; RAN `Services/admin-ui`, `Services/admin-priors`): in progress
 - Host tools (RAN `Hosts/preservator`, `Hosts/tui` session scripts): in progress
 - Releases and deploys of the stacks: a gppu release from ld-standard, Alex's
