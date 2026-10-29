@@ -26,14 +26,16 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 
 ## Users of gppufs, moved in parallel (docs/gppufs-users.md)
 - Lake service and Dagster (RAN `Systems/lake`, stacks `lake` and `dagster` on trix): done; both code locations build, 118 tests pass
-- Linked Data service (RAN `Systems/ld`, stack `linked-data` on five), session hook and Session Manager: done; serving waits on gppu.ld's two-byte ids and the standard's SQL on its database
-- FileIndexer (RAN `Systems/ld/fileindexer`): done; 4 of 5 tests pass on a scratch database, the TUI test waits on WSL's network
-- Admin UI and its APIs (CRAP `Systems/admin_ui`; RAN `Services/admin-ui`, `Services/admin-priors`): moved, its configuration routes answer as the live API does; its session tests wait on its evidence hash and the standard's session span
-- Host tools (RAN `Hosts/preservator`, `Hosts/tui` session scripts): in progress
+- Linked Data service (RAN `Systems/ld`, stack `linked-data` on five), session hook and Session Manager: done, its sessions on gppu.ld.sessions and its checks on `/fs` pass on a scratch database; a session's messages in their file's order, and its `/types` readers on the new type records: in progress; serving waits on the gppu release and the standard's SQL on its database
+- FileIndexer (RAN `Systems/ld/fileindexer`): done, posting locations as Linked Data - FS has them; 4 of 5 tests pass on a scratch database, the TUI test waits on WSL's network
+- Admin UI and its APIs (CRAP `Systems/admin_ui`; RAN `Services/admin-ui`, `Services/admin-priors`): done; its configuration routes answer as the live API does, its tests pass as the running image's do, its docs page renders
+- Host tools (RAN `Hosts/preservator`, `Hosts/tui` session scripts): done, preservator saving through the Lake; restoring `platform_for_os`: in progress
 - Releases and deploys of the stacks: a gppu release from ld-standard, Alex's
 - with a catalog, gppufs lists and opens through it what it holds no index for, SharePoint and archives among them: done; the catalog's address is the `catalog` option, from fsspec's configuration (`FSSPEC_GPPU_CATALOG`), none by default; bytes come from the Lake at the entry's address
 - each index row carries its file's UUID (`uuid_create(0x10, 0x02)`, fs.files as Linked Data - FS has it), kept through a refresh, a change and a move: done; an index on a store this host does not own holds its ids in memory until its own host writes it; finding a file by its UUID: not started
 - gppufs on fsspec's `AsyncFileSystem`, its callers moved: in progress
+- the catalog's Location binds this host's folder for a location reached through `handler.access`, not the canonical's: after the async step
+- the Lake keeps its index at its root, never in its day folders: after the async step
 
 ## In progress: full paths
 - `_key` normalizes a full path; `_path` is identity; `root` and `location` go.
@@ -45,6 +47,10 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 /goal gppufs is `fsspec.filesystem('gppu')` and `gppu::<url>` with full paths and the index found from each path; proven by the gppufs tests passing and the session cleaner's dry run listing both folders in seconds; RAN and CRAP untouched.
 
 ## Found, not this task
+- The Lake API has no batch route: preservator makes two calls per file on every run, files already preserved included.
+- FileIndexer could write files to Linked Data with `PUT /fs/files/{gppu.id}`; it writes none today.
+- WSL has no network, so FileIndexer's TUI test cannot run there; Windows does not reach the scratch database.
+- gppu has no public field for the first line a person typed; the session tools read it from `normalized_name`.
 - RAN `Systems/lake/plaud/test_dagster_incremental.py` calls `download_recordings` with the signature CRAP d1091211 (2026-09-24) replaced.
 - RAN `Systems/lake/m365/locations/karelin.py` and `tulaco.py` need a `lake.yaml` that is not in the repository; their compose services are commented out.
 - RAN `Systems/lake/tests/test_age.py`, `test_catalog_graph.py` and `test_graph_read.py` run inside a transaction on pg.karel.in/everything; not run.
