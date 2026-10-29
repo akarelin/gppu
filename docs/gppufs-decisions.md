@@ -1,6 +1,6 @@
 # gppufs: decisions for Alex
 
-gppufs is becoming a standard fsspec file system: a URI starts it, one instance serves every path, and an index beside each folder holds what the handlers read. Three questions are left that only you can answer. Each one names the work it holds up and the option that works. Answer on the `Answer:` line.
+gppufs is becoming a standard fsspec file system: a URI starts it, one instance serves every path, and an index beside each folder holds what the handlers read. Four questions are left that only you can answer. Each one names the work it holds up and the option that works. Answer on the `Answer:` line.
 
 ## 1. What "refresh" means
 
@@ -66,6 +66,17 @@ Answer:
 - **Addresses:** the Lake names every row by its Lake address, the store's URI plus the path below it. gppufs used to do that through the location map. The catalog now holds that map (`locate`, `resolve`) for anything else that needs a location's address on a row.
 - **One gppufs:** the Lake lists its folder on the process's single gppufs, the same one the catalog uses.
 - **The Lake standard is out of date** in three places. It names `gppu.ld.gppufs.catalog()`, which is now `gppu.fs.catalog.catalog(records)`, fed by the service. It names `gppu/lake.py` and `gppu.catalog`, which are now `gppu/fs/lake.py` and `gppu.fs.catalog`. And it says the Lake's index is gppufs's index beside the Lake, which can't be, because the Lake is a share that gppufs doesn't write. Its index is the Lake catalog.
+
+## How each user of gppu and the Lake fits
+
+None of these has been changed yet: you said gppu's users wait until its structure is what you expect. This is what each one does today, and what changes for it.
+
+- **Session hook** (RAN `AI/sessions/export_session.py`, run by Claude Code's hooks on every call): it doesn't import gppu. It asks the Lake API where the session's copy goes (`POST /lake/?copy`), grows the copy on the share itself, asks the Lake to index it (`POST /lake/{uri}`), and sends the new lines to Linked Data (`PUT /sessions`). It already works through the APIs, so nothing changes for it. On the service side, the Lake indexes the copy with its one gppufs.
+- **Preservator** (RAN `Hosts/preservator`): it copies files from the fleet's hosts straight into the Lake folder named in `locations.yaml`, and uses gppu's session handlers to recognise sessions. It writes into the Lake without the service. With A in question 4, it saves the way the hook does (the Lake says where, preservator copies, the Lake indexes), so the Lake catalog knows what arrived. With B, it keeps copying and writes the Lake catalog itself.
+- **Admin UI** (RAN `Services/admin-ui`): it browses through APIs only: the Lake's, the catalog's `/lake/catalog` and Linked Data's. Its Lake page still runs the earlier lake-api from CRAP's archive. The gppu rework doesn't reach it, and with A it stays that way.
+- **FileIndexer** (RAN `Systems/ld/fileindexer`): it opens one gppufs per location. It moves to the one gppufs plus the catalog's location map: `reached` for the folders on this host, `locate` for each row's address, and `stats(path, apart=...)` to leave the locations below out of a location's totals.
+- **Dagster** (RAN `Systems/lake`): it builds its catalog from its own configuration rows and runs the providers. That already matches `GppuCatalog(rows)`. It moves when the Lake service passes Linked Data's location records.
+- **Session cleaner and desktop mount** (gppu `examples/`): already on the one gppufs. The session cleaner runs from the TUI launcher.
 
 ## Settled by what you said, not questions
 
