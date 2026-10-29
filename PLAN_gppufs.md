@@ -30,7 +30,7 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - Linked Data service (RAN `Systems/ld`, stack `linked-data` on five), session hook and Session Manager: done, its sessions on gppu.ld.sessions and its checks on `/fs` pass on a scratch database; a session's messages read in their file's order: done; its core check, its pages (stack linked-data's `admin`) and `structure.py` (knowledge, a node type) on the new records: done, the pages built and type-checked, their browser check waiting on WSL's network; Session Manager's plain links are type `link`; serving waits on the gppu release and the standard's SQL on its database
 - FileIndexer (RAN `Systems/ld/fileindexer`): done, posting locations as Linked Data - FS has them; 4 of 5 tests pass on a scratch database, the TUI test waits on WSL's network
 - Admin UI and its APIs (CRAP `Systems/admin_ui`; RAN `Services/admin-ui`, `Services/admin-priors`): done; its configuration routes answer as the live API does, its tests pass as the running image's do, its docs page renders; its Linked Data record pages on the new API: done, drawn in a browser against a scratch database; the work, project and knowledge pages wait for `/work`'s schema, Systems and Processes for the entity types they filter by
-- gppu.ld: a sort by span, a type's update without its slug and shard, a link's type checked against the store's types: in progress
+- gppu.ld: a sort by span, a type's update without its slug and shard, a link's type checked against the store's types: done, its tests pass on Postgres in WSL
 - Host tools (RAN `Hosts/preservator`, `Hosts/tui` session scripts): done, preservator saving through the Lake, `platform_for_os` restored
 - Releases and deploys of the stacks: a gppu release from ld-standard, Alex's
 - with a catalog, gppufs lists and opens through it what it holds no index for, SharePoint and archives among them: done; the catalog's address is the `catalog` option, from fsspec's configuration (`FSSPEC_GPPU_CATALOG`), none by default; bytes come from the Lake at the entry's address
@@ -49,6 +49,8 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 /goal gppufs is `fsspec.filesystem('gppu')` and `gppu::<url>` with full paths and the index found from each path; proven by the gppufs tests passing and the session cleaner's dry run listing both folders in seconds; RAN and CRAP untouched.
 
 ## Found, not this task
+- WSL's mirrored networking gives its VM no network device on this host; WSL runs in NAT mode, reaches Windows and is reached at localhost, and Windows does not forward its traffic further.
+- gppu.ld's async psycopg cannot run on Windows' default event loop, so its tests run in WSL.
 - The admin's Linked Data pages count records with one request per type, about 60 on a store made from the standard.
 - The Lake API has no batch route: preservator makes two calls per file on every run, files already preserved included.
 - FileIndexer could write files to Linked Data with `PUT /fs/files/{gppu.id}`; it writes none today.
