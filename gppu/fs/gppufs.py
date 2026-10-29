@@ -177,10 +177,15 @@ class GppuFileSystem(ChainedFileSystem):
 
   def __init__(self, target_protocol: str | None = None, target_options: Mapping[str, Any] | None = None,
                fs: AbstractFileSystem | None = None, cache: Sequence[str] | None = None, **kwargs: Any) -> None:
-    """cache: folders whose index is kept in the cache, not beside them."""
-    if self._cached:   # the one gppufs, made already: asked for with other options, it says so
-      if cache is not None and [self._key(folder) for folder in cache] != self._cache:
-        raise ValueError(f'gppufs is made already, keeping {self._cache} in the cache, not {list(cache)}')
+    """cache: folders whose index is kept in the cache, not beside them. A folder is kept there whoever names it: the one gppufs
+    keeps every folder any of its users names, its index found anew under the cache."""
+    if self._cached:   # the one gppufs, made already
+      with self._lock:
+        for folder in [self._key(folder) for folder in cache or ()]:
+          if folder not in self._cache:
+            self._cache.append(folder)
+            self._cache_held = {held: kept for held, kept in self._cache_held.items() if not self._within(held, folder)}
+            self._forget_indexes(folder)
       return
     super().__init__(**kwargs)
     self.fs = fs if fs is not None else filesystem(target_protocol or 'file', **(target_options or {}))
