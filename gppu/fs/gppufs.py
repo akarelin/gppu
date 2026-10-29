@@ -1132,15 +1132,17 @@ class GppuFileSystem(ChainedFileSystem):
       return self._stored(self._key(path))
 
   def stats(self, path: str | Path, apart: Sequence[str] = ()) -> dict[str, Any]:
-    """What the index holding path holds, aggregated in the index and touching no filesystem: its folders and files, the
-    files' bytes, the first and the last modified time among them, when the latest entry was probed, its notes (.md) and its
-    sessions (what the session handler read). An ignored entry is not counted, as a row's totals do not count it. The
-    indexes below it count with it, but for the folders apart names, such as the locations below it the catalog knows,
-    each holding its own."""
+    """What is below path, aggregated in the indexes and touching no filesystem: its folders and files, the files' bytes, the
+    first and the last modified time among them, when the latest entry was probed, its notes (.md) and its sessions (what the
+    session handler read). An ignored entry is not counted, as a row's totals do not count it. The indexes below it count with
+    it, but for the folders apart names, such as the locations below it the catalog knows, each holding its own; an index
+    above it gives only what is below it."""
     with self._lock:
-      owner = self._owner(self._key(path))
+      key = self._key(path)
+      owner = self._owner(key)
       folders, files, size, first, last, seen, notes, sessions = (
-        [0, 0, 0, None, None, None, 0, 0] if owner is None else self._aggregated(owner, {self._key(f) for f in apart}))
+        [0, 0, 0, None, None, None, 0, 0] if owner is None else
+        self._aggregated(owner, {self._key(f) for f in apart}, None if owner == key else key))
     return dict(folders=folders, files=files, bytes=size, notes=notes, sessions=sessions,
                 first=None if first is None else datetime.fromtimestamp(first, timezone.utc).astimezone(),
                 last=None if last is None else datetime.fromtimestamp(last, timezone.utc).astimezone(),
@@ -1177,17 +1179,21 @@ class GppuFileSystem(ChainedFileSystem):
           AND coalesce(metadata->>'$.gppu.record.type', '') NOT IN ({", ".join(f"'{s}'" for s in handlers.IGNORED)}))
       WHERE mtime IS NOT NULL GROUP BY prefix'''
 
-  def _aggregated(self, owner: str, apart: set[str]) -> list:
-    """owner's index aggregated in it, with what the indexes of the folders below it hold, but for those apart."""
+  def _aggregated(self, owner: str, apart: set[str], key: str | None = None) -> list:
+    """What is below key, owner's own folder unless given, aggregated in owner's index, with what the indexes of the folders
+    below it hold, but for those apart."""
+    here = '.' if key is None else self._relative(key, owner)
+    aggregate = self._aggregate if here == '.' else self._aggregate.replace(
+      "FROM gppufs_entries WHERE path<>'.'", 'FROM gppufs_entries WHERE path > :low AND path < :high')
     with self._database(owner) as database:
       if database is None:
         return [0, 0, 0, None, None, None, 0, 0]
-      held = list(database.execute(self._aggregate).fetchone())
+      held = list(database.execute(aggregate, {'low': f'{here}/', 'high': f'{here}0'}).fetchone())
       nested = [self._absolute(path, owner) for (path,) in database.execute(self._nested).fetchall()]
-    for key in nested:
-      if key in apart:
+    for folder in nested:
+      if folder in apart or (key is not None and (folder == key or not self._within(folder, key))):
         continue
-      below = self._aggregated(key, apart)
+      below = self._aggregated(folder, apart)
       below[0] += 1   # the folder itself, whose row is its own index's root
       for i, combined in ((0, sum), (1, sum), (2, sum), (3, min), (4, max), (5, max), (6, sum), (7, sum)):
         held[i] = combined(value for value in (held[i], below[i]) if value is not None) if any(
