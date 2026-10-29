@@ -34,6 +34,7 @@ from sqlalchemy import Computed, DateTime, FetchedValue, SmallInteger, String, T
 from sqlalchemy.dialects.postgresql import JSONB, TSTZRANGE, Range
 from sqlalchemy.exc import DataError, IntegrityError, StatementError
 from sqlalchemy.sql.elements import UnaryExpression
+from sqlalchemy.sql.sqltypes import NullType
 from sqlalchemy.sql.visitors import iterate
 from sqlmodel import Column, Field, SQLModel, func, or_, select
 
@@ -236,19 +237,25 @@ class _Record(SQLModel):
         return (await cls.db().exec(query.order_by(*order))).all()
 
     @classmethod
-    async def search(cls, params, *where, conditions: QueryParams | None = None, only: bool = False):
+    async def search(cls, params, *where, conditions: QueryParams | None = None, order: tuple = (), only: bool = False):
         """A page of a search: the records in sight of its table fastapi-querybuilder's query of `conditions` and `where` select,
-        `limit` of them after the last one of the page before (sqlakeyset), so the order ends with the id, which no two rows share;
-        every match when no limit is given. `only` keeps to its own table's records, not those of the tables made from it."""
+        `limit` of them after the last one of the page before (sqlakeyset), in the sort of `conditions`, then in `order`, then by
+        the id, which no two rows share; every match when no limit is given. `only` keeps to its own table's records, not those of
+        the tables made from it."""
         query = (build_query(cls, conditions) if conditions else select(cls)).where(cls.flags.op('&')(int(UNSEEN)) == 0, *where)
         if only:
             query = query.with_hint(cls.__table__, 'ONLY', 'postgresql')
 
         def after(key):
-            """A sort key a page can read after: one over a column a record may leave empty sorts that record as the column's least value."""
+            """A sort key a page can read after: one a record may leave empty, a column's or a key's in `data` or `meta`, sorts that
+            record as the least value of its kind, the key's when it is read as one, else its column's."""
+            key = key if isinstance(key, UnaryExpression) else key.asc()
             column = next(c for c in iterate(key.element) if isinstance(c, Column))   # under querybuilder's lower() of a text column
-            return UnaryExpression(func.coalesce(key.element, LEAST[column.type.python_type]), modifier=key.modifier) if column.nullable else key
-        keys = [after(k) for k in query._order_by_clauses]   # querybuilder's sort, read as sqlakeyset reads it
+            typed = column if isinstance(key.element.type, NullType) else key.element   # lower() has no type of its own
+            if not column.nullable and typed is column:
+                return key
+            return UnaryExpression(func.coalesce(key.element, LEAST[typed.type.python_type]), modifier=key.modifier)
+        keys = [after(k) for k in (*query._order_by_clauses, *order)]   # querybuilder's sort, then the caller's, read as sqlakeyset reads them
         query = query.order_by(None).order_by(*keys, cls.id)
         if params.size is None:
             rows = (await cls.db().scalars(query)).all()   # querybuilder's select is SQLAlchemy's: rows of one record each

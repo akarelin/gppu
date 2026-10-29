@@ -12,21 +12,30 @@ if not os.environ.get('LD_TEST_DSN'):
 
 import psycopg
 from pathlib import Path
+from fastapi import APIRouter, Depends
 from fastapi.testclient import TestClient
 
 from gppu import Env, uuid_create
 from gppu.data import _SQABase
 from gppu.fs import catalog as locations
 from gppu.ld import fs as files
-from gppu.ld import serve, sessions
+from gppu.ld import Page, Params, api_at, serve, sessions
 
 DSN = os.environ['LD_TEST_DSN']
 DB = f'gppu_ld_test_{uuid4().hex[:12]}'   # its own, so no other database on the server is touched
+ordered = APIRouter()
+
+
+@ordered.get('/ordered/{id}/messages', response_model=Page[sessions.Message])
+async def messages(id: UUID, params: Params = Depends()):
+    """A session's messages in the order of their lines in its file, then of their ids, a page at a time, as Linked Data's
+    service reads them."""
+    return await sessions.Message.search(params, sessions.Message.parent_id == id, order=(sessions.Message.meta['line'].as_integer(),))
 
 
 @pytest.fixture(scope='module')
 def api():
-    """The core, the fs API and the sessions API on a database made from the standard's SQL."""
+    """The core, the fs API and the sessions API, and a session's messages in order, on a database made from the standard's SQL."""
     with psycopg.connect(DSN, autocommit=True) as server:
         server.execute(f'CREATE DATABASE {DB}')
     dsn = DSN.rsplit('/', 1)[0] + '/' + DB
@@ -35,7 +44,8 @@ def api():
         with psycopg.connect(dsn, autocommit=True) as db:
             db.execute((Path(__file__).parent / 'ld.sql').read_text(encoding='utf-8'))
         Env._load_dict({'db': dsn})   # the store's `db`, as an app's configuration gives it
-        with TestClient(serve({'/fs': files.app, '/sessions': sessions.app}, _SQABase())) as client:
+        apis = {'/fs': files.app, '/sessions': sessions.app, '/ordered': api_at('/ordered', 'ordered', "A session's messages in order.", ordered)}
+        with TestClient(serve(apis, _SQABase())) as client:
             yield client
     finally:
         Env.reset()
@@ -159,6 +169,22 @@ def test_a_session_is_known_by_its_type_and_uid(api):
     nxt = ok(api.post('/sessions/links', json={'type': 'next', 'status': 'new', 'from_id': session['id'], 'to_id': other['id']}))
     assert header(nxt)[:2] == bytes([0x20, 0x10])
     assert [t['shard'] for t in ok(api.get('/sessions/types', params={'filters': '{"slug": {"$eq": "next"}}'}))['items']] == [0x10]
+
+
+def test_a_sessions_messages_are_read_in_the_order_of_their_lines_a_page_at_a_time(api):
+    session = ok(api.post('/sessions', json={'type': 'cx', 'uid': 'ordered'}))
+    ids = sorted(uuid_create(0x20, 0x02) for _ in range(5))
+    for id, line in zip(ids, (11, 10, 9, 2, 1)):   # the ids sort against the lines, and 10 and 11 sort before 9 and 2 as text
+        ok(api.put(f'/sessions/messages/{id}', json={'type': 'agent', 'parent_id': session['id'], 'meta': {'line': line}}))
+    lineless = ok(api.post('/sessions/messages', json={'type': 'user', 'parent_id': session['id']}))   # read as line 0
+    read, cursor = [], None
+    while True:
+        page = ok(api.get(f"/ordered/{session['id']}/messages", params={'limit': 2} | ({'cursor': cursor} if cursor else {})))
+        assert len(page['items']) <= 2 and page['total'] == 6
+        read += [m['id'] for m in page['items']]
+        if not (cursor := page['next']):
+            break
+    assert read == [lineless['id'], *map(str, reversed(ids))]
 
 
 def test_gppufs_makes_its_catalog_from_the_locations(api):
