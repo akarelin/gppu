@@ -22,7 +22,7 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - refresh: never follows a junction, reads below once on a recursive refresh: done
 - refresh of a folder of millions: read a folder at a time, written in batches of 1,000 rows: done
 - catalog() reads location records as Linked Data - FS has them; a location is on this host by its handler's access, or below the location above it: done
-- gppu.ld to the Linked Data standard as it is now (`byAlex` files: two-byte ids, shard1 the schema and shard2 the table; LD, FS and Sessions SQL and Python blocks): done, 17 tests pass on Postgres
+- gppu.ld to the Linked Data standard as it is now (two-byte ids, shard1 the schema and shard2 the table, from `Linked Data.md`, the one `byAlex` file; the SQL and Python blocks of the LD, FS and Sessions notes, which are generated): done, its tests pass on Postgres
 
 ## Users of gppufs, moved in parallel (docs/gppufs-users.md)
 - Lake service and Dagster (RAN `Systems/lake`, stacks `lake` and `dagster` on trix): done; both code locations build, 118 tests pass
