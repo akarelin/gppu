@@ -19,7 +19,7 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - the session cleaner in gppu's TUI: done
 - gppufs's own tests on full paths: done, the whole suite passes
 - refresh: never follows a junction, reads below once on a recursive refresh: done
-- refresh of a folder of millions: read and written in batches, not held whole in memory: next
+- refresh of a folder of millions: read a folder at a time, written in batches of 1,000 rows: done
 - catalog() reads location records as Linked Data - FS has them (data.handler: kind, service, access, connection), and a location is on this host by its access: next
 - gppu.ld to the Linked Data standard as it is now (`byAlex` files: two-byte ids, shard1 the schema and shard2 the table; LD, FS and Sessions SQL and Python blocks): in progress
 
