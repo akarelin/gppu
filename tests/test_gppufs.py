@@ -212,7 +212,7 @@ def test_failed_refresh_does_not_destroy_snapshot(tmp_path, monkeypatch):
   before = fs.ls(tmp_path)
   def denied(*args, **kwargs):
     raise PermissionError('source unavailable')
-  monkeypatch.setattr(fs, '_inventory', denied)
+  monkeypatch.setattr(fs, '_parse', denied)   # reading this host's disk, which a refresh does here
   with pytest.raises(PermissionError, match='source unavailable'):
     fs.ls(tmp_path, refresh=True)
   assert fs.ls(tmp_path) == before

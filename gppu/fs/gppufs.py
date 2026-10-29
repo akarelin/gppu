@@ -38,6 +38,10 @@ from . import handlers, CACHE, UNSAFE, _display_order, _metadata_text, _modified
 # in 958 MB), well above every other index on alex-pc, the largest of which held 27 MB.
 INDEX_LIMIT = 64 * 2**20
 
+# The rows a refresh writes at a time: what it holds in memory beside the folder it is reading. At about 2.3 KB a row, as D:'s
+# index measured, a batch is a few megabytes.
+BATCH = 1000
+
 # The filesystems a Linux host mounts another host's folders with: such a folder is not this host's to write an index in.
 NETWORK_FILESYSTEMS = ('cifs', 'smb3', 'smbfs', 'nfs', 'nfs4', 'afpfs', 'fuse.sshfs')
 
@@ -798,11 +802,10 @@ class GppuFileSystem(ChainedFileSystem):
     archive_metadata = self._stored(key)[0] if container else None
     with self._filesystem(key, container=container) as (fs, source):
       fs.invalidate_cache()
-      native = self._inventory(fs, source)
       if isinstance(fs, LocalFileSystem):
-        self._parse(key, Path(source), native, source)
-      else:
-        self._parse_listed(key, fs, native, source, in_archive=fs is not self.fs, archive_metadata=archive_metadata)
+        return self._parse(key, Path(source))
+      native = self._inventory(fs, source)
+      self._parse_listed(key, fs, native, source, in_archive=fs is not self.fs, archive_metadata=archive_metadata)
 
   def _parse_listed(self, key: str, fs: AbstractFileSystem, native: dict[str, dict], source: str, *,
                     in_archive: bool = False, archive_metadata: dict | None = None) -> None:
@@ -895,28 +898,30 @@ class GppuFileSystem(ChainedFileSystem):
       rows[address] = rows[address][0], listing
     self._store(key, rows, members[key])
 
-  def _parse(self, key: str, local: Path, native: dict[str, dict], source: str, *,
-             in_archive: bool = False, archive_metadata: dict | None = None) -> None:
-    """Parse every entry at and below local through gppu's handlers, its native attributes from the fsspec
-    inventory: each its handler's record, and a folder the totals of what is below it. A read that fails is
-    the entry's `unread`, and the walk goes on."""
+  def _parse(self, key: str, local: Path) -> None:
+    """Parse every entry at and below key on this host's disk through gppu's handlers: each its handler's record, and a
+    folder the totals of what is below it, read a folder at a time. A read that fails is the entry's `unread`, and the
+    walk goes on. What is read is written BATCH rows at a time, never held whole: a folder holds only its own entries'
+    rows while it is read, so a folder of millions does not swallow a run. A file its handler read as it is now is not
+    read again; an entry gone from a folder is dropped with what is below it. A link or a junction is listed, never
+    entered."""
     local = full_path(local)
-    rows: dict[str, tuple[dict, list[str] | None]] = {}
     now = datetime.now().astimezone()
+    batch: dict[str, tuple[dict, list[dict] | None]] = {}
+    gone: list[str] = []
+    top = self.fs.info(key)
+    anchor = self._anchor(key, top['type'] == 'directory')
 
-    def read(path: Path) -> tuple[str, dict] | None:
-      relative = path.relative_to(local).as_posix()
-      name = str(PurePosixPath(source) / relative)
-      name = '' if name == '.' else name
-      if name not in native or self._index_name.fullmatch(path.name):
-        return None
-      item = native[name]
-      address = self._member_address(key, relative)
-      if item['type'] != 'directory' and not in_archive and (stored := self._stored(address)) is not None:
+    def write() -> None:
+      self._write(batch, gone, anchor)
+      batch.clear()
+      gone.clear()
+
+    def read(path: Path, address: str, item: dict, stored: tuple[dict, list[dict] | None] | None) -> dict | None:
+      if item['type'] != 'directory' and stored is not None:
         row = stored[0]
         if row['gppu']['probed'] and (row.get('mtime'), row.get('size')) == (item.get('mtime'), item.get('size')):
-          rows[address] = row, None   # a file its handler read as it is now is not read again
-          return address, row
+          return row   # a file its handler read as it is now is not read again
       record, unread = handlers.probe(path), None
       if self._unindexed(record, item['type'] == 'directory'):
         return None
@@ -927,24 +932,91 @@ class GppuFileSystem(ChainedFileSystem):
         except Exception as error:   # the walk records what it could not read and goes on
           unread = f'{handler.__name__}: {type(error).__name__}: {error}'
           Warn(f'{path}: {unread}')
-      folder = self._folder(record)
-      children: list[tuple[str, dict]] = []
-      if folder:
+      children, listing = [], None
+      if self._folder(record):
         try:
-          members = sorted(path.iterdir(), key=_display_order)
+          members = [member for member in sorted(path.iterdir(), key=_display_order)
+                     if not self._index_name.fullmatch(member.name)]
         except OSError as error:
           unread, members = f'listing: {type(error).__name__}: {error}', []
           Warn(f'{path}: {unread}')
-        children = [child for member in members if (child := read(member)) is not None]
+        held = self._stored_many([self._member_address(address, member.name) for member in members])
+        listing = []
+        for member in members:
+          child = self._member_address(address, member.name)
+          if (row := read(member, child, self.fs.info(child), held.get(child))) is not None:
+            children.append(row)
+            listing.append({'path': child, 'type': row['type'], 'ino': row.get('ino')})
+        listed = {entry['path'] for entry in listing}
+        gone.extend(path for path in self._held_in(address) if path not in listed)
       row = self._row(address, item, record, path, probed_at=now, unread=unread,
-                      children=[child for _, child in children] if folder else None)
-      if path == local and archive_metadata is not None:
-        row = archive_metadata
-      rows[address] = row, [child_address for child_address, _ in children] if folder else None
-      return address, row
+                      children=children if listing is not None else None)
+      batch[address] = row, listing
+      if len(batch) >= BATCH:
+        write()
+      return row
 
-    read(local)
-    self._save(rows, key, in_archive=in_archive)
+    with self.run():   # the indexes reach their folders whole when the refresh ends, however it ends
+      read(local, key, top, self._stored(key))
+      write()
+      self._total_above(key)
+
+  def _write(self, rows: dict[str, tuple[dict, list[dict] | None]], gone: list[str], anchor: str) -> None:
+    """Rows as a refresh read them, each with its listing, put into the indexes that own them; what is gone dropped, with
+    what is below it."""
+    grouped: dict[str, list[tuple]] = {}
+    for key, (metadata, listing) in rows.items():
+      owner = self._owner(key, anchor)
+      value = json.loads(json.dumps(metadata, default=_metadata_text))
+      value['name'] = value['gppu']['path'] = self._relative(key, owner)
+      grouped.setdefault(owner, []).append((value['name'], json.dumps(value, default=_metadata_text),
+        None if listing is None else json.dumps([{**entry, 'path': self._relative(entry['path'], owner)} for entry in listing])))
+    with self.run():
+      for key in gone:
+        self._forget_indexes(self._path(key))
+        self._forget_below(key)
+      for owner in sorted(grouped, key=lambda item: len(PurePosixPath(item).parts), reverse=True):
+        with self._database(owner, write=True) as database:
+          database.executemany('INSERT INTO gppufs_entries VALUES (?, ?, ?) '
+            'ON CONFLICT(path) DO UPDATE SET metadata=excluded.metadata, children=excluded.children', grouped[owner])
+      for owner in grouped:
+        self._bound(owner)
+
+  def _held_in(self, key: str) -> list[str]:
+    """What the index holding a folder holds directly in it, whatever the folder's listing says."""
+    owner = self._owner(key)
+    if owner is None:
+      return []
+    here = self._relative(key, owner)
+    below = 'path' if here == '.' else f'substr(path, {len(here) + 2})'
+    with self._database(owner) as database:
+      if database is None:
+        return []
+      found = database.execute(f"SELECT path FROM gppufs_entries WHERE path <> '.' AND {'' if here == '.' else 'path > :low AND path < :high AND '}"
+                               f"instr({below}, '/') = 0", {'low': f'{here}/', 'high': f'{here}0'}).fetchall()
+    return [self._absolute(path, owner) for (path,) in found]
+
+  def _total_above(self, scope: str) -> None:
+    """The folders above a refreshed entry, as far up as an index lists them, given totals with what it holds now."""
+    rows: dict[str, tuple[dict, list[dict] | None]] = {}
+    child = key = scope
+    while (key := self._parent_key(key)) is not None:
+      cached = self._stored(key)
+      if cached is None or cached[1] is None:
+        break
+      metadata, members = cached
+      held = self._stored_many(list(dict.fromkeys([*(item['path'] for item in members), child])))
+      if child in rows:
+        held[child] = rows[child]   # the level below as this refresh totalled it, not yet written
+      if child not in held:
+        break   # an ignored file parses to nothing, and leaves the totals above it as they are
+      paths = sorted(held, key=lambda item: (held[item][0]['type'] != 'directory', item.casefold()))
+      metadata['gppu'].update(json.loads(json.dumps(
+        self._totals(metadata['gppu'], [held[path][0] for path in paths]), default=_metadata_text)))
+      rows[key] = metadata, [{'path': path, 'type': held[path][0]['type'], 'ino': held[path][0].get('ino')} for path in paths]
+      child = key
+    if rows:
+      self._write(rows, [], scope)
 
   def _archive_key(self, key: str) -> str:
     name = key.split('::', 1)[0].casefold()
