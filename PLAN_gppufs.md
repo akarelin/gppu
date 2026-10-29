@@ -46,7 +46,7 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 What matters is gppufs working, and its code merged so the new Linked Data, gppu.ld, works on top of it.
 - `ld-standard` into master as a fast-forward, the whole suite passing on the scratch database: done; gppu's work goes to master.
 - Every user of gppufs on master and pushed: done; vfs, the desktop, the handler browser, the session cleaner, the Lake and Dagster, the Linked Data service, the session hook, Session Manager, FileIndexer and its TUI, the admin UI and the host tools already ran on it, their tests passing; CRAP `Projects/FileIndexer`'s tests import `GppuCatalog` from `gppu.fs.catalog`; RAN `Systems/ld/ld.sql` is gppu.ld's SQL, and the Linked Data image installs every module gppu.ld needs from master
-- RAN `.github/workflows/ld.yml` building from `Systems/ld`: committed in RAN, not pushed; its push was refused as a production deploy, and workflow code is Alex's
+- RAN `.github/workflows/ld.yml` building from `Systems/ld`: on RAN's master; it runs only when Alex starts it, and has not run
 - No workflow runs on a push; a release and the deploys stay Alex's. RAN's Linked Data and Lake images install gppu from master, so their next build takes gppufs and gppu.ld, which need gppu.ld's SQL on `linked_data` first.
 
 /goal gppufs and gppu.ld are on gppu's master and every user of gppufs is updated to it and pushed; proven by the gppu suite and each user's tests passing against the scratch database; no release, deploy or production write.
