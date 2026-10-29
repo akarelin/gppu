@@ -10,6 +10,7 @@ import zipfile
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 import yaml
@@ -990,6 +991,36 @@ def test_a_move_carries_what_is_held_of_the_thing_moved(tmp_path):
   assert fs.info(tmp_path / 'b' / 'note.md')['gppu']['record']['data']['title'] == 'Moved'
   assert [row['gppu']['name'] for row in fs.ls(tmp_path / 'b')] == ['note.md']
   assert fs.stored(tmp_path / 'a' / 'note.md') is None
+
+
+def test_every_row_carries_its_files_id_through_a_refresh_a_change_and_a_move(tmp_path):
+  """Inside gppufs a file is its id, fs.files' kind: given when its row is first written and kept while it is read again,
+  changed or moved; the path tells gppufs where it is."""
+  (tmp_path / 'a').mkdir()
+  (tmp_path / 'a' / 'note.md').write_text('# note')
+  fs = GppuFileSystem()
+  ids = {row['name']: row['gppu']['id'] for row in fs.ls(tmp_path / 'a')}
+  note = ids[(tmp_path / 'a' / 'note.md').as_posix()]
+  assert UUID(note).bytes[:3] == bytes([0x10, 0x02, 1])
+  fs.ls(tmp_path, refresh=True)
+  (tmp_path / 'a' / 'note.md').write_text('# note, changed')
+  fs.ls(tmp_path / 'a', refresh=True)
+  assert fs.info(tmp_path / 'a' / 'note.md')['gppu']['id'] == note
+  fs.mv(tmp_path / 'a', tmp_path / 'b')
+  assert fs.info(tmp_path / 'b' / 'note.md')['gppu']['id'] == note
+
+
+def test_an_index_written_before_rows_carried_ids_gives_each_one_at_its_next_write(tmp_path):
+  (tmp_path / 'note.md').write_text('# note')
+  fs = GppuFileSystem()
+  fs.ls(tmp_path)
+  with closing(sqlite3.connect(index(tmp_path))) as database, database:
+    database.execute("UPDATE gppufs_entries SET metadata=json_remove(metadata, '$.gppu.id')")
+    database.execute('PRAGMA user_version = 0')
+  GppuFileSystem.clear_instance_cache()
+  gppu.fs.gppufs._INDEXES.clear()
+  (tmp_path / 'later.md').write_text('# later')
+  assert all(UUID(row['gppu']['id']) for row in GppuFileSystem().ls(tmp_path))
 
 
 def test_a_folder_moved_between_two_locations_keeps_its_index(tmp_path, monkeypatch):

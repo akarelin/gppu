@@ -32,7 +32,7 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - Host tools (RAN `Hosts/preservator`, `Hosts/tui` session scripts): in progress
 - Releases and deploys of the stacks: a gppu release from ld-standard, Alex's
 - with a catalog, gppufs lists and opens through it what it holds no index for, SharePoint and archives among them: done; the catalog's address is the `catalog` option, from fsspec's configuration (`FSSPEC_GPPU_CATALOG`), none by default; bytes come from the Lake at the entry's address
-- each index row carries its file's UUID (`uuid_create(0x10, 0x02)`, fs.files as Linked Data - FS has it); code finds files by UUID, not URI: not started
+- each index row carries its file's UUID (`uuid_create(0x10, 0x02)`, fs.files as Linked Data - FS has it), kept through a refresh, a change and a move: done; finding a file by its UUID: not started
 - gppufs on fsspec's `AsyncFileSystem`: not started
 
 ## In progress: full paths

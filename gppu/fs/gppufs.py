@@ -29,7 +29,7 @@ from fsspec.implementations.local import LocalFileSystem
 from fsspec.spec import AbstractFileSystem
 from fsspec.utils import stringify_path
 from fsspec.utils import tokenize
-from ..gppu import TimeSpan, full_path, sync, Warn
+from ..gppu import TimeSpan, full_path, sync, uuid_create, Warn
 from . import handlers, CACHE, UNSAFE, _display_order, _metadata_text, _modified, _probe_name, _scratch
 
 
@@ -96,6 +96,15 @@ def _remote(root: str) -> bool:
   return kind in NETWORK_FILESYSTEMS
 
 
+def _identified(metadata: str, id: str | None) -> str:
+  """A row's metadata as JSON text with the id its file was given, when it had one."""
+  if id is None:
+    return metadata
+  value = json.loads(metadata)
+  value['gppu']['id'] = id
+  return json.dumps(value)
+
+
 def _signature(path: str | None) -> tuple[int, int] | None:
   """Which version of a file is there, by its modified time and size; None when there is none."""
   if path is None or not os.path.isfile(path):
@@ -116,7 +125,9 @@ class GppuFileSystem(ChainedFileSystem):
   index at or above an entry owns it; an entry with none above it is indexed
   beside the folder listed, a file beside its folder. Index rows use paths
   relative to their index's folder, so moving a folder with its index
-  preserves its listings. ``cache`` names folders whose index is kept in the
+  preserves its listings. Each row carries its file's id, ``gppu.id``, made
+  as fs.files makes one and kept while the file is read again, changed or
+  moved: inside gppufs a file is its id, and its path says where it is. ``cache`` names folders whose index is kept in the
   cache instead of beside them, as a folder another program watches needs.
   ``catalog`` is the address of the catalog's API; with it, what gppufs holds
   no index for, the catalog's own paths (``catalog://``) and the address of
@@ -161,6 +172,9 @@ class GppuFileSystem(ChainedFileSystem):
     FROM (SELECT CASE WHEN path = :here THEN '.' ELSE substr(path, :cut) END AS at, metadata, children
       FROM owner.gppufs_entries WHERE path = :here OR substr(path, 1, :cut - 1) = :prefix) WHERE true
     ON CONFLICT(path) DO UPDATE SET metadata=excluded.metadata, children=excluded.children'''
+  # A row written again keeps the id its file was given when it was first written.
+  _upsert = '''INSERT INTO gppufs_entries VALUES (?, ?, ?) ON CONFLICT(path) DO UPDATE SET metadata=json_set(excluded.metadata,
+    '$.gppu.id', coalesce(gppufs_entries.metadata->>'$.gppu.id', excluded.metadata->>'$.gppu.id')), children=excluded.children'''
   # The folders below that hold an index of their own: a listing here names them, and their rows are in their own index.
   _nested = '''SELECT DISTINCT child.value->>'$.path' FROM gppufs_entries, json_each(gppufs_entries.children) AS child
     WHERE child.value->>'$.type' = 'directory' AND child.value->>'$.path' NOT IN (SELECT path FROM gppufs_entries)'''
@@ -424,6 +438,10 @@ class GppuFileSystem(ChainedFileSystem):
       database.execute('INSERT INTO gppufs_index VALUES (?)', (self.fs.info(self._path(owner)).get('ino'),))
     database.execute('CREATE TABLE IF NOT EXISTS gppufs_entries ('
       'path TEXT PRIMARY KEY, metadata TEXT NOT NULL, children TEXT)')
+    if database.execute('PRAGMA user_version').fetchone()[0] < 1:   # rows written before each carried its file's id are given one
+      database.create_function('file_id', 0, lambda: str(uuid_create(0x10, 0x02)))
+      database.execute("UPDATE gppufs_entries SET metadata=json_set(metadata, '$.gppu.id', file_id()) WHERE metadata->>'$.gppu.id' IS NULL")
+      database.execute('PRAGMA user_version = 1')
 
   def _held(self, owner: str) -> sqlite3.Connection:
     """The index held in memory for this instance, read once from the store when the store has one.
@@ -753,14 +771,13 @@ class GppuFileSystem(ChainedFileSystem):
     with self.run():
       for owner in sorted(grouped, key=lambda item: len(PurePosixPath(item).parts), reverse=True):
         with self._database(owner, write=True) as database:
-          if self._within(owner, scope):
-            database.execute('DELETE FROM gppufs_entries')
-          else:
-            relative = self._relative(scope, owner)
-            database.execute('DELETE FROM gppufs_entries WHERE path=? OR substr(path,1,?)=?',
-              (relative, len(relative) + 1, relative + '/'))
-          database.executemany('INSERT INTO gppufs_entries VALUES (?, ?, ?) '
-            'ON CONFLICT(path) DO UPDATE SET metadata=excluded.metadata, children=excluded.children', grouped[owner])
+          relative = self._relative(scope, owner)
+          inside, values = ('true', ()) if self._within(owner, scope) else (
+            'path=? OR substr(path,1,?)=?', (relative, len(relative) + 1, relative + '/'))
+          ids = dict(database.execute(f"SELECT path, metadata->>'$.gppu.id' FROM gppufs_entries WHERE {inside}", values))
+          database.execute(f'DELETE FROM gppufs_entries WHERE {inside}', values)
+          database.executemany(self._upsert, [(path, _identified(metadata, ids.get(path)), children)
+                                              for path, metadata, children in grouped[owner]])
       for owner in grouped:
         self._bound(owner)
 
@@ -982,7 +999,7 @@ class GppuFileSystem(ChainedFileSystem):
         listed = {entry['path'] for entry in listing}
         gone.extend(path for path in self._held_in(address) if path not in listed)
       row = self._row(address, item, record, path, probed_at=now, unread=unread,
-                      children=children if listing is not None else None)
+                      children=children if listing is not None else None, id=stored and stored[0]['gppu'].get('id'))
       batch[address] = row, listing
       if len(batch) >= BATCH:
         write()
@@ -1009,8 +1026,7 @@ class GppuFileSystem(ChainedFileSystem):
         self._forget_below(key)
       for owner in sorted(grouped, key=lambda item: len(PurePosixPath(item).parts), reverse=True):
         with self._database(owner, write=True) as database:
-          database.executemany('INSERT INTO gppufs_entries VALUES (?, ?, ?) '
-            'ON CONFLICT(path) DO UPDATE SET metadata=excluded.metadata, children=excluded.children', grouped[owner])
+          database.executemany(self._upsert, grouped[owner])
       for owner in grouped:
         self._bound(owner)
 
@@ -1108,15 +1124,16 @@ class GppuFileSystem(ChainedFileSystem):
     return {**totals, 'span': span}
 
   def _row(self, key: str, item: dict, record: handlers.Record, path: Path, *, probed_at: datetime | None = None,
-           unread: str | None = None, children: list[dict] | None = None) -> dict:
-    """One entry as gppufs holds it: its native attributes, and under `gppu` the handlers that read it, its handler's
-    record and its totals. An entry only identified, not parsed, is `probed` false, and a folder's totals are then
-    unknown."""
+           unread: str | None = None, children: list[dict] | None = None, id: str | None = None) -> dict:
+    """One entry as gppufs holds it: its native attributes, and under `gppu` its file's id, the handlers that read it, its
+    handler's record and its totals. The id is the one its row was given when first written, a new one for an entry the
+    index never held, `uuid_create(0x10, 0x02)` as fs.files makes it. An entry only identified, not parsed, is `probed`
+    false, and a folder's totals are then unknown."""
     folder = self._folder(record)
     names = [record.type]
     if path.name.casefold().endswith(handlers.ARCHIVES):
       names.append('archive')
-    gppu = {'path': str(path), 'type': 'folder' if folder else 'file',
+    gppu = {'id': id or str(uuid_create(0x10, 0x02)), 'path': str(path), 'type': 'folder' if folder else 'file',
             'size': 0 if folder else int(record.meta.get('size', 0)), 'modified_at': _modified(item),
             'handlers': names, 'record': vars(record)}
     if unread is not None:
@@ -1217,7 +1234,8 @@ class GppuFileSystem(ChainedFileSystem):
         record = self._listed(child_key, item)
       if self._unindexed(record, item['type'] == 'directory'):
         continue
-      rows[child_key] = self._row(child_key, item, record, Path(self._path(child_key))), None
+      rows[child_key] = self._row(child_key, item, record, Path(self._path(child_key)),
+                                  id=stored and stored[0]['gppu'].get('id')), None
       listing.append({'path': child_key, 'type': item['type'], 'ino': item.get('ino')})
     listing.sort(key=lambda entry: (entry['type'] != 'directory', entry['path'].casefold()))
     if rows or listing != children:
@@ -1485,7 +1503,8 @@ class GppuFileSystem(ChainedFileSystem):
             record = handlers.probe(Path(path))
             if self._unindexed(record, item['type'] == 'directory'):
               continue
-            row = json.loads(json.dumps(self._row(child, item, record, Path(path)), default=_metadata_text))
+            row = json.loads(json.dumps(self._row(child, item, record, Path(path), id=row and row['gppu'].get('id')),
+                                        default=_metadata_text))
             values.append((relative(child), json.dumps({**row, 'name': relative(child), 'gppu': {**row['gppu'], 'path': relative(child)}})))
           rows.append((child, row))
       rows.sort(key=lambda pair: (pair[1]['type'] != 'directory', pair[0].casefold()))
@@ -1520,7 +1539,7 @@ class GppuFileSystem(ChainedFileSystem):
       if values or children or gone:
         with self._lock, self.run():
           with self._database(owner, write=True) as database:
-            database.executemany('INSERT INTO gppufs_entries VALUES (?, ?, NULL) ON CONFLICT(path) DO UPDATE SET metadata=excluded.metadata', values)
+            database.executemany(self._upsert, [(path, metadata, None) for path, metadata in values])
             database.executemany('UPDATE gppufs_entries SET children=? WHERE path=?', children)
             database.executemany('DELETE FROM gppufs_entries WHERE path=? OR substr(path, 1, ?)=?',
                                  [(relative(child), len(relative(child)) + 1, relative(child) + '/') for child in gone])
