@@ -35,8 +35,8 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - with a catalog, gppufs lists and opens through it what it holds no index for, SharePoint and archives among them: done; the catalog's address is the `catalog` option, from fsspec's configuration (`FSSPEC_GPPU_CATALOG`), none by default; bytes come from the Lake at the entry's address
 - each index row carries its file's UUID (`uuid_create(0x10, 0x02)`, fs.files as Linked Data - FS has it), kept through a refresh, a change and a move: done; an index on a store this host does not own holds its ids in memory until its own host writes it; finding a file by its UUID: not started
 - gppufs on fsspec's `AsyncFileSystem`, its callers moved: done in gppu and RAN, the suite passes, the session cleaner's dry run finds the same sessions; the admin API's inventory readers: in progress
-- the catalog's Location binds this host's folder for a location reached through `handler.access`, not the canonical's: in progress
-- the Lake keeps its index at its root, never in its day folders: next
+- the catalog's Location binds this host's folder for a location reached through `handler.access`, not the canonical's: done
+- the Lake keeps its index at its root, never in its day folders: done, as the Lake on s1 already has it
 
 ## In progress: full paths
 - `_key` normalizes a full path; `_path` is identity; `root` and `location` go.
