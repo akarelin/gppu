@@ -13,12 +13,12 @@ import socket
 import sqlite3
 import time
 import tempfile
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from itertools import islice
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any, BinaryIO, Protocol, runtime_checkable
+from typing import Any, BinaryIO
 from urllib.parse import quote
 from threading import RLock
 from fsspec import filesystem, register_implementation
@@ -28,46 +28,9 @@ from fsspec.implementations.chained import ChainedFileSystem
 from fsspec.implementations.local import LocalFileSystem
 from fsspec.spec import AbstractFileSystem
 from fsspec.utils import stringify_path
+from fsspec.utils import tokenize
 from ..gppu import TimeSpan, full_path, sync, Warn
-from . import handlers, CACHE, UNSAFE, _address, _below, _display_order, _metadata_text, _modified, _probe_name, _scratch
-
-
-@runtime_checkable
-class GppuIndex(Protocol):
-  """Where the metadata of a location's entries is kept when it is kept somewhere other than beside it.
-
-  Alex, 2026-09-17 03:45: "handler in my view was a thing that gets metadata for any locations
-  (recursively) / If metadata is already in database - handler is not involved". So a filesystem given
-  an index asks it first and runs a handler only for what it does not hold, and hands back what the
-  handler read so the next lookup does not run it again.
-
-  An entry is named by its address — the uri gppufs puts on every row, and the permalink of a
-  configured location where there is one. An implementation may accept an entity's uid as well; gppufs
-  only ever asks with an address. Nothing here knows what the index is made of: the implementation
-  that keeps Alex's index in Postgres lives with the indexer, in CRAP, and gppu imports none of it.
-  """
-
-  def entry(self, address: str) -> tuple[dict, list[dict] | None] | None:
-    """One entry's metadata and the listing of what is in it, or None when the index holds neither.
-
-    The listing is None for a thing that is not a container, and for a container the index has not
-    been told the contents of. Both come back in the same shape gppufs stores: the metadata is the
-    row, and each child of the listing carries `path`, `type` and `ino`.
-    """
-
-  def put(self, entries: Mapping[str, tuple[dict | None, list[dict] | None]]) -> None:
-    """Keep what the handlers read, by address. A None stands for a part this call does not change."""
-
-  def moved(self, source: str, destination: str) -> None:
-    """The entry at `source`, and everything under it, is at `destination` now.
-
-    What the index holds of a thing moves with the thing. Alex's reason for a file manager built on
-    this filesystem is that moving a folder between two indexed places keeps the index: the rows are
-    carried over, never thrown away and read again, so what was said about a file survives the move.
-
-    Every address the index holds of what moved is rewritten, the entries' own and the addresses
-    inside them, because an entry that still names where it was is an entry that cannot be read.
-    """
+from . import handlers, CACHE, UNSAFE, _display_order, _metadata_text, _modified, _probe_name, _scratch
 
 
 # The most an index holds before the folder below it holding the most of it gets an index of its own (Alex's proposal of
@@ -149,8 +112,10 @@ class GppuFileSystem(ChainedFileSystem):
   index at or above an entry owns it; an entry with none above it is indexed
   beside the folder listed, a file beside its folder. Index rows use paths
   relative to their index's folder, so moving a folder with its index
-  preserves its listings. ``cache=False`` writes no index file into a folder:
-  its index is kept in the cache instead.
+  preserves its listings. ``cache`` names folders whose index is kept in the
+  cache instead of beside them, as a folder another program watches needs.
+  There is one gppufs for each filesystem it wraps; constructing it again
+  gives the same one, and its options are fsspec's configuration for ``gppu``.
 
   ``ls`` and ``info`` return the same metadata dictionaries from SQLite or
   live parsing. ``refresh=True`` requests live data. An absent cached row
@@ -169,15 +134,10 @@ class GppuFileSystem(ChainedFileSystem):
   a member through its archive, and a write to a member is refused. A write
   does not touch the index, so what was identified stands until the folder is
   read again with ``refresh=True``.
-
-  When ``locations`` is given, a location's own address is an address this
-  filesystem answers to, so ``info('sd://SD.agents/memory/MEMORY.md')`` reaches
-  the entry whose rows carry that address. The deepest configured location
-  wins.
   """
 
   protocol = 'gppu'
-  _strip_tokenize_options = ('fo',)   # the path a chained url names; it does not make another instance
+  cachable = False   # one gppufs for each filesystem it wraps, kept by __new__, whatever spelling asks for it
   _index_name = re.compile(r'^\..+\.gppufs\.sqlite(?:-(?:journal|wal|shm))?$')
   # The folders directly below an index's own, the one holding the most of it first: what a split moves (`_bound`).
   _largest = '''SELECT top FROM (SELECT substr(path, 1, instr(path, '/') - 1) AS top,
@@ -205,42 +165,36 @@ class GppuFileSystem(ChainedFileSystem):
       FROM gppufs_entries WHERE path<>'.'
         AND coalesce(metadata->>'$.gppu.record.type', '') NOT IN ({", ".join(f"'{s}'" for s in handlers.IGNORED)}))'''
 
+  def __new__(cls, target_protocol: str | None = None, target_options: Mapping[str, Any] | None = None,
+              fs: AbstractFileSystem | None = None, **kwargs: Any) -> 'GppuFileSystem':
+    """The one gppufs of the filesystem it wraps: `fsspec.filesystem('gppu')`, `gppu::D:/TextLake` and `GppuFileSystem()`
+    are one object. `fo`, the path a chained url names, is the caller's to list and makes no other one."""
+    key = (id(fs),) if fs is not None else (target_protocol or 'file', tokenize(target_options or {}))
+    with cls._instantiation_lock:
+      if key not in cls._cache:
+        cls._cache[key] = super().__new__(cls)
+      return cls._cache[key]
+
   def __init__(self, target_protocol: str | None = None, target_options: Mapping[str, Any] | None = None,
-               fs: AbstractFileSystem | None = None, locations: Mapping[str, Mapping[str, str]] | None = None,
-               index: GppuIndex | None = None, cache: bool = True, **kwargs: Any) -> None:
-    """`cache=False` writes no index file into a folder: a folder another program watches, such as a harness's sessions,
-    keeps its index in the cache instead. `fo`, the path a chained url names, is the caller's to list."""
+               fs: AbstractFileSystem | None = None, cache: Sequence[str] | None = None, **kwargs: Any) -> None:
+    """cache: folders whose index is kept in the cache, not beside them."""
+    if self._cached:   # the one gppufs, made already: asked for with other options, it says so
+      if cache is not None and [self._key(folder) for folder in cache] != self._cache:
+        raise ValueError(f'gppufs is made already, keeping {self._cache} in the cache, not {list(cache)}')
+      return
     super().__init__(**kwargs)
     self.fs = fs if fs is not None else filesystem(target_protocol or 'file', **(target_options or {}))
     self._lock = RLock()
-    self._index = index              # the index that answers first; the file beside the folder is a cache
     # Only the host a folder belongs to writes its index: an index file is written only on this host's own disk. Another
-    # host's share and every other store hold theirs in memory for this instance, read from the store and never written back.
-    self._cache = cache
-    self._cache_held: dict[str, bool] = {}   # with cache=False, whether the cache holds a folder's index, asked once
+    # host's share and every other store hold theirs in memory, read from the store and never written back.
+    self._cache = [self._key(folder) for folder in cache or ()]
+    self._cache_held: dict[str, bool] = {}   # whether the cache holds the index of a folder kept there, asked once
     self._memory: dict[str, sqlite3.Connection] = {}   # an index held in memory or in the cache, by its folder
     self._tabled: set[str] = set()   # the held indexes known to have their tables, asked of each once
     self._working: dict[str, list] = {}   # an index's path -> [its copy in the cache, the file it was copied from, changed]
     self._scratch: tempfile.TemporaryDirectory | None = None   # where the copies are, made at the first write
     self._copies = 0                 # how many copies were made there
     self._running = 0                # how many runs are open: their writes reach the folders when the last one ends
-    self._locations = dict(locations) if locations else {}   # folder -> the location that is there
-
-  def _on_host(self, key: str) -> str:
-    """Where an entry is on this host, as the location map names folders."""
-    return full_path(key).as_posix()
-
-  def _location_of(self, key: str) -> dict[str, str] | None:
-    """Which configured location an entry on this host is, or is inside: its location, canonical address, the entry's
-    address and its folder in it, the deepest location containing it winning; None when none does."""
-    here = self._on_host(key)
-    base = max((folder for folder in self._locations if here == folder or here.startswith(folder.rstrip('/') + '/')),
-               key=len, default=None)
-    if base is None:
-      return None
-    row, folder = self._locations[base], '' if here == base else here[len(base.rstrip('/')) + 1:]
-    return {'location': str(row['location']), 'canonical': str(row['canonical']),
-            'address': _address(str(row['canonical']), folder), 'folder': folder}
 
   def _database_path(self, folder: str) -> str:
     name = folder.rstrip('/').rsplit('/', 1)[-1].rstrip(':')
@@ -313,27 +267,12 @@ class GppuFileSystem(ChainedFileSystem):
     self.fs.mv(matches[0], expected)
     return expected
 
-  def _located(self, value: str) -> str:
-    """The folder a configured location's own address names, or the value unchanged.
-
-    `LocationHandler` puts `sd://SD.agents/memory/MEMORY.md` on every row it identifies, and that
-    address is what the index, the lake and an annotation carry. A filesystem that emits an address
-    and then refuses it cannot be asked about what it just said, so a permalink is read here as the
-    path it stands for. The deepest configured location wins, the way `located` picks one, and an
-    address belonging to a location outside this root still fails as being outside it.
-    """
-    for folder in sorted(self._locations, key=lambda item: len(str(self._locations[item]['canonical'])), reverse=True):
-      rest = _below(str(self._locations[folder]['canonical']), value)
-      if rest is not None:
-        return posixpath.join(folder, rest) if rest else folder
-    return value
-
   def _key(self, path: str | Path) -> str:
     """A path as the wrapped filesystem names it, in full: its protocol taken off, a folder without its trailing slash and a
     drive with it."""
     if path is None:
       raise ValueError('a path is required: gppufs is given full paths')
-    value = self.fs._strip_protocol(self._located(str(path).replace('\\', '/')))
+    value = self.fs._strip_protocol(str(path).replace('\\', '/'))
     if '..' in PurePosixPath(value).parts:
       raise ValueError(f'{path}: parent traversal is not a path')
     if re.fullmatch(r'[A-Za-z]:/?', value):
@@ -414,11 +353,16 @@ class GppuFileSystem(ChainedFileSystem):
     """Whether a folder holds an index: in memory, in the cache when this instance keeps its indexes there, else beside it."""
     if folder in self._memory:
       return True
-    if not self._cache and isinstance(self.fs, LocalFileSystem) and not _remote(folder):
+    if self._kept_in_cache(folder):
       if folder not in self._cache_held:
         self._cache_held[folder] = self._cache_file(folder).exists()
       return self._cache_held[folder]
     return self._existing_index(folder) is not None
+
+  def _kept_in_cache(self, folder: str) -> bool:
+    """Whether a folder's index is kept in the cache: a folder at or below one the cache option names, on this host's disk."""
+    return (isinstance(self.fs, LocalFileSystem) and any(self._within(folder, kept) for kept in self._cache)
+            and not _remote(folder))
 
   def _cache_file(self, folder: str) -> Path:
     """Where the cache keeps a folder's index."""
@@ -475,8 +419,8 @@ class GppuFileSystem(ChainedFileSystem):
     Lake, is read and never written.
     """
     path = self._database_path(self._path(owner))
-    if (self._cache and owner not in self._memory and isinstance(self.fs, LocalFileSystem) and not _remote(self._path(owner))
-        and os.path.isdir(self._path(owner)) and os.access(self._path(owner), os.W_OK)):
+    if (not self._kept_in_cache(owner) and owner not in self._memory and isinstance(self.fs, LocalFileSystem)
+        and not _remote(self._path(owner)) and os.path.isdir(self._path(owner)) and os.access(self._path(owner), os.W_OK)):
       working = self._working_copy(owner, path, write)
       if working is None:
         yield None
@@ -674,21 +618,12 @@ class GppuFileSystem(ChainedFileSystem):
       "SELECT 1 FROM sqlite_master WHERE type='table' AND name='gppufs_entries'").fetchone())
 
   def _stored(self, key: str) -> tuple[dict, list[dict] | None] | None:
-    """One entry read back from the location's index: its metadata and its listing, or None.
-
-    The index answers first when there is one, and what it holds is the answer — a handler runs only
-    for what it does not hold. The file beside the location is asked after it, and is a cache.
+    """One entry read back from its index: its metadata and its listing, or None.
 
     Not `_cached`: `AbstractFileSystem.__init__` returns early on a truthy `_cached`, so a method of
     that name leaves the instance without `_intrans`, `_transaction` and `dircache`, and every read
     through the fsspec surface raises AttributeError.
     """
-    if self._index is not None:
-      held = self._index.entry(self._address(key))
-      if held is not None and held[0] is not None:
-        children = None if held[1] is None else [
-          {**child, 'path': self._key(child['path'])} for child in held[1]]
-        return self._addressed(key, dict(held[0])), children
     owner = self._owner(key)
     if owner is None:
       return None
@@ -705,9 +640,7 @@ class GppuFileSystem(ChainedFileSystem):
     return self._addressed(key, json.loads(row[0])), children
 
   def _stored_many(self, keys: list[str]) -> dict[str, tuple[dict, list[dict] | None]]:
-    """`_stored` of a folder's entries, each index beside the location asked once for all of them it holds."""
-    if self._index is not None:
-      return {key: found for key in keys if (found := self._stored(key)) is not None}
+    """`_stored` of a folder's entries, each index asked once for all of them it holds."""
     owners: dict[str, dict[str, str]] = {}
     for key in keys:
       if (owner := self._owner(key)) is not None:
@@ -725,34 +658,8 @@ class GppuFileSystem(ChainedFileSystem):
             found[relative[path]] = self._read_row(relative[path], owner, row)
     return found
 
-  def _address(self, key: str) -> str:
-    """How an index names this entry: the permalink a configured location gives it, else its uri.
-
-    An index is shared, and `sd://SD.agents/memory/MEMORY.md` is the one name for that file whichever
-    host holds it and whichever checkout asks. A place no configured location covers has only its own
-    uri to be named by, and an index keyed on that is an index for this host.
-    """
-    if self._locations:
-      located = self._location_of(key)
-      if located is not None:
-        return located['address']
-    return self._uri(key)
-
-  def _for_index(self, key: str, metadata: dict) -> dict:
-    """One row as an index is given it: addressed, and every path inside it an address too.
-
-    An index is shared — the same entry is looked up from another host and another checkout — so
-    nothing owner-relative and nothing this process only can resolve may go into it.
-    """
-    value = json.loads(json.dumps(metadata, default=_metadata_text))
-    return self._addressed(key, value)
-
   def _addressed(self, key: str, metadata: dict) -> dict:
-    """One stored row with the addresses this filesystem gives it: its own, its name and its parent.
-
-    How a thing is addressed is gppufs's and not the index's, so a row read from the file beside the
-    location and a row read from an index given to this filesystem are finished the same way.
-    """
+    """One stored row with its path, its name and its parent's path."""
     metadata['name'] = key
     metadata['gppu']['path'] = key
     metadata['gppu']['name'] = PurePosixPath(key).name or key
@@ -787,7 +694,6 @@ class GppuFileSystem(ChainedFileSystem):
         child = key
 
     grouped: dict[str, list[tuple]] = {}
-    keep: dict[str, tuple[dict | None, list[dict] | None]] = {}
     anchor = self._anchor(scope, scope not in rows or rows[scope][0]['type'] == 'directory')
     for key, (metadata, children) in rows.items():
       owner = self._owner(key, anchor)
@@ -796,20 +702,12 @@ class GppuFileSystem(ChainedFileSystem):
       listing = None if children is None else [
         {'path': child, 'type': (item := metadata_for(child))['type'], 'ino': item.get('ino')}
         for child in children]
-      # What the handlers read goes to the index as well, addressed as this filesystem addresses it.
-      # A probe arrives here and not through `_store`, so an index told only by `_store` would answer
-      # with the identified row for ever and the probe would run again on every lookup.
-      if self._index is not None:
-        keep[self._address(key)] = (self._for_index(key, metadata),
-          None if listing is None else [{**child, 'path': self._address(child['path'])} for child in listing])
       value = json.loads(json.dumps(metadata, default=_metadata_text))
       value['name'] = self._relative(key, owner)
       value['gppu']['path'] = value['name']
       grouped[owner].append((self._relative(key, owner), json.dumps(value, default=_metadata_text),
         None if listing is None else json.dumps([
           {**child, 'path': self._relative(child['path'], owner)} for child in listing])))
-    if keep:
-      self._index.put(keep)
     # Publish descendant databases before the listing which references them.
     with self.run():
       for owner in sorted(grouped, key=lambda item: len(PurePosixPath(item).parts), reverse=True):
@@ -1107,14 +1005,9 @@ class GppuFileSystem(ChainedFileSystem):
     names = [record.type]
     if path.name.casefold().endswith(handlers.ARCHIVES):
       names.append('archive')
-    located = self._location_of(key) if isinstance(self.fs, LocalFileSystem) else None
-    if located is not None:
-      names.append('location')
     gppu = {'path': str(path), 'type': 'folder' if folder else 'file',
             'size': 0 if folder else int(record.meta.get('size', 0)), 'modified_at': _modified(item),
             'handlers': names, 'record': vars(record)}
-    if located is not None:
-      gppu['location'] = located
     if unread is not None:
       gppu['unread'] = unread
     gppu = json.loads(json.dumps(gppu, default=_metadata_text))
@@ -1127,21 +1020,7 @@ class GppuFileSystem(ChainedFileSystem):
     return {**item, 'name': key, 'gppu': gppu}
 
   def _store(self, key: str, rows: dict[str, tuple[dict, list | None]], listing: list[dict] | None) -> None:
-    """Add identified rows the index does not hold yet and record the folder's live child listing.
-
-    What a handler read goes to the index first, so the next lookup is answered without running it,
-    and then to the file beside the location, which is the cache.
-    """
-    if self._index is not None:
-      keep: dict[str, tuple[dict | None, list[dict] | None]] = {
-        self._address(child): (self._for_index(child, metadata),
-                               None if members is None else
-                               [{**item, 'path': self._address(item['path'])} for item in members])
-        for child, (metadata, members) in rows.items()}
-      if listing is not None:
-        keep[self._address(key)] = (keep.get(self._address(key), (None, None))[0],
-                                    [{**item, 'path': self._address(item['path'])} for item in listing])
-      self._index.put(keep)
+    """Add identified rows the index does not hold yet and record the folder's live child listing."""
     grouped: dict[str, list[tuple]] = {}
     anchor = self._anchor(key, rows[key][0]['type'] == 'directory' if key in rows else listing is not None)
     for child_key, (metadata, members) in rows.items():
@@ -1179,21 +1058,9 @@ class GppuFileSystem(ChainedFileSystem):
     record = handlers.probe(Path(path)) if isinstance(self.fs, LocalFileSystem) else self._listed(key, item)
     row = self._row(key, item, record, Path(path))
     if self._unindexed(record, item['type'] == 'directory'):
-      return self._for_index(key, row), None
+      return self._addressed(key, json.loads(json.dumps(row, default=_metadata_text))), None
     self._store(key, {key: (row, None)}, None)
     return self._stored(key)
-
-  def _unlocated(self, key: str) -> bool:
-    """Whether the index holds this entry from before a configured location covered it.
-
-    The location map is the caller's, not the folder's, so a row identified without it is
-    out of date the moment the configuration names the place. Such a row is identified
-    again; every other stored row is kept.
-    """
-    if not self._locations or not self._location_of(key):
-      return False
-    stored = self._stored(key)
-    return stored is not None and 'location' not in stored[0]['gppu']
 
   def _misread(self, key: str, entry: dict, stored: tuple[dict, list[dict] | None] | None) -> bool:
     """Whether the index holds a folder on this host as read by another handler than the one probe gives it now, as a
@@ -1226,8 +1093,8 @@ class GppuFileSystem(ChainedFileSystem):
       if stored is not None and stored[0]['type'] != 'directory' and 'ignored' in stored[0]['gppu']['handlers']:
         self._forget(child_key)   # an ignored file an earlier listing indexed
         continue
-      if self._unlocated(child_key) or (child_key in known and self._misread(child_key, entry, stored)):
-        self._forget(child_key)   # the stored row predates the location or the folder's handler; an insert alone would keep it
+      if child_key in known and self._misread(child_key, entry, stored):
+        self._forget(child_key)   # the stored row predates the folder's handler; an insert alone would keep it
       elif child_key in known:
         listing.append(known[child_key])
         continue
@@ -1316,8 +1183,6 @@ class GppuFileSystem(ChainedFileSystem):
       held = list(database.execute(self._aggregate).fetchone())
       nested = [self._absolute(path, owner) for (path,) in database.execute(self._nested).fetchall()]
     for key in nested:
-      if self._on_host(key) in self._locations:
-        continue
       below = self._aggregated(key)
       below[0] += 1   # the folder itself, whose row is its own index's root
       for i, combined in ((0, sum), (1, sum), (2, sum), (3, min), (4, max), (5, max), (6, sum), (7, sum)):
@@ -1329,8 +1194,6 @@ class GppuFileSystem(ChainedFileSystem):
     """``info`` on the calling thread."""
     with self._lock:
       key = self._key(path)
-      if not refresh and self._unlocated(key):
-        self._forget(key)   # the stored row predates the location, as _reconcile treats a child
       cached = None if refresh else self._stored(key)
       if refresh and isinstance(self.fs, LocalFileSystem) and (held := self._stored(key)) is not None:
         row = held[0]
@@ -1434,8 +1297,8 @@ class GppuFileSystem(ChainedFileSystem):
 
   def _walkable(self, key: str) -> bool:
     """Whether a recursive listing of key is one walk of this host's disk: a folder outside any archive, its index the file
-    gppufs keeps and no other, and no configured location to place its entries in."""
-    return (self._index is None and not self._locations and isinstance(self.fs, LocalFileSystem) and not _remote(key)
+    gppufs keeps and no other."""
+    return (isinstance(self.fs, LocalFileSystem) and not _remote(key)
             and self._archive_parent(key) is None and os.path.isdir(self._path(key)))
 
   async def ls_iter(self, path: str | Path) -> AsyncIterator[dict]:
@@ -1476,7 +1339,7 @@ class GppuFileSystem(ChainedFileSystem):
       with os.scandir(self._path(folder)) as entries:
         for entry in entries:
           if self._index_name.fullmatch(entry.name):
-            if folder != owner and self._cache:
+            if folder != owner and not self._kept_in_cache(owner):
               return None   # a folder holding an index of its own; one opened without a cache keeps one index
             continue
           child = posixpath.join(folder, entry.name)
@@ -1567,39 +1430,6 @@ class GppuFileSystem(ChainedFileSystem):
       self.fs.mv(self._path(source), self._path(destination), recursive=recursive,
                  maxdepth=maxdepth, **kwargs)
       self._move_rows(source, destination)
-      if self._index is not None:
-        self._index.moved(self._address_of(source), self._address(destination))
-
-  def move_into(self, other: 'GppuFileSystem', path: str | Path, destination: str | Path) -> str:
-    """Move an entry out of this location and into another one, and move what is held of it with it.
-
-    This is the move Alex asks a file manager for: a folder carried between two indexed places, where
-    what the index says about it goes with it rather than being read again. The entity keeps its uid,
-    so every annotation on it survives the move; only where it is changes.
-
-    Two folders on one disk are renamed, which is one operation whatever the folder holds. Two places
-    on different filesystems are copied and then removed, because there is no other way.
-
-    The file beside each location is a cache and is treated as one: this location forgets what moved,
-    and the other identifies what arrived when it next lists. The index is what carries the reading.
-    """
-    source, arriving = self._key(path), other._key(destination)
-    was, now = self._address(source), other._address(arriving)
-    here, there = self._path(source), other._path(arriving)
-    with self._lock:
-      self._let_go(source)
-    other.fs.mkdirs(other._parent_key(arriving) or arriving, exist_ok=True)
-    if type(self.fs) is type(other.fs) and isinstance(self.fs, LocalFileSystem):
-      self.fs.mv(here, there, recursive=True)
-    else:
-      self.fs.get(here, there, recursive=True) if self.fs.isdir(here) else other.fs.pipe_file(
-        there, self.fs.cat_file(here))
-      self.fs.rm(here, recursive=True)
-    with self._lock:
-      self._forget_below(source)
-    if self._index is not None:
-      self._index.moved(was, now)
-    return now
 
   def _forget_below(self, key: str) -> None:
     """Forget the stored rows at and under one key, and the listing of the folder it was in."""
@@ -1648,16 +1478,6 @@ class GppuFileSystem(ChainedFileSystem):
       self._tabled.discard(key)
       self._forget_indexes(key)
     return kept
-
-  def _address_of(self, key: str) -> str:
-    """The address an entry had, worked out from the location map rather than from the vanished path."""
-    if self._locations:
-      here = self._on_host(key)
-      for folder in sorted(self._locations, key=lambda item: len(item), reverse=True):
-        base = folder.rstrip('/')
-        if here == base or here.startswith(base + '/'):
-          return _address(str(self._locations[folder]['canonical']), '' if here == base else here[len(base) + 1:])
-    return self._uri(key)
 
   def _move_rows(self, source: str, destination: str) -> None:
     """Rewrite every stored row at and under `source` to sit under `destination`."""

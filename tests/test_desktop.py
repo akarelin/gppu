@@ -57,7 +57,7 @@ def test_unrelated_copied_index_is_preserved(tmp_path):
     original.mkdir()
     copied.mkdir()
     (original / 'note.txt').write_text('original')
-    GppuFileSystem(skip_instance_cache=True).ls_sync(str(original))
+    GppuFileSystem().ls_sync(str(original))
     old_index = copied / '.original.gppufs.sqlite'
     shutil.copyfile(original / '.original.gppufs.sqlite', old_index)
     before = old_index.read_bytes()
@@ -80,7 +80,7 @@ def test_index_view_reads_deep_entries_without_listing_source(tmp_path, monkeypa
     (folder / 'note.txt').write_text('deep indexed content')
     (root / 'other').mkdir()
     (root / 'other' / 'note.txt').write_text('another note')
-    GppuFileSystem(skip_instance_cache=True).ls_sync(str(root), recurse=True)
+    GppuFileSystem().ls_sync(str(root), recurse=True)
     fs = DesktopFileSystem({'Data': f'gppu::{root}'})
     views = fs.ls('/Indexed', detail=False)
     assert '/Indexed/Data › source' in views
@@ -99,7 +99,7 @@ def test_synced_index_is_read_without_renaming_or_touching_content(tmp_path, mon
     folder = root / 'a' / 'b' / 'c'
     folder.mkdir(parents=True)
     (folder / 'note.txt').write_text('the source')
-    GppuFileSystem(skip_instance_cache=True).ls_sync(str(root), recurse=True)
+    GppuFileSystem().ls_sync(str(root), recurse=True)
     synced = tmp_path / 'synced'
     synced.mkdir()
     index = synced / '.original.gppufs.sqlite'
@@ -121,7 +121,7 @@ def test_index_view_names_archive_members_for_windows_and_leaves_out_ignored(tmp
     (root / 'note.txt').write_text('a note')
     with zipfile.ZipFile(root / 'bundle.zip', 'w') as archive:
         archive.writestr('inner/member.txt', 'from the archive')
-    GppuFileSystem(skip_instance_cache=True).ls_sync(str(root))
+    GppuFileSystem().ls_sync(str(root))
     index = root / '.original.gppufs.sqlite'
     with sqlite3.connect(index) as db:   # rows an earlier gppufs wrote: archive members chained as fsspec chains them, an ignored file
         metadata = db.execute("SELECT metadata FROM gppufs_entries WHERE path='note.txt'").fetchone()[0]
@@ -141,7 +141,7 @@ def test_a_time_an_index_holds_as_text_reaches_windows_in_seconds(tmp_path):
     root = tmp_path / 'original'
     root.mkdir()
     (root / 'note.txt').write_text('a note')
-    GppuFileSystem(skip_instance_cache=True).ls_sync(str(root))
+    GppuFileSystem().ls_sync(str(root))
     with sqlite3.connect(root / '.original.gppufs.sqlite') as db:   # an archive member's row: its time as text
         metadata = db.execute("SELECT metadata FROM gppufs_entries WHERE path='note.txt'").fetchone()[0]
         member = re.sub(r'"mtime": [0-9.]+', '"mtime": "2026-08-05 16:08:05-07:00"', metadata)
@@ -156,7 +156,7 @@ def test_a_name_longer_than_windows_holds_keeps_the_end_nearest_the_file(tmp_pat
     root = tmp_path / 'original'
     root.mkdir()
     (root / 'note.txt').write_text('a note')
-    GppuFileSystem(skip_instance_cache=True).ls_sync(str(root))
+    GppuFileSystem().ls_sync(str(root))
     index = root / '.original.gppufs.sqlite'
     with sqlite3.connect(index) as db:   # two notes told apart only by folders whose names together pass 255 characters
         metadata = db.execute("SELECT metadata FROM gppufs_entries WHERE path='note.txt'").fetchone()[0]
@@ -177,7 +177,7 @@ def test_transported_snapshot_never_reads_unrelated_sibling_files(tmp_path):
     root = tmp_path / 'original'
     root.mkdir()
     (root / 'note.txt').write_text('original')
-    GppuFileSystem(skip_instance_cache=True).ls_sync(str(root))
+    GppuFileSystem().ls_sync(str(root))
     destination = tmp_path / 'destination'
     destination.mkdir()
     (destination / 'note.txt').write_text('unrelated')
@@ -203,13 +203,13 @@ def test_a_session_is_shown_by_its_handlers_name_and_dated_by_its_span(tmp_path)
                  'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'Here they are'}]}})
     (folder / 'rollout.jsonl').write_text('\n'.join(json.dumps(line) for line in lines), encoding='utf-8')
     (folder / 'plain.txt').write_text('ordinary file')
-    GppuFileSystem(skip_instance_cache=True).ls(str(tmp_path / 'sessions'), refresh=True)
+    GppuFileSystem().ls(str(tmp_path / 'sessions'), refresh=True)
     fs = DesktopFileSystem({'home': f'gppu::{tmp_path}'})
     names = fs.ls('/home/sessions', detail=False)
     shown = next(name for name in names if name != '/home/sessions/plain.txt')
     assert re.fullmatch(r'/home/sessions/260901-\d{4} \d+~\d+m - Show the handlers\.codex-demo\.jsonl', shown)
     row = fs.info(shown)
-    start, end = GppuFileSystem(skip_instance_cache=True).info(str(tmp_path / 'sessions' / 'rollout.jsonl'))['gppu']['record']['span']
+    start, end = GppuFileSystem().info(str(tmp_path / 'sessions' / 'rollout.jsonl'))['gppu']['record']['span']
     assert (row['ctime'], row['mtime']) == (datetime.fromisoformat(start).timestamp(), datetime.fromisoformat(end).timestamp())
     assert row['ctime'] < row['mtime']
     assert fs.cat_file(shown) == (folder / 'rollout.jsonl').read_bytes()
@@ -281,5 +281,5 @@ def test_a_folder_stored_before_its_handler_existed_is_identified_again(tmp_path
     fs = DesktopFileSystem({'D': f'gppu::{tmp_path}'})
     assert fs.ls('/D/Work', detail=False) == ['/D/Work/10']
     monkeypatch.setattr(handlers, 'probe', probe)
-    GppuFileSystem(skip_instance_cache=True).ls_sync(str(tmp_path))   # listed live, as a FileIndexer run lists it
+    GppuFileSystem().ls_sync(str(tmp_path))   # listed live, as a FileIndexer run lists it
     assert DesktopFileSystem({'D': f'gppu::{tmp_path}'}).ls('/D/Work', detail=False) == ['/D/Work/task']

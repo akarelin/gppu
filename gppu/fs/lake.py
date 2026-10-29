@@ -25,7 +25,7 @@ from urllib.parse import unquote, urlsplit
 from fsspec import AbstractFileSystem
 
 from . import handlers
-from . import CACHE, Container, DataObject, Location, _below
+from . import CACHE, Container, DataObject, Location, _address, _below
 from .catalog import GppuCatalog
 from .gppufs import GppuFileSystem
 from ..gppu import TemplateSet, TimeSpan, y2uri
@@ -40,19 +40,17 @@ class Lake:
         location, path = catalog.location_of(store)
         self.store = Container(location.provider, location.provider.join(location.uri, path))
         self.templates = TemplateSet(named={'lake': dict(templates)})
-        self.root = location.provider.local(self.store.uri).as_posix().rstrip('/')   # the Lake on this host, as gppufs names
-        # a folder: a share's root, \\s1\Lake\, without the slash its Path keeps
-        self.files = GppuFileSystem(locations={self.root: {'location': location.uid, 'canonical': str(self.store.uri)}})
+        self.files = GppuFileSystem()
+        self.root = self.files._key(location.provider.local(self.store.uri).as_posix())   # the Lake on this host, as gppufs names it
 
     def _here(self, uri: y2uri | str) -> str | None:
         """The Lake folder or file a uri names, as gppufs takes it; none for a uri outside the Lake."""
         below = _below(str(self.store.uri), str(uri))
         return None if below is None else f'{self.root}/{unquote(below)}'.rstrip('/')
 
-    @staticmethod
-    def _row(row: dict[str, Any]) -> dict[str, Any]:
+    def _row(self, row: dict[str, Any]) -> dict[str, Any]:
         """A gppufs row as the Lake answers it: named by its uri in the Lake."""
-        return row | {'name': row['gppu']['location']['address']}
+        return row | {'name': _address(str(self.store.uri), row['name'][len(self.root):].strip('/'))}
 
     def _at(self, uri: y2uri | str) -> tuple[Container, str]:
         location, path = self.catalog.location_of(uri)

@@ -49,9 +49,9 @@ def test_live_and_sqlite_return_all_metadata(tmp_path, monkeypatch):
   folder.mkdir()
   (folder / 'note.md').write_text('---\ntitle: Handlers\nstats: user metadata\ncreated: 2026-09-01\n---\nText', encoding='utf-8')
   session(folder / 'session.jsonl')
-  fs = GppuFileSystem(tmp_path)
-  live = fs.ls(recurse=True, refresh=True)
-  root = fs.info()
+  fs = GppuFileSystem()
+  live = fs.ls(tmp_path, recurse=True, refresh=True)
+  root = fs.info(tmp_path)
   assert root['gppu']['files'] == 2
   assert root['gppu']['folders'] == 1
   note = next(row for row in live if row['name'].endswith('/note.md'))
@@ -66,11 +66,11 @@ def test_live_and_sqlite_return_all_metadata(tmp_path, monkeypatch):
     assert json.loads(stored)['gppu']['record']['uid'] == 'codex-demo'
   assert not index(folder).exists()
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
-  cached = GppuFileSystem(tmp_path)
-  assert cached.ls(recurse=True) == live
-  assert cached.info() == root
+  cached = GppuFileSystem()
+  assert cached.ls(tmp_path, recurse=True) == live
+  assert cached.info(tmp_path) == root
   assert cached.info(note['name']) == note
-  assert cached.ls(detail=False) == [row['name'] for row in cached.ls()]
+  assert cached.ls(tmp_path, detail=False) == [row['name'] for row in cached.ls(tmp_path)]
 
 
 def test_stats_are_aggregated_in_the_index(tmp_path, monkeypatch):
@@ -82,16 +82,16 @@ def test_stats_are_aggregated_in_the_index(tmp_path, monkeypatch):
   session(folder / 'session.jsonl')
   (tmp_path / 'added.txt').write_text('added')
   (tmp_path / '.DS_Store').write_bytes(b'ignored')
-  fs = GppuFileSystem(tmp_path)
-  fs.ls(recurse=True)
+  fs = GppuFileSystem()
+  fs.ls(tmp_path, recurse=True)
   monkeypatch.setattr(GppuFileSystem, 'ls_sync', no_live)
-  stats = fs.stats()
+  stats = fs.stats(tmp_path)
   assert (stats['folders'], stats['files'], stats['notes'], stats['sessions']) == (1, 3, 1, 1)
   assert stats['bytes'] == sum(path.stat().st_size for path in (folder / 'note.md', folder / 'session.jsonl', tmp_path / 'added.txt'))
   assert stats['first'] <= stats['last'] and stats['seen'] is None
   empty = tmp_path.parent / f'{tmp_path.name}-empty'
   empty.mkdir()
-  assert GppuFileSystem(empty).stats() == dict(folders=0, files=0, bytes=0, notes=0, sessions=0, first=None, last=None, seen=None)
+  assert GppuFileSystem().stats(empty) == dict(folders=0, files=0, bytes=0, notes=0, sessions=0, first=None, last=None, seen=None)
   assert not index(empty).exists()
 
 
@@ -104,24 +104,24 @@ def test_an_index_past_the_limit_splits_off_the_folder_holding_most_of_it(tmp_pa
     for i in range(count):
       (tmp_path / name / 'deep' / f'note{i}.md').write_text(f'Text {i}', encoding='utf-8')
   monkeypatch.setattr(gppu.fs.gppufs, 'INDEX_LIMIT', 32 * 1024)   # above what an index holding small's notes takes after big moves out (6 pages), below big/deep's (13)
-  fs = GppuFileSystem(tmp_path)
-  listed = fs.ls(recurse=True)
+  fs = GppuFileSystem()
+  listed = fs.ls(tmp_path, recurse=True)
   assert index(tmp_path / 'big').is_file() and index(tmp_path / 'big' / 'deep').is_file()
   assert not index(tmp_path / 'small').exists() and not index(tmp_path / 'small' / 'deep').exists()
   assert index(tmp_path).stat().st_size <= gppu.fs.gppufs.INDEX_LIMIT
   assert index(tmp_path / 'big').stat().st_size <= gppu.fs.gppufs.INDEX_LIMIT
-  stats = fs.stats()
+  stats = fs.stats(tmp_path)
   assert (stats['folders'], stats['files'], stats['notes']) == (4, 42, 42)
   monkeypatch.setattr(GppuFileSystem, '_live', no_live)
-  assert GppuFileSystem(tmp_path).ls(recurse=True) == listed
-  assert GppuFileSystem(tmp_path).stats() == stats
+  assert GppuFileSystem().ls(tmp_path, recurse=True) == listed
+  assert GppuFileSystem().stats(tmp_path) == stats
   monkeypatch.undo()
   with closing(sqlite3.connect(index(tmp_path))) as database, database:   # rows of big left in the root's index, as an index made before rule one has
     assert database.execute("SELECT count(*) FROM gppufs_entries WHERE path LIKE 'big%'").fetchone()[0] == 0
     database.execute('INSERT INTO gppufs_entries VALUES (?, ?, ?)', ('big/stale.md', json.dumps(listed[0]), None))
   (tmp_path / 'small' / 'added.md').write_text('More', encoding='utf-8')
   monkeypatch.setattr(gppu.fs.gppufs, 'INDEX_LIMIT', 1024)
-  GppuFileSystem(tmp_path).ls('small')
+  GppuFileSystem().ls(tmp_path / 'small')
   with closing(sqlite3.connect(index(tmp_path))) as database:   # big owns its rows in its own index: the copy is dropped, not moved
     assert database.execute("SELECT count(*) FROM gppufs_entries WHERE path LIKE 'big%'").fetchone()[0] == 0
   with closing(sqlite3.connect(index(tmp_path / 'big'))) as database:
@@ -133,18 +133,18 @@ def test_a_run_puts_its_indexes_into_their_folders_when_it_ends(tmp_path):
   folder is not touched, and the run's ending, however it ends, puts it there whole."""
   (tmp_path / 'notes').mkdir()
   (tmp_path / 'notes' / 'note.md').write_text('Text', encoding='utf-8')
-  fs = GppuFileSystem(tmp_path)
+  fs = GppuFileSystem()
   with fs.run():
-    fs.ls(recurse=True)
+    fs.ls(tmp_path, recurse=True)
     assert not index(tmp_path).exists()
-    assert [row['gppu']['name'] for row in fs.ls_sync(None, recurse=True, live=False)] == ['notes', 'note.md']
+    assert [row['gppu']['name'] for row in fs.ls_sync(tmp_path, recurse=True, live=False)] == ['notes', 'note.md']
   before = index(tmp_path).read_bytes()
   (tmp_path / 'notes' / 'added.md').write_text('More', encoding='utf-8')
   with pytest.raises(KeyboardInterrupt), fs.run():
-    fs.ls('notes', refresh=True)
+    fs.ls(tmp_path / 'notes', refresh=True)
     assert index(tmp_path).read_bytes() == before
     raise KeyboardInterrupt
-  assert [row['gppu']['name'] for row in GppuFileSystem(tmp_path).ls_sync('notes', live=False)] == ['added.md', 'note.md']
+  assert [row['gppu']['name'] for row in GppuFileSystem().ls_sync(tmp_path / 'notes', live=False)] == ['added.md', 'note.md']
 
 
 def test_ls_identifies_without_probing_and_refresh_probes(tmp_path, monkeypatch):

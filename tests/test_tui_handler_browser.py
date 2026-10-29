@@ -49,7 +49,7 @@ def test_tui_tree_expands_folders_and_archives_shows_metadata_and_refreshes(tmp_
     with zipfile.ZipFile(tmp_path / 'bundle.zip', 'w') as archive:
       archive.writestr('inside.txt', 'inside')
     (tmp_path / '.git').mkdir()
-    fs = GppuFileSystem(skip_instance_cache=True)
+    fs = GppuFileSystem()
     app = HandlerBrowser(fs, tmp_path.as_posix())
     async with app.run_test(size=(130, 40)) as pilot:
       await settled(app, pilot)
@@ -154,7 +154,7 @@ def test_tui_shows_the_catalog_as_a_tree_of_locations(tmp_path):
 def test_tui_stays_responsive_while_a_listing_is_awaited(tmp_path):
   async def exercise():
     (tmp_path / 'note.txt').write_text('content')
-    delegate = GppuFileSystem(skip_instance_cache=True)
+    delegate = GppuFileSystem()
     entered, release = asyncio.Event(), asyncio.Event()
     class Filesystem:
       async def ls(self, *args, **kwargs):
