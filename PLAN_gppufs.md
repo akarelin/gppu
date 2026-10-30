@@ -59,7 +59,7 @@ What matters is gppufs working, and its code merged so the new Linked Data, gppu
 Independent, not scoped:
 - `rar:` registered with fsspec
 - `lake:` and `m365:` registered with fsspec
-- the schemes the convention discards: `pg`, `catalog`, `gppu-catalog`, `gppu-index`, `gppu-desktop`
+- addresses in the schemes the convention discards still in use: the Lake's `pg://`, gppufs's `catalog://`; `gppu-catalog`, `gppu-index` and `gppu-desktop` are only fsspec's names for those classes, no address uses them
 - a `uuid:` resolved to its record
 - a record's `name` and `display_name` as 0.2 has them
 - Record not a table of its own (`ld.records`)
