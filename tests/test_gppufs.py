@@ -154,6 +154,7 @@ def test_a_run_puts_its_indexes_into_their_folders_when_it_ends(tmp_path):
     assert index(tmp_path).read_bytes() == before
     raise KeyboardInterrupt
   assert [row['gppu']['name'] for row in GppuFileSystem().ls(tmp_path / 'notes', live=False)] == ['added.md', 'note.md']
+  assert [Path(path) for path in fs.written(tmp_path)] == [index(tmp_path)] and fs.written(tmp_path / 'notes') == []
 
 
 def test_ls_identifies_without_probing_and_refresh_probes(tmp_path, monkeypatch):

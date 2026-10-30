@@ -595,6 +595,12 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
     for path in [path for path in self._working if self._within(os.path.dirname(path), key)]:
       del self._working[path]
 
+  def written(self, path: str | Path | None = None) -> list[str]:
+    """The index files this gppufs wrote at and below path, or every one, where they are in their folders."""
+    key = None if path is None else self._key(path)
+    with self._lock:
+      return [index for index in self._working if key is None or self._within(os.path.dirname(index), key)]
+
   @contextmanager
   def run(self):
     """Writes that reach their folders together: every index a run writes is built in the cache and put into its folder
