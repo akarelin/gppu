@@ -66,6 +66,13 @@ Independent, not scoped:
 - the initial types of 0.2 in ld.sql
 - the Lake's sections: Activity by source, `text`, `inbox`
 
+## No ld.records and no /records
+- gppu.ld: each table carries a record's columns itself and is served at its own path (`/types`, `/nodes`, `/links`, `/events`); children and links are a search of their table: done, the gppu suite passes
+- RAN `Systems/ld`'s scripts and checks on each table's path: in progress
+- RAN `Systems/ld/web` and `ui` on each table's path: in progress
+- CRAP admin_ui's Linked Data pages on each table's path: in progress
+- `ld.types` and `ld.links` are still parents that fs's and sessions' types and links inherit, the same pattern
+
 ## Found, not this task
 - `examples/handler_ls.py` and the handler browser's `main` stop: `D:\TextLake\.catalog`, the catalog `examples/handlers.yaml` names, has no folder for this host, which the host-folder catalog has required since 2026-09-08, the day the folder was last written.
 - The admin API's image installs gppu from the `gppu/latest` tag; the Linked Data and Lake images install it from master.
@@ -73,7 +80,7 @@ Independent, not scoped:
 - The admin's Linked Data pages count records with one request per type, about 60 on a store made from gppu.ld's SQL.
 - The Lake API has no batch route: preservator makes two calls per file on every run, files already preserved included.
 - FileIndexer could write files to Linked Data with `PUT /fs/files/{gppu.id}`; it writes none today.
-- gppu.ld has what `Linked Data.md` does not define, from the generated notes: the `ld.records` parent table, the columns `name`, `data`, `meta`, `created` and `updated`, and the API's routes.
+- gppu.ld has what `Linked Data.md` does not define, from the generated notes: the columns `name`, `data`, `meta`, `created` and `updated`, and the API's routes.
 - A record's status is not checked against its type's statuses.
 - The Systems collector's runs were activities of subtype `collection`, which is the core's node type, so `POST /records` cannot tell their table; they need a slug of their own before the production migration makes them.
 - No code reads a file type's `data.class`; gppufs picks a file's handler from gppu's own list, and gppufs works without the database.
