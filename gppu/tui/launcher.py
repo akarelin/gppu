@@ -1394,7 +1394,9 @@ def launcher_main(
         result = tui.run()
         if not result:
             break
-        launch_app(app_dir, result['app'], result.get('args') or None)
+        # a failed app's output stays on screen until Enter: the menu drawn at once over it would hide its error
+        if code := launch_app(app_dir, result['app'], result.get('args') or None):
+            input(f"\n{result['app'].get('name', 'The app')} stopped with exit code {code}. Enter returns to the menu. ")
 
 
 def _launcher_cli(apps: dict[str, dict], app_dir: Path) -> None:
