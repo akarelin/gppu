@@ -37,6 +37,7 @@ What Alex instructed for gppufs, its catalog and their users, as plain statement
 - Writes to Linked Data go through its API, never directly into the database.
 - Objects are retrieved and saved by uri; the Lake decides where an object goes.
 - Every local index is collected on the server; sending it is FileIndexer's.
+- A UI that lists folders asks gppufs; where gppufs keeps what it reads, its indexes or Postgres, is no concern of the UI.
 - The Lake is storage for all file-like objects: the main lake `\\s1\Lake`, the text lake `D:\TextLake`, which is part of it, and lake-in-place at various locations.
 
 ## Users
