@@ -83,6 +83,7 @@ Every caller of production's API from before the standard is moved onto gppu.ld 
 - every other caller (session hook, Session Manager, linked-data-tasks, the dashboard mod, MCP United's `pm_*`, static sites' lectures, Kuma's monitors, admin_ui's `shared`), and the list of what switches with production: in progress
 
 ## Found, not this task
+- `ld.uuid_create` keeps two random bytes after the six of time, as `Linked Data.md` # UUID lays an id out, so two rows made in one millisecond collide about once in 65,536 pairs: one build of a scratch store from ld.sql stopped on a duplicate fs.types id (2026-10-29).
 - `examples/handler_ls.py` and the handler browser's `main` stop: `D:\TextLake\.catalog`, the catalog `examples/handlers.yaml` names, has no folder for this host, which the host-folder catalog has required since 2026-09-08, the day the folder was last written.
 - The admin API's image installs gppu from the `gppu/latest` tag; the Linked Data and Lake images install it from master.
 - WSL's mirrored networking gives its VM no network device on this host; WSL runs in NAT mode, reaches Windows and is reached at localhost, and Windows does not forward its traffic further.
