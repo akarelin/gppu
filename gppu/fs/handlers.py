@@ -1403,8 +1403,11 @@ class SessionHandler(FileHandler):
 
     @staticmethod
     def _home_harness(path: Path) -> Harness | None:
-        """Identify a harness home directory from its required marker file."""
+        """Identify a harness home directory from its required marker file, and an Agy session folder, the UUID-named
+        folder beneath ``brain``, by its place, a transcript in it or not."""
 
+        if path.parent.name == "brain" and SESSION_UID.fullmatch(path.name):
+            return "agy"
         return next(
             (
                 harness

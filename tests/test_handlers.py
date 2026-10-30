@@ -764,6 +764,14 @@ def test_an_agy_transcript_and_its_session_folder_are_identified(tmp_path: Path)
   assert (folder.data['harness'], folder.data['uid'], folder.data['sessions']) == ('agy', AGY_UID, 1)
 
 
+def test_an_agy_session_folder_without_a_transcript_is_agy_by_its_place(tmp_path: Path) -> None:
+  folder = tmp_path / '.gemini' / 'antigravity-cli' / 'brain' / AGY_UID
+  (folder / '.system_generated').mkdir(parents=True)
+
+  sessions = SessionFolderHandler.parse(folder)
+  assert (sessions.data['harness'], sessions.data['sessions']) == ('agy', 0)
+
+
 def test_an_agy_session_folder_is_probed_by_its_path(tmp_path: Path) -> None:
   brain = tmp_path / '.gemini' / 'antigravity-cli' / 'brain'
   path = _jsonl(brain / AGY_UID / '.system_generated' / 'logs' / 'transcript_full.jsonl', AGY)
