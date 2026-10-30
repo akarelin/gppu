@@ -76,11 +76,11 @@ Independent, not scoped:
 ## Nothing on the API from before the standard
 Every caller of production's API from before the standard is moved onto gppu.ld on master; what runs live switches with production.
 - the standard's initial types in ld.sql (work, epic, project and task events; entity and work statuses): done, the gppu suite passes
-- a kind on ld's nodes and events, each type's kinds a constrained vocabulary as its statuses; experiment, feature, problem and chore kinds of work in place of the types per parent: done in gppu.ld, the suite passes; the carry-over, the collector, the callers and the pages on it: in progress
+- a kind on ld's nodes and events, each type's kinds a constrained vocabulary as its statuses; experiment, feature, problem and chore kinds of work in place of the types per parent: done in gppu.ld, the suite passes; a type's slug unique in its shard, a status's or a kind's under its type: done; the callers on it: done; the collector and the pages on it: in progress
 - RAN `Systems/ld`'s check_work.py, check_sessions.py and check_api.py on gppu.ld, work as events with a work's work and parents in work.py: done, every check passes against the API on a scratch database; web/check.py's page side: in progress
-- the database `ld` on five's Postgres, made from ld.sql, the store gppu.ld serves; `linked_data` predates LD and nothing is carried from it: waiting on the database, which the `ld` role cannot create
+- the database `ld` on five's Postgres, made from ld.sql, the store gppu.ld serves; `linked_data` predates LD and nothing is carried from it, the scripts that filled it archived at RAN `archive/Systems/ld/migrate-261029`: waiting on the database, which the `ld` role cannot create
 - RAN `Systems/ld/ui`, retired 10-19 for admin_ui's Linked Data section, archived at RAN `archive/Systems/ld/ui-261029`: done
-- every other caller (session hook, Session Manager, linked-data-tasks, the dashboard mod, MCP United's `pm_*`, static sites' lectures, Kuma's monitors, admin_ui's `shared`), and the list of what switches with production: in progress
+- every other caller on gppu.ld: Session Manager, Project Manager, linked-data-tasks, the dashboard mod, MCP United's `pm_*`, static sites' lectures, Kuma's monitors and sessions_check done, each proven against the API on a scratch database; admin_ui's `shared` (the Systems collector): in progress
 
 ## Found, not this task
 - `ld.uuid_create` keeps two random bytes after the six of time, as `Linked Data.md` # UUID lays an id out, so two rows made in one millisecond collide about once in 65,536 pairs: one build of a scratch store from ld.sql stopped on a duplicate fs.types id (2026-10-29).
