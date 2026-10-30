@@ -53,6 +53,20 @@ What matters is gppufs working, and its code merged so the new Linked Data, gppu
 
 /goal gppufs and gppu.ld are on gppu's master and every user of gppufs is updated to it and pushed; proven by the gppu suite and each user's tests passing against the scratch database; no release, deploy or production write.
 
+## URI convention and Linked Data 0.2
+- gppu/fs's y2uri (`gppu/fs/uri.py`): `uuid:` and any uri without `//`, fsspec's chained uris with their target, a path joined below, and what a fragment selects (anchor, text, line, char, t): done; tests/test_uri.py opens a zip member, a `gppu::` file and a `file:///` file through fsspec, and the whole suite passes
+
+Independent, not scoped:
+- `rar:` registered with fsspec
+- `lake:` and `m365:` registered with fsspec
+- the schemes the convention discards: `pg`, `catalog`, `gppu-catalog`, `gppu-index`, `gppu-desktop`
+- a `uuid:` resolved to its record
+- a record's `name` and `display_name` as 0.2 has them
+- Record not a table of its own (`ld.records`)
+- a type's slug as its alternative key
+- the initial types of 0.2 in ld.sql
+- the Lake's sections: Activity by source, `text`, `inbox`
+
 ## Found, not this task
 - `examples/handler_ls.py` and the handler browser's `main` stop: `D:\TextLake\.catalog`, the catalog `examples/handlers.yaml` names, has no folder for this host, which the host-folder catalog has required since 2026-09-08, the day the folder was last written.
 - The admin API's image installs gppu from the `gppu/latest` tag; the Linked Data and Lake images install it from master.

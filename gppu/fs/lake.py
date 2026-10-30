@@ -29,7 +29,8 @@ from . import handlers
 from . import CACHE, Container, DataObject, Location, _address, _below
 from .catalog import GppuCatalog
 from .gppufs import GppuFileSystem
-from ..gppu import TemplateSet, TimeSpan, y2uri
+from ..gppu import TemplateSet, TimeSpan
+from .uri import y2uri
 
 PIECE = 1 << 20   # a download is sent a mebibyte at a time
 

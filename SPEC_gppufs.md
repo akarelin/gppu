@@ -13,6 +13,7 @@ What Alex instructed for gppufs, its catalog and their users, as plain statement
 - gppufs works without the database and knows nothing about locations or the database.
 - gppufs can read where the catalog is from configuration; by default there is no catalog. With a catalog, gppufs lists and opens through it what it holds no index for, SharePoint and archives among them.
 - gppufs and the gppufs catalog are two file systems.
+- gppu/fs redefines y2uri so that every form the URI convention lists is read and written back as it is, and fsspec opens it.
 
 ## Linked Data in gppu
 - Files are in the `fs` (File System) schema; its records are `gppu.fs.files`.

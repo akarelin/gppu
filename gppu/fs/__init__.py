@@ -43,7 +43,8 @@ from fsspec import open as open_uri, register_implementation
 from fsspec.archive import AbstractArchiveFileSystem
 from fsspec.spec import AbstractFileSystem
 
-from ..gppu import TimeSpan, OSType, TemplateSet, detect_os, full_path, y2path, y2uri
+from ..gppu import TimeSpan, OSType, TemplateSet, detect_os, full_path, y2path
+from .uri import y2uri
 from . import handlers
 
 

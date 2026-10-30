@@ -28,7 +28,8 @@ from fsspec.core import split_protocol
 from fsspec.spec import AbstractFileSystem
 
 from ..app import glob
-from ..gppu import TemplateSet, TimeSpan, full_path, y2path, y2uri
+from ..gppu import TemplateSet, TimeSpan, full_path, y2path
+from .uri import y2uri
 from . import FileSystem, Location, Provider, _address, _below
 from .gppufs import GppuFileSystem
 
