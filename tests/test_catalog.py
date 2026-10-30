@@ -25,11 +25,10 @@ class Held:
         self.asked = []
 
     def locations(self):
-        return [{'id': 'tenant', 'name': 'Karelin', 'uid': 'box-karelin', 'canonical': 'm365://karelin', 'parent': None, 'lake_id': None},
-                {'id': 'library', 'name': 'Statements', 'uid': None, 'canonical': 'm365://karelin/sharepoint/Statements',
-                 'parent': 'tenant', 'lake_id': 142},
-                {'id': 'one', 'name': 'github', 'uid': 'github', 'canonical': None, 'parent': None, 'lake_id': None},
-                {'id': 'two', 'name': 'github', 'uid': 'system-github', 'canonical': None, 'parent': None, 'lake_id': 226}]
+        return [{'id': 'tenant', 'name': 'Karelin', 'canonical': 'm365://karelin', 'parent': None, 'lake_id': None},
+                {'id': 'library', 'name': 'Statements', 'canonical': 'm365://karelin/sharepoint/Statements', 'parent': 'tenant', 'lake_id': 142},
+                {'id': 'one', 'name': 'github', 'canonical': None, 'parent': None, 'lake_id': None},
+                {'id': 'two', 'name': 'github', 'canonical': None, 'parent': None, 'lake_id': 226}]
 
     def columns(self):
         return ['ContentType', '_StartDate', 'TaxYear']
@@ -79,9 +78,9 @@ def browsed(held):
     return CatalogFileSystem(client=served(held))
 
 
-def test_locations_are_folders_and_a_shared_name_is_told_apart_by_uid():
+def test_locations_are_folders_and_a_shared_name_is_told_apart_by_id():
     fs = browsed(Held())
-    assert sorted(fs.ls('', detail=False)) == ['Karelin', 'github (github)', 'github (system-github)']
+    assert sorted(fs.ls('', detail=False)) == ['Karelin', 'github (one)', 'github (two)']
     assert fs.ls('Karelin', detail=False) == ['Karelin/Statements']
     assert fs.info('Karelin')['type'] == 'directory'
 
@@ -132,7 +131,7 @@ def test_a_columns_value_is_shown_as_text():
 
 def test_a_path_is_in_the_location_whose_path_it_starts_with_longest():
     tree = paths(Held().locations())
-    assert sorted(tree) == ['Karelin', 'Karelin/Statements', 'github (github)', 'github (system-github)']
+    assert sorted(tree) == ['Karelin', 'Karelin/Statements', 'github (one)', 'github (two)']
     assert where(tree, 'Karelin/Statements/Statements/Tax Forms') == (tree['Karelin/Statements'], 'Statements/Tax Forms')
     assert where(tree, 'Nowhere/x') == (None, 'Nowhere/x')
 
@@ -193,16 +192,15 @@ def test_the_desktop_shows_the_catalog_beside_its_other_sources():
 
 
 def test_a_location_on_this_host_by_its_handlers_access_is_read_in_its_folder(tmp_path):
-    """A location whose canonical address names another host is read on this host in the folder its handler's access names here,
-    and still named by its canonical address."""
+    """A location whose uri names another host is read on this host in the folder its handler's access names here, and still named
+    by its uri."""
     host = socket.gethostname().split('.')[0].casefold()
     (tmp_path / 'sub').mkdir()
     (tmp_path / 'sub' / 'note.md').write_text('# note')
     records = [{'id': 'top', 'name': 'Top', 'parent_id': None, 'status': 'active', 'flags': 0, 'meta': {},
-                'data': {'uid': 'top', 'canonical': 'file://elsewhere/srv/top',
-                         'handler': {'kind': 'fileSystem', 'access': {host: tmp_path.as_posix()}}}},
+                'data': {'uri': 'file://elsewhere/srv/top', 'handler': {'access': {host: tmp_path.as_posix()}}}},
                {'id': 'inner', 'name': 'Inner', 'parent_id': 'top', 'status': 'active', 'flags': 0, 'meta': {},
-                'data': {'uid': 'inner', 'canonical': 'file://elsewhere/srv/top/sub'}}]
+                'data': {'uri': 'file://elsewhere/srv/top/sub'}}]
     found = locations(records)
     assert str(found.location('top').uri_of('sub')) == 'file://elsewhere/srv/top/sub'
     assert found.location('top').container('sub').ls(detail=False) == ['note.md']

@@ -172,8 +172,7 @@ def test_each_schema_searches_its_own_types(api):
 
 def test_the_file_system_is_in_its_own_schema(api):
     host = ok(api.post('/fs/locations', json={'type': 'host', 'status': 'active',
-                                              'data': {'uid': 'root', 'canonical': 'file:///root', 'handler': {'kind': 'fileSystem'},
-                                                       'provider': 'microsoft', 'service': 'windows'}}))
+                                              'data': {'uri': 'file:///root'}}))
     file = ok(api.post('/fs/files', json={'type': 'markdown', 'parent_id': host['id'], 'name': 'a.md', 'data': {'extension': 'md'}}))
     instance = ok(api.post('/fs/instances', json={'type': 'instance', 'parent_id': file['id'], 'data': {'source': 'test', 'size': 3}}))
     node = ok(api.post('/nodes', json={'type': 'entity'}))
@@ -252,17 +251,16 @@ def test_a_link_is_written_with_its_relation_as_its_type(api):
 
 
 def test_gppufs_makes_its_catalog_from_the_locations(api):
-    root = ok(api.post('/fs/locations', json={'type': 'host', 'status': 'active', 'name': 'Root',
-                                              'data': {'uid': 'cat-root', 'canonical': 'file:///cat-root', 'handler': {'kind': 'fileSystem'}}}))
-    ok(api.post('/fs/locations', json={'type': 'location', 'status': 'active', 'parent_id': root['id'], 'name': 'Inner',
-                                       'data': {'uid': 'cat-inner', 'canonical': 'file:///cat-root/inner', 'tags': ['x']}}))
-    ok(api.post('/fs/locations', json={'type': 'location', 'status': 'discarded', 'parent_id': root['id'],
-                                       'data': {'uid': 'cat-discarded', 'canonical': 'file:///cat-root/discarded'}}))
-    ok(api.post('/fs/locations', json={'type': 'location', 'parent_id': root['id'], 'flags': 16,
-                                       'data': {'uid': 'cat-archived', 'canonical': 'file:///cat-root/archived'}}))
+    root = ok(api.post('/fs/locations', json={'type': 'host', 'status': 'active', 'name': 'Root', 'data': {'uri': 'file:///cat-root'}}))
+    inner = ok(api.post('/fs/locations', json={'type': 'location', 'status': 'active', 'parent_id': root['id'], 'name': 'Inner',
+                                               'data': {'uri': 'file:///cat-root/inner', 'tags': ['x']}}))
+    discarded = ok(api.post('/fs/locations', json={'type': 'location', 'status': 'discarded', 'parent_id': root['id'],
+                                                   'data': {'uri': 'file:///cat-root/discarded'}}))
+    archived = ok(api.post('/fs/locations', json={'type': 'location', 'parent_id': root['id'], 'flags': 16,
+                                                  'data': {'uri': 'file:///cat-root/archived'}}))
     catalog = locations.catalog(ok(api.get('/fs/locations'))['items'])
-    assert {'cat-root', 'cat-inner'} <= catalog.locations.keys() and not {'cat-discarded', 'cat-archived'} & catalog.locations.keys()
-    assert catalog.locations['cat-inner']['parent'] == 'cat-root' and catalog.locations['cat-inner']['tags'] == ['x']
+    assert {root['id'], inner['id']} <= catalog.locations.keys() and not {discarded['id'], archived['id']} & catalog.locations.keys()
+    assert catalog.locations[inner['id']]['parent'] == root['id'] and catalog.locations[inner['id']]['tags'] == ['x']
 
 
 def test_a_record_has_a_kind_from_its_types_kinds(api):

@@ -28,6 +28,9 @@ What Alex instructed for gppufs, its catalog and their users, as plain statement
 - A record of the `ld` schema has a kind, as it has a status: each type has its own Constrained Vocabulary of kinds, so a type is not split into types per kind. Experiment, feature, problem and chore are kinds of work. Other schemas have no kind until they need one.
 - A read-only record, a type among them, is neither changed nor deleted, by the API or in the database.
 
+## Locations
+- Home and data are local locations, on each host: on Windows the user's home and D:, on Debian ~ and /data.
+
 ## The catalog and its users
 - gppu provides the catalog; the catalog's users load its locations.
 - Linked Data and the file system stay separate, each in its own submodule.

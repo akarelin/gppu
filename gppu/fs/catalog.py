@@ -464,13 +464,12 @@ class Drives(FileSystem):
 
 def catalog(records: list[dict], **location_types: Any) -> GppuCatalog:
     """gppufs's catalog of Linked Data's location records, the items of GET /fs/locations as the catalog's user read them: every location
-    in use that has a uid and a canonical uri, the two a gppufs Location is known and reached by, as a row of gppufs's configuration
-    table, its data with its id, name, parent's uid and tags. A location is active or discarded (gppu.fs.files); one out of sight is
-    not listed at all, and a location below one not in use is not in use either, since a location is part of the location above it; its
-    connection is its root location, whose data.handler holds the connection's parameters. location_types are the Providers a caller
-    adds by scheme, as GppuCatalog takes them; gppufs's FileSystem reaches file://, and in a Windows host's WSL, Drives does."""
-    records = {r['id']: r for r in records
-               if r['status'] != DISCARDED and r['data'].get('uid') and r['data'].get('canonical')}
+    in use that has a uri, as a row of gppufs's configuration table, known by its id and reached by its uri, its data with its name and
+    parent's id. A location is active or discarded (gppu.fs.files); one out of sight is not listed at all, and a location below one not
+    in use is not in use either, since a location is part of the location above it; its connection is its root location, reached by
+    the scheme of the root's uri. location_types are the Providers a caller adds by scheme, as GppuCatalog takes them; gppufs's
+    FileSystem reaches file://, and in a Windows host's WSL, Drives does."""
+    records = {r['id']: r for r in records if r['status'] != DISCARDED and r['data'].get('uri')}
 
     def root(r: dict) -> dict | None:
         """The root location above it; none when one above it is not in use, so it is not in use either."""
@@ -478,13 +477,11 @@ def catalog(records: list[dict], **location_types: Any) -> GppuCatalog:
             if not (r := records.get(r['parent_id'])):
                 return None
         return r
-    rows = [r['data'] | {'id': r['id'], 'name': r['name'], 'parent': r['parent_id'] and records[r['parent_id']]['data']['uid'],
-                         'connection': top['data']['uid']}
+    rows = [r['data'] | {'uid': r['id'], 'canonical': r['data']['uri'], 'id': r['id'], 'name': r['name'], 'parent': r['parent_id'],
+                         'connection': top['id']}
             for r in records.values() if (top := root(r))]
-    roots = [r for r in rows if r['connection'] == r['uid']]
-    if missing := [r['uid'] for r in roots if r.get('handler') is None]:
-        raise ValueError(f'root locations without a handler, their connection: {", ".join(missing)}')
-    return GppuCatalog({'locations': rows, 'connections': {r['uid']: r['handler'] for r in roots}}, location_types=location_types)
+    connections = {r['uid']: {'kind': urlsplit(r['canonical']).scheme} for r in rows if r['connection'] == r['uid']}
+    return GppuCatalog({'locations': rows, 'connections': connections}, location_types=location_types)
 
 
 def here(catalog: GppuCatalog, uri: str) -> Path | None:
@@ -620,7 +617,7 @@ def paths(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     names = Counter((row['parent'], row['name'].casefold()) for row in found.values())
 
     def path(row: dict[str, Any]) -> str:
-        name = row['name'] if names[row['parent'], row['name'].casefold()] == 1 else f"{row['name']} ({row['uid'] or row['id']})"
+        name = row['name'] if names[row['parent'], row['name'].casefold()] == 1 else f"{row['name']} ({row['id']})"
         return f"{path(found[row['parent']])}/{name}" if row['parent'] else name
     return {path(row): row for row in found.values()}
 
@@ -662,8 +659,7 @@ class Catalog:
                     kept.add(r['id'])
                     r = records.get(r['parent_id'])
         self.lake_ids = {id: records[id]['meta']['lake_id'] for id in kept if 'lake_id' in records[id]['meta']}
-        return [{'id': id, 'name': records[id]['name'], 'uid': records[id]['data'].get('uid'),
-                 'canonical': records[id]['data'].get('canonical'),
+        return [{'id': id, 'name': records[id]['name'], 'canonical': records[id]['data'].get('uri'),
                  'parent': records[id]['parent_id'] if records[id]['parent_id'] in kept else None, 'lake_id': self.lake_ids.get(id)}
                 for id in kept]
 
