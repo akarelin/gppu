@@ -71,7 +71,7 @@ Independent, not scoped:
 - RAN `Systems/ld`'s scripts and checks on each table's path: in progress
 - RAN `Systems/ld/web` and `ui` on each table's path: in progress
 - CRAP admin_ui's Linked Data pages on each table's path: in progress
-- `ld.types` and `ld.links` are still parents that fs's and sessions' types and links inherit, the same pattern
+- no table inherits another: fs's and sessions' types and links are their own, each schema searched at its own paths: done, the gppu suite passes
 
 ## Found, not this task
 - `examples/handler_ls.py` and the handler browser's `main` stop: `D:\TextLake\.catalog`, the catalog `examples/handlers.yaml` names, has no folder for this host, which the host-folder catalog has required since 2026-09-08, the day the folder was last written.
