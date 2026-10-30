@@ -18,9 +18,8 @@ class Type(_Type, table=True):
 class Location(_Record, table=True):
     """One place in the configured hierarchy; a host is a location. Its `parent_id` is the location it is part of, and a location
     is a container: the locations and files in it have it as their `parent_id`. `status` `active` while it is in use, `discarded`
-    once it is not. `data.uid` its slug; `data.canonical` its URI; `data.description`, `data.icon`, `data.tags`; `data.handler`
-    how its data is reached and listed: `kind` the provider, `service`, `access` its path on each host, `connection` how a root
-    location is connected; `data.provides` what it provides; `data.provider`, `data.service` the vendor and service it is on."""
+    once it is not. It is known by its id; `data.uri` its URI, `data.icon` how it is shown; `data.handler.access` its path on a host
+    its URI does not name."""
     __tablename__, __table_args__, __shard__ = 'locations', {'schema': 'fs'}, 0x1001
 
 
