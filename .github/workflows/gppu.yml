@@ -154,7 +154,7 @@ jobs:
               with open(os.environ["GITHUB_ENV"], "a") as f:
                   f.write(f"{k}={v}\n")
 
-          if bump == "patch":
+          if bump in ("patch", "minor"):
               # Latest tag (stable vX.Y.Z or beta vX.Y.ZbN) drives the next.
               pat = re.compile(r'^gppu/v(\d+)\.(\d+)\.(\d+)(b\d+)?$')
               latest = None
@@ -167,10 +167,16 @@ jobs:
                       previous = t
                       break
               if latest is None:
-                  new = "gppu/v0.0.1b1" if beta else "gppu/v0.0.1"
+                  new = "gppu/v0.1.0" if bump == "minor" else "gppu/v0.0.1"
+                  if beta:
+                      new += "b1"
               else:
                   x, y, z, n = latest
-                  if beta:
+                  if bump == "minor":
+                      new = f"gppu/v{x}.{y+1}.0"
+                      if beta:
+                          new += "b1"
+                  elif beta:
                       # stable → next patch's first beta; beta → next beta
                       new = (f"gppu/v{x}.{y}.{z+1}b1" if n is None
                              else f"gppu/v{x}.{y}.{z}b{n+1}")
