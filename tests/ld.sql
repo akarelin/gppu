@@ -1,4 +1,4 @@
--- gppu.ld's tables, schemas ld, fs and sessions, to Linked Data's standard (_Standards/Linked Data/Linked Data.md); the tests make their database from it.
+-- gppu.ld's tables, schemas ld, fs and sessions, each table with a record's columns of its own, to Linked Data's standard (_Standards/Linked Data/Linked Data.md); the tests make their database from it.
 
 CREATE SCHEMA ld;
 
@@ -11,22 +11,6 @@ AS $$
     SELECT encode(substring(int4send(shard) FROM 3 FOR 2) || '\x010000000000'::bytea || substring(v7 FROM 1 FOR 6) || substring(v7 FROM 11 FOR 2), 'hex')::uuid
     FROM (SELECT uuid_send(uuidv7()) AS v7) AS s;
 $$;
-
-CREATE TABLE ld.records (
-    id        uuid,
-    flags     smallint NOT NULL DEFAULT 0,
-    type      text,
-    status    text,
-    name      text,    
-    parent_id uuid,
-    span      tstzrange,
-    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
-    data      jsonb NOT NULL DEFAULT '{}',
-    meta      jsonb NOT NULL DEFAULT '{}',
-    created   timestamptz NOT NULL DEFAULT now(),
-    updated   timestamptz,
-    CHECK (false) NO INHERIT
-);
 
 CREATE FUNCTION ld.record()
 RETURNS trigger
@@ -46,10 +30,21 @@ $$;
 
 CREATE TABLE ld.types (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'0000'::int),
+    flags     smallint NOT NULL DEFAULT 0,
+    type      text,
+    status    text,
+    name      text,
+    parent_id uuid,
+    span      tstzrange,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    data      jsonb NOT NULL DEFAULT '{}',
+    meta      jsonb NOT NULL DEFAULT '{}',
+    created   timestamptz NOT NULL DEFAULT now(),
+    updated   timestamptz,
     slug      text NOT NULL,
     shard     integer NOT NULL,     -- the shard of the table its records are in, two bytes: shard1 its schema, shard2 the table
     UNIQUE (shard, slug)
-) INHERITS (ld.records);
+);
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON ld.types FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 -- parent is the type of `ld` it is under; a root type has none and says what one of the schema's tables holds
@@ -81,14 +76,36 @@ CALL ld.type_create(slug => 'event', shard => x'0020'::int, name => 'Event');
 
 CREATE TABLE ld.links (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'0010'::int),
+    flags     smallint NOT NULL DEFAULT 0,
+    type      text,
+    status    text,
+    name      text,
+    parent_id uuid,
+    span      tstzrange,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    data      jsonb NOT NULL DEFAULT '{}',
+    meta      jsonb NOT NULL DEFAULT '{}',
+    created   timestamptz NOT NULL DEFAULT now(),
+    updated   timestamptz,
     from_id   uuid,
     to_id     uuid
-) INHERITS (ld.records);
+);
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON ld.links FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CREATE TABLE ld.nodes (
-    id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'0001'::int)
-) INHERITS (ld.records);
+    id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'0001'::int),
+    flags     smallint NOT NULL DEFAULT 0,
+    type      text,
+    status    text,
+    name      text,
+    parent_id uuid,
+    span      tstzrange,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    data      jsonb NOT NULL DEFAULT '{}',
+    meta      jsonb NOT NULL DEFAULT '{}',
+    created   timestamptz NOT NULL DEFAULT now(),
+    updated   timestamptz
+);
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON ld.nodes FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CALL ld.type_create(slug => 'entity', shard => x'0001'::int, name => 'Entity', parent => 'node');
@@ -100,8 +117,19 @@ CALL ld.type_create(slug => 'view', shard => x'0001'::int, name => 'View', paren
 CALL ld.type_create(slug => 'knowledge', shard => x'0001'::int, name => 'Knowledge', parent => 'node');
 
 CREATE TABLE ld.events (
-    id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'0020'::int)
-) INHERITS (ld.records);
+    id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'0020'::int),
+    flags     smallint NOT NULL DEFAULT 0,
+    type      text,
+    status    text,
+    name      text,
+    parent_id uuid,
+    span      tstzrange,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    data      jsonb NOT NULL DEFAULT '{}',
+    meta      jsonb NOT NULL DEFAULT '{}',
+    created   timestamptz NOT NULL DEFAULT now(),
+    updated   timestamptz
+);
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON ld.events FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CALL ld.type_create(slug => 'activity', shard => x'0020'::int, name => 'Activity', parent => 'event');
@@ -145,15 +173,37 @@ CALL fs.status_create(slug => 'discarded', shard => x'1001'::int, name => 'Disca
 CALL fs.status_create(slug => 'parsed', shard => x'1002'::int, name => 'Parsed', type => 'file');
 
 CREATE TABLE fs.locations (
-    id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'1001'::int)
-) INHERITS (ld.records);
+    id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'1001'::int),
+    flags     smallint NOT NULL DEFAULT 0,
+    type      text,
+    status    text,
+    name      text,
+    parent_id uuid,
+    span      tstzrange,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    data      jsonb NOT NULL DEFAULT '{}',
+    meta      jsonb NOT NULL DEFAULT '{}',
+    created   timestamptz NOT NULL DEFAULT now(),
+    updated   timestamptz
+);
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON fs.locations FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CALL fs.type_create(slug => 'host', shard => x'1001'::int, name => 'Host', parent => 'location');
 
 CREATE TABLE fs.files (
-    id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'1002'::int)
-) INHERITS (ld.records);
+    id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'1002'::int),
+    flags     smallint NOT NULL DEFAULT 0,
+    type      text,
+    status    text,
+    name      text,
+    parent_id uuid,
+    span      tstzrange,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    data      jsonb NOT NULL DEFAULT '{}',
+    meta      jsonb NOT NULL DEFAULT '{}',
+    created   timestamptz NOT NULL DEFAULT now(),
+    updated   timestamptz
+);
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON fs.files FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CALL fs.type_create(slug => 'folder', shard => x'1002'::int, name => 'Folder', parent => 'file', data => '{"class": "gppu.fs.handlers.FolderHandler"}');
@@ -185,8 +235,19 @@ CALL fs.type_create(slug => 'ignored', shard => x'1002'::int, name => 'Ignored',
 CALL fs.type_create(slug => 'normal', shard => x'1002'::int, name => 'Normal', parent => 'file');
 
 CREATE TABLE fs.instances (
-    id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'1003'::int)
-) INHERITS (ld.records);
+    id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'1003'::int),
+    flags     smallint NOT NULL DEFAULT 0,
+    type      text,
+    status    text,
+    name      text,
+    parent_id uuid,
+    span      tstzrange,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    data      jsonb NOT NULL DEFAULT '{}',
+    meta      jsonb NOT NULL DEFAULT '{}',
+    created   timestamptz NOT NULL DEFAULT now(),
+    updated   timestamptz
+);
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON fs.instances FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CREATE TABLE fs.links (
@@ -237,9 +298,20 @@ CALL sessions.status_create(slug => 'active', shard => x'2010'::int, name => 'Ac
 
 CREATE TABLE sessions.sessions (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'2001'::int),
+    flags     smallint NOT NULL DEFAULT 0,
+    type      text,
+    status    text,
+    name      text,
+    parent_id uuid,
+    span      tstzrange,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    data      jsonb NOT NULL DEFAULT '{}',
+    meta      jsonb NOT NULL DEFAULT '{}',
+    created   timestamptz NOT NULL DEFAULT now(),
+    updated   timestamptz,
     uid       text,
     UNIQUE (type, uid)
-) INHERITS (ld.records);
+);
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON sessions.sessions FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CALL sessions.type_create(slug => 'cc', shard => x'2001'::int, name => 'Claude Code', parent => 'session');
@@ -252,8 +324,19 @@ CALL sessions.type_create(slug => 'openviking', shard => x'2001'::int, name => '
 CALL sessions.type_create(slug => 'copilot', shard => x'2001'::int, name => 'Copilot', parent => 'session');
 
 CREATE TABLE sessions.messages (
-    id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'2002'::int)
-) INHERITS (ld.records);
+    id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'2002'::int),
+    flags     smallint NOT NULL DEFAULT 0,
+    type      text,
+    status    text,
+    name      text,
+    parent_id uuid,
+    span      tstzrange,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    data      jsonb NOT NULL DEFAULT '{}',
+    meta      jsonb NOT NULL DEFAULT '{}',
+    created   timestamptz NOT NULL DEFAULT now(),
+    updated   timestamptz
+);
 CREATE INDEX ON sessions.messages (parent_id);
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON sessions.messages FOR EACH ROW EXECUTE FUNCTION ld.record();
 

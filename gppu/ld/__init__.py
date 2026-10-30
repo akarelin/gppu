@@ -1,10 +1,10 @@
 """Linked Data: records and the links between them, on Postgres (_Standards/Linked Data/Linked Data.md), schema `ld`, and what
 another schema's API is built from. `_Record`, every record's columns and its operations (create, read, update, delete, list,
 search), with no table; `_Type` and `_Link`, the columns a type and a link add; and each table's class, which only defines its table
-and the shard its ids start with (`__shard__`), shard1 its schema and shard2 the table (# UUID): `ld.records`, `ld.types` 0x0000,
+and the shard its ids start with (`__shard__`), shard1 its schema and shard2 the table (# UUID): `ld.types` 0x0000,
 `ld.nodes` 0x0001, `ld.links` 0x0010, `ld.events` 0x0020.
 A record's `flags` say what can change it and whether it is in sight (`Flags`). `operations()` gives a path its tables' create, read,
-update, delete and search; `app` is the core, `/records`, `/types` and `/links`; `api_at()`, another schema's API with its own
+update, delete and search; `app` is the core, each table at its own path, `/types`, `/nodes`, `/links` and `/events`; `api_at()`, another schema's API with its own
 documentation; `serve()`, the APIs at one address, on the store of the app that serves them. The tables are made by gppu's
 SQL, `tests/ld.sql`, and how they inherit is Postgres'. The store is the app's: a `gppu.data._SQABase` gives the engine and each request's database
 session.
@@ -36,7 +36,7 @@ from sqlalchemy.exc import DataError, IntegrityError, StatementError
 from sqlalchemy.sql.elements import UnaryExpression
 from sqlalchemy.sql.sqltypes import NullType
 from sqlalchemy.sql.visitors import iterate
-from sqlmodel import Column, Field, SQLModel, func, or_, select
+from sqlmodel import Column, Field, SQLModel, func, select
 
 from ..data import _SQABase
 from ..gppu import TimeSpan
@@ -304,16 +304,7 @@ class _Link(_Record):
     to_id: UUID | None = Field(None, description='The record where it ends.')
 
 
-class Fields(_Link):
-    """A record as a caller sends it to `/records`: a record's columns and a link's ends; each table takes those it has."""
-
-
 # ++     The core's tables: schema `ld`, shard1 0x00
-
-class Record(_Record, table=True):
-    """Every table inherits it, and it holds none of its own: reading `ld.records` returns every table's rows with these columns."""
-    __tablename__, __table_args__ = 'records', {'schema': 'ld'}
-
 
 class Type(_Type, table=True):
     """What a record is, and its statuses."""
@@ -404,21 +395,8 @@ def operations(path: str, body: type[_Record], name: str, *models: type[_Record]
 router = APIRouter()
 
 
-@router.get('/records/{id}/records', response_model=list[Record], tags=['record'], summary="List a record's children")
-async def records_list(id: UUID, type: str | None = None):
-    """`list`, a simple select of like records: the records in sight whose parent it is, of one `type` or of every type, in the
-    order they were made. No query, that is search, and not paged: more than `LIST` children, or more than `LIST_BYTES` of their
-    `data` and `meta`, are refused with their count and size, and search pages them."""
-    return await Record.list(Record.parent_id == id, *([Record.type == type] if type else []), order=(Record.created,), what=f'records are under {id}')
-
-
-@router.get('/records/{id}/links', response_model=Page[Link], tags=['link'], summary="Search a record's links")
-async def record_links(id: UUID, conditions: QueryParams = Depends(), params: Params = Depends()):
-    """From it and to it; `filters`, `sort`, `search` and paging as in record search."""
-    return await Link.search(params, or_(Link.from_id == id, Link.to_id == id), conditions=conditions)
-
-
-router.include_router(operations('/records', Fields, 'record', Record, Node, Link, Event))
+router.include_router(operations('/nodes', _Record, 'node', Node))
+router.include_router(operations('/events', _Record, 'event', Event))
 router.include_router(operations('/types', _Type, 'type', Type))
 router.include_router(operations('/links', _Link, 'link', Link))
 
@@ -437,9 +415,10 @@ app = FastAPI(
     version='1',   # the major version its path carries, /ld/v1 (Alex 10-16 09:48: versions in the URL)
     summary='Records and the links between them: create, read, update, delete, search.',
     openapi_tags=[
-        {'name': 'record', 'description': 'Every record of every table.'},
         {'name': 'type', 'description': 'What a record can be, and its statuses.'},
-        {'name': 'link', 'description': 'The links between records.'}],
+        {'name': 'node', 'description': 'Nodes (vertices) or rows; most belong to a container, their `parent_id`.'},
+        {'name': 'link', 'description': 'The links between records.'},
+        {'name': 'event', 'description': 'What happened: an `event` at one moment, an `activity` over its span.'}],
 )
 app.include_router(router)
 

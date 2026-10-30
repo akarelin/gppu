@@ -2,6 +2,7 @@
 of their own, made for these tests and dropped after them; every call goes through the API to Postgres and back. LD_TEST_DSN is the
 Postgres server to make it on."""
 import asyncio
+import json
 import os
 from uuid import UUID, uuid4
 
@@ -60,92 +61,91 @@ def ok(r, status=200):
     return r.json() if r.content else None
 
 
+def links_of(record) -> str:
+    """The filter of a record's links, from it and to it."""
+    return json.dumps({'$or': [{'from_id': {'$eq': record['id']}}, {'to_id': {'$eq': record['id']}}]})
+
+
 def header(record) -> bytes:
     """An id's first eight bytes: shard1, shard2, version 1 and five reserved bytes of 0."""
     return UUID(record['id']).bytes[:8]
 
 
-def test_a_record_goes_to_the_table_its_type_is_in(api):
-    node = ok(api.post('/records', json={'type': 'node', 'data': {'x': 1}}))
-    entity = ok(api.post('/records', json={'type': 'entity'}))
-    activity = ok(api.post('/records', json={'type': 'activity', 'span': {'start': '2026-10-27T10:00:00Z', 'end': '2026-10-27T11:00:00Z'}}))
-    message = ok(api.post('/records', json={'type': 'message'}))
+def test_a_record_is_made_in_the_table_of_its_path(api):
+    node = ok(api.post('/nodes', json={'type': 'node', 'data': {'x': 1}}))
+    entity = ok(api.post('/nodes', json={'type': 'entity'}))
+    activity = ok(api.post('/events', json={'type': 'activity', 'span': {'start': '2026-10-27T10:00:00Z', 'end': '2026-10-27T11:00:00Z'}}))
+    message = ok(api.post('/events', json={'type': 'message'}))
     assert header(node) == header(entity) == bytes([0x00, 0x01, 1]) + bytes(5)
     assert header(activity) == header(message) == bytes([0x00, 0x20, 1]) + bytes(5)
     assert node['flags'] == 0 and node['name'] == f"node-{node['id']}"
     assert activity['ts'].startswith('2026-10-27T10:00:00')
 
 
-def test_a_type_no_table_of_the_path_has_is_refused(api):
-    for type in ('markdown', 'host', 'cc', 'nothing'):   # fs's, fs's, fs's and sessions', none
-        assert 'no table' in ok(api.post('/records', json={'type': type}), 422)['detail']
-
-
 def test_the_store_fills_its_own_columns(api):
-    assert 'the store fills them' in ok(api.post('/records', json={'type': 'node', 'ts': '2026-10-27T10:00:00Z'}), 422)['detail']
+    assert 'the store fills them' in ok(api.post('/nodes', json={'type': 'node', 'ts': '2026-10-27T10:00:00Z'}), 422)['detail']
 
 
 def test_a_name_is_data_name_unless_one_is_sent(api):
-    assert ok(api.post('/records', json={'type': 'node', 'data': {'name': 'From data'}}))['name'] == 'From data'
-    assert ok(api.post('/records', json={'type': 'node', 'name': 'Sent', 'data': {'name': 'From data'}}))['name'] == 'Sent'
+    assert ok(api.post('/nodes', json={'type': 'node', 'data': {'name': 'From data'}}))['name'] == 'From data'
+    assert ok(api.post('/nodes', json={'type': 'node', 'name': 'Sent', 'data': {'name': 'From data'}}))['name'] == 'Sent'
 
 
 def test_a_name_from_data_follows_it(api):
-    node = ok(api.post('/records', json={'type': 'node', 'data': {'name': 'Before'}}))
-    assert ok(api.put(f"/records/{node['id']}", json={'data': {'name': 'After'}}))['name'] == 'After'
+    node = ok(api.post('/nodes', json={'type': 'node', 'data': {'name': 'Before'}}))
+    assert ok(api.put(f"/nodes/{node['id']}", json={'data': {'name': 'After'}}))['name'] == 'After'
 
 
 def test_an_update_merges_data_and_a_null_removes_a_key(api):
-    node = ok(api.post('/records', json={'type': 'node', 'data': {'a': 1, 'b': 2}}))
-    updated = ok(api.put(f"/records/{node['id']}", json={'data': {'b': None, 'c': 3}}))
+    node = ok(api.post('/nodes', json={'type': 'node', 'data': {'a': 1, 'b': 2}}))
+    updated = ok(api.put(f"/nodes/{node['id']}", json={'data': {'b': None, 'c': 3}}))
     assert updated['data'] == {'a': 1, 'c': 3} and updated['updated']
 
 
 def test_a_put_of_an_id_not_there_creates_it(api):
     id = uuid_create(0x0001)   # made offline as the store makes them
-    assert ok(api.put(f'/records/{id}', json={'type': 'node'}))['id'] == str(id)
-    assert ok(api.get(f'/records/{id}'))['type'] == 'node'
+    assert ok(api.put(f'/nodes/{id}', json={'type': 'node'}))['id'] == str(id)
+    assert ok(api.get(f'/nodes/{id}'))['type'] == 'node'
 
 
 def test_a_link_joins_two_records(api):
-    a, b = (ok(api.post('/records', json={'type': 'node'})) for _ in range(2))
+    a, b = (ok(api.post('/nodes', json={'type': 'node'})) for _ in range(2))
     link = ok(api.post('/links', json={'type': 'link', 'from_id': a['id'], 'to_id': b['id']}))
     assert header(link)[:2] == bytes([0x00, 0x10])
-    assert [l['id'] for l in ok(api.get(f"/records/{a['id']}/links"))['items']] == [link['id']]
+    assert [l['id'] for l in ok(api.get('/links', params={'filters': links_of(a)}))['items']] == [link['id']]
 
 
 def test_a_read_only_record_changes_only_its_flags(api):
-    node = ok(api.post('/records', json={'type': 'node', 'flags': 1}))
-    assert 'read only' in ok(api.put(f"/records/{node['id']}", json={'data': {'a': 1}}), 422)['detail']
-    assert ok(api.put(f"/records/{node['id']}", json={'flags': 0}))['flags'] == 0
-    assert ok(api.put(f"/records/{node['id']}", json={'data': {'a': 1}}))['data'] == {'a': 1}
+    node = ok(api.post('/nodes', json={'type': 'node', 'flags': 1}))
+    assert 'read only' in ok(api.put(f"/nodes/{node['id']}", json={'data': {'a': 1}}), 422)['detail']
+    assert ok(api.put(f"/nodes/{node['id']}", json={'flags': 0}))['flags'] == 0
+    assert ok(api.put(f"/nodes/{node['id']}", json={'data': {'a': 1}}))['data'] == {'a': 1}
 
 
 def test_a_deleted_record_is_out_of_sight_and_read_by_its_id(api):
-    parent = ok(api.post('/records', json={'type': 'node'}))
-    child = ok(api.post('/records', json={'type': 'node', 'parent_id': parent['id']}))
-    hidden = ok(api.post('/records', json={'type': 'node', 'parent_id': parent['id'], 'flags': 8}))
-    ok(api.delete(f"/records/{child['id']}"), 204)
-    assert ok(api.get(f"/records/{child['id']}"))['flags'] == 4
-    assert ok(api.get(f"/records/{parent['id']}/records")) == []
-    assert ok(api.get('/records', params={'filters': f'{{"parent_id": {{"$eq": "{parent["id"]}"}}}}'}))['total'] == 0
-    assert ok(api.get(f"/records/{hidden['id']}"))['flags'] == 8
-    assert 'read only' in ok(api.put(f"/records/{child['id']}", json={'data': {'a': 1}}), 422)['detail']
+    parent = ok(api.post('/nodes', json={'type': 'node'}))
+    child = ok(api.post('/nodes', json={'type': 'node', 'parent_id': parent['id']}))
+    hidden = ok(api.post('/nodes', json={'type': 'node', 'parent_id': parent['id'], 'flags': 8}))
+    ok(api.delete(f"/nodes/{child['id']}"), 204)
+    assert ok(api.get(f"/nodes/{child['id']}"))['flags'] == 4
+    assert ok(api.get('/nodes', params={'filters': f'{{"parent_id": {{"$eq": "{parent["id"]}"}}}}'}))['total'] == 0
+    assert ok(api.get(f"/nodes/{hidden['id']}"))['flags'] == 8
+    assert 'read only' in ok(api.put(f"/nodes/{child['id']}", json={'data': {'a': 1}}), 422)['detail']
 
 
 def test_flags_change_only_by_their_transitions(api):
-    node = ok(api.post('/records', json={'type': 'node'}))
-    assert 'change only by delete, archive, toggle hidden, toggle ro' in ok(api.put(f"/records/{node['id']}", json={'flags': 3}), 422)['detail']
-    assert ok(api.put(f"/records/{node['id']}", json={'flags': 16}))['flags'] == 16   # archive
-    assert 'change only by un-archive' in ok(api.put(f"/records/{node['id']}", json={'flags': 20}), 422)['detail']
-    assert 'change only by un-archive' in ok(api.delete(f"/records/{node['id']}"), 422)['detail']
-    assert ok(api.put(f"/records/{node['id']}", json={'flags': 0}))['flags'] == 0   # un-archive
-    hidden = ok(api.post('/records', json={'type': 'node', 'flags': 8}))
-    assert 'change only by toggle hidden' in ok(api.delete(f"/records/{hidden['id']}"), 422)['detail']
-    system = ok(api.post('/records', json={'type': 'node', 'flags': 2}))
-    assert 'no transition' in ok(api.put(f"/records/{system['id']}", json={'flags': 0}), 422)['detail']
-    ok(api.delete(f"/records/{node['id']}"), 204)
-    assert ok(api.put(f"/records/{node['id']}", json={'flags': 0}))['flags'] == 0   # un-delete
+    node = ok(api.post('/nodes', json={'type': 'node'}))
+    assert 'change only by delete, archive, toggle hidden, toggle ro' in ok(api.put(f"/nodes/{node['id']}", json={'flags': 3}), 422)['detail']
+    assert ok(api.put(f"/nodes/{node['id']}", json={'flags': 16}))['flags'] == 16   # archive
+    assert 'change only by un-archive' in ok(api.put(f"/nodes/{node['id']}", json={'flags': 20}), 422)['detail']
+    assert 'change only by un-archive' in ok(api.delete(f"/nodes/{node['id']}"), 422)['detail']
+    assert ok(api.put(f"/nodes/{node['id']}", json={'flags': 0}))['flags'] == 0   # un-archive
+    hidden = ok(api.post('/nodes', json={'type': 'node', 'flags': 8}))
+    assert 'change only by toggle hidden' in ok(api.delete(f"/nodes/{hidden['id']}"), 422)['detail']
+    system = ok(api.post('/nodes', json={'type': 'node', 'flags': 2}))
+    assert 'no transition' in ok(api.put(f"/nodes/{system['id']}", json={'flags': 0}), 422)['detail']
+    ok(api.delete(f"/nodes/{node['id']}"), 204)
+    assert ok(api.put(f"/nodes/{node['id']}", json={'flags': 0}))['flags'] == 0   # un-delete
 
 
 def test_types_are_searched_by_slug_in_every_schema(api):
@@ -161,11 +161,11 @@ def test_the_file_system_is_in_its_own_schema(api):
                                                        'provider': 'microsoft', 'service': 'windows'}}))
     file = ok(api.post('/fs/files', json={'type': 'markdown', 'parent_id': host['id'], 'name': 'a.md', 'data': {'extension': 'md'}}))
     instance = ok(api.post('/fs/instances', json={'type': 'instance', 'parent_id': file['id'], 'data': {'source': 'test', 'size': 3}}))
-    node = ok(api.post('/records', json={'type': 'entity'}))
+    node = ok(api.post('/nodes', json={'type': 'entity'}))
     link = ok(api.post('/fs/links', json={'type': 'link', 'from_id': host['id'], 'to_id': node['id']}))
     assert [header(r) for r in (host, file, instance, link)] == [bytes([0x10, s, 1]) + bytes(5) for s in (0x01, 0x02, 0x03, 0x10)]
-    assert ok(api.get(f"/records/{file['id']}"))['type'] == 'markdown'   # every table inherits ld.records
-    assert [l['id'] for l in ok(api.get(f"/records/{node['id']}/links"))['items']] == [link['id']]   # and every links table ld.links
+    assert ok(api.get(f"/fs/files/{file['id']}"))['type'] == 'markdown'
+    assert [l['id'] for l in ok(api.get('/links', params={'filters': links_of(node)}))['items']] == [link['id']]   # every links table inherits ld.links
     assert [t['slug'] for t in ok(api.get('/fs/types', params={'filters': '{"slug": {"$eq": "markdown"}}'}))['items']] == ['markdown']
     assert ok(api.post('/fs/locations', json={'type': 'location', 'provider': 'file_system'}), 422)['detail'][0]['loc'] == ['body', 'provider']
 
@@ -180,7 +180,8 @@ def test_a_session_is_known_by_its_type_and_uid(api):
     assert other['id'] != session['id'] and ok(api.get(f"/sessions/{session['id']}"))['uid'] == 'u1'
     message = ok(api.post('/sessions/messages', json={'type': 'user', 'parent_id': session['id'], 'meta': {'uid': 'm1', 'line': 1}}))
     assert header(message)[:2] == bytes([0x20, 0x02])
-    assert [m['id'] for m in ok(api.get(f"/records/{session['id']}/records"))] == [message['id']]
+    children = {'filters': json.dumps({'parent_id': {'$eq': session['id']}})}
+    assert [m['id'] for m in ok(api.get('/sessions/messages', params=children))['items']] == [message['id']]
     nxt = ok(api.post('/sessions/links', json={'type': 'next', 'status': 'new', 'from_id': session['id'], 'to_id': other['id']}))
     assert header(nxt)[:2] == bytes([0x20, 0x10])
     assert [t['shard'] for t in ok(api.get('/sessions/types', params={'filters': '{"slug": {"$eq": "next"}}'}))['items']] == [0x2010]
@@ -229,7 +230,7 @@ def test_a_type_is_made_with_its_slug_and_shard_and_changed_without_them(api):
 
 
 def test_a_link_is_written_with_its_relation_as_its_type(api):
-    a, b = (ok(api.post('/records', json={'type': 'node'})) for _ in range(2))
+    a, b = (ok(api.post('/nodes', json={'type': 'node'})) for _ in range(2))
     link = ok(api.post('/links', json={'type': 'implements', 'from_id': a['id'], 'to_id': b['id']}))
     assert ok(api.get(f"/links/{link['id']}"))['type'] == 'implements'
 
