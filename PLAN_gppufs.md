@@ -69,7 +69,7 @@ Independent, not scoped:
 ## No ld.records and no /records
 - gppu.ld: each table carries a record's columns itself and is served at its own path (`/types`, `/nodes`, `/links`, `/events`); children and links are a search of their table: done, the gppu suite passes
 - RAN `Systems/ld`'s scripts and checks on each table's path: done; check.py, check_files.py and structure.py pass against the API on a scratch database, FileIndexer's tests pass
-- RAN `Systems/ld/web` and `ui` on each table's path: in progress
+- RAN `Systems/ld/web` on each table's path: done; type-checked, built, and drawn in a browser against the API on a scratch database, a record's links read from every schema's links
 - CRAP admin_ui's Linked Data pages on each table's path: in progress
 - no table inherits another: fs's and sessions' types and links are their own, each schema searched at its own paths: done, the gppu suite passes
 
@@ -78,7 +78,7 @@ Every caller of production's API from before the standard is moved onto gppu.ld 
 - the standard's initial types in ld.sql (work, epic, project and task events; entity and work statuses): in progress
 - RAN `Systems/ld`'s check_work.py, check_sessions.py, check_api.py and web/check.py on gppu.ld: in progress
 - the carry-over of production's store into gppu.ld through its API (migrate.py, migrate_systems.py), proven on scratch stores laid out as production's: in progress
-- RAN `Systems/ld/ui`, retired 10-19 for admin_ui's Linked Data section, archived: in progress
+- RAN `Systems/ld/ui`, retired 10-19 for admin_ui's Linked Data section, archived at RAN `archive/Systems/ld/ui-261029`: done
 - every other caller (session hook, Session Manager, linked-data-tasks, the dashboard mod, MCP United's `pm_*`, static sites' lectures, Kuma's monitors, admin_ui's `shared`), and the list of what switches with production: in progress
 
 ## Found, not this task
