@@ -73,6 +73,14 @@ Independent, not scoped:
 - CRAP admin_ui's Linked Data pages on each table's path: in progress
 - no table inherits another: fs's and sessions' types and links are their own, each schema searched at its own paths: done, the gppu suite passes
 
+## Nothing on the API from before the standard
+Every caller of production's API from before the standard is moved onto gppu.ld on master; what runs live switches with production.
+- the standard's initial types in ld.sql (work, epic, project and task events; entity and work statuses): in progress
+- RAN `Systems/ld`'s check_work.py, check_sessions.py, check_api.py and web/check.py on gppu.ld: in progress
+- the carry-over of production's store into gppu.ld through its API (migrate.py, migrate_systems.py), proven on scratch stores laid out as production's: in progress
+- RAN `Systems/ld/ui`, retired 10-19 for admin_ui's Linked Data section, archived: in progress
+- every other caller (session hook, Session Manager, linked-data-tasks, the dashboard mod, MCP United's `pm_*`, static sites' lectures, Kuma's monitors, admin_ui's `shared`), and the list of what switches with production: in progress
+
 ## Found, not this task
 - `examples/handler_ls.py` and the handler browser's `main` stop: `D:\TextLake\.catalog`, the catalog `examples/handlers.yaml` names, has no folder for this host, which the host-folder catalog has required since 2026-09-08, the day the folder was last written.
 - The admin API's image installs gppu from the `gppu/latest` tag; the Linked Data and Lake images install it from master.
@@ -88,5 +96,4 @@ Independent, not scoped:
 - gppu has no public field for the first line a person typed; the session tools read it from `normalized_name`.
 - RAN `Systems/lake/plaud/test_dagster_incremental.py` calls `download_recordings` with the signature CRAP d1091211 (2026-09-24) replaced.
 - RAN `Systems/lake/m365/locations/karelin.py` and `tulaco.py` need a `lake.yaml` that is not in the repository; their compose services are commented out.
-- RAN `Systems/ld`'s check_api.py, check_sessions.py, check_work.py, migrate.py, migrate_systems.py and web/check.py call production's API from before the standard (`/records`, `/entities`, hex types, `subtype`); they fail against gppu.ld, and `/work` has no tables in ld.sql.
 - RAN `Systems/lake/tests/test_age.py`, `test_catalog_graph.py` and `test_graph_read.py` run inside a transaction on pg.karel.in/everything; not run.
