@@ -2,7 +2,7 @@
 (gppu.ld) and served at /ld/v1/fs, documented at /ld/v1/fs/docs.
 
 A location is one place in the configured hierarchy, a host among them; a file is a file or a folder in a location, its type its
-handler; an instance is what one source read of a file; a link joins a location or a file to a record of another schema. Each is
+handler; an instance is one copy of a file at one path, what gppufs indexes; a link joins a location or a file to a record of another schema. Each is
 created, read, updated, deleted and searched at its own path, `/fs/locations`, `/fs/files`, `/fs/instances` and `/fs/links`, and
 the file system's types at `/fs/types`; gppufs makes its catalog from the locations (gppu.fs.catalog)."""
 from sqlalchemy import UniqueConstraint
@@ -34,7 +34,7 @@ class File(_Record, table=True):
 
 
 class Instance(_Record, table=True):
-    """What one source read of a file. Its `parent_id` is the file; its `span` from when the source read it to when the source
+    """One copy of a file at one path, what gppufs indexes. Its `parent_id` is the file; its `span` from when the source read it to when the source
     found it gone. `data.source` the source that read it; `data.size`, `data.files`, `data.folders` its size, and for a folder what
     it holds; `data.changed_at` when the source last changed it; `data.metadata` what the handlers read of it."""
     __tablename__, __table_args__, __shard__ = 'instances', {'schema': 'fs'}, 0x1003

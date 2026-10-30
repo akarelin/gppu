@@ -438,10 +438,10 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
       database.execute('INSERT INTO gppufs_index VALUES (?)', (self.fs.info(self._path(owner)).get('ino'),))
     database.execute('CREATE TABLE IF NOT EXISTS gppufs_entries ('
       'path TEXT PRIMARY KEY, metadata TEXT NOT NULL, children TEXT)')
-    if database.execute('PRAGMA user_version').fetchone()[0] < 1:   # rows written before each carried its file's id are given one
-      database.create_function('file_id', 0, lambda: str(uuid_create(0x1002)))
-      database.execute("UPDATE gppufs_entries SET metadata=json_set(metadata, '$.gppu.id', file_id()) WHERE metadata->>'$.gppu.id' IS NULL")
-      database.execute('PRAGMA user_version = 1')
+    if database.execute('PRAGMA user_version').fetchone()[0] < 2:   # a row is an instance: one without its id, or with a file's, is given an instance's
+      database.create_function('instance_id', 0, lambda: str(uuid_create(0x1003)))
+      database.execute("UPDATE gppufs_entries SET metadata=json_set(metadata, '$.gppu.id', instance_id()) WHERE coalesce(metadata->>'$.gppu.id', '') NOT LIKE '1003%'")
+      database.execute('PRAGMA user_version = 2')
 
   def _held(self, owner: str) -> sqlite3.Connection:
     """The index held in memory for this instance, read once from the store when the store has one.
@@ -1125,15 +1125,15 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
 
   def _row(self, key: str, item: dict, record: handlers.Record, path: Path, *, probed_at: datetime | None = None,
            unread: str | None = None, children: list[dict] | None = None, id: str | None = None) -> dict:
-    """One entry as gppufs holds it: its native attributes, and under `gppu` its file's id, the handlers that read it, its
+    """One entry as gppufs holds it: its native attributes, and under `gppu` its instance's id, the handlers that read it, its
     handler's record and its totals. The id is the one its row was given when first written, a new one for an entry the
-    index never held, `uuid_create(0x1002)` as fs.files makes it. An entry only identified, not parsed, is `probed`
+    index never held, `uuid_create(0x1003)` as fs.instances makes it. An entry only identified, not parsed, is `probed`
     false, and a folder's totals are then unknown."""
     folder = self._folder(record)
     names = [record.type]
     if path.name.casefold().endswith(handlers.ARCHIVES):
       names.append('archive')
-    gppu = {'id': id or str(uuid_create(0x1002)), 'path': str(path), 'type': 'folder' if folder else 'file',
+    gppu = {'id': id or str(uuid_create(0x1003)), 'path': str(path), 'type': 'folder' if folder else 'file',
             'size': 0 if folder else int(record.meta.get('size', 0)), 'modified_at': _modified(item),
             'handlers': names, 'record': vars(record)}
     if unread is not None:

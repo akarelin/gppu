@@ -35,7 +35,7 @@ A session-sized job: gppufs.py is reworked, and its tests, the catalog, the desk
 - Host tools (RAN `Hosts/preservator`, `Hosts/tui` session scripts): done, preservator saving through the Lake, `platform_for_os` restored
 - Releases and deploys of the stacks: a gppu release from master, Alex's
 - with a catalog, gppufs lists and opens through it what it holds no index for, SharePoint and archives among them: done; the catalog's address is the `catalog` option, from fsspec's configuration (`FSSPEC_GPPU_CATALOG`), none by default; bytes come from the Lake at the entry's address
-- each index row carries a UUID, made by gppufs (`uuid_create(0x1002)`), kept through a refresh, a change and a move: done; an index on a store this host does not own holds its ids in memory until its own host writes it; finding an entry by its UUID: not started
+- each index row carries a UUID, made by gppufs as an instance's (`uuid_create(0x1003)`), rows indexed with a file's id given an instance's, kept through a refresh, a change and a move: done; an index on a store this host does not own holds its ids in memory until its own host writes it; finding an entry by its UUID: not started
 - the handler generates the UUID, an instance's or a file's by its target: not started; which handlers target which is in the gppufs note's "For Alex to decide"
 - the gppufs and Lake notes in `Linked Data.md`'s style, conventions from the spec and the code, then their processes, life cycles and types as unverified details; the earlier text of each its Implementation note: done
 - gppufs on fsspec's `AsyncFileSystem`, its callers moved: done in gppu and RAN, the suite passes, the session cleaner's dry run finds the same sessions; the admin API's inventory readers await `_ls` and `_info`: done
@@ -62,7 +62,6 @@ Independent, not scoped:
 - addresses in the schemes the convention discards still in use: the Lake's `pg://`, gppufs's `catalog://`; `gppu-catalog`, `gppu-index` and `gppu-desktop` are only fsspec's names for those classes, no address uses them
 - a `uuid:` resolved to its record
 - a record's `name` and `display_name` as 0.2 has them
-- Record not a table of its own (`ld.records`)
 - a type's slug as its alternative key
 - the initial types of 0.2 in ld.sql
 - the Lake's sections: Activity by source, `text`, `inbox`
