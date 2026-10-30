@@ -249,3 +249,14 @@ def test_gppufs_makes_its_catalog_from_the_locations(api):
     catalog = locations.catalog(ok(api.get('/fs/locations'))['items'])
     assert {'cat-root', 'cat-inner'} <= catalog.locations.keys() and not {'cat-discarded', 'cat-archived'} & catalog.locations.keys()
     assert catalog.locations['cat-inner']['parent'] == 'cat-root' and catalog.locations['cat-inner']['tags'] == ['x']
+
+
+def test_a_record_has_a_kind_from_its_types_kinds(api):
+    kinds = ok(api.get('/types', params={'filters': json.dumps({'type': {'$eq': 'kind'}})}))['items']
+    assert {'experiment', 'feature', 'problem', 'chore'} <= {k['slug'] for k in kinds}
+    chore = ok(api.post('/events', json={'type': 'task', 'kind': 'chore', 'name': 'a chore'}))
+    assert chore['kind'] == 'chore' and chore['id'][:4] == '0020'
+    assert ok(api.put(f"/events/{chore['id']}", json={'kind': 'problem'}))['kind'] == 'problem'
+    found = ok(api.get('/events', params={'filters': json.dumps({'kind': {'$eq': 'problem'}, 'name': {'$eq': 'a chore'}})}))['items']
+    assert [x['id'] for x in found] == [chore['id']]
+    assert ok(api.post('/fs/locations', json={'type': 'location', 'kind': 'chore'}), 422)   # only the core's nodes and events have a kind

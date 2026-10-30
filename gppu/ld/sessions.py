@@ -14,7 +14,7 @@ from . import _Link, _Record, _Type, api_at, operations
 
 
 class Type(_Type, table=True):
-    """The sessions' types and statuses: a session's harness, a message's kind, a link's kind."""
+    """The sessions' types and statuses: a session's harness, a message's side and a link's relation are its types."""
     __tablename__, __table_args__, __shard__ = 'types', (UniqueConstraint('shard', 'slug'), {'schema': 'sessions'}), 0x2000
 
 

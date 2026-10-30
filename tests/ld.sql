@@ -69,6 +69,17 @@ AS $$
             status_create.flags, status_create.status, status_create.span, status_create.data, status_create.meta);
 $$;
 
+-- a kind is a row of type 'kind' whose parent is the type it belongs to, a record's `kind` one of them, as its `status` is
+CREATE PROCEDURE ld.kind_create(slug text, shard int, name text, type text,
+                                  flags smallint DEFAULT 0, status text DEFAULT NULL, span tstzrange DEFAULT NULL, data jsonb DEFAULT '{}', meta jsonb DEFAULT '{}')
+LANGUAGE sql
+AS $$
+    INSERT INTO ld.types (type, slug, shard, name, parent_id, flags, status, span, data, meta)
+    VALUES ('kind', kind_create.slug, kind_create.shard, kind_create.name,
+            (SELECT t.id FROM ld.types t WHERE t.slug = kind_create.type AND t.shard = kind_create.shard AND t.type IS NULL),
+            kind_create.flags, kind_create.status, kind_create.span, kind_create.data, kind_create.meta);
+$$;
+
 CALL ld.type_create(slug => 'type', shard => x'0000'::int, name => 'Type');
 CALL ld.type_create(slug => 'node', shard => x'0001'::int, name => 'Node', parent => 'type');
 CALL ld.type_create(slug => 'link', shard => x'0010'::int, name => 'Link', parent => 'type');
@@ -113,6 +124,7 @@ CREATE TABLE ld.nodes (
     flags     smallint NOT NULL DEFAULT 0,
     type      text,
     status    text,
+    kind      text,
     name      text,
     parent_id uuid,
     span      tstzrange,
@@ -135,6 +147,7 @@ CALL ld.type_create(slug => 'dimension', shard => x'0001'::int, name => 'Label u
 CALL ld.type_create(slug => 'axis', shard => x'0001'::int, name => 'Axis', parent => 'dimension');
 CALL ld.type_create(slug => 'theme', shard => x'0001'::int, name => 'Theme', parent => 'label');
 CALL ld.type_create(slug => 'status', shard => x'0001'::int, name => 'Status', parent => 'label');
+CALL ld.type_create(slug => 'kind', shard => x'0001'::int, name => 'Kind', parent => 'label');
 CALL ld.type_create(slug => 'ne', shard => x'0001'::int, name => 'Named Entity', parent => 'entity');
 CALL ld.type_create(slug => 'idea', shard => x'0001'::int, name => 'Idea', parent => 'entity');
 CALL ld.type_create(slug => 'container', shard => x'0001'::int, name => 'Container', parent => 'node');
@@ -152,6 +165,7 @@ CREATE TABLE ld.events (
     flags     smallint NOT NULL DEFAULT 0,
     type      text,
     status    text,
+    kind      text,
     name      text,
     parent_id uuid,
     span      tstzrange,
@@ -169,13 +183,11 @@ CALL ld.type_create(slug => 'work', shard => x'0020'::int, name => 'Real Activit
 CALL ld.type_create(slug => 'epic', shard => x'0020'::int, name => 'Epic', parent => 'work');
 CALL ld.type_create(slug => 'project', shard => x'0020'::int, name => 'Project', parent => 'work');
 CALL ld.type_create(slug => 'task', shard => x'0020'::int, name => 'Task', parent => 'work');
-CALL ld.type_create(slug => 'project-experiment', shard => x'0020'::int, name => 'Experiment', parent => 'project');
-CALL ld.type_create(slug => 'task-experiment', shard => x'0020'::int, name => 'Experiment', parent => 'task');
-CALL ld.type_create(slug => 'project-feature', shard => x'0020'::int, name => 'Feature', parent => 'project');
-CALL ld.type_create(slug => 'epic-feature', shard => x'0020'::int, name => 'Feature', parent => 'epic');
-CALL ld.type_create(slug => 'task-feature', shard => x'0020'::int, name => 'Feature', parent => 'task');
-CALL ld.type_create(slug => 'problem', shard => x'0020'::int, name => 'Problem', parent => 'task');
-CALL ld.type_create(slug => 'chore', shard => x'0020'::int, name => 'Chore', parent => 'task');
+
+CALL ld.kind_create(slug => 'experiment', shard => x'0020'::int, name => 'Experiment', type => 'work');
+CALL ld.kind_create(slug => 'feature', shard => x'0020'::int, name => 'Feature', type => 'work');
+CALL ld.kind_create(slug => 'problem', shard => x'0020'::int, name => 'Problem', type => 'work');
+CALL ld.kind_create(slug => 'chore', shard => x'0020'::int, name => 'Chore', type => 'work');
 
 CALL ld.status_create(slug => 'work-status', shard => x'0020'::int, name => 'Status', type => 'work');
 CALL ld.status_create(slug => 'proposed', shard => x'0020'::int, name => NULL, type => 'work-status');
@@ -228,6 +240,7 @@ AS $$
             (SELECT t.id FROM fs.types t WHERE t.slug = status_create.type AND t.shard = status_create.shard),
             status_create.flags, status_create.status, status_create.span, status_create.data, status_create.meta);
 $$;
+
 
 CALL fs.type_create(slug => 'location', shard => x'1001'::int, name => 'Location');
 CALL fs.type_create(slug => 'file', shard => x'1002'::int, name => 'File', data => '{"class": "gppu.fs.handlers.FileHandler"}');
@@ -376,6 +389,7 @@ AS $$
             (SELECT t.id FROM sessions.types t WHERE t.slug = status_create.type AND t.shard = status_create.shard),
             status_create.flags, status_create.status, status_create.span, status_create.data, status_create.meta);
 $$;
+
 
 CALL sessions.type_create(slug => 'session', shard => x'2001'::int, name => 'Session');
 CALL sessions.type_create(slug => 'message', shard => x'2002'::int, name => 'Message');

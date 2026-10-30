@@ -287,8 +287,8 @@ class _Record(SQLModel):
 
 class _Type(_Record):
     """A type's columns: its slug, unique in its shard, and the shard its records are in, the two bytes of their table, shard1
-    its schema and shard2 the table (# UUID). A status is a type of type `status` whose parent is the type it belongs to; a type's parent
-    is the type of its schema it is under (# Types: `node` and `link` under `type`, `event` under `node`), and the type made for one of
+    its schema and shard2 the table (# UUID). A status is a type of type `status` whose parent is the type it belongs to, and a kind
+    one of type `kind` (`_Kinded`); a type's parent is the type of its schema it is under (# Types: `node` and `link` under `type`, `event` under `node`), and the type made for one of
     its schema's tables says what that table holds. Each schema's types are a table of its own."""
     # required to make a type, which its table refuses without them, not to change one: an update takes only what changes
     slug: str | None = Field(None, sa_type=String, sa_column_kwargs={'nullable': False}, description='Its slug, unique in its shard.')
@@ -301,14 +301,20 @@ class _Link(_Record):
     to_id: UUID | None = Field(None, description='The record where it ends.')
 
 
+class _Kinded(_Record):
+    """A record that has a kind, as it has a status: one of the kinds of its type or its type's parent, a constrained vocabulary of
+    rows of type `kind` in its schema's types. The core's nodes and events have it; no other table needs one."""
+    kind: str | None = Field(None, sa_type=String, description="Slug of its kind, one of its type's or its type's parent's.")
+
+
 # ++     The core's tables: schema `ld`, shard1 0x00
 
 class Type(_Type, table=True):
-    """What a record is, and its statuses."""
+    """What a record is, its statuses and its kinds."""
     __tablename__, __table_args__, __shard__ = 'types', (UniqueConstraint('shard', 'slug'), {'schema': 'ld'}), 0x0000
 
 
-class Node(_Record, table=True):
+class Node(_Kinded, table=True):
     """A node (vertex) or a row; most belong to a container, their `parent_id`."""
     __tablename__, __table_args__, __shard__ = 'nodes', {'schema': 'ld'}, 0x0001
 
@@ -318,7 +324,7 @@ class Link(_Link, table=True):
     __tablename__, __table_args__, __shard__ = 'links', {'schema': 'ld'}, 0x0010
 
 
-class Event(_Record, table=True):
+class Event(_Kinded, table=True):
     """Something that happened: an `event` at one moment, an `activity` over its span."""
     __tablename__, __table_args__, __shard__ = 'events', {'schema': 'ld'}, 0x0020
 
@@ -340,7 +346,7 @@ def operations(path: str, body: type[_Record], name: str, *models: type[_Record]
         """The table of the record's `type`, one of the path's: the type's `shard`, read in the core's `ld.types`."""
         if len(own) == 1:
             return next(iter(own.values()))
-        shards = (await _Record.db().exec(select(Type.shard).where(Type.slug == record.type, Type.type.is_distinct_from('status')))).all()
+        shards = (await _Record.db().exec(select(Type.shard).where(Type.slug == record.type, Type.type.is_(None)))).all()
         if len(found := {s for s in shards if s in own}) != 1:
             raise HTTPException(422, f'{record.type!r} is a type of {len(found) or "no"} table{"" if len(found) == 1 else "s"} of {path}: '
                                      + ', '.join(m.__table__.fullname for m in own.values()))
@@ -391,8 +397,8 @@ def operations(path: str, body: type[_Record], name: str, *models: type[_Record]
 router = APIRouter()
 
 
-router.include_router(operations('/nodes', _Record, 'node', Node))
-router.include_router(operations('/events', _Record, 'event', Event))
+router.include_router(operations('/nodes', _Kinded, 'node', Node))
+router.include_router(operations('/events', _Kinded, 'event', Event))
 router.include_router(operations('/types', _Type, 'type', Type))
 router.include_router(operations('/links', _Link, 'link', Link))
 
@@ -411,7 +417,7 @@ app = FastAPI(
     version='1',   # the major version its path carries, /ld/v1 (Alex 10-16 09:48: versions in the URL)
     summary='Records and the links between them: create, read, update, delete, search.',
     openapi_tags=[
-        {'name': 'type', 'description': 'What a record can be, and its statuses.'},
+        {'name': 'type', 'description': 'What a record can be, its statuses and its kinds.'},
         {'name': 'node', 'description': 'Nodes (vertices) or rows; most belong to a container, their `parent_id`.'},
         {'name': 'link', 'description': 'The links between records.'},
         {'name': 'event', 'description': 'What happened: an `event` at one moment, an `activity` over its span.'}],
