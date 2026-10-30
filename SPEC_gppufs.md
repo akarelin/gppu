@@ -22,6 +22,7 @@ What Alex instructed for gppufs, its catalog and their users, as plain statement
 - Inside every schema, types describe how the rest of the schema works: the type made for one of the schema's tables says what it holds, and the types under it are its kinds. The types and their parents are those of `Linked Data.md` # Types.
 - A type's parent is the type it is under, a container of types, not inheritance.
 - Status is a Constrained Vocabulary stored in Linked Data, and each type has its own list of statuses.
+- A task's parent is a project or another task.
 
 ## The catalog and its users
 - gppu provides the catalog; the catalog's users load its locations.
