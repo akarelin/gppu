@@ -76,6 +76,7 @@ Independent, not scoped:
 ## Nothing on the API from before the standard
 Every caller of production's API from before the standard is moved onto gppu.ld on master; what runs live switches with production.
 - the standard's initial types in ld.sql (work, epic, project and task events; entity and work statuses): done, the gppu suite passes
+- a kind on ld's nodes and events, each type's kinds a constrained vocabulary as its statuses; experiment, feature, problem and chore kinds of work in place of the types per parent: done in gppu.ld, the suite passes; the carry-over, the collector, the callers and the pages on it: in progress
 - RAN `Systems/ld`'s check_work.py, check_sessions.py and check_api.py on gppu.ld, work as events with a work's work and parents in work.py: done, every check passes against the API on a scratch database; web/check.py's page side: in progress
 - the carry-over of production's store into gppu.ld through its API (migrate.py, migrate_systems.py), proven on scratch stores laid out as production's: in progress
 - RAN `Systems/ld/ui`, retired 10-19 for admin_ui's Linked Data section, archived at RAN `archive/Systems/ld/ui-261029`: done
