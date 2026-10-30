@@ -25,6 +25,7 @@ from gppu.ld import Page, Params, api_at, serve, sessions
 
 DSN = os.environ['LD_TEST_DSN']
 DB = f'gppu_ld_test_{uuid4().hex[:12]}'   # its own, so no other database on the server is touched
+STORE = DSN.rsplit('/', 1)[0] + '/' + DB
 ordered = APIRouter()
 
 
@@ -40,12 +41,11 @@ def api():
     """The core, the fs API and the sessions API, and a session's messages in order, on a database made from gppu.ld's SQL (ld.sql)."""
     with psycopg.connect(DSN, autocommit=True) as server:
         server.execute(f'CREATE DATABASE {DB}')
-    dsn = DSN.rsplit('/', 1)[0] + '/' + DB
     previous, initialized = Env.data, Env.initialized
     try:
-        with psycopg.connect(dsn, autocommit=True) as db:
+        with psycopg.connect(STORE, autocommit=True) as db:
             db.execute((Path(__file__).parent / 'ld.sql').read_text(encoding='utf-8'))
-        Env._load_dict({'db': dsn})   # the store's `db`, as an app's configuration gives it
+        Env._load_dict({'db': STORE})   # the store's `db`, as an app's configuration gives it
         apis = {'/fs': files.app, '/sessions': sessions.app, '/ordered': api_at('/ordered', 'ordered', "A session's messages in order.", ordered)}
         with TestClient(serve(apis, _SQABase()), backend_options={'loop_factory': asyncio.SelectorEventLoop}) as client:   # psycopg's async connections need the selector loop on Windows, as RAN's api.py runs it
             yield client
@@ -120,6 +120,20 @@ def test_a_read_only_record_changes_only_its_flags(api):
     assert 'read only' in ok(api.put(f"/nodes/{node['id']}", json={'data': {'a': 1}}), 422)['detail']
     assert ok(api.put(f"/nodes/{node['id']}", json={'flags': 0}))['flags'] == 0
     assert ok(api.put(f"/nodes/{node['id']}", json={'data': {'a': 1}}))['data'] == {'a': 1}
+
+
+def test_a_read_only_type_is_neither_changed_nor_deleted_by_the_api_or_in_the_database(api):
+    kept = ok(api.post('/types', json={'slug': 'kept', 'shard': 0x0001, 'name': 'Kept'}))
+    assert ok(api.put(f"/types/{kept['id']}", json={'flags': 1}))['flags'] == 1   # toggle ro
+    assert 'read only' in ok(api.put(f"/types/{kept['id']}", json={'data': {'a': 1}}), 422)['detail']
+    assert 'change only by toggle ro' in ok(api.delete(f"/types/{kept['id']}"), 422)['detail']
+    with psycopg.connect(STORE, autocommit=True) as db:
+        with pytest.raises(psycopg.errors.RaiseException, match='only its flags change'):
+            db.execute("UPDATE ld.types SET data = '{\"a\": 1}' WHERE id = %s", (kept['id'],))
+        with pytest.raises(psycopg.errors.RaiseException, match='it is not deleted'):
+            db.execute('DELETE FROM ld.types WHERE id = %s', (kept['id'],))
+    assert ok(api.put(f"/types/{kept['id']}", json={'flags': 0}))['flags'] == 0   # toggle ro, and it changes again
+    assert ok(api.put(f"/types/{kept['id']}", json={'data': {'a': 1}}))['data'] == {'a': 1}
 
 
 def test_a_deleted_record_is_out_of_sight_and_read_by_its_id(api):

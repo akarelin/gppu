@@ -12,11 +12,22 @@ AS $$
     FROM (SELECT uuid_send(uuidv7()) AS v7) AS s;
 $$;
 
+-- a read-only record (ro, system, deleted or archived: Linked Data, # Flags) changes only its flags, and is never deleted
 CREATE FUNCTION ld.record()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF OLD.flags & 23 <> 0 THEN
+            RAISE EXCEPTION '%.% % is read only (flags %): it is not deleted', TG_TABLE_SCHEMA, TG_TABLE_NAME, OLD.id, OLD.flags;
+        END IF;
+        RETURN OLD;
+    END IF;
+    IF TG_OP = 'UPDATE' AND OLD.flags & 23 <> 0
+       AND to_jsonb(NEW) - 'flags' - 'updated' - 'ts' IS DISTINCT FROM to_jsonb(OLD) - 'flags' - 'updated' - 'ts' THEN
+        RAISE EXCEPTION '%.% % is read only (flags %): only its flags change', TG_TABLE_SCHEMA, TG_TABLE_NAME, OLD.id, OLD.flags;
+    END IF;
     IF TG_OP = 'UPDATE' THEN
         IF NEW.name IS NOT DISTINCT FROM OLD.name AND OLD.name = coalesce(OLD.data->>'name', OLD.type || '-' || OLD.id) THEN
             NEW.name := NULL;
@@ -47,7 +58,7 @@ CREATE TABLE ld.types (
 -- a type is one slug in its shard; a status or a kind is one slug under the type it belongs to
 CREATE UNIQUE INDEX types_slug ON ld.types (shard, slug) WHERE type IS NULL;
 CREATE UNIQUE INDEX types_value_slug ON ld.types (parent_id, slug) WHERE type IS NOT NULL;
-CREATE TRIGGER record BEFORE INSERT OR UPDATE ON ld.types FOR EACH ROW EXECUTE FUNCTION ld.record();
+CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON ld.types FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 -- parent is the type of `ld` it is under (Linked Data, # Types); `type` has none
 CREATE PROCEDURE ld.type_create(slug text, shard int, name text, parent text DEFAULT NULL,
@@ -103,7 +114,7 @@ CREATE TABLE ld.links (
     from_id   uuid,
     to_id     uuid
 );
-CREATE TRIGGER record BEFORE INSERT OR UPDATE ON ld.links FOR EACH ROW EXECUTE FUNCTION ld.record();
+CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON ld.links FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CALL ld.type_create(slug => 'related', shard => x'0010'::int, name => 'Related', parent => 'link');
 CALL ld.type_create(slug => 'same', shard => x'0010'::int, name => 'Same', parent => 'link');
@@ -136,7 +147,7 @@ CREATE TABLE ld.nodes (
     created   timestamptz NOT NULL DEFAULT now(),
     updated   timestamptz
 );
-CREATE TRIGGER record BEFORE INSERT OR UPDATE ON ld.nodes FOR EACH ROW EXECUTE FUNCTION ld.record();
+CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON ld.nodes FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CALL ld.type_create(slug => 'entity', shard => x'0001'::int, name => 'Entity', parent => 'node');
 CALL ld.type_create(slug => 'content', shard => x'0001'::int, name => 'Content', parent => 'node');
@@ -177,7 +188,7 @@ CREATE TABLE ld.events (
     created   timestamptz NOT NULL DEFAULT now(),
     updated   timestamptz
 );
-CREATE TRIGGER record BEFORE INSERT OR UPDATE ON ld.events FOR EACH ROW EXECUTE FUNCTION ld.record();
+CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON ld.events FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CALL ld.type_create(slug => 'activity', shard => x'0020'::int, name => 'Activity', parent => 'event');
 CALL ld.type_create(slug => 'message', shard => x'0020'::int, name => 'Message', parent => 'event');
@@ -222,7 +233,7 @@ CREATE TABLE fs.types (
 -- a type is one slug in its shard; a status or a kind is one slug under the type it belongs to
 CREATE UNIQUE INDEX types_slug ON fs.types (shard, slug) WHERE type IS NULL;
 CREATE UNIQUE INDEX types_value_slug ON fs.types (parent_id, slug) WHERE type IS NOT NULL;
-CREATE TRIGGER record BEFORE INSERT OR UPDATE ON fs.types FOR EACH ROW EXECUTE FUNCTION ld.record();
+CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON fs.types FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 -- parent is the type of `fs` it is under; a root type has none and says what one of the schema's tables holds
 CREATE PROCEDURE fs.type_create(slug text, shard int, name text, parent text DEFAULT NULL,
@@ -268,7 +279,7 @@ CREATE TABLE fs.locations (
     created   timestamptz NOT NULL DEFAULT now(),
     updated   timestamptz
 );
-CREATE TRIGGER record BEFORE INSERT OR UPDATE ON fs.locations FOR EACH ROW EXECUTE FUNCTION ld.record();
+CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON fs.locations FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CALL fs.type_create(slug => 'host', shard => x'1001'::int, name => 'Host', parent => 'location');
 
@@ -286,7 +297,7 @@ CREATE TABLE fs.files (
     created   timestamptz NOT NULL DEFAULT now(),
     updated   timestamptz
 );
-CREATE TRIGGER record BEFORE INSERT OR UPDATE ON fs.files FOR EACH ROW EXECUTE FUNCTION ld.record();
+CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON fs.files FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CALL fs.type_create(slug => 'folder', shard => x'1002'::int, name => 'Folder', parent => 'file', data => '{"class": "gppu.fs.handlers.FolderHandler"}');
 
@@ -330,7 +341,7 @@ CREATE TABLE fs.instances (
     created   timestamptz NOT NULL DEFAULT now(),
     updated   timestamptz
 );
-CREATE TRIGGER record BEFORE INSERT OR UPDATE ON fs.instances FOR EACH ROW EXECUTE FUNCTION ld.record();
+CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON fs.instances FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CREATE TABLE fs.links (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'1010'::int),
@@ -348,7 +359,7 @@ CREATE TABLE fs.links (
     from_id   uuid,
     to_id     uuid
 );
-CREATE TRIGGER record BEFORE INSERT OR UPDATE ON fs.links FOR EACH ROW EXECUTE FUNCTION ld.record();
+CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON fs.links FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CALL fs.type_create(slug => 'link', shard => x'1010'::int, name => 'Link');
 
@@ -373,7 +384,7 @@ CREATE TABLE sessions.types (
 -- a type is one slug in its shard; a status or a kind is one slug under the type it belongs to
 CREATE UNIQUE INDEX types_slug ON sessions.types (shard, slug) WHERE type IS NULL;
 CREATE UNIQUE INDEX types_value_slug ON sessions.types (parent_id, slug) WHERE type IS NOT NULL;
-CREATE TRIGGER record BEFORE INSERT OR UPDATE ON sessions.types FOR EACH ROW EXECUTE FUNCTION ld.record();
+CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON sessions.types FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 -- parent is the type of `sessions` it is under; a root type has none and says what one of the schema's tables holds
 CREATE PROCEDURE sessions.type_create(slug text, shard int, name text, parent text DEFAULT NULL,
@@ -423,7 +434,7 @@ CREATE TABLE sessions.sessions (
     uid       text,
     UNIQUE (type, uid)
 );
-CREATE TRIGGER record BEFORE INSERT OR UPDATE ON sessions.sessions FOR EACH ROW EXECUTE FUNCTION ld.record();
+CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON sessions.sessions FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CALL sessions.type_create(slug => 'cc', shard => x'2001'::int, name => 'Claude Code', parent => 'session');
 CALL sessions.type_create(slug => 'cx', shard => x'2001'::int, name => 'Codex', parent => 'session');
@@ -449,7 +460,7 @@ CREATE TABLE sessions.messages (
     updated   timestamptz
 );
 CREATE INDEX ON sessions.messages (parent_id);
-CREATE TRIGGER record BEFORE INSERT OR UPDATE ON sessions.messages FOR EACH ROW EXECUTE FUNCTION ld.record();
+CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON sessions.messages FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CALL sessions.type_create(slug => 'user', shard => x'2002'::int, name => 'User', parent => 'message');
 CALL sessions.type_create(slug => 'agent', shard => x'2002'::int, name => 'Agent', parent => 'message');
@@ -473,6 +484,6 @@ CREATE TABLE sessions.links (
     from_id   uuid,
     to_id     uuid
 );
-CREATE TRIGGER record BEFORE INSERT OR UPDATE ON sessions.links FOR EACH ROW EXECUTE FUNCTION ld.record();
+CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON sessions.links FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CALL sessions.type_create(slug => 'next', shard => x'2010'::int, name => 'Next', parent => 'link');
