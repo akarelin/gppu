@@ -10,6 +10,7 @@ on:
         options:
           - none
           - patch
+          - minor
       beta:
         description: 'Beta release — produces bN suffix and marks as pre-release'
         type: boolean
