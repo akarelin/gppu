@@ -75,9 +75,9 @@ def test_a_record_is_made_in_the_table_of_its_path(api):
     node = ok(api.post('/nodes', json={'type': 'node', 'data': {'x': 1}}))
     entity = ok(api.post('/nodes', json={'type': 'entity'}))
     activity = ok(api.post('/events', json={'type': 'activity', 'span': {'start': '2026-10-27T10:00:00Z', 'end': '2026-10-27T11:00:00Z'}}))
-    message = ok(api.post('/events', json={'type': 'message'}))
+    event = ok(api.post('/events', json={'type': 'event'}))
     assert header(node) == header(entity) == bytes([0x00, 0x01, 1]) + bytes(5)
-    assert header(activity) == header(message) == bytes([0x00, 0x20, 1]) + bytes(5)
+    assert header(activity) == header(event) == bytes([0x00, 0x20, 1]) + bytes(5)
     assert node['flags'] == 0 and node['name'] == f"node-{node['id']}"
     assert activity['ts'].startswith('2026-10-27T10:00:00')
 
@@ -276,7 +276,7 @@ def test_a_record_has_a_kind_from_its_types_kinds(api):
 
 def test_a_kind_shares_its_slug_with_a_type_and_is_unique_under_its_own(api):
     ne = ok(api.get('/types', params={'filters': json.dumps({'slug': {'$eq': 'ne'}, 'type': {'$isempty': True}})}))['items'][0]
-    kind = {'type': 'kind', 'slug': 'container', 'shard': 0x0001, 'name': 'Container', 'parent_id': ne['id']}
-    ok(api.post('/types', json=kind))   # a Docker container is a kind of named entity; `container` the type stays the node that holds records
+    kind = {'type': 'kind', 'slug': 'idea', 'shard': 0x0001, 'name': 'Idea', 'parent_id': ne['id']}
+    ok(api.post('/types', json=kind))   # a kind of named entity named as the type `idea` is
     ok(api.post('/types', json=kind), 422)
-    ok(api.post('/types', json={'slug': 'container', 'shard': 0x0001, 'name': 'Container'}), 422)
+    ok(api.post('/types', json={'slug': 'idea', 'shard': 0x0001, 'name': 'Idea'}), 422)

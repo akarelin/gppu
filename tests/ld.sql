@@ -150,7 +150,6 @@ CREATE TABLE ld.nodes (
 CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON ld.nodes FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CALL ld.type_create(slug => 'entity', shard => x'0001'::int, name => 'Entity', parent => 'node');
-CALL ld.type_create(slug => 'content', shard => x'0001'::int, name => 'Content', parent => 'node');
 CALL ld.type_create(slug => 'resource', shard => x'0001'::int, name => 'URI', parent => 'entity');
 CALL ld.type_create(slug => 'resource-fragment', shard => x'0001'::int, name => 'Resource fragment', parent => 'resource');
 CALL ld.type_create(slug => 'skos-cs', shard => x'0001'::int, name => 'skos:ConceptScheme', parent => 'entity');
@@ -163,10 +162,6 @@ CALL ld.type_create(slug => 'status', shard => x'0001'::int, name => 'Status', p
 CALL ld.type_create(slug => 'kind', shard => x'0001'::int, name => 'Kind', parent => 'label');
 CALL ld.type_create(slug => 'ne', shard => x'0001'::int, name => 'Named Entity', parent => 'entity');
 CALL ld.type_create(slug => 'idea', shard => x'0001'::int, name => 'Idea', parent => 'entity');
-CALL ld.type_create(slug => 'container', shard => x'0001'::int, name => 'Container', parent => 'node');
-CALL ld.type_create(slug => 'collection', shard => x'0001'::int, name => 'Collection', parent => 'node');
-CALL ld.type_create(slug => 'view', shard => x'0001'::int, name => 'View', parent => 'node');
-CALL ld.type_create(slug => 'knowledge', shard => x'0001'::int, name => 'Knowledge', parent => 'node');
 
 CALL ld.status_create(slug => 'entity-status', shard => x'0001'::int, name => 'Status', type => 'entity');
 CALL ld.status_create(slug => 'new', shard => x'0001'::int, name => 'New', type => 'entity-status');
@@ -191,7 +186,6 @@ CREATE TABLE ld.events (
 CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON ld.events FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CALL ld.type_create(slug => 'activity', shard => x'0020'::int, name => 'Activity', parent => 'event');
-CALL ld.type_create(slug => 'message', shard => x'0020'::int, name => 'Message', parent => 'event');
 CALL ld.type_create(slug => 'work', shard => x'0020'::int, name => 'Real Activity', parent => 'activity');
 CALL ld.type_create(slug => 'epic', shard => x'0020'::int, name => 'Epic', parent => 'work');
 CALL ld.type_create(slug => 'project', shard => x'0020'::int, name => 'Project', parent => 'work');
