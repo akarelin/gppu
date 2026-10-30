@@ -5,14 +5,14 @@ A location is one place in the configured hierarchy, a host among them; a file i
 handler; an instance is one copy of a file at one path, what gppufs indexes; a link joins a location or a file to a record of another schema. Each is
 created, read, updated, deleted and searched at its own path, `/fs/locations`, `/fs/files`, `/fs/instances` and `/fs/links`, and
 the file system's types at `/fs/types`; gppufs makes its catalog from the locations (gppu.fs.catalog)."""
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import Index, text
 
 from ..ld import _Link, _Record, _Type, api_at, operations
 
 
 class Type(_Type, table=True):
     """The file system's types and statuses: a handler's `data.class` is the Python class that is it."""
-    __tablename__, __table_args__, __shard__ = 'types', (UniqueConstraint('shard', 'slug'), {'schema': 'fs'}), 0x1000
+    __tablename__, __table_args__, __shard__ = 'types', (Index('types_slug', 'shard', 'slug', unique=True, postgresql_where=text('type IS NULL')), Index('types_value_slug', 'parent_id', 'slug', unique=True, postgresql_where=text('type IS NOT NULL')), {'schema': 'fs'}), 0x1000
 
 
 class Location(_Record, table=True):

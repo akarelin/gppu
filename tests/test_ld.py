@@ -260,3 +260,11 @@ def test_a_record_has_a_kind_from_its_types_kinds(api):
     found = ok(api.get('/events', params={'filters': json.dumps({'kind': {'$eq': 'problem'}, 'name': {'$eq': 'a chore'}})}))['items']
     assert [x['id'] for x in found] == [chore['id']]
     assert ok(api.post('/fs/locations', json={'type': 'location', 'kind': 'chore'}), 422)   # only the core's nodes and events have a kind
+
+
+def test_a_kind_shares_its_slug_with_a_type_and_is_unique_under_its_own(api):
+    ne = ok(api.get('/types', params={'filters': json.dumps({'slug': {'$eq': 'ne'}, 'type': {'$isempty': True}})}))['items'][0]
+    kind = {'type': 'kind', 'slug': 'container', 'shard': 0x0001, 'name': 'Container', 'parent_id': ne['id']}
+    ok(api.post('/types', json=kind))   # a Docker container is a kind of named entity; `container` the type stays the node that holds records
+    ok(api.post('/types', json=kind), 422)
+    ok(api.post('/types', json={'slug': 'container', 'shard': 0x0001, 'name': 'Container'}), 422)

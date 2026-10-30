@@ -42,9 +42,11 @@ CREATE TABLE ld.types (
     created   timestamptz NOT NULL DEFAULT now(),
     updated   timestamptz,
     slug      text NOT NULL,
-    shard     integer NOT NULL,     -- the shard of the table its records are in, two bytes: shard1 its schema, shard2 the table
-    UNIQUE (shard, slug)
+    shard     integer NOT NULL      -- the shard of the table its records are in, two bytes: shard1 its schema, shard2 the table
 );
+-- a type is one slug in its shard; a status or a kind is one slug under the type it belongs to
+CREATE UNIQUE INDEX types_slug ON ld.types (shard, slug) WHERE type IS NULL;
+CREATE UNIQUE INDEX types_value_slug ON ld.types (parent_id, slug) WHERE type IS NOT NULL;
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON ld.types FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 -- parent is the type of `ld` it is under (Linked Data, # Types); `type` has none
@@ -215,9 +217,11 @@ CREATE TABLE fs.types (
     created   timestamptz NOT NULL DEFAULT now(),
     updated   timestamptz,
     slug      text NOT NULL,
-    shard     integer NOT NULL,     -- the shard of the table its records are in, two bytes: shard1 its schema, shard2 the table
-    UNIQUE (shard, slug)
+    shard     integer NOT NULL      -- the shard of the table its records are in, two bytes: shard1 its schema, shard2 the table
 );
+-- a type is one slug in its shard; a status or a kind is one slug under the type it belongs to
+CREATE UNIQUE INDEX types_slug ON fs.types (shard, slug) WHERE type IS NULL;
+CREATE UNIQUE INDEX types_value_slug ON fs.types (parent_id, slug) WHERE type IS NOT NULL;
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON fs.types FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 -- parent is the type of `fs` it is under; a root type has none and says what one of the schema's tables holds
@@ -364,9 +368,11 @@ CREATE TABLE sessions.types (
     created   timestamptz NOT NULL DEFAULT now(),
     updated   timestamptz,
     slug      text NOT NULL,
-    shard     integer NOT NULL,     -- the shard of the table its records are in, two bytes: shard1 its schema, shard2 the table
-    UNIQUE (shard, slug)
+    shard     integer NOT NULL      -- the shard of the table its records are in, two bytes: shard1 its schema, shard2 the table
 );
+-- a type is one slug in its shard; a status or a kind is one slug under the type it belongs to
+CREATE UNIQUE INDEX types_slug ON sessions.types (shard, slug) WHERE type IS NULL;
+CREATE UNIQUE INDEX types_value_slug ON sessions.types (parent_id, slug) WHERE type IS NOT NULL;
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON sessions.types FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 -- parent is the type of `sessions` it is under; a root type has none and says what one of the schema's tables holds

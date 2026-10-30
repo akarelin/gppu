@@ -30,7 +30,7 @@ from psycopg.errors import UndefinedFunction
 from pydantic import ConfigDict, GetCoreSchemaHandler, GetJsonSchemaHandler, TypeAdapter, ValidationError
 from pydantic_core import core_schema
 from sqlakeyset import custom_bookmark_type
-from sqlalchemy import Computed, DateTime, FetchedValue, Integer, SmallInteger, String, TypeDecorator, UniqueConstraint, literal
+from sqlalchemy import Computed, DateTime, FetchedValue, Index, Integer, SmallInteger, String, TypeDecorator, literal, text
 from sqlalchemy.dialects.postgresql import JSONB, TSTZRANGE, Range
 from sqlalchemy.exc import DataError, IntegrityError, StatementError
 from sqlalchemy.sql.elements import UnaryExpression
@@ -286,12 +286,14 @@ class _Record(SQLModel):
 
 
 class _Type(_Record):
-    """A type's columns: its slug, unique in its shard, and the shard its records are in, the two bytes of their table, shard1
-    its schema and shard2 the table (# UUID). A status is a type of type `status` whose parent is the type it belongs to, and a kind
-    one of type `kind` (`_Kinded`); a type's parent is the type of its schema it is under (# Types: `node` and `link` under `type`, `event` under `node`), and the type made for one of
-    its schema's tables says what that table holds. Each schema's types are a table of its own."""
+    """A type's columns: its slug, and the shard its records are in, the two bytes of their table, shard1 its schema and shard2 the
+    table (# UUID). A status is a type of type `status` whose parent is the type it belongs to, and a kind one of type `kind`
+    (`_Kinded`); a type's slug is unique in its shard, a status's or a kind's under the type it belongs to. A type's parent is the
+    type of its schema it is under (# Types: `node` and `link` under `type`, `event` under `node`), and the type made for one of its
+    schema's tables says what that table holds. Each schema's types are a table of its own."""
     # required to make a type, which its table refuses without them, not to change one: an update takes only what changes
-    slug: str | None = Field(None, sa_type=String, sa_column_kwargs={'nullable': False}, description='Its slug, unique in its shard.')
+    slug: str | None = Field(None, sa_type=String, sa_column_kwargs={'nullable': False},
+                             description="Its slug: a type's unique in its shard, a status's or a kind's under the type it belongs to.")
     shard: int | None = Field(None, sa_type=Integer, sa_column_kwargs={'nullable': False}, description='The shard of the table its records are in, two bytes: shard1 its schema, shard2 the table.')
 
 
@@ -311,7 +313,7 @@ class _Kinded(_Record):
 
 class Type(_Type, table=True):
     """What a record is, its statuses and its kinds."""
-    __tablename__, __table_args__, __shard__ = 'types', (UniqueConstraint('shard', 'slug'), {'schema': 'ld'}), 0x0000
+    __tablename__, __table_args__, __shard__ = 'types', (Index('types_slug', 'shard', 'slug', unique=True, postgresql_where=text('type IS NULL')), Index('types_value_slug', 'parent_id', 'slug', unique=True, postgresql_where=text('type IS NOT NULL')), {'schema': 'ld'}), 0x0000
 
 
 class Node(_Kinded, table=True):

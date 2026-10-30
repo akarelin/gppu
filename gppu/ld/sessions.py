@@ -7,7 +7,7 @@ on, or a session to the session that continued it (`next`). Each is created, rea
 `/sessions`, `/sessions/messages` and `/sessions/links`, and the sessions' types at `/sessions/types`."""
 from typing import Self
 
-from sqlalchemy import String, UniqueConstraint
+from sqlalchemy import Index, String, UniqueConstraint, text
 from sqlmodel import Field, select
 
 from . import _Link, _Record, _Type, api_at, operations
@@ -15,7 +15,7 @@ from . import _Link, _Record, _Type, api_at, operations
 
 class Type(_Type, table=True):
     """The sessions' types and statuses: a session's harness, a message's side and a link's relation are its types."""
-    __tablename__, __table_args__, __shard__ = 'types', (UniqueConstraint('shard', 'slug'), {'schema': 'sessions'}), 0x2000
+    __tablename__, __table_args__, __shard__ = 'types', (Index('types_slug', 'shard', 'slug', unique=True, postgresql_where=text('type IS NULL')), Index('types_value_slug', 'parent_id', 'slug', unique=True, postgresql_where=text('type IS NOT NULL')), {'schema': 'sessions'}), 0x2000
 
 
 class _Session(_Record):
