@@ -97,3 +97,6 @@ Every caller of production's API from before the standard is moved onto gppu.ld 
 - RAN `Systems/lake/plaud/test_dagster_incremental.py` calls `download_recordings` with the signature CRAP d1091211 (2026-09-24) replaced.
 - RAN `Systems/lake/m365/locations/karelin.py` and `tulaco.py` need a `lake.yaml` that is not in the repository; their compose services are commented out.
 - RAN `Systems/lake/tests/test_age.py`, `test_catalog_graph.py` and `test_graph_read.py` run inside a transaction on pg.karel.in/everything; not run.
+- RAN `Hosts/configure-all` imports `CliApp` and `Hosts/rewrite-commits` imports `file_log` from gppu; neither has been there since 3.6.24.
+- RAN `Hosts/tui/tests`: `test_tui.py` expects the launcher's list from before pc-control, sessions-clean and configs-web; `test_start_page.py` loads a `start-page.py` that is not there.
+- No workflow declares `LD_TEST_DSN`; the tests' Postgres is a scratch container in WSL Docker.
