@@ -68,7 +68,7 @@ Independent, not scoped:
 
 ## No ld.records and no /records
 - gppu.ld: each table carries a record's columns itself and is served at its own path (`/types`, `/nodes`, `/links`, `/events`); children and links are a search of their table: done, the gppu suite passes
-- RAN `Systems/ld`'s scripts and checks on each table's path: in progress
+- RAN `Systems/ld`'s scripts and checks on each table's path: done; check.py, check_files.py and structure.py pass against the API on a scratch database, FileIndexer's tests pass
 - RAN `Systems/ld/web` and `ui` on each table's path: in progress
 - CRAP admin_ui's Linked Data pages on each table's path: in progress
 - no table inherits another: fs's and sessions' types and links are their own, each schema searched at its own paths: done, the gppu suite passes
@@ -88,4 +88,5 @@ Independent, not scoped:
 - gppu has no public field for the first line a person typed; the session tools read it from `normalized_name`.
 - RAN `Systems/lake/plaud/test_dagster_incremental.py` calls `download_recordings` with the signature CRAP d1091211 (2026-09-24) replaced.
 - RAN `Systems/lake/m365/locations/karelin.py` and `tulaco.py` need a `lake.yaml` that is not in the repository; their compose services are commented out.
+- RAN `Systems/ld`'s check_api.py, check_sessions.py, check_work.py, migrate.py, migrate_systems.py and web/check.py call production's API from before the standard (`/records`, `/entities`, hex types, `subtype`); they fail against gppu.ld, and `/work` has no tables in ld.sql.
 - RAN `Systems/lake/tests/test_age.py`, `test_catalog_graph.py` and `test_graph_read.py` run inside a transaction on pg.karel.in/everything; not run.
