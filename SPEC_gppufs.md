@@ -12,6 +12,7 @@ What Alex instructed for gppufs, its catalog and their users, as plain statement
 - The handler generates the UUID of what it reads. It is an instance's or a file's by the handler's target; an instance is one copy of a file at one path.
 - gppufs separates files from instances: what it indexes at a path is an instance, in fs.instances.
 - Indexing a local synced copy of a cloud folder populates an instance and a file at the same time: the local copy is the instance, and the file is the item in the cloud location the folder is linked to.
+- A file already indexed is not indexed again: another host's synced copy of the same cloud folder skips reading the file and records only its instance, linked to the file.
 - gppufs works without the database and knows nothing about locations or the database.
 - gppufs can read where the catalog is from configuration; by default there is no catalog. With a catalog, gppufs lists and opens through it what it holds no index for, SharePoint and archives among them.
 - gppufs and the gppufs catalog are two file systems.
