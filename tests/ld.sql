@@ -47,7 +47,7 @@ CREATE TABLE ld.types (
 );
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON ld.types FOR EACH ROW EXECUTE FUNCTION ld.record();
 
--- parent is the type of `ld` it is under; a root type has none and says what one of the schema's tables holds
+-- parent is the type of `ld` it is under (Linked Data, # Types); `type` has none
 CREATE PROCEDURE ld.type_create(slug text, shard int, name text, parent text DEFAULT NULL,
                                   flags smallint DEFAULT 0, status text DEFAULT NULL, span tstzrange DEFAULT NULL, data jsonb DEFAULT '{}', meta jsonb DEFAULT '{}')
 LANGUAGE sql
@@ -70,9 +70,9 @@ AS $$
 $$;
 
 CALL ld.type_create(slug => 'type', shard => x'0000'::int, name => 'Type');
-CALL ld.type_create(slug => 'node', shard => x'0001'::int, name => 'Node');
-CALL ld.type_create(slug => 'link', shard => x'0010'::int, name => 'Link');
-CALL ld.type_create(slug => 'event', shard => x'0020'::int, name => 'Event');
+CALL ld.type_create(slug => 'node', shard => x'0001'::int, name => 'Node', parent => 'type');
+CALL ld.type_create(slug => 'link', shard => x'0010'::int, name => 'Link', parent => 'type');
+CALL ld.type_create(slug => 'event', shard => x'0020'::int, name => 'Event', parent => 'node');
 
 CREATE TABLE ld.links (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'0010'::int),
@@ -92,6 +92,22 @@ CREATE TABLE ld.links (
 );
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON ld.links FOR EACH ROW EXECUTE FUNCTION ld.record();
 
+CALL ld.type_create(slug => 'related', shard => x'0010'::int, name => 'Related', parent => 'link');
+CALL ld.type_create(slug => 'same', shard => x'0010'::int, name => 'Same', parent => 'link');
+CALL ld.type_create(slug => 'up', shard => x'0010'::int, name => 'Up', parent => 'link');
+CALL ld.type_create(slug => 'down', shard => x'0010'::int, name => 'Down', parent => 'link');
+CALL ld.type_create(slug => 'prev', shard => x'0010'::int, name => 'Prev', parent => 'link');
+CALL ld.type_create(slug => 'next', shard => x'0010'::int, name => 'Next', parent => 'link');
+CALL ld.type_create(slug => 'prov-o', shard => x'0010'::int, name => 'PROV-O', parent => 'link');
+CALL ld.type_create(slug => 'generated-by', shard => x'0010'::int, name => 'wasGeneratedBy', parent => 'prov-o');
+CALL ld.type_create(slug => 'derived-from', shard => x'0010'::int, name => 'wasDerivedFrom', parent => 'prov-o');
+CALL ld.type_create(slug => 'attributed-to', shard => x'0010'::int, name => 'wasAttributedTo', parent => 'prov-o');
+CALL ld.type_create(slug => 'associated-with', shard => x'0010'::int, name => 'wasAssociatedWith', parent => 'prov-o');
+CALL ld.type_create(slug => 'informed-by', shard => x'0010'::int, name => 'wasInformedBy', parent => 'prov-o');
+CALL ld.type_create(slug => 'started-by', shard => x'0010'::int, name => 'wasStartedBy', parent => 'prov-o');
+CALL ld.type_create(slug => 'invalidated-by', shard => x'0010'::int, name => 'wasInvalidatedBy', parent => 'prov-o');
+CALL ld.type_create(slug => 'ended-by', shard => x'0010'::int, name => 'wasEndedBy', parent => 'prov-o');
+
 CREATE TABLE ld.nodes (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'0001'::int),
     flags     smallint NOT NULL DEFAULT 0,
@@ -110,11 +126,26 @@ CREATE TRIGGER record BEFORE INSERT OR UPDATE ON ld.nodes FOR EACH ROW EXECUTE F
 
 CALL ld.type_create(slug => 'entity', shard => x'0001'::int, name => 'Entity', parent => 'node');
 CALL ld.type_create(slug => 'content', shard => x'0001'::int, name => 'Content', parent => 'node');
-CALL ld.type_create(slug => 'resource', shard => x'0001'::int, name => 'Resource', parent => 'node');
+CALL ld.type_create(slug => 'resource', shard => x'0001'::int, name => 'URI', parent => 'entity');
+CALL ld.type_create(slug => 'resource-fragment', shard => x'0001'::int, name => 'Resource fragment', parent => 'resource');
+CALL ld.type_create(slug => 'skos-cs', shard => x'0001'::int, name => 'skos:ConceptScheme', parent => 'entity');
+CALL ld.type_create(slug => 'onto-cv', shard => x'0001'::int, name => 'Controlled Vocabulary', parent => 'skos-cs');
+CALL ld.type_create(slug => 'label', shard => x'0001'::int, name => 'Label', parent => 'onto-cv');
+CALL ld.type_create(slug => 'dimension', shard => x'0001'::int, name => 'Label used as 1st division', parent => 'label');
+CALL ld.type_create(slug => 'axis', shard => x'0001'::int, name => 'Axis', parent => 'dimension');
+CALL ld.type_create(slug => 'theme', shard => x'0001'::int, name => 'Theme', parent => 'label');
+CALL ld.type_create(slug => 'status', shard => x'0001'::int, name => 'Status', parent => 'label');
+CALL ld.type_create(slug => 'ne', shard => x'0001'::int, name => 'Named Entity', parent => 'entity');
+CALL ld.type_create(slug => 'idea', shard => x'0001'::int, name => 'Idea', parent => 'entity');
 CALL ld.type_create(slug => 'container', shard => x'0001'::int, name => 'Container', parent => 'node');
 CALL ld.type_create(slug => 'collection', shard => x'0001'::int, name => 'Collection', parent => 'node');
 CALL ld.type_create(slug => 'view', shard => x'0001'::int, name => 'View', parent => 'node');
 CALL ld.type_create(slug => 'knowledge', shard => x'0001'::int, name => 'Knowledge', parent => 'node');
+
+CALL ld.status_create(slug => 'entity-status', shard => x'0001'::int, name => 'Status', type => 'entity');
+CALL ld.status_create(slug => 'new', shard => x'0001'::int, name => 'New', type => 'entity-status');
+CALL ld.status_create(slug => 'active', shard => x'0001'::int, name => 'Active', type => 'entity-status');
+CALL ld.status_create(slug => 'rejected', shard => x'0001'::int, name => 'Rejected', type => 'entity-status');
 
 CREATE TABLE ld.events (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'0020'::int),
@@ -134,6 +165,27 @@ CREATE TRIGGER record BEFORE INSERT OR UPDATE ON ld.events FOR EACH ROW EXECUTE 
 
 CALL ld.type_create(slug => 'activity', shard => x'0020'::int, name => 'Activity', parent => 'event');
 CALL ld.type_create(slug => 'message', shard => x'0020'::int, name => 'Message', parent => 'event');
+CALL ld.type_create(slug => 'work', shard => x'0020'::int, name => 'Real Activity', parent => 'activity');
+CALL ld.type_create(slug => 'epic', shard => x'0020'::int, name => 'Epic', parent => 'work');
+CALL ld.type_create(slug => 'project', shard => x'0020'::int, name => 'Project', parent => 'work');
+CALL ld.type_create(slug => 'task', shard => x'0020'::int, name => 'Task', parent => 'work');
+CALL ld.type_create(slug => 'project-experiment', shard => x'0020'::int, name => 'Experiment', parent => 'project');
+CALL ld.type_create(slug => 'task-experiment', shard => x'0020'::int, name => 'Experiment', parent => 'task');
+CALL ld.type_create(slug => 'project-feature', shard => x'0020'::int, name => 'Feature', parent => 'project');
+CALL ld.type_create(slug => 'epic-feature', shard => x'0020'::int, name => 'Feature', parent => 'epic');
+CALL ld.type_create(slug => 'task-feature', shard => x'0020'::int, name => 'Feature', parent => 'task');
+CALL ld.type_create(slug => 'problem', shard => x'0020'::int, name => 'Problem', parent => 'task');
+CALL ld.type_create(slug => 'chore', shard => x'0020'::int, name => 'Chore', parent => 'task');
+
+CALL ld.status_create(slug => 'work-status', shard => x'0020'::int, name => 'Status', type => 'work');
+CALL ld.status_create(slug => 'proposed', shard => x'0020'::int, name => NULL, type => 'work-status');
+CALL ld.status_create(slug => 'planned', shard => x'0020'::int, name => NULL, type => 'work-status');
+CALL ld.status_create(slug => 'active', shard => x'0020'::int, name => NULL, type => 'work-status');
+CALL ld.status_create(slug => 'pending', shard => x'0020'::int, name => NULL, type => 'work-status');
+CALL ld.status_create(slug => 'suspended', shard => x'0020'::int, name => NULL, type => 'work-status');
+CALL ld.status_create(slug => 'completed', shard => x'0020'::int, name => NULL, type => 'work-status');
+CALL ld.status_create(slug => 'abandoned', shard => x'0020'::int, name => NULL, type => 'work-status');
+CALL ld.status_create(slug => 'rejected', shard => x'0020'::int, name => NULL, type => 'work-status');
 
 CREATE SCHEMA fs;
 

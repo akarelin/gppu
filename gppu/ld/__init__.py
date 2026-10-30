@@ -288,8 +288,8 @@ class _Record(SQLModel):
 class _Type(_Record):
     """A type's columns: its slug, unique in its shard, and the shard its records are in, the two bytes of their table, shard1
     its schema and shard2 the table (# UUID). A status is a type of type `status` whose parent is the type it belongs to; a type's parent
-    is the type of its schema it is under, and a root type, with none, says what one of its schema's tables holds. Every schema's
-    types are a table made from it."""
+    is the type of its schema it is under (# Types: `node` and `link` under `type`, `event` under `node`), and the type made for one of
+    its schema's tables says what that table holds. Each schema's types are a table of its own."""
     # required to make a type, which its table refuses without them, not to change one: an update takes only what changes
     slug: str | None = Field(None, sa_type=String, sa_column_kwargs={'nullable': False}, description='Its slug, unique in its shard.')
     shard: int | None = Field(None, sa_type=Integer, sa_column_kwargs={'nullable': False}, description='The shard of the table its records are in, two bytes: shard1 its schema, shard2 the table.')
