@@ -1,4 +1,4 @@
--- gppu.ld's tables, schemas ld, fs and sessions, each table with a record's columns of its own, to Linked Data's standard (_Standards/Linked Data/Linked Data.md); the tests make their database from it.
+-- gppu.ld's tables, schemas ld, fs and sessions, each table with a record's columns of its own and no parent, to Linked Data's standard (_Standards/Linked Data/Linked Data.md); the tests make their database from it.
 
 CREATE SCHEMA ld;
 
@@ -54,7 +54,7 @@ LANGUAGE sql
 AS $$
     INSERT INTO ld.types (slug, shard, name, parent_id, flags, status, span, data, meta)
     VALUES (type_create.slug, type_create.shard, type_create.name,
-            (SELECT p.id FROM ONLY ld.types p WHERE p.slug = type_create.parent AND p.type IS NULL),
+            (SELECT p.id FROM ld.types p WHERE p.slug = type_create.parent AND p.type IS NULL),
             type_create.flags, type_create.status, type_create.span, type_create.data, type_create.meta);
 $$;
 
@@ -139,8 +139,21 @@ CREATE SCHEMA fs;
 
 CREATE TABLE fs.types (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'1000'::int),
+    flags     smallint NOT NULL DEFAULT 0,
+    type      text,
+    status    text,
+    name      text,
+    parent_id uuid,
+    span      tstzrange,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    data      jsonb NOT NULL DEFAULT '{}',
+    meta      jsonb NOT NULL DEFAULT '{}',
+    created   timestamptz NOT NULL DEFAULT now(),
+    updated   timestamptz,
+    slug      text NOT NULL,
+    shard     integer NOT NULL,     -- the shard of the table its records are in, two bytes: shard1 its schema, shard2 the table
     UNIQUE (shard, slug)
-) INHERITS (ld.types);
+);
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON fs.types FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 -- parent is the type of `fs` it is under; a root type has none and says what one of the schema's tables holds
@@ -251,8 +264,21 @@ CREATE TABLE fs.instances (
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON fs.instances FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CREATE TABLE fs.links (
-    id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'1010'::int)
-) INHERITS (ld.links);
+    id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'1010'::int),
+    flags     smallint NOT NULL DEFAULT 0,
+    type      text,
+    status    text,
+    name      text,
+    parent_id uuid,
+    span      tstzrange,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    data      jsonb NOT NULL DEFAULT '{}',
+    meta      jsonb NOT NULL DEFAULT '{}',
+    created   timestamptz NOT NULL DEFAULT now(),
+    updated   timestamptz,
+    from_id   uuid,
+    to_id     uuid
+);
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON fs.links FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CALL fs.type_create(slug => 'link', shard => x'1010'::int, name => 'Link');
@@ -261,8 +287,21 @@ CREATE SCHEMA sessions;
 
 CREATE TABLE sessions.types (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'2000'::int),
+    flags     smallint NOT NULL DEFAULT 0,
+    type      text,
+    status    text,
+    name      text,
+    parent_id uuid,
+    span      tstzrange,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    data      jsonb NOT NULL DEFAULT '{}',
+    meta      jsonb NOT NULL DEFAULT '{}',
+    created   timestamptz NOT NULL DEFAULT now(),
+    updated   timestamptz,
+    slug      text NOT NULL,
+    shard     integer NOT NULL,     -- the shard of the table its records are in, two bytes: shard1 its schema, shard2 the table
     UNIQUE (shard, slug)
-) INHERITS (ld.types);
+);
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON sessions.types FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 -- parent is the type of `sessions` it is under; a root type has none and says what one of the schema's tables holds
@@ -347,8 +386,21 @@ CALL sessions.type_create(slug => 'tool_use', shard => x'2002'::int, name => 'To
 CALL sessions.type_create(slug => 'tool_result', shard => x'2002'::int, name => 'Tool result', parent => 'message');
 
 CREATE TABLE sessions.links (
-    id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'2010'::int)
-) INHERITS (ld.links);
+    id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'2010'::int),
+    flags     smallint NOT NULL DEFAULT 0,
+    type      text,
+    status    text,
+    name      text,
+    parent_id uuid,
+    span      tstzrange,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    data      jsonb NOT NULL DEFAULT '{}',
+    meta      jsonb NOT NULL DEFAULT '{}',
+    created   timestamptz NOT NULL DEFAULT now(),
+    updated   timestamptz,
+    from_id   uuid,
+    to_id     uuid
+);
 CREATE TRIGGER record BEFORE INSERT OR UPDATE ON sessions.links FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CALL sessions.type_create(slug => 'next', shard => x'2010'::int, name => 'Next', parent => 'link');

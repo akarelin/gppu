@@ -6,7 +6,7 @@ and the shard its ids start with (`__shard__`), shard1 its schema and shard2 the
 A record's `flags` say what can change it and whether it is in sight (`Flags`). `operations()` gives a path its tables' create, read,
 update, delete and search; `app` is the core, each table at its own path, `/types`, `/nodes`, `/links` and `/events`; `api_at()`, another schema's API with its own
 documentation; `serve()`, the APIs at one address, on the store of the app that serves them. The tables are made by gppu's
-SQL, `tests/ld.sql`, and how they inherit is Postgres'. The store is the app's: a `gppu.data._SQABase` gives the engine and each request's database
+SQL, `tests/ld.sql`, each table on its own. The store is the app's: a `gppu.data._SQABase` gives the engine and each request's database
 session.
 
 Needs the `ld` extra, and fastapi-querybuilder installed with `--no-deps`: its metadata lists poetry, uvicorn and aiosqlite as runtime
@@ -262,14 +262,11 @@ class _Record(SQLModel):
         return (await cls.db().exec(query.order_by(*order))).all()
 
     @classmethod
-    async def search(cls, params, *where, conditions: QueryParams | None = None, order: tuple = (), only: bool = False):
+    async def search(cls, params, *where, conditions: QueryParams | None = None, order: tuple = ()):
         """A page of a search: the records in sight of its table fastapi-querybuilder's query of `conditions` and `where` select,
         `limit` of them after the last one of the page before (sqlakeyset), in the sort of `conditions`, then in `order`, then by
-        the id, which no two rows share; every match when no limit is given. `only` keeps to its own table's records, not those of
-        the tables made from it."""
+        the id, which no two rows share; every match when no limit is given."""
         query = (build_query(cls, conditions) if conditions else select(cls)).where(cls.flags.op('&')(int(UNSEEN)) == 0, *where)
-        if only:
-            query = query.with_hint(cls.__table__, 'ONLY', 'postgresql')
 
         def after(key):
             """A sort key a page can read after: one a record may leave empty, a column's or a key's in `data` or `meta`, sorts that
@@ -340,8 +337,7 @@ def operations(path: str, body: type[_Record], name: str, *models: type[_Record]
         return int.from_bytes(id.bytes[:2])
 
     async def table(record: _Record) -> type[_Record]:
-        """The table of the record's `type`, one of the path's: the type's `shard`. Every schema's types are read in `ld.types`,
-        which they inherit."""
+        """The table of the record's `type`, one of the path's: the type's `shard`, read in the core's `ld.types`."""
         if len(own) == 1:
             return next(iter(own.values()))
         shards = (await _Record.db().exec(select(Type.shard).where(Type.slug == record.type, Type.type.is_distinct_from('status')))).all()

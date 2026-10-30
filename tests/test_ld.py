@@ -148,11 +148,12 @@ def test_flags_change_only_by_their_transitions(api):
     assert ok(api.put(f"/nodes/{node['id']}", json={'flags': 0}))['flags'] == 0   # un-delete
 
 
-def test_types_are_searched_by_slug_in_every_schema(api):
+def test_each_schema_searches_its_own_types(api):
     found = ok(api.get('/types', params={'filters': '{"slug": {"$eq": "node"}}'}))['items']
     assert [(t['slug'], t['shard']) for t in found] == [('node', 0x0001)]
-    cc = ok(api.get('/types', params={'filters': '{"slug": {"$eq": "cc"}}'}))['items']   # a file's type in fs, a session's in sessions
-    assert sorted((UUID(t['id']).bytes[0], t['shard']) for t in cc) == [(0x10, 0x1002), (0x20, 0x2001)]
+    assert ok(api.get('/types', params={'filters': '{"slug": {"$eq": "cc"}}'}))['items'] == []
+    cc = [t for path in ('/fs/types', '/sessions/types') for t in ok(api.get(path, params={'filters': '{"slug": {"$eq": "cc"}}'}))['items']]
+    assert [(UUID(t['id']).bytes[0], t['shard']) for t in cc] == [(0x10, 0x1002), (0x20, 0x2001)]   # a file's type in fs, a session's in sessions
 
 
 def test_the_file_system_is_in_its_own_schema(api):
@@ -165,7 +166,8 @@ def test_the_file_system_is_in_its_own_schema(api):
     link = ok(api.post('/fs/links', json={'type': 'link', 'from_id': host['id'], 'to_id': node['id']}))
     assert [header(r) for r in (host, file, instance, link)] == [bytes([0x10, s, 1]) + bytes(5) for s in (0x01, 0x02, 0x03, 0x10)]
     assert ok(api.get(f"/fs/files/{file['id']}"))['type'] == 'markdown'
-    assert [l['id'] for l in ok(api.get('/links', params={'filters': links_of(node)}))['items']] == [link['id']]   # every links table inherits ld.links
+    assert [l['id'] for l in ok(api.get('/fs/links', params={'filters': links_of(node)}))['items']] == [link['id']]
+    assert ok(api.get('/links', params={'filters': links_of(node)}))['items'] == []   # each schema's links are its own
     assert [t['slug'] for t in ok(api.get('/fs/types', params={'filters': '{"slug": {"$eq": "markdown"}}'}))['items']] == ['markdown']
     assert ok(api.post('/fs/locations', json={'type': 'location', 'provider': 'file_system'}), 422)['detail'][0]['loc'] == ['body', 'provider']
 
