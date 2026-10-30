@@ -92,7 +92,9 @@ Every caller of production's API from before the standard is moved onto gppu.ld 
 - The Lake API has no batch route: preservator makes two calls per file on every run, files already preserved included.
 - FileIndexer could write files to Linked Data with `PUT /fs/files/{gppu.id}`; it writes none today.
 - gppu.ld has what `Linked Data.md` does not define, from the generated notes: the columns `name`, `data`, `meta`, `created` and `updated`, and the API's routes.
-- A record's status is not checked against its type's statuses.
+- A record's status, or its kind, is not checked against its type's statuses or kinds: a task takes the kind `health`.
+- Searches leave out archived records, so the Systems collector cannot find an archived item its source still reports and makes it again with the same `meta.uid`.
+- Linked Data's documentation step stops: the project notes it builds from link `_Standards/Linked Data/Linked Data`, which the build does not have (2026-10-29).
 - The Systems collector's runs were activities of subtype `collection`, which is the core's node type, so `POST /records` cannot tell their table; they need a slug of their own before the production migration makes them.
 - No code reads a file type's `data.class`; gppufs picks a file's handler from gppu's own list, and gppufs works without the database.
 - Session Manager and the admin's session pages cite `Linked Data - Sessions and work`, a superseded generated note.
