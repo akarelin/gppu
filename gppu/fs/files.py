@@ -26,15 +26,16 @@ class Location(_Record, table=True):
 class File(_Record, table=True):
     """A file or a folder in a location, known by its name in the folder it is in. Its `parent_id` is the file it is in, or the
     location at whose root it is; an archive's members have it as their `parent_id`. Its `type` is its handler, which probing gives
-    from its path, its name or its suffix; a path no handler takes is a `symlink`, a `junction`, `offline`, `ignored` or `normal`.
-    `status` `parsed` once its handler has read it; `data.unread` why its handler could not; `data.target` a link's or a
-    junction's target; `data.extension` its extension; `data.fingerprints` what identifies its content, each source's."""
+    from its path, its name or its suffix.
+    `status` `parsed` once its handler has read it; `data.unread` why its handler could not;
+    `data.extension` its extension; `data.fingerprints` what identifies its content, each source's."""
     __tablename__, __table_args__, __shard__ = 'files', {'schema': 'fs'}, 0x1002
 
 
 class Instance(_Record, table=True):
     """One copy of a file at one path, what gppufs indexes. Its `parent_id` is the file; its `span` from when the source read it to when the source
-    found it gone. `data.source` the source that read it; `data.size`, `data.files`, `data.folders` its size, and for a folder what
+    found it gone. `status` how the copy is at its path, as probing gives it: `normal`, which its file's handler reads, or a `symlink`, a
+    `junction`, `offline` or `ignored`, which no handler reads; `data.target` a symlink's or a junction's target. `data.source` the source that read it; `data.size`, `data.files`, `data.folders` its size, and for a folder what
     it holds; `data.changed_at` when the source last changed it; `data.metadata` what the handlers read of it."""
     __tablename__, __table_args__, __shard__ = 'instances', {'schema': 'fs'}, 0x1003
 

@@ -258,6 +258,11 @@ CALL fs.type_create(slug => 'instance', shard => x'1003'::int, name => 'Instance
 CALL fs.status_create(slug => 'active', shard => x'1001'::int, name => 'Active', type => 'location');
 CALL fs.status_create(slug => 'discarded', shard => x'1001'::int, name => 'Discarded', type => 'location');
 CALL fs.status_create(slug => 'parsed', shard => x'1002'::int, name => 'Parsed', type => 'file');
+CALL fs.status_create(slug => 'symlink', shard => x'1003'::int, name => 'Symlink', type => 'instance');
+CALL fs.status_create(slug => 'junction', shard => x'1003'::int, name => 'Junction', type => 'instance');
+CALL fs.status_create(slug => 'offline', shard => x'1003'::int, name => 'Offline', type => 'instance');
+CALL fs.status_create(slug => 'ignored', shard => x'1003'::int, name => 'Ignored', type => 'instance');
+CALL fs.status_create(slug => 'normal', shard => x'1003'::int, name => 'Normal', type => 'instance');
 
 CREATE TABLE fs.locations (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'1001'::int),
@@ -314,12 +319,6 @@ CALL fs.type_create(slug => 'gemini', shard => x'1002'::int, name => 'Gemini', p
 CALL fs.type_create(slug => 'openclaw', shard => x'1002'::int, name => 'OpenClaw', parent => 'session');
 CALL fs.type_create(slug => 'agy', shard => x'1002'::int, name => 'Antigravity', parent => 'session');
 CALL fs.type_create(slug => 'hermes', shard => x'1002'::int, name => 'Hermes', parent => 'session');
-
-CALL fs.type_create(slug => 'symlink', shard => x'1002'::int, name => 'Symlink', parent => 'file');
-CALL fs.type_create(slug => 'junction', shard => x'1002'::int, name => 'Junction', parent => 'file');
-CALL fs.type_create(slug => 'offline', shard => x'1002'::int, name => 'Offline', parent => 'file');
-CALL fs.type_create(slug => 'ignored', shard => x'1002'::int, name => 'Ignored', parent => 'file');
-CALL fs.type_create(slug => 'normal', shard => x'1002'::int, name => 'Normal', parent => 'file');
 
 CREATE TABLE fs.instances (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'1003'::int),
