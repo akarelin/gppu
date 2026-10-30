@@ -78,7 +78,7 @@ Every caller of production's API from before the standard is moved onto gppu.ld 
 - the standard's initial types in ld.sql (work, epic, project and task events; entity and work statuses): done, the gppu suite passes
 - a kind on ld's nodes and events, each type's kinds a constrained vocabulary as its statuses; experiment, feature, problem and chore kinds of work in place of the types per parent: done in gppu.ld, the suite passes; the carry-over, the collector, the callers and the pages on it: in progress
 - RAN `Systems/ld`'s check_work.py, check_sessions.py and check_api.py on gppu.ld, work as events with a work's work and parents in work.py: done, every check passes against the API on a scratch database; web/check.py's page side: in progress
-- the carry-over of production's store into gppu.ld through its API (migrate.py, migrate_systems.py), proven on scratch stores laid out as production's: in progress
+- the database `ld` on five's Postgres, made from ld.sql, the store gppu.ld serves; `linked_data` predates LD and nothing is carried from it: waiting on the database, which the `ld` role cannot create
 - RAN `Systems/ld/ui`, retired 10-19 for admin_ui's Linked Data section, archived at RAN `archive/Systems/ld/ui-261029`: done
 - every other caller (session hook, Session Manager, linked-data-tasks, the dashboard mod, MCP United's `pm_*`, static sites' lectures, Kuma's monitors, admin_ui's `shared`), and the list of what switches with production: in progress
 
