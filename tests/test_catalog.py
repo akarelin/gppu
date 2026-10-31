@@ -197,10 +197,11 @@ def test_a_location_on_this_host_by_its_handlers_access_is_read_in_its_folder(tm
     host = socket.gethostname().split('.')[0].casefold()
     (tmp_path / 'sub').mkdir()
     (tmp_path / 'sub' / 'note.md').write_text('# note')
-    records = [{'id': 'top', 'name': 'Top', 'parent_id': None, 'status': 'active', 'flags': 0, 'meta': {},
-                'data': {'uri': 'file://elsewhere/srv/top', 'handler': {'access': {host: tmp_path.as_posix()}}}},
-               {'id': 'inner', 'name': 'Inner', 'parent_id': 'top', 'status': 'active', 'flags': 0, 'meta': {},
-                'data': {'uri': 'file://elsewhere/srv/top/sub'}}]
+    records = [{'id': 'top', 'parent_id': None, 'status': 'active', 'flags': 0,
+                'meta': {'display_name': 'Top', 'uri': 'file://elsewhere/srv/top', 'status': 'active'},
+                'data': {'handler': {'access': {host: tmp_path.as_posix()}}}},
+               {'id': 'inner', 'parent_id': 'top', 'status': 'active', 'flags': 0,
+                'meta': {'display_name': 'Inner', 'uri': 'file://elsewhere/srv/top/sub', 'status': 'active'}, 'data': {}}]
     found = locations(records)
     assert str(found.location('top').uri_of('sub')) == 'file://elsewhere/srv/top/sub'
     assert found.location('top').container('sub').ls(detail=False) == ['note.md']

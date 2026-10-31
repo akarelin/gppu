@@ -446,8 +446,6 @@ class GppuCatalog(AsyncFileSystem):
 # endregion
 # region Linked Data
 
-DISCARDED = 'discarded'   # a location's status when it is not in use; the other is active (gppu.fs.files)
-
 class Drives(FileSystem):
     """gppufs's FileSystem in a Windows host's WSL: a file uri naming a drive, file://alex-pc/D:/Dev, is that drive as WSL mounts it,
     /mnt/d/Dev (`drives` in the app's configuration), so a location configured on the host is walked from its WSL as it is configured."""
@@ -464,21 +462,21 @@ class Drives(FileSystem):
 
 def catalog(records: list[dict], **location_types: Any) -> GppuCatalog:
     """gppufs's catalog of Linked Data's location records, the items of GET /fs/locations as the catalog's user read them: every location
-    in use that has a uri, as a row of gppufs's configuration table, known by its id and reached by its uri, its data with its name and
-    parent's id. A location is active or discarded (gppu.fs.files); one out of sight is not listed at all, and a location below one not
-    in use is not in use either, since a location is part of the location above it; its connection is its root location, reached by
-    the scheme of the root's uri. location_types are the Providers a caller adds by scheme, as GppuCatalog takes them; gppufs's
-    FileSystem reaches file://, and in a Windows host's WSL, Drives does."""
-    records = {r['id']: r for r in records if r['status'] != DISCARDED and r['data'].get('uri')}
+    that has a uri, as a row of gppufs's configuration table, known by its id and reached by its uri (`meta.uri`), its data with its
+    name (`meta.display_name`) and parent's id. One out of sight is not listed at all, and a location below one not listed is not
+    listed either, since a location is part of the location above it; its connection is its root location, reached by the scheme of
+    the root's uri. location_types are the Providers a caller adds by scheme, as GppuCatalog takes them; gppufs's FileSystem reaches
+    file://, and in a Windows host's WSL, Drives does."""
+    records = {r['id']: r for r in records if r['meta'].get('uri')}
 
     def root(r: dict) -> dict | None:
-        """The root location above it; none when one above it is not in use, so it is not in use either."""
+        """The root location above it; none when one above it is not listed, so it is not listed either."""
         while r['parent_id']:
             if not (r := records.get(r['parent_id'])):
                 return None
         return r
-    rows = [r['data'] | {'uid': r['id'], 'canonical': r['data']['uri'], 'id': r['id'], 'name': r['name'], 'parent': r['parent_id'],
-                         'connection': top['id']}
+    rows = [r['data'] | {'uid': r['id'], 'canonical': r['meta']['uri'], 'id': r['id'], 'name': r['meta'].get('display_name'),
+                         'parent': r['parent_id'], 'connection': top['id']}
             for r in records.values() if (top := root(r))]
     connections = {r['uid']: {'kind': urlsplit(r['canonical']).scheme} for r in rows if r['connection'] == r['uid']}
     return GppuCatalog({'locations': rows, 'connections': connections}, location_types=location_types)
@@ -649,9 +647,9 @@ class Catalog:
         return psycopg.connect(self.dsn, options='-c default_transaction_read_only=on', row_factory=dict_row, connect_timeout=30)
 
     def locations(self) -> list[dict[str, Any]]:
-        """Linked Data's locations in use whose entries are in the catalog, with every location above them, so they make one tree:
-        each its id, name, canonical address, parent's id and, where it has entries, the catalog's id for it."""
-        records = {r['id']: r for r in self.records() if r['status'] != DISCARDED}
+        """Linked Data's locations whose entries are in the catalog, with every location above them, so they make one tree: each its
+        id, name, canonical address, parent's id and, where it has entries, the catalog's id for it."""
+        records = {r['id']: r for r in self.records()}
         kept: set[str] = set()
         for r in records.values():
             if 'lake_id' in r['meta']:
@@ -659,7 +657,7 @@ class Catalog:
                     kept.add(r['id'])
                     r = records.get(r['parent_id'])
         self.lake_ids = {id: records[id]['meta']['lake_id'] for id in kept if 'lake_id' in records[id]['meta']}
-        return [{'id': id, 'name': records[id]['name'], 'canonical': records[id]['data'].get('uri'),
+        return [{'id': id, 'name': records[id]['meta'].get('display_name'), 'canonical': records[id]['meta'].get('uri'),
                  'parent': records[id]['parent_id'] if records[id]['parent_id'] in kept else None, 'lake_id': self.lake_ids.get(id)}
                 for id in kept]
 
