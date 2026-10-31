@@ -32,6 +32,9 @@ What Alex instructed for gppufs, its catalog and their users, as plain statement
 - Home and data are local locations, on each host: on Windows the user's home and D:, on Debian ~ and /data.
 
 ## The catalog and its users
+- There is one catalog, the Lake's: gppufs, the VFS driver, Directory Opus and FileIndexer read it.
+- The catalog answers from a database holding the latest copy of every index; nothing reads s1 live. Its database is Linked Data's fs.
+- gppufs reaches the catalog through configuration naming `api.karel.in/lake/catalog`.
 - gppu provides the catalog; the catalog's users load its locations.
 - Linked Data and the file system stay separate, each in its own submodule.
 - Writes to Linked Data go through its API, never directly into the database.
@@ -39,6 +42,13 @@ What Alex instructed for gppufs, its catalog and their users, as plain statement
 - Every local index is collected on the server; sending it is FileIndexer's.
 - A UI that lists folders asks gppufs; where gppufs keeps what it reads, its indexes or Postgres, is no concern of the UI.
 - The Lake is storage for all file-like objects: the main lake `\\s1\Lake`, the text lake `D:\TextLake`, which is part of it, and lake-in-place at various locations.
+
+## FileIndexer
+- FileIndexer indexes locally, each PC its own copy; each index is stored with its files, and what FileIndexer sends goes into the catalog's database.
+- FileIndexer does not index everything yet: on alex-pc it indexes Projects, Work, the Obsidian vault and the repos, which hold the files of the work in hand.
+- What runs ingests what is new as it comes in; no old data is imported anywhere.
+- The linking is what matters: a file is the same file as its other instances, and a file belongs to a task, a project or an epic, never to a session.
+- A project's timeline shows its files' events, a file created, beside its messages.
 
 ## Users
 - Every user of gppufs is moved to it: the Lake, the admin UI and its APIs, Linked Data, Session Manager, and every service deployed in Docker that uses it. The web services gppu implements and its users deploy keep working.
