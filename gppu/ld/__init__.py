@@ -240,8 +240,15 @@ class _Record(SQLModel):
                     change[key] = {k: v for k, v in (getattr(row, key) | change[key]).items() if v is not None}
             row = row.sqlmodel_update(change)
         else:
-            row = cls.model_validate(sent, update={'id': id})
-            cls.db().add(row)
+            while True:   # an id the store makes has two random bytes in its millisecond (# UUID): one already taken is made again
+                row = cls.model_validate(sent, update={'id': id})
+                try:
+                    async with cls.db().begin_nested():
+                        cls.db().add(row)
+                    break
+                except IntegrityError as e:
+                    if id or e.orig.diag.constraint_name != f'{cls.__tablename__}_pkey':
+                        raise
         await cls.db().flush()
         if 'status' in sent.meta:
             await cls.db().refresh(row, ['flags'])   # the flag a status comes with (# Flags), which the store sets

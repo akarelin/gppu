@@ -127,6 +127,19 @@ def test_an_update_merges_data_and_a_null_removes_a_key(api):
     assert updated['data'] == {'a': 1, 'c': 3} and updated['updated']
 
 
+def test_an_id_the_store_made_twice_is_made_again(api):
+    taken = ok(api.post('/nodes', json={'type': 'node'}))['id']
+    with psycopg.connect(STORE, autocommit=True) as db:   # the store's next id one already taken, as two writes in one millisecond can draw
+        db.execute('CREATE SEQUENCE ld.drawn')
+        db.execute(f"""ALTER TABLE ld.nodes ALTER COLUMN id SET DEFAULT CASE nextval('ld.drawn') WHEN 1 THEN '{taken}'::uuid ELSE ld.uuid_create(x'0001'::int) END""")
+        try:
+            made = ok(api.post('/nodes', json={'type': 'node', 'data': {'drawn': 'again'}}))
+        finally:
+            db.execute("ALTER TABLE ld.nodes ALTER COLUMN id SET DEFAULT ld.uuid_create(x'0001'::int)")
+            db.execute('DROP SEQUENCE ld.drawn')
+    assert made['id'] != taken and ok(api.get(f'/nodes/{taken}'))['data'] == {} and made['data'] == {'drawn': 'again'}
+
+
 def test_a_put_of_an_id_not_there_creates_it(api):
     id = uuid_create(0x0001)   # made offline as the store makes them
     assert ok(api.put(f'/nodes/{id}', json={'type': 'node'}))['id'] == str(id)
