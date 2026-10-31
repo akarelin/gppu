@@ -269,17 +269,30 @@ CREATE TABLE sessions.links (
 CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON sessions.links FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 -- a row of the types table of the schema its shard's first byte names (# UUID): its name, kind and uri in `meta`, its parent the
--- row of that slug in any schema's types
+-- row of that slug in any schema's types; an id the store makes has two random bytes in its millisecond, so one already taken is
+-- made again
 CREATE PROCEDURE ld.type_create(slug text, shard int, name text, parent text DEFAULT NULL, kind text DEFAULT NULL, uri text DEFAULT NULL, data jsonb DEFAULT '{}')
 LANGUAGE plpgsql
 AS $$
+DECLARE
+    taken text;
 BEGIN
-    EXECUTE format('INSERT INTO %I.types (slug, shard, parent_id, data, meta) VALUES ($1, $2, $3, $4, $5)',
-                   CASE shard >> 8 WHEN x'00'::int THEN 'ld' WHEN x'10'::int THEN 'fs' WHEN x'20'::int THEN 'sessions' END)
-    USING type_create.slug, type_create.shard,
-          (SELECT t.id FROM (SELECT l.id, l.slug FROM ld.types l UNION ALL SELECT f.id, f.slug FROM fs.types f UNION ALL SELECT s.id, s.slug FROM sessions.types s) t
-           WHERE t.slug = type_create.parent),
-          type_create.data, jsonb_strip_nulls(jsonb_build_object('display_name', type_create.name, 'kind', type_create.kind, 'uri', type_create.uri));
+    LOOP
+        BEGIN
+            EXECUTE format('INSERT INTO %I.types (slug, shard, parent_id, data, meta) VALUES ($1, $2, $3, $4, $5)',
+                           CASE shard >> 8 WHEN x'00'::int THEN 'ld' WHEN x'10'::int THEN 'fs' WHEN x'20'::int THEN 'sessions' END)
+            USING type_create.slug, type_create.shard,
+                  (SELECT t.id FROM (SELECT l.id, l.slug FROM ld.types l UNION ALL SELECT f.id, f.slug FROM fs.types f UNION ALL SELECT s.id, s.slug FROM sessions.types s) t
+                   WHERE t.slug = type_create.parent),
+                  type_create.data, jsonb_strip_nulls(jsonb_build_object('display_name', type_create.name, 'kind', type_create.kind, 'uri', type_create.uri));
+            RETURN;
+        EXCEPTION WHEN unique_violation THEN
+            GET STACKED DIAGNOSTICS taken = CONSTRAINT_NAME;
+            IF taken <> 'types_pkey' THEN
+                RAISE;
+            END IF;
+        END;
+    END LOOP;
 END;
 $$;
 
