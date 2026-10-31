@@ -294,14 +294,25 @@ CALL ld.type_create(slug => 'label', shard => x'0000'::int, name => 'Label', par
 CALL ld.type_create(slug => 'kind', shard => x'0000'::int, name => 'Kind', parent => 'label', uri => 'uo:Kind');
 CALL ld.type_create(slug => 'assistant', shard => x'2000'::int, name => 'Assistant', parent => 'kind', kind => 'message', uri => 'uo:SessionMessageAssistant');
 CALL ld.type_create(slug => 'chore', shard => x'0000'::int, name => 'Chore', parent => 'kind', kind => 'work', uri => 'uo:WorkChore');
+CALL ld.type_create(slug => 'class', shard => x'0000'::int, name => 'Class', parent => 'kind', kind => 'knowledge', uri => 'uo:KnowledgeClass');
+CALL ld.type_create(slug => 'comment', shard => x'0000'::int, name => 'Comment', parent => 'kind', kind => 'knowledge', uri => 'uo:KnowledgeComment');
+CALL ld.type_create(slug => 'concept', shard => x'0000'::int, name => 'Concept', parent => 'kind', kind => 'knowledge', uri => 'uo:KnowledgeConcept');
 CALL ld.type_create(slug => 'developer', shard => x'2000'::int, name => 'Developer', parent => 'kind', kind => 'message', uri => 'uo:SessionMessageDeveloper');
+CALL ld.type_create(slug => 'document', shard => x'0000'::int, name => 'Document', parent => 'kind', kind => 'knowledge', uri => 'uo:KnowledgeDocument');
 CALL ld.type_create(slug => 'experiment', shard => x'0000'::int, name => 'Experiment', parent => 'kind', kind => 'work', uri => 'uo:WorkExperiment');
 CALL ld.type_create(slug => 'feature', shard => x'0000'::int, name => 'Feature', parent => 'kind', kind => 'work', uri => 'uo:WorkFeature');
+CALL ld.type_create(slug => 'graph', shard => x'0000'::int, name => 'Graph', parent => 'kind', kind => 'knowledge', uri => 'uo:KnowledgeGraph');
 CALL ld.type_create(slug => 'junction', shard => x'1000'::int, name => 'Junction', parent => 'kind', kind => 'instance', uri => 'uo:InstanceJunction');
+CALL ld.type_create(slug => 'lecture', shard => x'0000'::int, name => 'Lecture', parent => 'kind', kind => 'knowledge', uri => 'uo:KnowledgeLecture');
+CALL ld.type_create(slug => 'mention', shard => x'0000'::int, name => 'Mention', parent => 'kind', kind => 'knowledge', uri => 'uo:KnowledgeMention');
 CALL ld.type_create(slug => 'offline', shard => x'1000'::int, name => 'Offline', parent => 'kind', kind => 'instance', uri => 'uo:InstanceOffline');
 CALL ld.type_create(slug => 'ongoing', shard => x'0000'::int, name => 'Ongoing', parent => 'kind', kind => 'work', uri => 'uo:WorkOngoing');
 CALL ld.type_create(slug => 'problem', shard => x'0000'::int, name => 'Problem', parent => 'kind', kind => 'work', uri => 'uo:WorkProblem');
+CALL ld.type_create(slug => 'route', shard => x'0000'::int, name => 'Route', parent => 'kind', kind => 'knowledge', uri => 'uo:KnowledgeRoute');
+CALL ld.type_create(slug => 'script', shard => x'0000'::int, name => 'Script', parent => 'kind', kind => 'knowledge', uri => 'uo:KnowledgeScript');
 CALL ld.type_create(slug => 'symlink', shard => x'1000'::int, name => 'Symlink', parent => 'kind', kind => 'instance', uri => 'uo:InstanceSymlink');
+CALL ld.type_create(slug => 'table', shard => x'0000'::int, name => 'Table', parent => 'kind', kind => 'knowledge', uri => 'uo:KnowledgeTable');
+CALL ld.type_create(slug => 'term', shard => x'0000'::int, name => 'Term', parent => 'kind', kind => 'knowledge', uri => 'uo:KnowledgeTerm');
 CALL ld.type_create(slug => 'thinking', shard => x'2000'::int, name => 'Thinking', parent => 'kind', kind => 'message', uri => 'uo:SessionMessageThinking');
 CALL ld.type_create(slug => 'tool_result', shard => x'2000'::int, name => 'Tool result', parent => 'kind', kind => 'message', uri => 'uo:SessionMessageToolResult');
 CALL ld.type_create(slug => 'tool_use', shard => x'2000'::int, name => 'Tool use', parent => 'kind', kind => 'message', uri => 'uo:SessionMessageToolUse');
@@ -330,6 +341,7 @@ CALL ld.type_create(slug => 'ov', shard => x'0000'::int, name => 'Open Vocabular
 CALL ld.type_create(slug => 'tag', shard => x'0000'::int, name => 'Tag', parent => 'ov', uri => 'uo:Tag');
 CALL ld.type_create(slug => 'node', shard => x'0001'::int, name => 'Node', parent => 'record', uri => 'uo:Node');
 CALL ld.type_create(slug => 'entity', shard => x'0001'::int, name => 'Entity', parent => 'node', uri => 'uo:Entity');
+CALL ld.type_create(slug => 'knowledge', shard => x'0001'::int, name => 'Knowledge', parent => 'node', uri => 'uo:Knowledge');
 CALL ld.type_create(slug => 'event', shard => x'0020'::int, name => 'Event', parent => 'node', uri => 'uo:Event');
 CALL ld.type_create(slug => 'activity', shard => x'0020'::int, name => 'Activity', parent => 'event', uri => 'uo:Activity');
 CALL ld.type_create(slug => 'work', shard => x'0000'::int, name => 'Work', parent => 'activity', uri => 'uo:Work');
@@ -371,10 +383,10 @@ CALL ld.type_create(slug => 'session-file', shard => x'1002'::int, name => 'Sess
 CALL ld.type_create(slug => 'sqlite', shard => x'1002'::int, name => 'SQLite', parent => 'file', uri => 'uo:SQLite');
 CALL ld.type_create(slug => 'instance', shard => x'1003'::int, name => 'Instance', uri => 'uo:Instance');
 CALL ld.type_create(slug => 'message', shard => x'2002'::int, name => 'Message', uri => 'uo:SessionMessage');
-CALL ld.type_create(slug => 'kind', shard => x'0000'::int, name => 'Kind', parent => 'meta');
+CALL ld.type_create(slug => 'kind', shard => x'0000'::int, name => 'Kind', parent => 'meta', uri => 'uo:kind');
 CALL ld.type_create(slug => 'status', shard => x'0000'::int, name => 'Status', parent => 'meta', uri => 'uo:status');
 CALL ld.type_create(slug => 'tags', shard => x'0000'::int, name => 'Tags', parent => 'meta', uri => 'uo:tags');
 CALL ld.type_create(slug => 'uri', shard => x'0000'::int, name => 'uri', parent => 'meta', uri => 'uo:URI');
 CALL ld.type_create(slug => 'axis', shard => x'0000'::int, name => 'Axis', parent => 'meta', kind => 'work', uri => 'uo:hasAxis');
-CALL ld.type_create(slug => 'theme', shard => x'0000'::int, name => 'Theme', parent => 'meta', kind => 'work');
+CALL ld.type_create(slug => 'theme', shard => x'0000'::int, name => 'Theme', parent => 'meta', kind => 'work', uri => 'uo:hasTheme');
 -- the end of the type rows
