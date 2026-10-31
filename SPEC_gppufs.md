@@ -48,6 +48,7 @@ What Alex instructed for gppufs, its catalog and their users, as plain statement
 - FileIndexer does not index everything yet: on alex-pc it indexes Projects, Work, the Obsidian vault and the repos, which hold the files of the work in hand.
 - What runs ingests what is new as it comes in; no old data is imported anywhere.
 - The linking is what matters: a file is the same file as its other instances, and a file belongs to a task, a project or an epic, never to a session.
+- The files a session worked on, or that were involved in it, are added to that session's task, project or epic, never to the session.
 - A project's timeline shows its files' events, a file created, beside its messages.
 
 ## Users
