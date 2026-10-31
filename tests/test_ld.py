@@ -98,15 +98,18 @@ def test_a_records_status_and_kind_are_its_metas(api):
     assert ok(api.put(f"/nodes/{task['id']}", json={'meta': {'kind': None}}))['kind'] is None
 
 
-def test_a_display_name_is_filtered_sorted_and_searched_as_a_column_is(api):
+def test_a_key_of_meta_is_filtered_sorted_and_searched_as_a_column_is(api):
     parent = ok(api.post('/nodes', json={'type': 'project', 'meta': {'display_name': 'Named things'}}))
     for name in ('beta', 'Alpha', None, 'gamma'):
         ok(api.post('/nodes', json={'type': 'task', 'parent_id': parent['id']} | ({'meta': {'display_name': name}} if name else {})))
     under = {'parent_id': {'$eq': parent['id']}}
     named = lambda **params: [t['meta'].get('display_name') for t in pages(api, '/nodes', **params)]
-    assert named(filters=json.dumps(under), sort='display_name:asc', limit=1) == [None, 'Alpha', 'beta', 'gamma']   # one without a name is least
-    assert named(filters=json.dumps(under | {'display_name': {'$startswith': 'g'}})) == ['gamma']
+    assert named(filters=json.dumps(under), sort='meta.display_name:asc', limit=1) == [None, 'Alpha', 'beta', 'gamma']   # one without a name is least
+    assert named(filters=json.dumps(under), sort='meta.display_name:desc', limit=1) == ['gamma', 'beta', 'Alpha', None]
+    assert named(filters=json.dumps(under | {'meta.display_name': {'$startswith': 'g'}})) == ['gamma']
+    assert named(filters=json.dumps({'$or': [{'meta.display_name': {'$eq': 'alpha'}}, {'meta.display_name': {'$eq': 'Beta'}}]})) == ['beta', 'Alpha']
     assert named(search='named thing') == ['Named things']
+    assert 'no column' in ok(api.get('/nodes', params={'filters': json.dumps({'name': {'$eq': 'x'}})}), 400)['detail']
 
 
 def test_abandoned_comes_with_archived_and_rejected_with_deleted(api):
@@ -239,6 +242,8 @@ def test_a_session_is_known_by_its_harness_and_uid(api):
     assert [m['id'] for m in ok(api.get('/sessions/messages', params=children))['items']] == [message['id']]
     nxt = ok(api.post('/sessions/links', json={'type': 'next', 'meta': {'status': 'proposed'}, 'from_id': session['id'], 'to_id': other['id']}))
     assert header(nxt)[:2] == bytes([0x20, 0x10]) and nxt['status'] == 'proposed'
+    by = lambda **keys: [s['id'] for s in ok(api.get('/sessions', params={'filters': json.dumps({f'meta.{k}': {'$eq': v} for k, v in keys.items()})}))['items']]
+    assert by(harness='cx', uid='u1') == [other['id']] and session['id'] in by(harness='cc')
 
 
 def test_a_sessions_messages_are_read_in_the_order_of_their_lines_a_page_at_a_time(api):

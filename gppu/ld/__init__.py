@@ -24,19 +24,20 @@ from fastapi_pagination import add_pagination, create_page
 from fastapi_pagination.cursor import CursorPage   # a page carries the cursor of the next one (sqlakeyset reads after the last row)
 from fastapi_pagination.customization import (CustomizedPage, UseExcludedFields, UseFieldsAliases, UseIncludeTotal, UseName,
                                               UseOptionalParams, UseParamsFields)
-from fastapi_pagination.ext.sqlalchemy import apaginate   # querybuilder builds SQLAlchemy selects
-from fastapi_querybuilder import QueryParams, build_query
+from fastapi_pagination.ext.sqlalchemy import apaginate
+from fastapi_querybuilder import QueryParams   # a search's filters, sort and search, and their operators
+from fastapi_querybuilder.core import parse_filter_query
+from fastapi_querybuilder.operators import LOGICAL_OPERATORS, get_comparison_operators
 from psycopg.errors import UndefinedFunction
 from pydantic import ConfigDict, GetCoreSchemaHandler, GetJsonSchemaHandler, TypeAdapter, ValidationError
 from pydantic_core import core_schema
 from sqlakeyset import custom_bookmark_type
-from sqlalchemy import Computed, DateTime, FetchedValue, Integer, SmallInteger, String, TypeDecorator, literal
+from sqlalchemy import Computed, DateTime, FetchedValue, Integer, SmallInteger, String, TypeDecorator, and_, literal, or_
 from sqlalchemy.dialects.postgresql import JSONB, TSTZRANGE, Range
 from sqlalchemy.exc import DataError, IntegrityError, StatementError
 from sqlalchemy.sql.elements import UnaryExpression
 from sqlalchemy.sql.sqltypes import NullType
 from sqlalchemy.sql.visitors import iterate
-from sqlalchemy.orm import column_property
 from sqlmodel import Column, Field, SQLModel, func, select
 
 from ..data import _SQABase
@@ -264,27 +265,65 @@ class _Record(SQLModel):
         return (await cls.db().exec(query.order_by(*order))).all()
 
     @classmethod
+    def key(cls, key: str):
+        """What a filter, a sort or a search reads: a column, or a key of `meta`, `meta.{key}`, as text."""
+        if key.startswith('meta.') and key[5:]:
+            return cls.meta[key[5:]].astext
+        if key not in cls.__table__.columns:
+            raise HTTPException(400, f"{cls.__tablename__} has no column {key!r}; a key of meta is 'meta.{{key}}'")
+        return getattr(cls, key)
+
+    @classmethod
+    def where(cls, filters: dict, operators: dict):
+        """A JSON document of conditions as one: each key's operators, `$and` and `$or` a list of documents."""
+        if not isinstance(filters, dict):
+            raise HTTPException(400, f'a filter is a JSON object, not {filters!r}')
+        found = []
+        for key, value in filters.items():
+            if key in LOGICAL_OPERATORS:
+                found.append(LOGICAL_OPERATORS[key](*(cls.where(f, operators) for f in value)))
+                continue
+            if not isinstance(value, dict) or set(value) - operators.keys():
+                raise HTTPException(400, f'{key}: its conditions are operators, {", ".join(operators)}, not {value!r}')
+            column = cls.key(key)
+            found += [operators[o](column) if o in ('$isempty', '$isnotempty') else operators[o](column, v) for o, v in value.items()]
+        return and_(*found)
+
+    @classmethod
     async def search(cls, params, *where, conditions: QueryParams | None = None, order: tuple = ()):
-        """A page of a search: the records in sight of its table fastapi-querybuilder's query of `conditions` and `where` select,
-        `limit` of them after the last one of the page before (sqlakeyset), in the sort of `conditions`, then in `order`, then by
-        the id, which no two rows share; every match when no limit is given."""
-        if conditions and conditions.search and not conditions.search_fields:   # every text column and `display_name` (`operations`)
-            conditions.search_fields = ','.join([c.name for c in cls.__table__.columns if isinstance(c.type, String)] + ['display_name'])
-        query = (build_query(cls, conditions) if conditions else select(cls)).where(cls.flags.op('&')(int(UNSEEN)) == 0, *where)
+        """A page of a search: the records in sight of its table that `where` and the `conditions` select, their filters, and
+        their search's text in the text columns and `meta.display_name`, or in its fields; `limit` of them after the last one of the
+        page before (sqlakeyset), in the sort of `conditions`, then in `order`, then by the id, which no two rows share; every
+        match when no limit is given. A key of `meta` is filtered, sorted and searched as a column is, `meta.{key}`."""
+        query, sort = select(cls).where(cls.flags.op('&')(int(UNSEEN)) == 0, *where), []
+        if conditions:
+            if filters := parse_filter_query(conditions.filters):
+                query = query.where(cls.where(filters, get_comparison_operators(case_sensitive=conditions.case_sensitive)))
+            if conditions.search:
+                fields = (conditions.search_fields.split(',') if conditions.search_fields
+                          else [c.name for c in cls.__table__.columns if isinstance(c.type, String)] + ['meta.display_name'])
+                query = query.where(or_(*(cls.key(f.strip()).ilike(f'%{conditions.search}%') for f in fields)))
+            for clause in filter(None, (c.strip() for c in (conditions.sort or '').split(','))):
+                key, _, way = clause.partition(':')
+                if way.strip().lower() not in ('', 'asc', 'desc'):
+                    raise HTTPException(400, f'{clause}: a sort is column:asc or column:desc')
+                column = cls.key(key.strip())
+                column = func.lower(column, type_=String()) if isinstance(column.type, String) and not conditions.case_sensitive else column
+                sort.append(column.desc() if way.strip().lower() == 'desc' else column.asc())
 
         def after(key):
             """A sort key a page can read after: one a record may leave empty, a column's or a key's in `data` or `meta`, sorts that
             record as the least value of its kind, the key's when it is read as one, else its column's."""
             key = key if isinstance(key, UnaryExpression) else key.asc()
-            column = next(c for c in iterate(key.element) if isinstance(c, Column))   # under querybuilder's lower() of a text column
-            typed = column if isinstance(key.element.type, NullType) else key.element   # lower() has no type of its own
+            column = next(c for c in iterate(key.element) if isinstance(c, Column))   # under a lower() of a text column
+            typed = column if isinstance(key.element.type, NullType) else key.element   # an expression with no type of its own
             if not column.nullable and typed is column:
                 return key
             return UnaryExpression(func.coalesce(key.element, literal(LEAST[typed.type.python_type], typed.type)), modifier=key.modifier)
-        keys = [after(k) for k in (*query._order_by_clauses, *order)]   # querybuilder's sort, then the caller's, read as sqlakeyset reads them
-        query = query.order_by(None).order_by(*keys, cls.id)
+        keys = [after(k) for k in (*sort, *order)]   # the search's sort, then the caller's, read as sqlakeyset reads them
+        query = query.order_by(*keys, cls.id)
         if params.size is None:
-            rows = (await cls.db().scalars(query)).all()   # querybuilder's select is SQLAlchemy's: rows of one record each
+            rows = (await cls.db().scalars(query)).all()
             return create_page(rows, params=params, total=len(rows))
         return await apaginate(cls.db(), query, params=params)
 
@@ -328,10 +367,8 @@ class Event(_Record, table=True):
 
 
 def operations(path: str, body: type[_Record], name: str, table: type[_Record]) -> APIRouter:
-    """A path for its table: create, read, update, delete and search, `body` what a caller sends. The table's `display_name`, its
-    records' `meta.display_name` ('' when they have none), is filtered, sorted and searched as a column is."""
+    """A path for its table: create, read, update, delete and search, `body` what a caller sends."""
     routes = APIRouter(tags=[name])
-    table.display_name = column_property(func.coalesce(table.meta['display_name'].astext, ''), deferred=True)
     a, names = 'an' if name[0] in 'aeiou' else 'a', name[:-1] + 'ies' if name.endswith('y') else name + 's'   # an entity, entities
 
     @routes.post(path, response_model=table, summary=f'Create {a} {name}')
@@ -362,11 +399,12 @@ def operations(path: str, body: type[_Record], name: str, table: type[_Record]) 
     async def search(type: str | None = None, conditions: QueryParams = Depends(), params: Params = Depends()):
         """Of one `type`, or of every type; records out of sight are not searched.
 
-        `filters` is one JSON document of conditions on any column,
-        `{"parent_id": {"$eq": "…"}, "status": {"$ne": "rejected"}, "display_name": {"$contains": "x"}}`, with the operators
+        `filters` is one JSON document of conditions on any column or key of `meta`,
+        `{"parent_id": {"$eq": "…"}, "status": {"$ne": "rejected"}, "meta.display_name": {"$contains": "x"}}`, with the operators
         `$eq` `$ne` `$gt` `$gte` `$lt` `$lte` `$in` `$contains` `$startswith` `$isempty` `$isnotempty`, joined by `$and` `$or`.
         A time in a condition is UTC in whole seconds, `2026-10-16T13:00:00Z` or the same without the `Z`; one with an offset is refused.
-        `sort` is `column:asc` or `column:desc`; `search` is text looked for in every text column and `display_name`.
+        `sort` is `column:asc` or `column:desc`, a key of `meta` as well; `search` is text looked for in every text column and
+        `meta.display_name`, or in `search_fields`.
 
         A page is `limit` records after `cursor`, with the `total` and `next`, the cursor of the page after it, none after the last.
         Every match when no `limit` is given."""
