@@ -640,6 +640,8 @@ class Catalog:
         self.records = records
         self.ld = ld
         self._columns: list[str] | None = None   # columns(), read once and again after an m365 index is loaded
+        self._received: dict[str, dict[str, Any]] = {}   # each folder whose index this process received, and how its load went
+        self._guard = RLock()
 
     def _get(self, route: str, **params: Any) -> Any:
         r = self.ld.get(route, params=params)
@@ -688,8 +690,27 @@ class Catalog:
         """An index the Lake received, copy on this host, loaded as the latest copy of its folder's: source is the uri it came from,
         its folder's uri as Linked Data names it and the index's name (FileIndexer's store.send). What it holds is put by its gppufs
         id, the folder keeping the instance the catalog has for it; what the folder's earlier copy held and this one does not is
-        deleted. An index whose rows have no ids is refused."""
+        deleted. An index whose rows have no ids is refused. How the load goes is kept for loaded()."""
+        folder = self.received(source)
+        try:
+            self._load(folder, source, copy)
+        except BaseException as error:
+            with self._guard:
+                self._received[folder] |= {'loading': False, 'error': f'{type(error).__name__}: {error}'}
+            raise
+        with self._guard:
+            self._received[folder] |= {'loading': False, 'error': None}
+
+    def received(self, source: str) -> str:
+        """An index from source received, its load to come, and the folder it is of; loaded() answers it as loading until it is
+        loaded."""
         folder = source.rpartition('/')[0]
+        with self._guard:
+            if not self._received.get(folder, {}).get('loading'):
+                self._received[folder] = {'received': datetime.now().astimezone().isoformat(), 'loading': True, 'error': None}
+        return folder
+
+    def _load(self, folder: str, source: str, copy: Path) -> None:
         held = rows(copy)
         if not held or held[0]['path']:
             raise ValueError(f'{source}: the index holds no row for its folder')
@@ -716,12 +737,18 @@ class Catalog:
             if inside['id'] not in kept:
                 self.ld.delete(f"/fs/instances/{inside['id']}").raise_for_status()
 
-    def loaded(self, folder: str) -> dict[str, str]:
-        """When the catalog last loaded a folder's index, so an indexer sends an index written since, or one the catalog lacks."""
+    def loaded(self, folder: str) -> dict[str, Any]:
+        """The copy of a folder's index the catalog holds and the one it received last: when it was loaded, from the database; when
+        this process received one, whether it is still loading and why its load failed. An indexer sends an index written since
+        the copy it received, or one the catalog lacks."""
         found = self._find(folder)
-        if found is None or found['data'].get('index') != folder:
+        held = found is not None and found['data'].get('index') == folder
+        with self._guard:
+            state = dict(self._received.get(folder, {}))
+        if not held and not state:
             raise LookupError(f'{folder}: the catalog holds no index of it')
-        return {'folder': folder, 'loaded': found['data']['loaded']}
+        return {'folder': folder, 'loaded': found['data']['loaded'] if held else None, 'received': state.get('received'),
+                'loading': state.get('loading', False), 'error': state.get('error')}
 
     def unload(self, folder: str) -> None:
         """Everything a folder's index put in the catalog deleted, the folder's own instance with it, as when the folder is no
@@ -844,7 +871,7 @@ def api(catalog: Catalog):
     GET /entries/{uid}/entries      what is directly inside an entry, a line of JSON each, by name
     GET /entries?path=              what is directly inside the folder path names as the desktop shows the catalog, a line each
     GET /columns                    the columns an entry is described by, each its internal name and its name in words
-    GET /indexes?folder=            when the catalog last loaded the index of the folder a uri names
+    GET /indexes?folder=            the copy of the index of the folder a uri names the catalog holds, and the one it received last
 
     An entry listed carries the text of its columns. What the catalog does not hold answers 404 with its error."""
     from fastapi import FastAPI, Response

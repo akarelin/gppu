@@ -2,6 +2,8 @@
 the Lake's catalog, answered with that uri and retrieved by it; a Lake folder is listed from the catalog, never from the store;
 the Lake's API at /lake answers what the Lake answers itself. The catalog's database is conftest's ld, on LD_TEST_DSN."""
 import json
+import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -65,8 +67,8 @@ def test_an_object_the_layout_has_no_place_for_is_refused(tmp_path, ld):
 
 
 def test_an_index_the_lake_receives_is_loaded_into_the_catalog_and_kept_with_the_files(tmp_path, ld):
-    """FileIndexer sends each index a run wrote, named by the folder's uri: the Lake loads it as that folder's latest copy and stores
-    the index as any file."""
+    """FileIndexer sends each index a run wrote, named by the folder's uri: the Lake stores the index as any file, answers 202, and
+    then loads it as that folder's latest copy; the catalog says which copy it received and whether it is loaded."""
     lake, outer = lake_of(tmp_path, ld)
     dev = tmp_path / 'Dev'
     (dev / 'sub').mkdir(parents=True)
@@ -75,11 +77,26 @@ def test_an_index_the_lake_receives_is_loaded_into_the_catalog_and_kept_with_the
     with fs.run():
         fs.ls(dev, recurse=True, refresh=True)
     index = dev / '.Dev.gppufs.sqlite'
-    with index.open('rb') as content:
-        uri = lake.save(DataObject('file://alex-pc/Dev/.Dev.gppufs.sqlite', content, None, 'file', '.Dev.gppufs.sqlite'))
+    served = FastAPI()
+    served.mount('/lake', api(lake))
+    client = TestClient(served, raise_server_exceptions=False)
+    sent = client.post('/lake/', params={'name': index.name, 'source': 'file://alex-pc/Dev/.Dev.gppufs.sqlite'}, content=index.read_bytes())
+    assert sent.status_code == 202   # the load ran after the answer, as the test client runs a background task
     assert (outer / 'sources' / 'file-alex-pc' / 'Dev' / '.Dev.gppufs.sqlite').read_bytes() == index.read_bytes()
     assert [row['name'] for row in lake.contents.entries(uri='file://alex-pc/Dev')] == ['note.md', 'sub']
-    assert lake.info(uri)['type'] == 'sqlite'
+    assert lake.info(sent.json()['uri'])['type'] == 'sqlite'
+    state = lake.contents.loaded('file://alex-pc/Dev')
+    assert state['loaded'] and state['received'] and not state['loading'] and state['error'] is None
+
+    old = tmp_path / '.Old.gppufs.sqlite'   # an index written before gppufs gave its rows ids
+    with closing(sqlite3.connect(old)) as db:
+        db.execute('CREATE TABLE gppufs_entries (path TEXT PRIMARY KEY, metadata TEXT NOT NULL, children TEXT)')
+        db.execute('INSERT INTO gppufs_entries (path, metadata) VALUES (?, ?)', ('.', json.dumps({'gppu': {'type': 'folder', 'handlers': ['folder']}})))
+        db.commit()
+    refused = client.post('/lake/', params={'name': old.name, 'source': 'file://alex-pc/Old/.Old.gppufs.sqlite'}, content=old.read_bytes())
+    assert refused.status_code == 202 and refused.json()['uri'] in client.get('/lake/', params={'failed': ''}).json()
+    state = lake.contents.loaded('file://alex-pc/Old')   # received, its load failed, nothing loaded
+    assert state['loaded'] is None and not state['loading'] and state['error']
 
 
 def test_the_api_at_lake_answers_what_the_lake_answers(tmp_path, ld):
