@@ -9,7 +9,7 @@ from ..ld import _Link, _Record, _Type, api_at, operations
 
 
 class Type(_Type, table=True):
-    """The file system's types and values: a handler's `data.class` is the Python class that is it."""
+    """The file system's types and values."""
     __tablename__, __table_args__, __shard__ = 'types', {'schema': 'fs'}, 0x1000
 
 
