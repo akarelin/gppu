@@ -243,6 +243,8 @@ class _Record(SQLModel):
             row = cls.model_validate(sent, update={'id': id})
             cls.db().add(row)
         await cls.db().flush()
+        if 'status' in sent.meta:
+            await cls.db().refresh(row, ['flags'])   # the flag a status comes with (# Flags), which the store sets
         return row
 
     @classmethod

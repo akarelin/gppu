@@ -114,11 +114,11 @@ def test_a_key_of_meta_is_filtered_sorted_and_searched_as_a_column_is(api):
 
 def test_abandoned_comes_with_archived_and_rejected_with_deleted(api):
     work = ok(api.post('/nodes', json={'type': 'task', 'meta': {'status': 'proposed'}}))
-    assert ok(api.put(f"/nodes/{work['id']}", json={'meta': {'status': 'abandoned'}}))['status'] == 'abandoned'
-    assert ok(api.get(f"/nodes/{work['id']}"))['flags'] == 16
+    abandoned = ok(api.put(f"/nodes/{work['id']}", json={'meta': {'status': 'abandoned'}}))
+    assert (abandoned['status'], abandoned['flags']) == ('abandoned', 16) and ok(api.get(f"/nodes/{work['id']}"))['flags'] == 16
     assert ok(api.put(f"/nodes/{work['id']}", json={'flags': 0}))['flags'] == 0   # un-archive keeps the status it has
     rejected = ok(api.post('/nodes', json={'type': 'task', 'meta': {'status': 'rejected'}}))
-    assert ok(api.get(f"/nodes/{rejected['id']}"))['flags'] == 4
+    assert rejected['flags'] == 4 and ok(api.get(f"/nodes/{rejected['id']}"))['flags'] == 4
 
 
 def test_an_update_merges_data_and_a_null_removes_a_key(api):
