@@ -146,14 +146,14 @@ HOMES: dict[Harness, tuple[str, ...]] = {
 NAME_LEN = 120
 TITLES = {"ai-title": "aiTitle", "agent-name": "agentName", "custom-title": "customTitle"}
 CODEX_MESSAGES = {"message", "function_call", "custom_tool_call", "function_call_output", "custom_tool_call_output", "agent_message"}
-CODEX_ROLES = {"user": "user", "assistant": "agent", "developer": "user"}
+CODEX_ROLES = {"user": "user", "assistant": "assistant", "developer": "developer"}
 CODEX_INSTRUCTIONS = "# AGENTS.md instructions"
 NAMESPACE = UUID("4936da84-fd80-59f2-90ef-1d5b9672ceb6")
 OPENING = re.compile(r"\s*<([\w:-]+)([^>]*)>")
 SUMMARY = re.compile(r'\bsummary="([^"]*)"')
 ELEMENT = re.compile(r"<([\w:-]+)[^>]*>.*?</\1>", re.S)
 TAGS = re.compile(r"</?[\w:-]+[^>]*>")
-MESSAGE_TYPES = ("user", "agent", "thinking", "tool_use", "tool_result")
+MESSAGE_TYPES = ("user", "assistant", "developer", "thinking", "tool_use", "tool_result")
 SESSION_UID = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.I,
@@ -843,7 +843,7 @@ class SessionHandler(FileHandler):
             if kind == "user" and not message.get("isMeta") and "text" in types:
                 cls._prompted(session, cls._text_of(blocks, ("text",)))
             message_type = ("tool_result" if "tool_result" in types else "user" if kind == "user"
-                       else "tool_use" if "tool_use" in types else "agent" if "text" in types else "thinking")
+                       else "tool_use" if "tool_use" in types else "assistant" if "text" in types else "thinking")
             text = (" ".join(block.get("name", "") for block in blocks if block.get("type") == "tool_use")
                     if message_type == "tool_use" else cls._text_of(blocks))
             session_messages.append(cls._session_message(message.get("uuid"), message, n, message_type, text))
@@ -877,7 +877,7 @@ class SessionHandler(FileHandler):
             elif payload["type"].endswith("_output"):
                 message_type, text = "tool_result", cls._text_of(payload.get("output"))
             elif payload["type"] == "agent_message":
-                message_type, text = "agent", cls._text_of(payload.get("content") or payload.get("text"))
+                message_type, text = "assistant", cls._text_of(payload.get("content") or payload.get("text"))
             else:
                 message_type, text = "tool_use", payload.get("name") or ""
             session_messages.append(cls._session_message(message_uid, message, n, message_type, text))

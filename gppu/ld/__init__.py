@@ -3,7 +3,7 @@ another schema's API is built from. `_Record`, every record's columns and its op
 search), with no table; `_Type` and `_Link`, the columns a type and a link add; and each table's class, which only defines its table
 and the shard its ids start with (`__shard__`), shard1 its schema and shard2 the table (# UUID): `ld.types` 0x0000,
 `ld.nodes` 0x0001, `ld.links` 0x0010, `ld.events` 0x0020.
-A record's `flags` say what can change it and whether it is in sight (`Flags`). `operations()` gives a path its tables' create, read,
+A record's `flags` say what can change it and whether it is in sight (`Flags`). `operations()` gives a path its table's create, read,
 update, delete and search; `app` is the core, each table at its own path, `/types`, `/nodes`, `/links` and `/events`; `api_at()`, another schema's API with its own
 documentation; `serve()`, the APIs at one address, on the store of the app that serves them. The tables are made by gppu's
 SQL, `tests/ld.sql`, each table on its own. The store is the app's: a `gppu.data._SQABase` gives the engine and each request's database
@@ -14,7 +14,7 @@ dependencies."""
 from datetime import UTC, datetime, timedelta
 from enum import IntFlag
 from collections.abc import Sequence
-from typing import Any, ClassVar, Self, TypeVar, Union
+from typing import Any, ClassVar, Self, TypeVar
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -30,12 +30,13 @@ from psycopg.errors import UndefinedFunction
 from pydantic import ConfigDict, GetCoreSchemaHandler, GetJsonSchemaHandler, TypeAdapter, ValidationError
 from pydantic_core import core_schema
 from sqlakeyset import custom_bookmark_type
-from sqlalchemy import Computed, DateTime, FetchedValue, Index, Integer, SmallInteger, String, TypeDecorator, literal, text
+from sqlalchemy import Computed, DateTime, FetchedValue, Integer, SmallInteger, String, TypeDecorator, literal
 from sqlalchemy.dialects.postgresql import JSONB, TSTZRANGE, Range
 from sqlalchemy.exc import DataError, IntegrityError, StatementError
 from sqlalchemy.sql.elements import UnaryExpression
 from sqlalchemy.sql.sqltypes import NullType
 from sqlalchemy.sql.visitors import iterate
+from sqlalchemy.orm import column_property
 from sqlmodel import Column, Field, SQLModel, func, select
 
 from ..data import _SQABase
@@ -46,7 +47,7 @@ T = TypeVar('T')
 LIST = 1000   # the most records a list sends: the older data's largest list of like records is a folder's 585 files (work 15, a location's runs 16, 2026-10-17)
 LIST_BYTES = 1_000_000   # and the most data it sends, `data` and `meta` as Postgres stores them: that folder's are 187 kB (work 45 kB; a session's messages up to 145 MB, so they are read a page at a time)
 DATETIME, DURATION = TypeAdapter(datetime), TypeAdapter(timedelta)
-STORE = ('id', 'ts', 'created', 'updated')   # the columns Postgres fills: a caller does not send them
+STORE = ('id', 'status', 'kind', 'ts', 'created', 'updated')   # the columns Postgres fills: a caller does not send them
 
 
 async def transaction():
@@ -181,16 +182,17 @@ class _Record(SQLModel):
     flags: int = Field(0, sa_type=SmallInteger, description='ro 1, system 2, deleted 4, hidden 8, archived 16.')
     # String, not SQLModel's own AutoString: search looks for its text only in String columns
     type: str | None = Field(None, sa_type=String, description='Slug of its type.')
-    status: str | None = Field(None, sa_type=String, description="Slug of its status, one of its type's or its type's parent's.")
-    name: str | None = Field(None, sa_type=String, sa_column_kwargs={'server_default': FetchedValue(), 'server_onupdate': FetchedValue()},
-                             description='`data.name` when it has one, else `{type}-{id}`, unless one is sent.')
+    status: str | None = Field(None, sa_type=String, sa_column_args=[Computed("meta->>'status'", persisted=True)],
+                               description='`meta.status`, the slug of its status. Read only.')
+    kind: str | None = Field(None, sa_type=String, sa_column_args=[Computed("meta->>'kind'", persisted=True)],
+                             description='`meta.kind`, the slug of its kind. Read only.')
     parent_id: UUID | None = Field(None, description='The record it belongs to.')
     span: Span | None = Field(None, sa_type=SpanColumn, description='Its timespan: `start` and `end`; `date` and `duration`; a `date` alone, one day; a `ts` alone, one second.')
     # DateTime, not SQLModel's own: filters read a time they are given only for DateTime columns
-    ts: datetime | None = Field(None, sa_type=DateTime(timezone=True), sa_column_args=[Computed('lower(span)', persisted=False)],
+    ts: datetime | None = Field(None, sa_type=DateTime(timezone=True), sa_column_args=[Computed('lower(span)', persisted=True)],
                                 description='The start of `span`. Read only.')
-    data: dict = Field(default_factory=dict, sa_type=JSONB, description='What the record says about the thing. On update, merged into what is there; a null removes a key.')
-    meta: dict = Field(default_factory=dict, sa_type=JSONB, description='How the record came to be: who made it, from what, when it was seen. Merged on update as `data` is.')
+    data: dict = Field(default_factory=dict, sa_type=JSONB, description='The data recorded. On update, merged into what is there; a null removes a key.')
+    meta: dict = Field(default_factory=dict, sa_type=JSONB, description='Metadata about the data: `display_name`, `status`, `kind`, `uri`. Merged on update as `data` is.')
     created: datetime | None = Field(None, sa_type=DateTime(timezone=True), sa_column_kwargs={'server_default': FetchedValue(), 'nullable': False}, description='When the record was made.')
     updated: datetime | None = Field(None, sa_type=DateTime(timezone=True), sa_column_kwargs={'server_onupdate': FetchedValue()}, description='When the record was last changed.')
 
@@ -266,6 +268,8 @@ class _Record(SQLModel):
         """A page of a search: the records in sight of its table fastapi-querybuilder's query of `conditions` and `where` select,
         `limit` of them after the last one of the page before (sqlakeyset), in the sort of `conditions`, then in `order`, then by
         the id, which no two rows share; every match when no limit is given."""
+        if conditions and conditions.search and not conditions.search_fields:   # every text column and `display_name` (`operations`)
+            conditions.search_fields = ','.join([c.name for c in cls.__table__.columns if isinstance(c.type, String)] + ['display_name'])
         query = (build_query(cls, conditions) if conditions else select(cls)).where(cls.flags.op('&')(int(UNSEEN)) == 0, *where)
 
         def after(key):
@@ -286,14 +290,12 @@ class _Record(SQLModel):
 
 
 class _Type(_Record):
-    """A type's columns: its slug, and the shard its records are in, the two bytes of their table, shard1 its schema and shard2 the
-    table (# UUID). A status is a type of type `status` whose parent is the type it belongs to, and a kind one of type `kind`
-    (`_Kinded`); a type's slug is unique in its shard, a status's or a kind's under the type it belongs to. A type's parent is the
-    type of its schema it is under (# Types: `node` and `link` under `type`, `event` under `node`), and the type made for one of its
-    schema's tables says what that table holds. Each schema's types are a table of its own."""
+    """A type's columns (# Record): its slug, and the shard of the table its records are in, the two bytes of that table, shard1 its
+    schema and shard2 the table (# UUID); a type with no records of its own, an abstract type, a vocabulary or a value, has the shard
+    of its types table. A value's parent is its vocabulary and its `kind` the type the value applies to; a slug is one under its parent.
+    Each schema's types are a table of its own."""
     # required to make a type, which its table refuses without them, not to change one: an update takes only what changes
-    slug: str | None = Field(None, sa_type=String, sa_column_kwargs={'nullable': False},
-                             description="Its slug: a type's unique in its shard, a status's or a kind's under the type it belongs to.")
+    slug: str | None = Field(None, sa_type=String, sa_column_kwargs={'nullable': False}, description='Its slug, one under its parent.')
     shard: int | None = Field(None, sa_type=Integer, sa_column_kwargs={'nullable': False}, description='The shard of the table its records are in, two bytes: shard1 its schema, shard2 the table.')
 
 
@@ -303,20 +305,14 @@ class _Link(_Record):
     to_id: UUID | None = Field(None, description='The record where it ends.')
 
 
-class _Kinded(_Record):
-    """A record that has a kind, as it has a status: one of the kinds of its type or its type's parent, a constrained vocabulary of
-    rows of type `kind` in its schema's types. The core's nodes and events have it; no other table needs one."""
-    kind: str | None = Field(None, sa_type=String, description="Slug of its kind, one of its type's or its type's parent's.")
-
-
 # ++     The core's tables: schema `ld`, shard1 0x00
 
 class Type(_Type, table=True):
-    """What a record is, its statuses and its kinds."""
-    __tablename__, __table_args__, __shard__ = 'types', (Index('types_slug', 'shard', 'slug', unique=True, postgresql_where=text('type IS NULL')), Index('types_value_slug', 'parent_id', 'slug', unique=True, postgresql_where=text('type IS NOT NULL')), {'schema': 'ld'}), 0x0000
+    """What a record is, the vocabularies and their values."""
+    __tablename__, __table_args__, __shard__ = 'types', {'schema': 'ld'}, 0x0000
 
 
-class Node(_Kinded, table=True):
+class Node(_Record, table=True):
     """A node (vertex) or a row; most belong to a container, their `parent_id`."""
     __tablename__, __table_args__, __shard__ = 'nodes', {'schema': 'ld'}, 0x0001
 
@@ -326,72 +322,55 @@ class Link(_Link, table=True):
     __tablename__, __table_args__, __shard__ = 'links', {'schema': 'ld'}, 0x0010
 
 
-class Event(_Kinded, table=True):
+class Event(_Record, table=True):
     """Something that happened: an `event` at one moment, an `activity` over its span."""
     __tablename__, __table_args__, __shard__ = 'events', {'schema': 'ld'}, 0x0020
 
 
-def operations(path: str, body: type[_Record], name: str, *models: type[_Record]) -> APIRouter:
-    """A path for its tables: create, read, update, delete and search, each table its own, `body` what a caller sends. A create's
-    table is the one its `type` names (`ld.types`); a read, an update or a delete's `id` says its table by its first two bytes,
-    shard1 and shard2, and one of a table the path has not is read and changed through the first, with its columns."""
-    routes, base = APIRouter(tags=[name]), models[0]
-    own = {m.__shard__: m for m in models if hasattr(m, '__shard__')}   # an id's first two bytes to its table
-    One = Union[models]   # a record of the path, read with its own table's columns
+def operations(path: str, body: type[_Record], name: str, table: type[_Record]) -> APIRouter:
+    """A path for its table: create, read, update, delete and search, `body` what a caller sends. The table's `display_name`, its
+    records' `meta.display_name` ('' when they have none), is filtered, sorted and searched as a column is."""
+    routes = APIRouter(tags=[name])
+    table.display_name = column_property(func.coalesce(table.meta['display_name'].astext, ''), deferred=True)
     a, names = 'an' if name[0] in 'aeiou' else 'a', name[:-1] + 'ies' if name.endswith('y') else name + 's'   # an entity, entities
 
-    def shard(id: UUID) -> int:
-        """The table an id is in: its first two bytes, shard1 its schema and shard2 the table."""
-        return int.from_bytes(id.bytes[:2])
-
-    async def table(record: _Record) -> type[_Record]:
-        """The table of the record's `type`, one of the path's: the type's `shard`, read in the core's `ld.types`."""
-        if len(own) == 1:
-            return next(iter(own.values()))
-        shards = (await _Record.db().exec(select(Type.shard).where(Type.slug == record.type, Type.type.is_(None)))).all()
-        if len(found := {s for s in shards if s in own}) != 1:
-            raise HTTPException(422, f'{record.type!r} is a type of {len(found) or "no"} table{"" if len(found) == 1 else "s"} of {path}: '
-                                     + ', '.join(m.__table__.fullname for m in own.values()))
-        return own[found.pop()]
-
-    @routes.post(path, response_model=One, summary=f'Create {a} {name}')
+    @routes.post(path, response_model=table, summary=f'Create {a} {name}')
     async def create(record: body):
-        """It comes back with the `id`, `name`, `ts` and `created` the store gave it."""
-        return await (await table(record)).create(record)
+        """It comes back with the `id`, `status`, `kind`, `ts` and `created` the store gave it."""
+        return await table.create(record)
 
-    @routes.get(path + '/{id}', response_model=One, summary=f'Read {a} {name}')
+    @routes.get(path + '/{id}', response_model=table, summary=f'Read {a} {name}')
     async def read(id: UUID):
         """404 when there is none."""
-        return await own.get(shard(id), base).read(id)
+        return await table.read(id)
 
-    @routes.put(path + '/{id}', response_model=One, summary=f'Update {a} {name}')
+    @routes.put(path + '/{id}', response_model=table, summary=f'Update {a} {name}')
     async def update(id: UUID, record: body):
-        """Merged with what is sent when the `id` is there, created with that `id` when it is not; an `id` of a table the path has
-        not is refused when it is not there."""
-        if shard(id) not in own and not await base.db().get(base, id):
-            raise HTTPException(422, f'{path} has {", ".join(m.__table__.fullname for m in own.values())}; no record {id} is there to update')
-        return await own.get(shard(id), base).update(id, record)
+        """Merged with what is sent when the `id` is there, created with that `id` when it is not; an `id` of another table, its
+        first two bytes shard1 and shard2 (# UUID), is refused when it is not there."""
+        if int.from_bytes(id.bytes[:2]) != table.__shard__ and not await table.db().get(table, id):
+            raise HTTPException(422, f'{path} has {table.__table__.fullname}; no record {id} is there to update')
+        return await table.update(id, record)
 
     @routes.delete(path + '/{id}', status_code=204, summary=f'Delete {a} {name}')
     async def delete(id: UUID):
         """Marked `deleted`, a record with no flags set: out of sight and read only until un-deleted. 404 when there is none; 422
         when it has flags set."""
-        await own.get(shard(id), base).delete(id)
+        await table.delete(id)
 
-    @routes.get(path, response_model=Page[One], summary=f'Search {names}')
+    @routes.get(path, response_model=Page[table], summary=f'Search {names}')
     async def search(type: str | None = None, conditions: QueryParams = Depends(), params: Params = Depends()):
-        """Of one `type`, or of every type, in the tables of the path with the columns of the first; records out of sight are
-        not searched.
+        """Of one `type`, or of every type; records out of sight are not searched.
 
         `filters` is one JSON document of conditions on any column,
-        `{"parent_id": {"$eq": "…"}, "status": {"$ne": "discarded"}, "name": {"$contains": "x"}}`, with the operators
+        `{"parent_id": {"$eq": "…"}, "status": {"$ne": "rejected"}, "display_name": {"$contains": "x"}}`, with the operators
         `$eq` `$ne` `$gt` `$gte` `$lt` `$lte` `$in` `$contains` `$startswith` `$isempty` `$isnotempty`, joined by `$and` `$or`.
         A time in a condition is UTC in whole seconds, `2026-10-16T13:00:00Z` or the same without the `Z`; one with an offset is refused.
-        `sort` is `column:asc` or `column:desc`; `search` is text looked for in every text column.
+        `sort` is `column:asc` or `column:desc`; `search` is text looked for in every text column and `display_name`.
 
         A page is `limit` records after `cursor`, with the `total` and `next`, the cursor of the page after it, none after the last.
         Every match when no `limit` is given."""
-        return await base.search(params, *([base.type == type] if type else []), conditions=conditions)
+        return await table.search(params, *([table.type == type] if type else []), conditions=conditions)
 
     return routes
 
@@ -399,8 +378,8 @@ def operations(path: str, body: type[_Record], name: str, *models: type[_Record]
 router = APIRouter()
 
 
-router.include_router(operations('/nodes', _Kinded, 'node', Node))
-router.include_router(operations('/events', _Kinded, 'event', Event))
+router.include_router(operations('/nodes', _Record, 'node', Node))
+router.include_router(operations('/events', _Record, 'event', Event))
 router.include_router(operations('/types', _Type, 'type', Type))
 router.include_router(operations('/links', _Link, 'link', Link))
 
@@ -419,7 +398,7 @@ app = FastAPI(
     version='1',   # the major version its path carries, /ld/v1 (Alex 10-16 09:48: versions in the URL)
     summary='Records and the links between them: create, read, update, delete, search.',
     openapi_tags=[
-        {'name': 'type', 'description': 'What a record can be, its statuses and its kinds.'},
+        {'name': 'type', 'description': 'What a record can be, the vocabularies and their values.'},
         {'name': 'node', 'description': 'Nodes (vertices) or rows; most belong to a container, their `parent_id`.'},
         {'name': 'link', 'description': 'The links between records.'},
         {'name': 'event', 'description': 'What happened: an `event` at one moment, an `activity` over its span.'}],

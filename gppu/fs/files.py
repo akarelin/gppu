@@ -5,37 +5,35 @@ A location is one place in the configured hierarchy, a host among them; a file i
 handler; an instance is one copy of a file at one path, what gppufs indexes; a link joins a location or a file to a record of another schema. Each is
 created, read, updated, deleted and searched at its own path, `/fs/locations`, `/fs/files`, `/fs/instances` and `/fs/links`, and
 the file system's types at `/fs/types`; gppufs makes its catalog from the locations (gppu.fs.catalog)."""
-from sqlalchemy import Index, text
-
 from ..ld import _Link, _Record, _Type, api_at, operations
 
 
 class Type(_Type, table=True):
-    """The file system's types and statuses: a handler's `data.class` is the Python class that is it."""
-    __tablename__, __table_args__, __shard__ = 'types', (Index('types_slug', 'shard', 'slug', unique=True, postgresql_where=text('type IS NULL')), Index('types_value_slug', 'parent_id', 'slug', unique=True, postgresql_where=text('type IS NOT NULL')), {'schema': 'fs'}), 0x1000
+    """The file system's types and values: a handler's `data.class` is the Python class that is it."""
+    __tablename__, __table_args__, __shard__ = 'types', {'schema': 'fs'}, 0x1000
 
 
 class Location(_Record, table=True):
     """One place in the configured hierarchy; a host is a location. Its `parent_id` is the location it is part of, and a location
-    is a container: the locations and files in it have it as their `parent_id`. `status` `active` while it is in use, `discarded`
-    once it is not. It is known by its id; `data.uri` its URI, `data.icon` how it is shown; `data.handler.access` its path on a host
-    its URI does not name."""
+    is a container: the locations and files in it have it as their `parent_id`. `status` `active` while it is in use. It is known
+    by its id; `meta.display_name` its name, `meta.uri` its URI; `data.icon` how it is shown; `data.handler.access` its path on a
+    host its URI does not name."""
     __tablename__, __table_args__, __shard__ = 'locations', {'schema': 'fs'}, 0x1001
 
 
 class File(_Record, table=True):
-    """A file or a folder in a location, known by its name in the folder it is in. Its `parent_id` is the file it is in, or the
-    location at whose root it is; an archive's members have it as their `parent_id`. Its `type` is its handler, which probing gives
-    from its path, its name or its suffix.
-    `status` `parsed` once its handler has read it; `data.unread` why its handler could not;
-    `data.extension` its extension; `data.fingerprints` what identifies its content, each source's."""
+    """A file or a folder in a location, known by its name in the folder it is in, `meta.display_name`. Its `parent_id` is the file
+    it is in, or the location at whose root it is; an archive's members have it as their `parent_id` and are `ro`; a file an ignore
+    pattern matched is `hidden`. Its `type` is its handler, which probing gives from its path, its name or its suffix. `status`
+    `parsed` once its handler has read it; `data.unread` why its handler could not; `data.extension` its extension;
+    `data.fingerprints` what identifies its content, each source's."""
     __tablename__, __table_args__, __shard__ = 'files', {'schema': 'fs'}, 0x1002
 
 
 class Instance(_Record, table=True):
     """One copy of a file at one path, what gppufs indexes. Its `parent_id` is the file; its `span` from when the source read it to when the source
-    found it gone. `status` how the copy is at its path, as probing gives it: `normal`, which its file's handler reads, or a `symlink`, a
-    `junction`, `offline` or `ignored`, which no handler reads; `data.target` a symlink's or a junction's target. `data.source` the source that read it; `data.size`, `data.files`, `data.folders` its size, and for a folder what
+    found it gone. `kind` `symlink`, `junction` or `offline` for a copy no handler reads; `data.target` a symlink's or a junction's
+    target. `data.source` the source that read it; `data.size`, `data.files`, `data.folders` its size, and for a folder what
     it holds; `data.changed_at` when the source last changed it; `data.metadata` what the handlers read of it."""
     __tablename__, __table_args__, __shard__ = 'instances', {'schema': 'fs'}, 0x1003
 

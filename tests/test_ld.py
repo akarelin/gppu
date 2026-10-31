@@ -78,22 +78,44 @@ def test_a_record_is_made_in_the_table_of_its_path(api):
     event = ok(api.post('/events', json={'type': 'event'}))
     assert header(node) == header(entity) == bytes([0x00, 0x01, 1]) + bytes(5)
     assert header(activity) == header(event) == bytes([0x00, 0x20, 1]) + bytes(5)
-    assert node['flags'] == 0 and node['name'] == f"node-{node['id']}"
+    assert node['flags'] == 0 and 'name' not in node and node['status'] is None and node['kind'] is None
     assert activity['ts'].startswith('2026-10-27T10:00:00')
 
 
 def test_the_store_fills_its_own_columns(api):
-    assert 'the store fills them' in ok(api.post('/nodes', json={'type': 'node', 'ts': '2026-10-27T10:00:00Z'}), 422)['detail']
+    for column, value in (('ts', '2026-10-27T10:00:00Z'), ('status', 'active'), ('kind', 'chore')):
+        assert 'the store fills them' in ok(api.post('/nodes', json={'type': 'node', column: value}), 422)['detail']
+    assert ok(api.post('/nodes', json={'type': 'node', 'name': 'A name'}), 422)['detail'][0]['loc'] == ['body', 'name']
 
 
-def test_a_name_is_data_name_unless_one_is_sent(api):
-    assert ok(api.post('/nodes', json={'type': 'node', 'data': {'name': 'From data'}}))['name'] == 'From data'
-    assert ok(api.post('/nodes', json={'type': 'node', 'name': 'Sent', 'data': {'name': 'From data'}}))['name'] == 'Sent'
+def test_a_records_status_and_kind_are_its_metas(api):
+    task = ok(api.post('/nodes', json={'type': 'task', 'meta': {'status': 'proposed', 'kind': 'chore', 'display_name': 'A chore'}}))
+    assert (task['status'], task['kind'], task['meta']['display_name']) == ('proposed', 'chore', 'A chore')
+    changed = ok(api.put(f"/nodes/{task['id']}", json={'meta': {'status': 'active', 'kind': 'problem'}}))
+    assert (changed['status'], changed['kind'], changed['meta']['display_name']) == ('active', 'problem', 'A chore')
+    found = ok(api.get('/nodes', params={'filters': json.dumps({'kind': {'$eq': 'problem'}, 'status': {'$eq': 'active'}})}))['items']
+    assert [x['id'] for x in found] == [task['id']]
+    assert ok(api.put(f"/nodes/{task['id']}", json={'meta': {'kind': None}}))['kind'] is None
 
 
-def test_a_name_from_data_follows_it(api):
-    node = ok(api.post('/nodes', json={'type': 'node', 'data': {'name': 'Before'}}))
-    assert ok(api.put(f"/nodes/{node['id']}", json={'data': {'name': 'After'}}))['name'] == 'After'
+def test_a_display_name_is_filtered_sorted_and_searched_as_a_column_is(api):
+    parent = ok(api.post('/nodes', json={'type': 'project', 'meta': {'display_name': 'Named things'}}))
+    for name in ('beta', 'Alpha', None, 'gamma'):
+        ok(api.post('/nodes', json={'type': 'task', 'parent_id': parent['id']} | ({'meta': {'display_name': name}} if name else {})))
+    under = {'parent_id': {'$eq': parent['id']}}
+    named = lambda **params: [t['meta'].get('display_name') for t in pages(api, '/nodes', **params)]
+    assert named(filters=json.dumps(under), sort='display_name:asc', limit=1) == [None, 'Alpha', 'beta', 'gamma']   # one without a name is least
+    assert named(filters=json.dumps(under | {'display_name': {'$startswith': 'g'}})) == ['gamma']
+    assert named(search='named thing') == ['Named things']
+
+
+def test_abandoned_comes_with_archived_and_rejected_with_deleted(api):
+    work = ok(api.post('/nodes', json={'type': 'task', 'meta': {'status': 'proposed'}}))
+    assert ok(api.put(f"/nodes/{work['id']}", json={'meta': {'status': 'abandoned'}}))['status'] == 'abandoned'
+    assert ok(api.get(f"/nodes/{work['id']}"))['flags'] == 16
+    assert ok(api.put(f"/nodes/{work['id']}", json={'flags': 0}))['flags'] == 0   # un-archive keeps the status it has
+    rejected = ok(api.post('/nodes', json={'type': 'task', 'meta': {'status': 'rejected'}}))
+    assert ok(api.get(f"/nodes/{rejected['id']}"))['flags'] == 4
 
 
 def test_an_update_merges_data_and_a_null_removes_a_key(api):
@@ -106,6 +128,7 @@ def test_a_put_of_an_id_not_there_creates_it(api):
     id = uuid_create(0x0001)   # made offline as the store makes them
     assert ok(api.put(f'/nodes/{id}', json={'type': 'node'}))['id'] == str(id)
     assert ok(api.get(f'/nodes/{id}'))['type'] == 'node'
+    assert 'no record' in ok(api.put(f'/nodes/{uuid_create(0x0020)}', json={'type': 'node'}), 422)['detail']   # an id of another table
 
 
 def test_a_link_joins_two_records(api):
@@ -123,7 +146,7 @@ def test_a_read_only_record_changes_only_its_flags(api):
 
 
 def test_a_read_only_type_is_neither_changed_nor_deleted_by_the_api_or_in_the_database(api):
-    kept = ok(api.post('/types', json={'slug': 'kept', 'shard': 0x0001, 'name': 'Kept'}))
+    kept = ok(api.post('/types', json={'slug': 'kept', 'shard': 0x0001, 'meta': {'display_name': 'Kept'}}))
     assert ok(api.put(f"/types/{kept['id']}", json={'flags': 1}))['flags'] == 1   # toggle ro
     assert 'read only' in ok(api.put(f"/types/{kept['id']}", json={'data': {'a': 1}}), 422)['detail']
     assert 'change only by toggle ro' in ok(api.delete(f"/types/{kept['id']}"), 422)['detail']
@@ -142,7 +165,7 @@ def test_a_deleted_record_is_out_of_sight_and_read_by_its_id(api):
     hidden = ok(api.post('/nodes', json={'type': 'node', 'parent_id': parent['id'], 'flags': 8}))
     ok(api.delete(f"/nodes/{child['id']}"), 204)
     assert ok(api.get(f"/nodes/{child['id']}"))['flags'] == 4
-    assert ok(api.get('/nodes', params={'filters': f'{{"parent_id": {{"$eq": "{parent["id"]}"}}}}'}))['total'] == 0
+    assert ok(api.get('/nodes', params={'filters': json.dumps({'parent_id': {'$eq': parent['id']}})}))['total'] == 0
     assert ok(api.get(f"/nodes/{hidden['id']}"))['flags'] == 8
     assert 'read only' in ok(api.put(f"/nodes/{child['id']}", json={'data': {'a': 1}}), 422)['detail']
 
@@ -162,52 +185,68 @@ def test_flags_change_only_by_their_transitions(api):
     assert ok(api.put(f"/nodes/{node['id']}", json={'flags': 0}))['flags'] == 0   # un-delete
 
 
-def test_each_schema_searches_its_own_types(api):
-    found = ok(api.get('/types', params={'filters': '{"slug": {"$eq": "node"}}'}))['items']
-    assert [(t['slug'], t['shard']) for t in found] == [('node', 0x0001)]
-    assert ok(api.get('/types', params={'filters': '{"slug": {"$eq": "cc"}}'}))['items'] == []
-    cc = [t for path in ('/fs/types', '/sessions/types') for t in ok(api.get(path, params={'filters': '{"slug": {"$eq": "cc"}}'}))['items']]
-    assert [(UUID(t['id']).bytes[0], t['shard']) for t in cc] == [(0x10, 0x1002), (0x20, 0x2001)]   # a file's type in fs, a session's in sessions
+def types(api, path: str, **filters) -> list[dict]:
+    """The rows of a schema's types whose columns have these values."""
+    return ok(api.get(path, params={'filters': json.dumps({k: {'$eq': v} for k, v in filters.items()})}))['items']
+
+
+def test_each_schema_defines_its_own_types_and_values(api):
+    assert [(t['slug'], t['shard']) for t in types(api, '/types', slug='node')] == [('node', 0x0001)]
+    assert types(api, '/types', slug='cc') == types(api, '/fs/types', slug='cc') == []
+    cc, = types(api, '/sessions/types', slug='cc')
+    harness, = types(api, '/sessions/types', slug='harness')
+    assert (cc['shard'], cc['parent_id'], cc['kind'], cc['meta']['uri']) == (0x2000, harness['id'], 'session', 'uo:HarnessClaudeCode')
+    status, = [t for t in types(api, '/types', slug='status') if t['meta'].get('uri') == 'uo:Status']
+    parsed, = types(api, '/fs/types', slug='parsed')
+    assert (parsed['parent_id'], parsed['kind']) == (status['id'], 'file')   # a value of the core's vocabulary, for an fs type
+    assert {t['slug'] for t in types(api, '/types', parent_id=status['id'])} == {'proposed', 'active', 'rejected', 'pending', 'planned', 'suspended', 'abandoned', 'completed'}
+    assert [t['shard'] for t in types(api, '/types', slug='next')] == [0x0010]   # every schema's links take the core's link types
+
+
+def test_a_slug_is_one_under_its_parent(api):
+    status, = [t for t in types(api, '/types', slug='status') if t['meta'].get('uri') == 'uo:Status']
+    meta, = types(api, '/types', slug='meta')
+    assert {t['parent_id'] for t in types(api, '/types', slug='status')} == {meta['id'], status['parent_id']}   # a key of meta and a vocabulary
+    ok(api.post('/types', json={'slug': 'active', 'shard': 0, 'parent_id': status['id'], 'meta': {'kind': 'node'}}), 422)
+    ok(api.post('/types', json={'slug': 'active', 'shard': 0, 'parent_id': meta['id']}))
 
 
 def test_the_file_system_is_in_its_own_schema(api):
-    host = ok(api.post('/fs/locations', json={'type': 'host', 'status': 'active',
-                                              'data': {'uri': 'file:///root'}}))
-    file = ok(api.post('/fs/files', json={'type': 'markdown', 'parent_id': host['id'], 'name': 'a.md', 'data': {'extension': 'md'}}))
-    instance = ok(api.post('/fs/instances', json={'type': 'instance', 'parent_id': file['id'], 'data': {'source': 'test', 'size': 3}}))
+    host = ok(api.post('/fs/locations', json={'type': 'host', 'meta': {'status': 'active', 'uri': 'file:///root'}}))
+    file = ok(api.post('/fs/files', json={'type': 'markdown', 'parent_id': host['id'], 'meta': {'display_name': 'a.md'}, 'data': {'extension': 'md'}}))
+    instance = ok(api.post('/fs/instances', json={'type': 'instance', 'parent_id': file['id'], 'meta': {'kind': 'symlink'}, 'data': {'source': 'test', 'size': 3}}))
     node = ok(api.post('/nodes', json={'type': 'entity'}))
     link = ok(api.post('/fs/links', json={'type': 'link', 'from_id': host['id'], 'to_id': node['id']}))
     assert [header(r) for r in (host, file, instance, link)] == [bytes([0x10, s, 1]) + bytes(5) for s in (0x01, 0x02, 0x03, 0x10)]
-    assert ok(api.get(f"/fs/files/{file['id']}"))['type'] == 'markdown'
+    assert ok(api.get(f"/fs/files/{file['id']}"))['type'] == 'markdown' and instance['kind'] == 'symlink' and host['status'] == 'active'
     assert [l['id'] for l in ok(api.get('/fs/links', params={'filters': links_of(node)}))['items']] == [link['id']]
     assert ok(api.get('/links', params={'filters': links_of(node)}))['items'] == []   # each schema's links are its own
-    assert [t['slug'] for t in ok(api.get('/fs/types', params={'filters': '{"slug": {"$eq": "markdown"}}'}))['items']] == ['markdown']
+    assert [t['slug'] for t in types(api, '/fs/types', slug='session-file')] == ['session-file']
     assert ok(api.post('/fs/locations', json={'type': 'location', 'provider': 'file_system'}), 422)['detail'][0]['loc'] == ['body', 'provider']
 
 
-def test_a_session_is_known_by_its_type_and_uid(api):
-    session = ok(api.post('/sessions', json={'type': 'cc', 'uid': 'u1', 'status': 'active', 'data': {'cwd': '/a'},
+def test_a_session_is_known_by_its_harness_and_uid(api):
+    session = ok(api.post('/sessions', json={'type': 'session', 'meta': {'harness': 'cc', 'uid': 'u1', 'status': 'active'}, 'data': {'cwd': '/a'},
                                              'span': {'start': '2026-10-28T10:00:00Z', 'end': '2026-10-28T10:05:00Z'}}))
-    again = ok(api.post('/sessions', json={'type': 'cc', 'uid': 'u1', 'status': 'completed', 'data': {'turns': 2}}))
-    other = ok(api.post('/sessions', json={'type': 'cx', 'uid': 'u1'}))
+    again = ok(api.post('/sessions', json={'type': 'session', 'meta': {'harness': 'cc', 'uid': 'u1', 'status': 'completed'}, 'data': {'turns': 2}}))
+    other = ok(api.post('/sessions', json={'type': 'session', 'meta': {'harness': 'cx', 'uid': 'u1'}}))
     assert header(session) == bytes([0x20, 0x01, 1]) + bytes(5)
     assert again['id'] == session['id'] and again['status'] == 'completed' and again['data'] == {'cwd': '/a', 'turns': 2}
-    assert other['id'] != session['id'] and ok(api.get(f"/sessions/{session['id']}"))['uid'] == 'u1'
-    message = ok(api.post('/sessions/messages', json={'type': 'user', 'parent_id': session['id'], 'meta': {'uid': 'm1', 'line': 1}}))
-    assert header(message)[:2] == bytes([0x20, 0x02])
+    assert other['id'] != session['id'] and ok(api.get(f"/sessions/{session['id']}"))['meta']['uid'] == 'u1'
+    message = ok(api.post('/sessions/messages', json={'type': 'message', 'parent_id': session['id'], 'meta': {'kind': 'user', 'uid': 'm1', 'line': 1}}))
+    assert header(message)[:2] == bytes([0x20, 0x02]) and message['kind'] == 'user'
     children = {'filters': json.dumps({'parent_id': {'$eq': session['id']}})}
     assert [m['id'] for m in ok(api.get('/sessions/messages', params=children))['items']] == [message['id']]
-    nxt = ok(api.post('/sessions/links', json={'type': 'next', 'status': 'new', 'from_id': session['id'], 'to_id': other['id']}))
-    assert header(nxt)[:2] == bytes([0x20, 0x10])
-    assert [t['shard'] for t in ok(api.get('/sessions/types', params={'filters': '{"slug": {"$eq": "next"}}'}))['items']] == [0x2010]
+    nxt = ok(api.post('/sessions/links', json={'type': 'next', 'meta': {'status': 'proposed'}, 'from_id': session['id'], 'to_id': other['id']}))
+    assert header(nxt)[:2] == bytes([0x20, 0x10]) and nxt['status'] == 'proposed'
 
 
 def test_a_sessions_messages_are_read_in_the_order_of_their_lines_a_page_at_a_time(api):
-    session = ok(api.post('/sessions', json={'type': 'cx', 'uid': 'ordered'}))
+    session = ok(api.post('/sessions', json={'type': 'session', 'meta': {'harness': 'cx', 'uid': 'ordered'}}))
     ids = sorted(uuid_create(0x2002) for _ in range(5))
     for id, line in zip(ids, (11, 10, 9, 2, 1)):   # the ids sort against the lines, and 10 and 11 sort before 9 and 2 as text
-        ok(api.put(f'/sessions/messages/{id}', json={'type': 'agent', 'parent_id': session['id'], 'meta': {'line': line}}))
-    lineless = ok(api.post('/sessions/messages', json={'type': 'user', 'parent_id': session['id']}))   # read as line 0
+        ok(api.put(f'/sessions/messages/{id}', json={'type': 'message', 'parent_id': session['id'], 'meta': {'kind': 'assistant', 'line': line}}))
+    lineless = ok(api.post('/sessions/messages', json={'type': 'message', 'parent_id': session['id'], 'meta': {'kind': 'user'}}))   # read as line 0
     read, cursor = [], None
     while True:
         page = ok(api.get(f"/ordered/{session['id']}/messages", params={'limit': 2} | ({'cursor': cursor} if cursor else {})))
@@ -229,19 +268,21 @@ def pages(api, path: str, **params) -> list[dict]:
 
 
 def test_a_search_sorts_by_span_a_page_at_a_time_an_empty_span_least(api):
+    parent = ok(api.post('/sessions', json={'type': 'session', 'meta': {'harness': 'gemini', 'uid': 'spans'}}))
     starts = {'s1': '2026-10-28T10:00:00Z', 's2': '2026-10-28T12:00:00Z', 's3': None, 's4': '2026-10-28T11:00:00Z'}
     for uid, start in starts.items():
-        ok(api.post('/sessions', json={'type': 'gemini', 'uid': uid} | ({'span': {'ts': start}} if start else {})))
-    assert [s['uid'] for s in pages(api, '/sessions', type='gemini', sort='span:asc', limit=1)] == ['s3', 's1', 's4', 's2']
-    assert [s['uid'] for s in pages(api, '/sessions', type='gemini', sort='span:desc', limit=1)] == ['s2', 's4', 's1', 's3']
+        ok(api.post('/sessions', json={'type': 'session', 'parent_id': parent['id'], 'meta': {'harness': 'gemini', 'uid': uid}} | ({'span': {'ts': start}} if start else {})))
+    under = json.dumps({'parent_id': {'$eq': parent['id']}})
+    assert [s['meta']['uid'] for s in pages(api, '/sessions', filters=under, sort='span:asc', limit=1)] == ['s3', 's1', 's4', 's2']
+    assert [s['meta']['uid'] for s in pages(api, '/sessions', filters=under, sort='span:desc', limit=1)] == ['s2', 's4', 's1', 's3']
 
 
 def test_a_type_is_made_with_its_slug_and_shard_and_changed_without_them(api):
-    made = ok(api.post('/types', json={'slug': 'testing', 'shard': 0x0001, 'name': 'Testing'}))
+    made = ok(api.post('/types', json={'slug': 'testing', 'shard': 0x0001, 'meta': {'display_name': 'Testing'}}))
     changed = ok(api.put(f"/types/{made['id']}", json={'data': {'x': 1}}))
-    assert (changed['slug'], changed['shard'], changed['name'], changed['data']) == ('testing', 0x0001, 'Testing', {'x': 1})
-    assert '"slug"' in ok(api.post('/types', json={'shard': 0x0001, 'name': 'No slug'}), 422)['detail']
-    assert '"shard"' in ok(api.post('/types', json={'slug': 'no-shard', 'name': 'No shard'}), 422)['detail']
+    assert (changed['slug'], changed['shard'], changed['meta'], changed['data']) == ('testing', 0x0001, {'display_name': 'Testing'}, {'x': 1})
+    assert '"slug"' in ok(api.post('/types', json={'shard': 0x0001}), 422)['detail']
+    assert '"shard"' in ok(api.post('/types', json={'slug': 'no-shard'}), 422)['detail']
 
 
 def test_a_link_is_written_with_its_relation_as_its_type(api):
@@ -251,32 +292,11 @@ def test_a_link_is_written_with_its_relation_as_its_type(api):
 
 
 def test_gppufs_makes_its_catalog_from_the_locations(api):
-    root = ok(api.post('/fs/locations', json={'type': 'host', 'status': 'active', 'name': 'Root', 'data': {'uri': 'file:///cat-root'}}))
-    inner = ok(api.post('/fs/locations', json={'type': 'location', 'status': 'active', 'parent_id': root['id'], 'name': 'Inner',
-                                               'data': {'uri': 'file:///cat-root/inner', 'tags': ['x']}}))
-    discarded = ok(api.post('/fs/locations', json={'type': 'location', 'status': 'discarded', 'parent_id': root['id'],
-                                                   'data': {'uri': 'file:///cat-root/discarded'}}))
+    root = ok(api.post('/fs/locations', json={'type': 'host', 'meta': {'status': 'active', 'display_name': 'Root', 'uri': 'file:///cat-root'}}))
+    inner = ok(api.post('/fs/locations', json={'type': 'location', 'parent_id': root['id'], 'meta': {'status': 'active', 'display_name': 'Inner', 'uri': 'file:///cat-root/inner'},
+                                               'data': {'tags': ['x']}}))
     archived = ok(api.post('/fs/locations', json={'type': 'location', 'parent_id': root['id'], 'flags': 16,
-                                                  'data': {'uri': 'file:///cat-root/archived'}}))
+                                                  'meta': {'uri': 'file:///cat-root/archived'}}))
     catalog = locations.catalog(ok(api.get('/fs/locations'))['items'])
-    assert {root['id'], inner['id']} <= catalog.locations.keys() and not {discarded['id'], archived['id']} & catalog.locations.keys()
+    assert {root['id'], inner['id']} <= catalog.locations.keys() and archived['id'] not in catalog.locations
     assert catalog.locations[inner['id']]['parent'] == root['id'] and catalog.locations[inner['id']]['tags'] == ['x']
-
-
-def test_a_record_has_a_kind_from_its_types_kinds(api):
-    kinds = ok(api.get('/types', params={'filters': json.dumps({'type': {'$eq': 'kind'}})}))['items']
-    assert {'experiment', 'feature', 'problem', 'chore'} <= {k['slug'] for k in kinds}
-    chore = ok(api.post('/events', json={'type': 'task', 'kind': 'chore', 'name': 'a chore'}))
-    assert chore['kind'] == 'chore' and chore['id'][:4] == '0020'
-    assert ok(api.put(f"/events/{chore['id']}", json={'kind': 'problem'}))['kind'] == 'problem'
-    found = ok(api.get('/events', params={'filters': json.dumps({'kind': {'$eq': 'problem'}, 'name': {'$eq': 'a chore'}})}))['items']
-    assert [x['id'] for x in found] == [chore['id']]
-    assert ok(api.post('/fs/locations', json={'type': 'location', 'kind': 'chore'}), 422)   # only the core's nodes and events have a kind
-
-
-def test_a_kind_shares_its_slug_with_a_type_and_is_unique_under_its_own(api):
-    ne = ok(api.get('/types', params={'filters': json.dumps({'slug': {'$eq': 'ne'}, 'type': {'$isempty': True}})}))['items'][0]
-    kind = {'type': 'kind', 'slug': 'idea', 'shard': 0x0001, 'name': 'Idea', 'parent_id': ne['id']}
-    ok(api.post('/types', json=kind))   # a kind of named entity named as the type `idea` is
-    ok(api.post('/types', json=kind), 422)
-    ok(api.post('/types', json={'slug': 'idea', 'shard': 0x0001, 'name': 'Idea'}), 422)

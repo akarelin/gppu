@@ -1,6 +1,8 @@
--- gppu.ld's tables, schemas ld, fs and sessions, each table with a record's columns of its own and no parent, to Linked Data's standard (_Standards/Linked Data/Linked Data.md); the tests make their database from it.
+-- gppu.ld's tables, schemas ld, fs and sessions, each table with a record's columns of its own and no parent, to Linked Data's standard 0.3 (_Standards/Linked Data/Linked Data.md); the tests make their database from it.
 
 CREATE SCHEMA ld;
+CREATE SCHEMA fs;
+CREATE SCHEMA sessions;
 
 -- id: the shard in two bytes (shard1, shard2), version 1, 5 reserved bytes of 0, then 6 bytes of uuidv7 time and 2 random
 CREATE FUNCTION ld.uuid_create(shard int)
@@ -12,7 +14,8 @@ AS $$
     FROM (SELECT uuid_send(uuidv7()) AS v7) AS s;
 $$;
 
--- a read-only record (ro, system, deleted or archived: Linked Data, # Flags) changes only its flags, and is never deleted
+-- a read-only record (ro, system, deleted or archived: Linked Data, # Flags) changes only its flags, and is never deleted;
+-- `archived` comes with the status `abandoned`, `deleted` with the status `rejected`
 CREATE FUNCTION ld.record()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -24,89 +27,65 @@ BEGIN
         END IF;
         RETURN OLD;
     END IF;
-    IF TG_OP = 'UPDATE' AND OLD.flags & 23 <> 0
-       AND to_jsonb(NEW) - 'flags' - 'updated' - 'ts' IS DISTINCT FROM to_jsonb(OLD) - 'flags' - 'updated' - 'ts' THEN
-        RAISE EXCEPTION '%.% % is read only (flags %): only its flags change', TG_TABLE_SCHEMA, TG_TABLE_NAME, OLD.id, OLD.flags;
-    END IF;
     IF TG_OP = 'UPDATE' THEN
-        IF NEW.name IS NOT DISTINCT FROM OLD.name AND OLD.name = coalesce(OLD.data->>'name', OLD.type || '-' || OLD.id) THEN
-            NEW.name := NULL;
+        IF OLD.flags & 23 <> 0 AND to_jsonb(NEW) - 'flags' - 'updated' - 'status' - 'kind' - 'ts' IS DISTINCT FROM to_jsonb(OLD) - 'flags' - 'updated' - 'status' - 'kind' - 'ts' THEN
+            RAISE EXCEPTION '%.% % is read only (flags %): only its flags change', TG_TABLE_SCHEMA, TG_TABLE_NAME, OLD.id, OLD.flags;
         END IF;
         NEW.updated := now();
     END IF;
-    NEW.name := coalesce(NEW.name, NEW.data->>'name', NEW.type || '-' || NEW.id);
+    IF NEW.meta->>'status' IS DISTINCT FROM OLD.meta->>'status' THEN
+        NEW.flags := NEW.flags | CASE NEW.meta->>'status' WHEN 'abandoned' THEN 16 WHEN 'rejected' THEN 4 ELSE 0 END;
+    END IF;
     RETURN NEW;
 END;
 $$;
 
+-- a schema's types: a row adds `slug` and `shard`, the table its records are in (its `stored_as`), and the types table's own for a type
+-- with no records of its own; a value's `kind` is the type its vocabulary applies to. A slug is one under its parent.
 CREATE TABLE ld.types (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'0000'::int),
     flags     smallint NOT NULL DEFAULT 0,
     type      text,
-    status    text,
-    name      text,
+    status    text GENERATED ALWAYS AS (meta->>'status') STORED,
+    kind      text GENERATED ALWAYS AS (meta->>'kind') STORED,
     parent_id uuid,
     span      tstzrange,
-    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) STORED,
     data      jsonb NOT NULL DEFAULT '{}',
     meta      jsonb NOT NULL DEFAULT '{}',
     created   timestamptz NOT NULL DEFAULT now(),
     updated   timestamptz,
     slug      text NOT NULL,
-    shard     integer NOT NULL      -- the shard of the table its records are in, two bytes: shard1 its schema, shard2 the table
+    shard     integer NOT NULL,
+    UNIQUE NULLS NOT DISTINCT (parent_id, slug)
 );
--- a type is one slug in its shard; a status or a kind is one slug under the type it belongs to
-CREATE UNIQUE INDEX types_slug ON ld.types (shard, slug) WHERE type IS NULL;
-CREATE UNIQUE INDEX types_value_slug ON ld.types (parent_id, slug) WHERE type IS NOT NULL;
 CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON ld.types FOR EACH ROW EXECUTE FUNCTION ld.record();
 
--- parent is the type of `ld` it is under (Linked Data, # Types); `type` has none
-CREATE PROCEDURE ld.type_create(slug text, shard int, name text, parent text DEFAULT NULL,
-                                  flags smallint DEFAULT 0, status text DEFAULT NULL, span tstzrange DEFAULT NULL, data jsonb DEFAULT '{}', meta jsonb DEFAULT '{}')
-LANGUAGE sql
-AS $$
-    INSERT INTO ld.types (slug, shard, name, parent_id, flags, status, span, data, meta)
-    VALUES (type_create.slug, type_create.shard, type_create.name,
-            (SELECT p.id FROM ld.types p WHERE p.slug = type_create.parent AND p.type IS NULL),
-            type_create.flags, type_create.status, type_create.span, type_create.data, type_create.meta);
-$$;
-
--- a status is a row of type 'status' whose parent is the type it belongs to
-CREATE PROCEDURE ld.status_create(slug text, shard int, name text, type text,
-                                    flags smallint DEFAULT 0, status text DEFAULT NULL, span tstzrange DEFAULT NULL, data jsonb DEFAULT '{}', meta jsonb DEFAULT '{}')
-LANGUAGE sql
-AS $$
-    INSERT INTO ld.types (type, slug, shard, name, parent_id, flags, status, span, data, meta)
-    VALUES ('status', status_create.slug, status_create.shard, status_create.name,
-            (SELECT t.id FROM ld.types t WHERE t.slug = status_create.type AND t.shard = status_create.shard),
-            status_create.flags, status_create.status, status_create.span, status_create.data, status_create.meta);
-$$;
-
--- a kind is a row of type 'kind' whose parent is the type it belongs to, a record's `kind` one of them, as its `status` is
-CREATE PROCEDURE ld.kind_create(slug text, shard int, name text, type text,
-                                  flags smallint DEFAULT 0, status text DEFAULT NULL, span tstzrange DEFAULT NULL, data jsonb DEFAULT '{}', meta jsonb DEFAULT '{}')
-LANGUAGE sql
-AS $$
-    INSERT INTO ld.types (type, slug, shard, name, parent_id, flags, status, span, data, meta)
-    VALUES ('kind', kind_create.slug, kind_create.shard, kind_create.name,
-            (SELECT t.id FROM ld.types t WHERE t.slug = kind_create.type AND t.shard = kind_create.shard AND t.type IS NULL),
-            kind_create.flags, kind_create.status, kind_create.span, kind_create.data, kind_create.meta);
-$$;
-
-CALL ld.type_create(slug => 'type', shard => x'0000'::int, name => 'Type');
-CALL ld.type_create(slug => 'node', shard => x'0001'::int, name => 'Node', parent => 'type');
-CALL ld.type_create(slug => 'link', shard => x'0010'::int, name => 'Link', parent => 'type');
-CALL ld.type_create(slug => 'event', shard => x'0020'::int, name => 'Event', parent => 'node');
+CREATE TABLE ld.nodes (
+    id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'0001'::int),
+    flags     smallint NOT NULL DEFAULT 0,
+    type      text,
+    status    text GENERATED ALWAYS AS (meta->>'status') STORED,
+    kind      text GENERATED ALWAYS AS (meta->>'kind') STORED,
+    parent_id uuid,
+    span      tstzrange,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) STORED,
+    data      jsonb NOT NULL DEFAULT '{}',
+    meta      jsonb NOT NULL DEFAULT '{}',
+    created   timestamptz NOT NULL DEFAULT now(),
+    updated   timestamptz
+);
+CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON ld.nodes FOR EACH ROW EXECUTE FUNCTION ld.record();
 
 CREATE TABLE ld.links (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'0010'::int),
     flags     smallint NOT NULL DEFAULT 0,
     type      text,
-    status    text,
-    name      text,
+    status    text GENERATED ALWAYS AS (meta->>'status') STORED,
+    kind      text GENERATED ALWAYS AS (meta->>'kind') STORED,
     parent_id uuid,
     span      tstzrange,
-    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) STORED,
     data      jsonb NOT NULL DEFAULT '{}',
     meta      jsonb NOT NULL DEFAULT '{}',
     created   timestamptz NOT NULL DEFAULT now(),
@@ -116,68 +95,15 @@ CREATE TABLE ld.links (
 );
 CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON ld.links FOR EACH ROW EXECUTE FUNCTION ld.record();
 
-CALL ld.type_create(slug => 'related', shard => x'0010'::int, name => 'Related', parent => 'link');
-CALL ld.type_create(slug => 'same', shard => x'0010'::int, name => 'Same', parent => 'link');
-CALL ld.type_create(slug => 'up', shard => x'0010'::int, name => 'Up', parent => 'link');
-CALL ld.type_create(slug => 'down', shard => x'0010'::int, name => 'Down', parent => 'link');
-CALL ld.type_create(slug => 'prev', shard => x'0010'::int, name => 'Prev', parent => 'link');
-CALL ld.type_create(slug => 'next', shard => x'0010'::int, name => 'Next', parent => 'link');
-CALL ld.type_create(slug => 'prov-o', shard => x'0010'::int, name => 'PROV-O', parent => 'link');
-CALL ld.type_create(slug => 'generated-by', shard => x'0010'::int, name => 'wasGeneratedBy', parent => 'prov-o');
-CALL ld.type_create(slug => 'derived-from', shard => x'0010'::int, name => 'wasDerivedFrom', parent => 'prov-o');
-CALL ld.type_create(slug => 'attributed-to', shard => x'0010'::int, name => 'wasAttributedTo', parent => 'prov-o');
-CALL ld.type_create(slug => 'associated-with', shard => x'0010'::int, name => 'wasAssociatedWith', parent => 'prov-o');
-CALL ld.type_create(slug => 'informed-by', shard => x'0010'::int, name => 'wasInformedBy', parent => 'prov-o');
-CALL ld.type_create(slug => 'started-by', shard => x'0010'::int, name => 'wasStartedBy', parent => 'prov-o');
-CALL ld.type_create(slug => 'invalidated-by', shard => x'0010'::int, name => 'wasInvalidatedBy', parent => 'prov-o');
-CALL ld.type_create(slug => 'ended-by', shard => x'0010'::int, name => 'wasEndedBy', parent => 'prov-o');
-
-CREATE TABLE ld.nodes (
-    id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'0001'::int),
-    flags     smallint NOT NULL DEFAULT 0,
-    type      text,
-    status    text,
-    kind      text,
-    name      text,
-    parent_id uuid,
-    span      tstzrange,
-    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
-    data      jsonb NOT NULL DEFAULT '{}',
-    meta      jsonb NOT NULL DEFAULT '{}',
-    created   timestamptz NOT NULL DEFAULT now(),
-    updated   timestamptz
-);
-CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON ld.nodes FOR EACH ROW EXECUTE FUNCTION ld.record();
-
-CALL ld.type_create(slug => 'entity', shard => x'0001'::int, name => 'Entity', parent => 'node');
-CALL ld.type_create(slug => 'resource', shard => x'0001'::int, name => 'URI', parent => 'entity');
-CALL ld.type_create(slug => 'resource-fragment', shard => x'0001'::int, name => 'Resource fragment', parent => 'resource');
-CALL ld.type_create(slug => 'skos-cs', shard => x'0001'::int, name => 'skos:ConceptScheme', parent => 'entity');
-CALL ld.type_create(slug => 'onto-cv', shard => x'0001'::int, name => 'Controlled Vocabulary', parent => 'skos-cs');
-CALL ld.type_create(slug => 'label', shard => x'0001'::int, name => 'Label', parent => 'onto-cv');
-CALL ld.type_create(slug => 'dimension', shard => x'0001'::int, name => 'Label used as 1st division', parent => 'label');
-CALL ld.type_create(slug => 'axis', shard => x'0001'::int, name => 'Axis', parent => 'dimension');
-CALL ld.type_create(slug => 'theme', shard => x'0001'::int, name => 'Theme', parent => 'label');
-CALL ld.type_create(slug => 'status', shard => x'0001'::int, name => 'Status', parent => 'label');
-CALL ld.type_create(slug => 'kind', shard => x'0001'::int, name => 'Kind', parent => 'label');
-CALL ld.type_create(slug => 'ne', shard => x'0001'::int, name => 'Named Entity', parent => 'entity');
-CALL ld.type_create(slug => 'idea', shard => x'0001'::int, name => 'Idea', parent => 'entity');
-
-CALL ld.status_create(slug => 'entity-status', shard => x'0001'::int, name => 'Status', type => 'entity');
-CALL ld.status_create(slug => 'new', shard => x'0001'::int, name => 'New', type => 'entity-status');
-CALL ld.status_create(slug => 'active', shard => x'0001'::int, name => 'Active', type => 'entity-status');
-CALL ld.status_create(slug => 'rejected', shard => x'0001'::int, name => 'Rejected', type => 'entity-status');
-
 CREATE TABLE ld.events (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'0020'::int),
     flags     smallint NOT NULL DEFAULT 0,
     type      text,
-    status    text,
-    kind      text,
-    name      text,
+    status    text GENERATED ALWAYS AS (meta->>'status') STORED,
+    kind      text GENERATED ALWAYS AS (meta->>'kind') STORED,
     parent_id uuid,
     span      tstzrange,
-    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) STORED,
     data      jsonb NOT NULL DEFAULT '{}',
     meta      jsonb NOT NULL DEFAULT '{}',
     created   timestamptz NOT NULL DEFAULT now(),
@@ -185,94 +111,34 @@ CREATE TABLE ld.events (
 );
 CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON ld.events FOR EACH ROW EXECUTE FUNCTION ld.record();
 
-CALL ld.type_create(slug => 'activity', shard => x'0020'::int, name => 'Activity', parent => 'event');
-CALL ld.type_create(slug => 'work', shard => x'0020'::int, name => 'Real Activity', parent => 'activity');
-CALL ld.type_create(slug => 'epic', shard => x'0020'::int, name => 'Epic', parent => 'work');
-CALL ld.type_create(slug => 'project', shard => x'0020'::int, name => 'Project', parent => 'work');
-CALL ld.type_create(slug => 'task', shard => x'0020'::int, name => 'Task', parent => 'work');
-
-CALL ld.kind_create(slug => 'experiment', shard => x'0020'::int, name => 'Experiment', type => 'work');
-CALL ld.kind_create(slug => 'feature', shard => x'0020'::int, name => 'Feature', type => 'work');
-CALL ld.kind_create(slug => 'problem', shard => x'0020'::int, name => 'Problem', type => 'work');
-CALL ld.kind_create(slug => 'chore', shard => x'0020'::int, name => 'Chore', type => 'work');
-
-CALL ld.status_create(slug => 'work-status', shard => x'0020'::int, name => 'Status', type => 'work');
-CALL ld.status_create(slug => 'proposed', shard => x'0020'::int, name => NULL, type => 'work-status');
-CALL ld.status_create(slug => 'planned', shard => x'0020'::int, name => NULL, type => 'work-status');
-CALL ld.status_create(slug => 'active', shard => x'0020'::int, name => NULL, type => 'work-status');
-CALL ld.status_create(slug => 'pending', shard => x'0020'::int, name => NULL, type => 'work-status');
-CALL ld.status_create(slug => 'suspended', shard => x'0020'::int, name => NULL, type => 'work-status');
-CALL ld.status_create(slug => 'completed', shard => x'0020'::int, name => NULL, type => 'work-status');
-CALL ld.status_create(slug => 'abandoned', shard => x'0020'::int, name => NULL, type => 'work-status');
-CALL ld.status_create(slug => 'rejected', shard => x'0020'::int, name => NULL, type => 'work-status');
-
-CREATE SCHEMA fs;
-
 CREATE TABLE fs.types (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'1000'::int),
     flags     smallint NOT NULL DEFAULT 0,
     type      text,
-    status    text,
-    name      text,
+    status    text GENERATED ALWAYS AS (meta->>'status') STORED,
+    kind      text GENERATED ALWAYS AS (meta->>'kind') STORED,
     parent_id uuid,
     span      tstzrange,
-    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) STORED,
     data      jsonb NOT NULL DEFAULT '{}',
     meta      jsonb NOT NULL DEFAULT '{}',
     created   timestamptz NOT NULL DEFAULT now(),
     updated   timestamptz,
     slug      text NOT NULL,
-    shard     integer NOT NULL      -- the shard of the table its records are in, two bytes: shard1 its schema, shard2 the table
+    shard     integer NOT NULL,
+    UNIQUE NULLS NOT DISTINCT (parent_id, slug)
 );
--- a type is one slug in its shard; a status or a kind is one slug under the type it belongs to
-CREATE UNIQUE INDEX types_slug ON fs.types (shard, slug) WHERE type IS NULL;
-CREATE UNIQUE INDEX types_value_slug ON fs.types (parent_id, slug) WHERE type IS NOT NULL;
 CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON fs.types FOR EACH ROW EXECUTE FUNCTION ld.record();
-
--- parent is the type of `fs` it is under; a root type has none and says what one of the schema's tables holds
-CREATE PROCEDURE fs.type_create(slug text, shard int, name text, parent text DEFAULT NULL,
-                                  flags smallint DEFAULT 0, status text DEFAULT NULL, span tstzrange DEFAULT NULL, data jsonb DEFAULT '{}', meta jsonb DEFAULT '{}')
-LANGUAGE sql
-AS $$
-    INSERT INTO fs.types (slug, shard, name, parent_id, flags, status, span, data, meta)
-    VALUES (type_create.slug, type_create.shard, type_create.name,
-            (SELECT p.id FROM fs.types p WHERE p.slug = type_create.parent AND p.type IS NULL),
-            type_create.flags, type_create.status, type_create.span, type_create.data, type_create.meta);
-$$;
-
-CREATE PROCEDURE fs.status_create(slug text, shard int, name text, type text,
-                                    flags smallint DEFAULT 0, status text DEFAULT NULL, span tstzrange DEFAULT NULL, data jsonb DEFAULT '{}', meta jsonb DEFAULT '{}')
-LANGUAGE sql
-AS $$
-    INSERT INTO fs.types (type, slug, shard, name, parent_id, flags, status, span, data, meta)
-    VALUES ('status', status_create.slug, status_create.shard, status_create.name,
-            (SELECT t.id FROM fs.types t WHERE t.slug = status_create.type AND t.shard = status_create.shard),
-            status_create.flags, status_create.status, status_create.span, status_create.data, status_create.meta);
-$$;
-
-
-CALL fs.type_create(slug => 'location', shard => x'1001'::int, name => 'Location');
-CALL fs.type_create(slug => 'file', shard => x'1002'::int, name => 'File', data => '{"class": "gppu.fs.handlers.FileHandler"}');
-CALL fs.type_create(slug => 'instance', shard => x'1003'::int, name => 'Instance');
-
-CALL fs.status_create(slug => 'active', shard => x'1001'::int, name => 'Active', type => 'location');
-CALL fs.status_create(slug => 'discarded', shard => x'1001'::int, name => 'Discarded', type => 'location');
-CALL fs.status_create(slug => 'parsed', shard => x'1002'::int, name => 'Parsed', type => 'file');
-CALL fs.status_create(slug => 'symlink', shard => x'1003'::int, name => 'Symlink', type => 'instance');
-CALL fs.status_create(slug => 'junction', shard => x'1003'::int, name => 'Junction', type => 'instance');
-CALL fs.status_create(slug => 'offline', shard => x'1003'::int, name => 'Offline', type => 'instance');
-CALL fs.status_create(slug => 'ignored', shard => x'1003'::int, name => 'Ignored', type => 'instance');
-CALL fs.status_create(slug => 'normal', shard => x'1003'::int, name => 'Normal', type => 'instance');
 
 CREATE TABLE fs.locations (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'1001'::int),
     flags     smallint NOT NULL DEFAULT 0,
     type      text,
-    status    text,
-    name      text,
+    status    text GENERATED ALWAYS AS (meta->>'status') STORED,
+    kind      text GENERATED ALWAYS AS (meta->>'kind') STORED,
     parent_id uuid,
     span      tstzrange,
-    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) STORED,
     data      jsonb NOT NULL DEFAULT '{}',
     meta      jsonb NOT NULL DEFAULT '{}',
     created   timestamptz NOT NULL DEFAULT now(),
@@ -280,17 +146,15 @@ CREATE TABLE fs.locations (
 );
 CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON fs.locations FOR EACH ROW EXECUTE FUNCTION ld.record();
 
-CALL fs.type_create(slug => 'host', shard => x'1001'::int, name => 'Host', parent => 'location');
-
 CREATE TABLE fs.files (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'1002'::int),
     flags     smallint NOT NULL DEFAULT 0,
     type      text,
-    status    text,
-    name      text,
+    status    text GENERATED ALWAYS AS (meta->>'status') STORED,
+    kind      text GENERATED ALWAYS AS (meta->>'kind') STORED,
     parent_id uuid,
     span      tstzrange,
-    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) STORED,
     data      jsonb NOT NULL DEFAULT '{}',
     meta      jsonb NOT NULL DEFAULT '{}',
     created   timestamptz NOT NULL DEFAULT now(),
@@ -298,37 +162,15 @@ CREATE TABLE fs.files (
 );
 CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON fs.files FOR EACH ROW EXECUTE FUNCTION ld.record();
 
-CALL fs.type_create(slug => 'folder', shard => x'1002'::int, name => 'Folder', parent => 'file', data => '{"class": "gppu.fs.handlers.FolderHandler"}');
-
-CALL fs.type_create(slug => 'work', shard => x'1002'::int, name => 'Work', parent => 'folder', data => '{"class": "gppu.fs.handlers.WorkFolderHandler"}');
-CALL fs.type_create(slug => 'projects', shard => x'1002'::int, name => 'Projects', parent => 'folder', data => '{"class": "gppu.fs.handlers.ProjectsFolderHandler"}');
-CALL fs.type_create(slug => 'sessionfolder', shard => x'1002'::int, name => 'Session folder', parent => 'folder', data => '{"class": "gppu.fs.handlers.SessionFolderHandler"}');
-
-CALL fs.type_create(slug => 'sqlite', shard => x'1002'::int, name => 'SQLite', parent => 'file', data => '{"class": "gppu.fs.handlers.SqliteHandler"}');
-CALL fs.type_create(slug => 'markdown', shard => x'1002'::int, name => 'Markdown', parent => 'file', data => '{"class": "gppu.fs.handlers.MarkdownHandler"}');
-CALL fs.type_create(slug => 'csv', shard => x'1002'::int, name => 'CSV', parent => 'file', data => '{"class": "gppu.fs.handlers.CSVHandler"}');
-CALL fs.type_create(slug => 'log', shard => x'1002'::int, name => 'Log', parent => 'file', data => '{"class": "gppu.fs.handlers.LogHandler"}');
-CALL fs.type_create(slug => 'email', shard => x'1002'::int, name => 'Email', parent => 'file', data => '{"class": "gppu.fs.handlers.EmailHandler"}');
-CALL fs.type_create(slug => 'export', shard => x'1002'::int, name => 'Export', parent => 'file', data => '{"class": "gppu.fs.handlers.ExportHandler"}');
-CALL fs.type_create(slug => 'session', shard => x'1002'::int, name => 'Session', parent => 'file', data => '{"class": "gppu.fs.handlers.SessionHandler"}');
-CALL fs.type_create(slug => 'archive', shard => x'1002'::int, name => 'Archive', parent => 'file');
-
-CALL fs.type_create(slug => 'cc', shard => x'1002'::int, name => 'Claude Code', parent => 'session');
-CALL fs.type_create(slug => 'cx', shard => x'1002'::int, name => 'Codex', parent => 'session');
-CALL fs.type_create(slug => 'gemini', shard => x'1002'::int, name => 'Gemini', parent => 'session');
-CALL fs.type_create(slug => 'openclaw', shard => x'1002'::int, name => 'OpenClaw', parent => 'session');
-CALL fs.type_create(slug => 'agy', shard => x'1002'::int, name => 'Antigravity', parent => 'session');
-CALL fs.type_create(slug => 'hermes', shard => x'1002'::int, name => 'Hermes', parent => 'session');
-
 CREATE TABLE fs.instances (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'1003'::int),
     flags     smallint NOT NULL DEFAULT 0,
     type      text,
-    status    text,
-    name      text,
+    status    text GENERATED ALWAYS AS (meta->>'status') STORED,
+    kind      text GENERATED ALWAYS AS (meta->>'kind') STORED,
     parent_id uuid,
     span      tstzrange,
-    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) STORED,
     data      jsonb NOT NULL DEFAULT '{}',
     meta      jsonb NOT NULL DEFAULT '{}',
     created   timestamptz NOT NULL DEFAULT now(),
@@ -340,11 +182,11 @@ CREATE TABLE fs.links (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'1010'::int),
     flags     smallint NOT NULL DEFAULT 0,
     type      text,
-    status    text,
-    name      text,
+    status    text GENERATED ALWAYS AS (meta->>'status') STORED,
+    kind      text GENERATED ALWAYS AS (meta->>'kind') STORED,
     parent_id uuid,
     span      tstzrange,
-    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) STORED,
     data      jsonb NOT NULL DEFAULT '{}',
     meta      jsonb NOT NULL DEFAULT '{}',
     created   timestamptz NOT NULL DEFAULT now(),
@@ -354,99 +196,52 @@ CREATE TABLE fs.links (
 );
 CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON fs.links FOR EACH ROW EXECUTE FUNCTION ld.record();
 
-CALL fs.type_create(slug => 'link', shard => x'1010'::int, name => 'Link');
-
-CREATE SCHEMA sessions;
-
 CREATE TABLE sessions.types (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'2000'::int),
     flags     smallint NOT NULL DEFAULT 0,
     type      text,
-    status    text,
-    name      text,
+    status    text GENERATED ALWAYS AS (meta->>'status') STORED,
+    kind      text GENERATED ALWAYS AS (meta->>'kind') STORED,
     parent_id uuid,
     span      tstzrange,
-    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) STORED,
     data      jsonb NOT NULL DEFAULT '{}',
     meta      jsonb NOT NULL DEFAULT '{}',
     created   timestamptz NOT NULL DEFAULT now(),
     updated   timestamptz,
     slug      text NOT NULL,
-    shard     integer NOT NULL      -- the shard of the table its records are in, two bytes: shard1 its schema, shard2 the table
+    shard     integer NOT NULL,
+    UNIQUE NULLS NOT DISTINCT (parent_id, slug)
 );
--- a type is one slug in its shard; a status or a kind is one slug under the type it belongs to
-CREATE UNIQUE INDEX types_slug ON sessions.types (shard, slug) WHERE type IS NULL;
-CREATE UNIQUE INDEX types_value_slug ON sessions.types (parent_id, slug) WHERE type IS NOT NULL;
 CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON sessions.types FOR EACH ROW EXECUTE FUNCTION ld.record();
 
--- parent is the type of `sessions` it is under; a root type has none and says what one of the schema's tables holds
-CREATE PROCEDURE sessions.type_create(slug text, shard int, name text, parent text DEFAULT NULL,
-                                        flags smallint DEFAULT 0, status text DEFAULT NULL, span tstzrange DEFAULT NULL, data jsonb DEFAULT '{}', meta jsonb DEFAULT '{}')
-LANGUAGE sql
-AS $$
-    INSERT INTO sessions.types (slug, shard, name, parent_id, flags, status, span, data, meta)
-    VALUES (type_create.slug, type_create.shard, type_create.name,
-            (SELECT p.id FROM sessions.types p WHERE p.slug = type_create.parent AND p.type IS NULL),
-            type_create.flags, type_create.status, type_create.span, type_create.data, type_create.meta);
-$$;
-
-CREATE PROCEDURE sessions.status_create(slug text, shard int, name text, type text,
-                                          flags smallint DEFAULT 0, status text DEFAULT NULL, span tstzrange DEFAULT NULL, data jsonb DEFAULT '{}', meta jsonb DEFAULT '{}')
-LANGUAGE sql
-AS $$
-    INSERT INTO sessions.types (type, slug, shard, name, parent_id, flags, status, span, data, meta)
-    VALUES ('status', status_create.slug, status_create.shard, status_create.name,
-            (SELECT t.id FROM sessions.types t WHERE t.slug = status_create.type AND t.shard = status_create.shard),
-            status_create.flags, status_create.status, status_create.span, status_create.data, status_create.meta);
-$$;
-
-
-CALL sessions.type_create(slug => 'session', shard => x'2001'::int, name => 'Session');
-CALL sessions.type_create(slug => 'message', shard => x'2002'::int, name => 'Message');
-CALL sessions.type_create(slug => 'link', shard => x'2010'::int, name => 'Link');
-
-CALL sessions.status_create(slug => 'active', shard => x'2001'::int, name => 'Active', type => 'session');
-CALL sessions.status_create(slug => 'completed', shard => x'2001'::int, name => 'Completed', type => 'session');
-CALL sessions.status_create(slug => 'discarded', shard => x'2001'::int, name => 'Discarded', type => 'session');
-CALL sessions.status_create(slug => 'new', shard => x'2010'::int, name => 'New', type => 'link');
-CALL sessions.status_create(slug => 'active', shard => x'2010'::int, name => 'Active', type => 'link');
-
+-- a session is known by its harness and the id its harness gives it
 CREATE TABLE sessions.sessions (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'2001'::int),
     flags     smallint NOT NULL DEFAULT 0,
     type      text,
-    status    text,
-    name      text,
+    status    text GENERATED ALWAYS AS (meta->>'status') STORED,
+    kind      text GENERATED ALWAYS AS (meta->>'kind') STORED,
     parent_id uuid,
     span      tstzrange,
-    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) STORED,
     data      jsonb NOT NULL DEFAULT '{}',
     meta      jsonb NOT NULL DEFAULT '{}',
     created   timestamptz NOT NULL DEFAULT now(),
-    updated   timestamptz,
-    uid       text,
-    UNIQUE (type, uid)
+    updated   timestamptz
 );
+CREATE UNIQUE INDEX sessions_harness_uid ON sessions.sessions ((meta->>'harness'), (meta->>'uid'));
 CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON sessions.sessions FOR EACH ROW EXECUTE FUNCTION ld.record();
-
-CALL sessions.type_create(slug => 'cc', shard => x'2001'::int, name => 'Claude Code', parent => 'session');
-CALL sessions.type_create(slug => 'cx', shard => x'2001'::int, name => 'Codex', parent => 'session');
-CALL sessions.type_create(slug => 'gemini', shard => x'2001'::int, name => 'Gemini', parent => 'session');
-CALL sessions.type_create(slug => 'openclaw', shard => x'2001'::int, name => 'OpenClaw', parent => 'session');
-CALL sessions.type_create(slug => 'agy', shard => x'2001'::int, name => 'Antigravity', parent => 'session');
-CALL sessions.type_create(slug => 'hermes', shard => x'2001'::int, name => 'Hermes', parent => 'session');
-CALL sessions.type_create(slug => 'openviking', shard => x'2001'::int, name => 'OpenViking', parent => 'session');
-CALL sessions.type_create(slug => 'copilot', shard => x'2001'::int, name => 'Copilot', parent => 'session');
 
 CREATE TABLE sessions.messages (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'2002'::int),
     flags     smallint NOT NULL DEFAULT 0,
     type      text,
-    status    text,
-    name      text,
+    status    text GENERATED ALWAYS AS (meta->>'status') STORED,
+    kind      text GENERATED ALWAYS AS (meta->>'kind') STORED,
     parent_id uuid,
     span      tstzrange,
-    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) STORED,
     data      jsonb NOT NULL DEFAULT '{}',
     meta      jsonb NOT NULL DEFAULT '{}',
     created   timestamptz NOT NULL DEFAULT now(),
@@ -455,21 +250,15 @@ CREATE TABLE sessions.messages (
 CREATE INDEX ON sessions.messages (parent_id);
 CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON sessions.messages FOR EACH ROW EXECUTE FUNCTION ld.record();
 
-CALL sessions.type_create(slug => 'user', shard => x'2002'::int, name => 'User', parent => 'message');
-CALL sessions.type_create(slug => 'agent', shard => x'2002'::int, name => 'Agent', parent => 'message');
-CALL sessions.type_create(slug => 'thinking', shard => x'2002'::int, name => 'Thinking', parent => 'message');
-CALL sessions.type_create(slug => 'tool_use', shard => x'2002'::int, name => 'Tool use', parent => 'message');
-CALL sessions.type_create(slug => 'tool_result', shard => x'2002'::int, name => 'Tool result', parent => 'message');
-
 CREATE TABLE sessions.links (
     id        uuid PRIMARY KEY DEFAULT ld.uuid_create(x'2010'::int),
     flags     smallint NOT NULL DEFAULT 0,
     type      text,
-    status    text,
-    name      text,
+    status    text GENERATED ALWAYS AS (meta->>'status') STORED,
+    kind      text GENERATED ALWAYS AS (meta->>'kind') STORED,
     parent_id uuid,
     span      tstzrange,
-    ts        timestamptz GENERATED ALWAYS AS (lower(span)) VIRTUAL,
+    ts        timestamptz GENERATED ALWAYS AS (lower(span)) STORED,
     data      jsonb NOT NULL DEFAULT '{}',
     meta      jsonb NOT NULL DEFAULT '{}',
     created   timestamptz NOT NULL DEFAULT now(),
@@ -479,4 +268,124 @@ CREATE TABLE sessions.links (
 );
 CREATE TRIGGER record BEFORE INSERT OR UPDATE OR DELETE ON sessions.links FOR EACH ROW EXECUTE FUNCTION ld.record();
 
-CALL sessions.type_create(slug => 'next', shard => x'2010'::int, name => 'Next', parent => 'link');
+-- a row of the types table of the schema its shard's first byte names (# UUID): its name, kind and uri in `meta`, its parent the
+-- row of that slug in any schema's types
+CREATE PROCEDURE ld.type_create(slug text, shard int, name text, parent text DEFAULT NULL, kind text DEFAULT NULL, uri text DEFAULT NULL, data jsonb DEFAULT '{}')
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    EXECUTE format('INSERT INTO %I.types (slug, shard, parent_id, data, meta) VALUES ($1, $2, $3, $4, $5)',
+                   CASE shard >> 8 WHEN x'00'::int THEN 'ld' WHEN x'10'::int THEN 'fs' WHEN x'20'::int THEN 'sessions' END)
+    USING type_create.slug, type_create.shard,
+          (SELECT t.id FROM (SELECT l.id, l.slug FROM ld.types l UNION ALL SELECT f.id, f.slug FROM fs.types f UNION ALL SELECT s.id, s.slug FROM sessions.types s) t
+           WHERE t.slug = type_create.parent),
+          type_create.data, jsonb_strip_nulls(jsonb_build_object('display_name', type_create.name, 'kind', type_create.kind, 'uri', type_create.uri));
+END;
+$$;
+
+-- # Types, Records
+CALL ld.type_create(slug => 'record', shard => x'0000'::int, name => 'Record', uri => 'uo:Record');
+CALL ld.type_create(slug => 'type', shard => x'0000'::int, name => 'Type', parent => 'record', uri => 'uo:Type');
+CALL ld.type_create(slug => 'node', shard => x'0001'::int, name => 'Node', parent => 'record', uri => 'uo:Node');
+CALL ld.type_create(slug => 'link', shard => x'0010'::int, name => 'Link', parent => 'record', uri => 'uo:Link');
+CALL ld.type_create(slug => 'event', shard => x'0020'::int, name => 'Event', parent => 'node', uri => 'uo:Event');
+CALL ld.type_create(slug => 'activity', shard => x'0020'::int, name => 'Activity', parent => 'event', uri => 'uo:Activity');
+CALL ld.type_create(slug => 'entity', shard => x'0001'::int, name => 'Entity', parent => 'node', uri => 'uo:Entity');
+CALL ld.type_create(slug => 'meta', shard => x'0000'::int, name => 'Metadata', uri => 'uo:Metadata');
+
+-- # Types, Vocabularies
+CALL ld.type_create(slug => 'cv', shard => x'0000'::int, name => 'Controlled Vocabulary', parent => 'type', uri => 'uo:ControlledVocabulary');
+CALL ld.type_create(slug => 'ov', shard => x'0000'::int, name => 'Open Vocabulary', parent => 'type', uri => 'uo:OpenVocabulary');
+CALL ld.type_create(slug => 'status', shard => x'0000'::int, name => 'Status', parent => 'cv', uri => 'uo:Status');
+CALL ld.type_create(slug => 'proposed', shard => x'0000'::int, name => 'Proposed', parent => 'status', kind => 'record', uri => 'uo:StatusProposed');
+CALL ld.type_create(slug => 'active', shard => x'0000'::int, name => 'Active', parent => 'status', kind => 'record', uri => 'uo:StatusActive');
+CALL ld.type_create(slug => 'rejected', shard => x'0000'::int, name => 'Rejected', parent => 'status', kind => 'record', uri => 'uo:StatusRejected');
+CALL ld.type_create(slug => 'pending', shard => x'0000'::int, name => 'Pending', parent => 'status', kind => 'work', uri => 'uo:StatusPending');
+CALL ld.type_create(slug => 'planned', shard => x'0000'::int, name => 'Planned', parent => 'status', kind => 'work', uri => 'uo:StatusPlanned');
+CALL ld.type_create(slug => 'suspended', shard => x'0000'::int, name => 'Suspended', parent => 'status', kind => 'work', uri => 'uo:StatusSuspended');
+CALL ld.type_create(slug => 'abandoned', shard => x'0000'::int, name => 'Abandoned', parent => 'status', kind => 'work', uri => 'uo:StatusAbandoned');
+CALL ld.type_create(slug => 'completed', shard => x'0000'::int, name => 'Completed', parent => 'status', kind => 'activity', uri => 'uo:StatusCompleted');
+CALL ld.type_create(slug => 'dimension', shard => x'0000'::int, name => 'Dimension', parent => 'cv', uri => 'uo:Dimension');
+CALL ld.type_create(slug => 'label', shard => x'0000'::int, name => 'Label', parent => 'cv', uri => 'uo:Label');
+CALL ld.type_create(slug => 'axis', shard => x'0000'::int, name => 'Axis', parent => 'dimension', uri => 'uo:Axis');
+CALL ld.type_create(slug => 'theme', shard => x'0000'::int, name => 'Theme', parent => 'label', uri => 'uo:Theme');
+CALL ld.type_create(slug => 'kind', shard => x'0000'::int, name => 'Kind', parent => 'label', uri => 'uo:Kind');
+CALL ld.type_create(slug => 'chore', shard => x'0000'::int, name => 'Chore', parent => 'kind', kind => 'work', uri => 'uo:WorkChore');
+CALL ld.type_create(slug => 'problem', shard => x'0000'::int, name => 'Problem', parent => 'kind', kind => 'work', uri => 'uo:WorkProblem');
+CALL ld.type_create(slug => 'experiment', shard => x'0000'::int, name => 'Experiment', parent => 'kind', kind => 'work', uri => 'uo:WorkExperiment');
+CALL ld.type_create(slug => 'feature', shard => x'0000'::int, name => 'Feature', parent => 'kind', kind => 'work', uri => 'uo:WorkFeature');
+CALL ld.type_create(slug => 'ongoing', shard => x'0000'::int, name => 'Ongoing', parent => 'kind', kind => 'work', uri => 'uo:WorkOngoing');
+CALL ld.type_create(slug => 'tag', shard => x'0000'::int, name => 'Tag', parent => 'ov', uri => 'uo:Tag');
+
+-- # Types, Links: a link's records are in the links table of the schema of the record it is from
+CALL ld.type_create(slug => 'related', shard => x'0010'::int, name => 'Related', parent => 'link', uri => 'uo:Related');
+CALL ld.type_create(slug => 'same', shard => x'0010'::int, name => 'Same', parent => 'link', uri => 'skos:exactMatch');
+CALL ld.type_create(slug => 'up', shard => x'0010'::int, name => 'Up', parent => 'link', uri => 'uo:Up');
+CALL ld.type_create(slug => 'down', shard => x'0010'::int, name => 'Down', parent => 'link', uri => 'uo:Down');
+CALL ld.type_create(slug => 'prev', shard => x'0010'::int, name => 'Prev', parent => 'link', uri => 'uo:Prev');
+CALL ld.type_create(slug => 'next', shard => x'0010'::int, name => 'Next', parent => 'link', uri => 'uo:Next');
+CALL ld.type_create(slug => 'prov-o', shard => x'0000'::int, name => 'PROV-O', parent => 'link', uri => 'http://www.w3.org/ns/prov#');
+CALL ld.type_create(slug => 'influenced-by', shard => x'0010'::int, name => 'InfluencedBy', parent => 'prov-o', uri => 'prov:wasInfluencedBy');
+CALL ld.type_create(slug => 'ended-by', shard => x'0010'::int, name => 'EndedBy', parent => 'influenced-by', uri => 'prov:wasEndedBy');
+CALL ld.type_create(slug => 'generated-by', shard => x'0010'::int, name => 'GeneratedBy', parent => 'influenced-by', uri => 'prov:wasGeneratedBy');
+CALL ld.type_create(slug => 'derived-from', shard => x'0010'::int, name => 'DerivedFrom', parent => 'influenced-by', uri => 'prov:wasDerivedFrom');
+CALL ld.type_create(slug => 'attributed-to', shard => x'0010'::int, name => 'AttributedTo', parent => 'influenced-by', uri => 'prov:wasAttributedTo');
+CALL ld.type_create(slug => 'associated-with', shard => x'0010'::int, name => 'AssociatedWith', parent => 'influenced-by', uri => 'prov:wasAssociatedWith');
+CALL ld.type_create(slug => 'informed-by', shard => x'0010'::int, name => 'InformedBy', parent => 'influenced-by', uri => 'prov:wasInformedBy');
+CALL ld.type_create(slug => 'started-by', shard => x'0010'::int, name => 'StartedBy', parent => 'influenced-by', uri => 'prov:wasStartedBy');
+CALL ld.type_create(slug => 'invalidated-by', shard => x'0010'::int, name => 'InvalidatedBy', parent => 'influenced-by', uri => 'prov:wasInvalidatedBy');
+
+-- # Types, Work
+CALL ld.type_create(slug => 'work', shard => x'0000'::int, name => 'Work', parent => 'activity', uri => 'uo:Work');
+CALL ld.type_create(slug => 'epic', shard => x'0001'::int, name => 'Epic', parent => 'work', uri => 'uo:Epic');
+CALL ld.type_create(slug => 'project', shard => x'0001'::int, name => 'Project', parent => 'work', uri => 'uo:Project');
+CALL ld.type_create(slug => 'task', shard => x'0001'::int, name => 'Task', parent => 'work', uri => 'uo:Task');
+
+-- # FS
+CALL ld.type_create(slug => 'location', shard => x'1001'::int, name => 'Location', uri => 'uo:Location');
+CALL ld.type_create(slug => 'host', shard => x'1001'::int, name => 'Host', parent => 'location', uri => 'uo:Host');
+CALL ld.type_create(slug => 'file', shard => x'1002'::int, name => 'File', uri => 'uo:File', data => '{"class": "gppu.fs.handlers.FileHandler"}');
+CALL ld.type_create(slug => 'archive', shard => x'1002'::int, name => 'Archive', parent => 'file', uri => 'uo:Archive');
+CALL ld.type_create(slug => 'sqlite', shard => x'1002'::int, name => 'SQLite', parent => 'file', uri => 'uo:SQLite', data => '{"class": "gppu.fs.handlers.SqliteHandler"}');
+CALL ld.type_create(slug => 'markdown', shard => x'1002'::int, name => 'Markdown', parent => 'file', uri => 'uo:Markdown', data => '{"class": "gppu.fs.handlers.MarkdownHandler"}');
+CALL ld.type_create(slug => 'csv', shard => x'1002'::int, name => 'CSV', parent => 'file', uri => 'uo:CSV', data => '{"class": "gppu.fs.handlers.CSVHandler"}');
+CALL ld.type_create(slug => 'log', shard => x'1002'::int, name => 'Log', parent => 'file', uri => 'uo:Log', data => '{"class": "gppu.fs.handlers.LogHandler"}');
+CALL ld.type_create(slug => 'email', shard => x'1002'::int, name => 'Email', parent => 'file', uri => 'uo:Email', data => '{"class": "gppu.fs.handlers.EmailHandler"}');
+CALL ld.type_create(slug => 'export', shard => x'1002'::int, name => 'Export', parent => 'file', uri => 'uo:Export', data => '{"class": "gppu.fs.handlers.ExportHandler"}');
+CALL ld.type_create(slug => 'session-file', shard => x'1002'::int, name => 'Session file', parent => 'file', uri => 'uo:SessionFile', data => '{"class": "gppu.fs.handlers.SessionHandler"}');
+CALL ld.type_create(slug => 'folder', shard => x'1002'::int, name => 'Folder', parent => 'file', uri => 'uo:Folder', data => '{"class": "gppu.fs.handlers.FolderHandler"}');
+CALL ld.type_create(slug => 'work-folder', shard => x'1002'::int, name => 'Work folder', parent => 'folder', uri => 'uo:WorkFolder', data => '{"class": "gppu.fs.handlers.WorkFolderHandler"}');
+CALL ld.type_create(slug => 'projects', shard => x'1002'::int, name => 'Projects', parent => 'folder', uri => 'uo:Projects', data => '{"class": "gppu.fs.handlers.ProjectsFolderHandler"}');
+CALL ld.type_create(slug => 'sessionfolder', shard => x'1002'::int, name => 'Session folder', parent => 'folder', uri => 'uo:SessionFolder', data => '{"class": "gppu.fs.handlers.SessionFolderHandler"}');
+CALL ld.type_create(slug => 'instance', shard => x'1003'::int, name => 'Instance', uri => 'uo:Instance');
+CALL ld.type_create(slug => 'parsed', shard => x'1000'::int, name => 'Parsed', parent => 'status', kind => 'file', uri => 'uo:StatusParsed');
+CALL ld.type_create(slug => 'symlink', shard => x'1000'::int, name => 'Symlink', parent => 'kind', kind => 'instance', uri => 'uo:InstanceSymlink');
+CALL ld.type_create(slug => 'junction', shard => x'1000'::int, name => 'Junction', parent => 'kind', kind => 'instance', uri => 'uo:InstanceJunction');
+CALL ld.type_create(slug => 'offline', shard => x'1000'::int, name => 'Offline', parent => 'kind', kind => 'instance', uri => 'uo:InstanceOffline');
+
+-- # Sessions
+CALL ld.type_create(slug => 'session', shard => x'2001'::int, name => 'Session', parent => 'activity', uri => 'uo:Session');
+CALL ld.type_create(slug => 'message', shard => x'2002'::int, name => 'Message', uri => 'uo:SessionMessage');
+CALL ld.type_create(slug => 'harness', shard => x'2000'::int, name => 'Harness', parent => 'cv', uri => 'uo:Harness');
+CALL ld.type_create(slug => 'cc', shard => x'2000'::int, name => 'Claude Code', parent => 'harness', kind => 'session', uri => 'uo:HarnessClaudeCode');
+CALL ld.type_create(slug => 'cx', shard => x'2000'::int, name => 'Codex', parent => 'harness', kind => 'session', uri => 'uo:HarnessCodex');
+CALL ld.type_create(slug => 'gemini', shard => x'2000'::int, name => 'Gemini', parent => 'harness', kind => 'session', uri => 'uo:HarnessGemini');
+CALL ld.type_create(slug => 'openclaw', shard => x'2000'::int, name => 'OpenClaw', parent => 'harness', kind => 'session', uri => 'uo:HarnessOpenClaw');
+CALL ld.type_create(slug => 'agy', shard => x'2000'::int, name => 'Antigravity', parent => 'harness', kind => 'session', uri => 'uo:HarnessAntigravity');
+CALL ld.type_create(slug => 'hermes', shard => x'2000'::int, name => 'Hermes', parent => 'harness', kind => 'session', uri => 'uo:HarnessHermes');
+CALL ld.type_create(slug => 'openviking', shard => x'2000'::int, name => 'OpenViking', parent => 'harness', kind => 'session', uri => 'uo:HarnessOpenViking');
+CALL ld.type_create(slug => 'copilot', shard => x'2000'::int, name => 'Copilot', parent => 'harness', kind => 'session', uri => 'uo:HarnessCopilot');
+CALL ld.type_create(slug => 'user', shard => x'2000'::int, name => 'User', parent => 'kind', kind => 'message', uri => 'uo:SessionMessageUser');
+CALL ld.type_create(slug => 'assistant', shard => x'2000'::int, name => 'Assistant', parent => 'kind', kind => 'message', uri => 'uo:SessionMessageAssistant');
+CALL ld.type_create(slug => 'developer', shard => x'2000'::int, name => 'Developer', parent => 'kind', kind => 'message', uri => 'uo:SessionMessageDeveloper');
+CALL ld.type_create(slug => 'thinking', shard => x'2000'::int, name => 'Thinking', parent => 'kind', kind => 'message', uri => 'uo:SessionMessageThinking');
+CALL ld.type_create(slug => 'tool_use', shard => x'2000'::int, name => 'Tool use', parent => 'kind', kind => 'message', uri => 'uo:SessionMessageToolUse');
+CALL ld.type_create(slug => 'tool_result', shard => x'2000'::int, name => 'Tool result', parent => 'kind', kind => 'message', uri => 'uo:SessionMessageToolResult');
+
+-- # Types, Records and Work: the keys of `meta`, last, as `status` and `kind` are also the vocabularies' slugs the values above are under
+CALL ld.type_create(slug => 'tags', shard => x'0000'::int, name => 'Tags', parent => 'meta', uri => 'uo:Tags');
+CALL ld.type_create(slug => 'uri', shard => x'0000'::int, name => 'uri', parent => 'meta', uri => 'uo:URI');
+CALL ld.type_create(slug => 'status', shard => x'0000'::int, name => 'Status', parent => 'meta');
+CALL ld.type_create(slug => 'kind', shard => x'0000'::int, name => 'Kind', parent => 'meta');
+CALL ld.type_create(slug => 'axis', shard => x'0000'::int, name => 'Axis', parent => 'meta', kind => 'work');
+CALL ld.type_create(slug => 'theme', shard => x'0000'::int, name => 'Theme', parent => 'meta', kind => 'work');

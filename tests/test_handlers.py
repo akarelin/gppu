@@ -901,7 +901,7 @@ def test_parse_messages_reads_claude_code_messages() -> None:
   assert all(isinstance(message, Record) for message in messages)
   assert [(message.type, message.name, message.meta) for message in messages] == [
     ('user', 'Question', {'uid': 'one', 'line': 1}),
-    ('agent', 'Answer', {'uid': 'two', 'line': 2}),
+    ('assistant', 'Answer', {'uid': 'two', 'line': 2}),
   ]
   assert (messages[0].ts, messages[0].data) == (datetime.fromisoformat('2026-08-20T02:00:00+00:00'), CLAUDE[0])
 
@@ -937,7 +937,7 @@ def test_parse_messages_reads_codex_messages() -> None:
   session, messages = SessionHandler.parse_messages('cx', CODEX)
 
   assert (session['uid'], session['topic'], session['name']) == ('codex-one', 'Question', 'Question')
-  assert [message.type for message in messages] == ['session_meta', 'turn_context', 'user', 'agent']
+  assert [message.type for message in messages] == ['session_meta', 'turn_context', 'user', 'assistant']
   assert [message.meta['line'] for message in messages] == [1, 2, 3, 4]
   assert all(UUID(message.meta['uid']) for message in messages)
 
