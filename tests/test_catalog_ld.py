@@ -71,12 +71,19 @@ def test_an_index_is_loaded_as_its_folders_latest_copy_and_read_back(ld, tmp_pat
     with pytest.raises(LookupError):
         found.loaded('file://alex-pc/D:/Dev/sub')   # held inside Dev's index, no index of its own
 
+    old = root[1]['id']
     (dev / 'old.md').unlink()
     found.load('file://alex-pc/D:/Dev/.Dev.gppufs.sqlite', indexed(dev))
     assert [row['name'] for row in found.entries(location=ld.made['dev'])] == ['note.md', 'sub']   # gone from the latest copy
     assert found.loaded('file://alex-pc/D:/Dev')['loaded'] > first
     with pytest.raises(LookupError):
         found.info('file://alex-pc/D:/Dev/old.md')
+    kept = ld.get(f'/fs/files/{old}').json()   # kept, flagged deleted (# Flags), its links and timeline with it
+    assert (kept['flags'], kept['meta']['uri']) == (4, 'file://alex-pc/D:/Dev/old.md')
+    (dev / 'old.md').write_text('# old again', encoding='utf-8')
+    found.load('file://alex-pc/D:/Dev/.Dev.gppufs.sqlite', indexed(dev))
+    assert found.info('file://alex-pc/D:/Dev/old.md')['id'] == old   # its copy back: the same file, un-deleted
+    assert ld.get(f'/fs/files/{old}').json()['flags'] == 0
     with pytest.raises(LookupError):
         list(found.entries(location=ld.made['work']))   # the catalog holds nothing there
 
@@ -90,7 +97,11 @@ def test_a_file_the_lake_saves_is_recorded_inside_the_folders_above_it(ld):
     assert [entry['name'] for entry in found.entries(uri='file://five/mnt/S1/Lake')] == ['timeseries']
     assert found.info('file://five/mnt')['parent'] is None   # the top of a host no location holds
     again = found.record('file://five/mnt/S1/Lake/timeseries/2026/Screenshots/10/Screenshot 1.png', 'file', {'kind': 'file', 'size': 5})
-    assert (again['id'], again['size']) == (row['id'], 5)   # saved again, the same instance
+    assert (again['id'], again['size']) == (row['id'], 5)   # saved again, the same file
+    found.forget('file://five/mnt/S1/Lake/timeseries/2026/Screenshots/10/Screenshot 1.png')   # removed from the Lake: flagged, kept
+    assert ld.get(f"/fs/files/{row['id']}").json()['flags'] == 4
+    back = found.record('file://five/mnt/S1/Lake/timeseries/2026/Screenshots/10/Screenshot 1.png', 'file', {'kind': 'file', 'size': 7})
+    assert (back['id'], back['size']) == (row['id'], 7)   # saved there again: the same file, un-deleted
 
 
 def test_a_librarys_content_type_and_columns_come_from_its_index(ld, tmp_path):
