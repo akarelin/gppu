@@ -2,8 +2,8 @@ r"""The catalog: where every location is and what is in each.
 
   GppuCatalog             the locations as Location objects, each with the Provider of its connection
   catalog(records)        the catalog of Linked Data's location records, as its user read them from /fs/locations
-  Catalog(dsn)            what is in the locations: the index in Postgres (schema lake), its API /lake/catalog, and
-  CatalogFileSystem(url)  the index through that API as an fsspec filesystem, read-only"""
+  Catalog(records, indexes)  what is in the locations: gppufs's indexes the Lake keeps, its API /lake/catalog, and
+  CatalogFileSystem(url)     what is in the locations through that API as an fsspec filesystem, read-only"""
 import asyncio
 import functools
 import importlib
@@ -14,6 +14,7 @@ import re
 import socket
 from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import date, datetime
 from pathlib import Path, PurePosixPath
@@ -554,30 +555,16 @@ def resolve(folders: dict[str, dict[str, str]], address: str) -> str:
 # endregion
 # region what is in the locations
 
-FETCH = 1000   # the rows a cursor fetches at a time: a row read is about 2 kB with SharePoint's columns, so a fetch is about 2 MB,
-# and the largest folder, 56,297 entries, takes 57 fetches; a row sent is about 300 bytes, its columns given as text
+FETCH = 1000   # the rows a listing reads from an index at a time, so a folder of any size is never held whole
 
-# What a listing shows of each entry: its latest instance, as the source that read it last read it; an entry gone from it is not shown
-ENTRIES = """SELECT e.uid AS id, e.kind, e.name, i.size, i.files, i.folders, i.changed_at AS modified,
-                    i.metadata->'columns'->>'Created' AS created, i.metadata->>'content_type' AS content_type,
-                    i.metadata->'columns' AS columns
-             FROM lake.entity e
-             CROSS JOIN LATERAL (SELECT * FROM lake.instance WHERE entity_uid = e.uid ORDER BY read_at DESC LIMIT 1) i
-             WHERE {inside} AND i.gone_at IS NULL ORDER BY e.name"""
-# The entry a path names below a location's root, walked down a name at a time by the catalog's own unique indexes
-AT = """WITH RECURSIVE walk(uid, depth) AS (
-            SELECT uid, 1 FROM lake.entity WHERE location_id = %(location)s AND parent_uid IS NULL AND name = (%(names)s::text[])[1]
-            UNION ALL
-            SELECT e.uid, walk.depth + 1 FROM walk JOIN lake.entity e ON e.parent_uid = walk.uid AND e.name = (%(names)s::text[])[walk.depth + 1])
-        SELECT uid FROM walk WHERE depth = cardinality(%(names)s::text[])"""
-# One entry with every instance of it, the latest first
-ENTRY = """SELECT e.uid AS id, e.location_id, e.parent_uid AS parent, e.kind, e.name, e.extension, e.created_at,
-                  coalesce(json_agg(to_jsonb(i) - 'entity_uid' ORDER BY i.read_at DESC) FILTER (WHERE i.entity_uid IS NOT NULL), '[]') AS instances
-           FROM lake.entity e LEFT JOIN lake.instance i ON i.entity_uid = e.uid WHERE e.uid = %s GROUP BY e.uid"""
-# Each column SharePoint gave items, by how many carry it, and how many items it gave columns for
-COLUMNS = """SELECT k AS name, count(*) AS n FROM lake.instance i, jsonb_object_keys(i.metadata->'columns') k
-             WHERE jsonb_typeof(i.metadata->'columns') = 'object' AND i.gone_at IS NULL GROUP BY k ORDER BY n DESC, k"""
-ITEMS = "SELECT count(*) AS n FROM lake.instance WHERE jsonb_typeof(metadata->'columns') = 'object' AND gone_at IS NULL"
+# What an index holds directly inside one of its folders, by name: {inside} picks the folder, its own rows relative to the index's folder
+LISTED = """SELECT path, metadata FROM gppufs_entries WHERE {inside} ORDER BY path"""
+ROOT = "path <> '.' AND instr(path, '/') = 0"
+INSIDE = "path > :low AND path < :high AND instr(substr(path, :cut), '/') = 0"   # ':high' is ':low' with its '/' as the next character, '0'
+# Each column SharePoint gave items in one index, by how many carry it, and how many items it gave any column
+COLUMNS = """SELECT k.key AS name, count(*) AS n FROM gppufs_entries, json_each(metadata, '$.columns') k
+             WHERE json_type(metadata, '$.columns') = 'object' GROUP BY k.key"""
+ITEMS = "SELECT count(*) FROM gppufs_entries WHERE json_type(metadata, '$.columns') = 'object' AND EXISTS (SELECT 1 FROM json_each(metadata, '$.columns'))"
 WHEN = re.compile(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ')   # how SharePoint gives a date or a time
 
 
@@ -629,115 +616,175 @@ def where(tree: dict[str, dict[str, Any]], path: str) -> tuple[dict[str, Any] | 
     return None, path
 
 
-class Catalog:
-    """The catalog in the database at dsn, read only; records reads Linked Data's location records, the items of GET /fs/locations,
-    as the catalog's user reaches Linked Data."""
+@contextmanager
+def _opened(index: Path) -> Iterator[Any]:
+    """An index the Lake keeps, read only, and closed when read: written once and never again, so it is read without locks, as a
+    share serves it."""
+    import sqlite3
+    db = sqlite3.connect(f'{index.as_uri()}?mode=ro&immutable=1', uri=True, check_same_thread=False)
+    try:
+        yield db
+    finally:
+        db.close()
 
-    def __init__(self, dsn: str, records: Callable[[], list[dict]]) -> None:
-        if not dsn:
-            raise ValueError("the catalog's database is required")
-        self.dsn = dsn
+
+class Catalog:
+    """What is in Linked Data's locations, as gppufs's indexes hold it: the indexes every host sends to the Lake, which keeps each in
+    indexes, a folder per host or tenant and below it the folder indexed, named as its uri names it without a drive's colon, its
+    index named by when it was written (serve.yaml's layout). The deepest index at or above a folder holds it, its latest; an index is
+    read, never written. records reads Linked Data's location records, the items of GET /fs/locations."""
+
+    def __init__(self, records: Callable[[], list[dict]], indexes: str | Path) -> None:
         self.records = records
-        self.lake_ids: dict[str, int] = {}   # each location's Linked Data id -> the catalog's id for it, as locations() last read them
+        self.indexes = Path(indexes)
         self._columns: list[str] | None = None   # columns(), read once
 
-    def _open(self):
-        import psycopg
-        from psycopg.rows import dict_row
-        return psycopg.connect(self.dsn, options='-c default_transaction_read_only=on', row_factory=dict_row, connect_timeout=30)
+    def folder(self, uri: str) -> Path:
+        """Where the Lake keeps the indexes of the folder a uri names."""
+        parts = urlsplit(uri)
+        return self.indexes / parts.netloc / unquote(parts.path).replace(':', '').strip('/')
+
+    @staticmethod
+    def latest(folder: Path) -> Path | None:
+        """The index of a folder the Lake keeps, the one written last; none when it keeps none."""
+        return max(folder.glob('*.gppufs.sqlite'), default=None) if folder.is_dir() else None
+
+    def owner(self, folder: Path) -> tuple[Path, str] | None:
+        """The index holding a folder kept below indexes, the deepest at or above it, and the folder's path in it, '.' for its own;
+        none when no index holds it."""
+        top, here = self.indexes / folder.relative_to(self.indexes).parts[0], folder
+        while True:
+            if (index := self.latest(here)) is not None:
+                return index, folder.relative_to(here).as_posix()
+            if here == top:
+                return None
+            here = here.parent
 
     def locations(self) -> list[dict[str, Any]]:
-        """Linked Data's locations whose entries are in the catalog, with every location above them, so they make one tree: each its
-        id, name, canonical address, parent's id and, where it has entries, the catalog's id for it."""
-        records = {r['id']: r for r in self.records()}
+        """Linked Data's locations an index holds, with every location above them, so they make one tree: each its id, name,
+        canonical address, parent's id and whether an index holds it."""
+        records = {r['id']: r for r in self.records() if r['meta'].get('uri')}
+        indexed = {id for id, r in records.items() if self.owner(self.folder(r['meta']['uri'])) is not None}
         kept: set[str] = set()
-        for r in records.values():
-            if 'lake_id' in r['meta']:
-                while r and r['id'] not in kept:
-                    kept.add(r['id'])
-                    r = records.get(r['parent_id'])
-        self.lake_ids = {id: records[id]['meta']['lake_id'] for id in kept if 'lake_id' in records[id]['meta']}
-        return [{'id': id, 'name': records[id]['meta'].get('display_name'), 'canonical': records[id]['meta'].get('uri'),
-                 'parent': records[id]['parent_id'] if records[id]['parent_id'] in kept else None, 'lake_id': self.lake_ids.get(id)}
+        for id in indexed:
+            while id in records and id not in kept:
+                kept.add(id)
+                id = records[id]['parent_id']
+        return [{'id': id, 'name': records[id]['meta'].get('display_name'), 'canonical': records[id]['meta']['uri'],
+                 'parent': records[id]['parent_id'] if records[id]['parent_id'] in kept else None, 'indexed': id in indexed}
                 for id in kept]
-
-    def lake_id(self, location: str) -> int:
-        """The catalog's id for a location, by its Linked Data id."""
-        if location not in self.lake_ids:
-            self.locations()
-        if location not in self.lake_ids:
-            raise LookupError(f'location {location}: the catalog holds nothing there')
-        return self.lake_ids[location]
 
     def columns(self) -> list[str]:
         """The columns an entry is described by, by their internal names: its content type, then each column SharePoint gave some
         of its items and not every one, those carried most first. Every item carries SharePoint's own columns, its file name, its
         version, who edited it; what only some carry is what a library or a content type adds, a statement's period, a tax form's
-        year. Read from the whole catalog once."""
+        year. Read once from the indexes of every m365 location, the store whose listing carries them."""
         if self._columns is None:
-            with self._open() as db:
-                items = db.execute(ITEMS).fetchone()['n']
-                self._columns = ['ContentType'] + [row['name'] for row in db.execute(COLUMNS) if row['n'] < items]
+            counted, items = Counter(), 0
+            for r in self.records():
+                if urlsplit(uri := r['meta'].get('uri') or '').scheme != 'm365':
+                    continue
+                top = self.folder(uri)
+                for folder in [top, *top.rglob('*')] if top.is_dir() else []:
+                    if folder.is_dir() and (index := self.latest(folder)) is not None:
+                        with _opened(index) as db:
+                            items += db.execute(ITEMS).fetchone()[0]
+                            counted.update(dict(db.execute(COLUMNS).fetchall()))
+            self._columns = ['ContentType'] + [name for name, n in sorted(counted.items(), key=lambda c: (-c[1], c[0])) if n < items]
         return self._columns
+
+    def _entry(self, path: str, metadata: str) -> dict[str, Any]:
+        """An index's row as the catalog lists it: its gppufs id, kind, name, size, totals, when it was modified and created, and
+        its content type and the text of its columns where its store gave them."""
+        row = json.loads(metadata)
+        held, own = row.get('columns') or {}, row['gppu']
+        created = row.get('created_at') or (datetime.fromtimestamp(row['created']).astimezone().isoformat() if row.get('created') else None)
+        return {'id': own.get('id'), 'kind': own['type'], 'name': PurePosixPath(path).name, 'size': own.get('size'),
+                'files': own.get('files'), 'folders': own.get('folders'), 'modified': own.get('modified_at'), 'created': created,
+                'content_type': row.get('content_type'),
+                'columns': {name: text for name in self.columns() if (text := _text(held.get(name)))}}
+
+    def _listed(self, folder: Path) -> Iterator[dict[str, Any]]:
+        """What is directly inside a folder kept below indexes, by name, from the index holding it, read FETCH rows at a time.
+        What is asked for is found before the first row is."""
+        found = self.owner(folder)
+        if found is None:
+            raise LookupError(f'{folder.relative_to(self.indexes).as_posix()}: no index the Lake keeps holds it')
+        index, path = found
+        with _opened(index) as db:
+            if path != '.' and db.execute('SELECT 1 FROM gppufs_entries WHERE path = ?', (path,)).fetchone() is None:
+                raise LookupError(f'{folder.relative_to(self.indexes).as_posix()}: its index holds nothing there')
+        inside, values = (ROOT, {}) if path == '.' else (INSIDE, {'low': f'{path}/', 'high': f'{path}0', 'cut': len(path) + 2})
+
+        def rows() -> Iterator[dict[str, Any]]:
+            with _opened(index) as db:
+                cursor = db.execute(LISTED.format(inside=inside), values)
+                while batch := cursor.fetchmany(FETCH):
+                    yield from (self._entry(*row) for row in batch)
+        return rows()
 
     def entries(self, location: str | None = None, parent: UUID | None = None, path: str | None = None) -> Iterator[dict[str, Any]]:
         """What is directly inside an entry, parent, at a location's root, or in the folder a path names as the desktop shows the
-        catalog, by name, each with the text of its columns; read a fetch at a time from a cursor the database keeps, so a folder
-        of any size is never held whole. What is asked for is found before the first row is."""
+        catalog, by name, each with the text of its columns."""
+        if parent is not None:
+            index, below, _ = self._found(parent)
+            return self._listed(index.parent / below)
         if path is not None:
             if not path.strip('/'):
                 return iter(())   # the catalog's root holds only locations
             found, below = where(paths(self.locations()), path)
             if found is None:
                 raise LookupError(f'{path}: the catalog holds no location there')
-            if not below and found['lake_id'] is None:
+            if not below and not found['indexed']:
                 return iter(())
-            location, parent = (None, self.at(found['id'], below)) if below else (found['id'], None)
-        if parent:
-            with self._open() as db:
-                if db.execute('SELECT 1 FROM lake.entity WHERE uid = %s', (parent,)).fetchone() is None:
-                    raise LookupError(f'entry {parent}: the catalog holds no such entry')
-        inside, value = ('e.parent_uid = %s', parent) if parent else ('e.location_id = %s AND e.parent_uid IS NULL', self.lake_id(location))
-        columns = self.columns()
+            return self._listed(self.folder(_address(found['canonical'], below)))
+        return self._listed(self.folder(self._uri(location)))
 
-        def rows() -> Iterator[dict[str, Any]]:
-            with self._open() as db, db.cursor(name='entries') as cursor:
-                cursor.itersize = FETCH
-                cursor.execute(ENTRIES.format(inside=inside), (value,))
-                for row in cursor:
-                    held = row['columns'] or {}
-                    row['columns'] = {name: text for name in columns if (text := _text(held.get(name)))}
-                    yield row
-        return rows()
+    def _uri(self, location: str) -> str:
+        """A location's uri, by its Linked Data id."""
+        for r in self.records():
+            if r['id'] == location and r['meta'].get('uri'):
+                return r['meta']['uri']
+        raise LookupError(f'location {location}: Linked Data has no location with a uri by that id')
 
     def at(self, location: str, path: str) -> UUID:
-        """The uid of the entry path names below a location's root."""
-        names = [name for name in path.split('/') if name]
-        if not names:
+        """The gppufs id of the entry path names below a location's root."""
+        if not path.strip('/'):
             raise LookupError(f'location {location}: an empty path names its root, which is no entry')
-        with self._open() as db:
-            found = db.execute(AT, {'location': self.lake_id(location), 'names': names}).fetchone()
-        if found is None:
-            raise LookupError(f'location {location}: the catalog holds nothing at {path}')
-        return found['uid']
+        folder = self.folder(_address(self._uri(location), path.strip('/')))
+        found = self.owner(folder)
+        if found is not None:
+            with _opened(found[0]) as db:
+                row = db.execute("SELECT metadata->>'$.gppu.id' FROM gppufs_entries WHERE path = ?", (found[1],)).fetchone()
+            if row is not None and row[0]:
+                return UUID(row[0])
+        raise LookupError(f'location {location}: the catalog holds nothing at {path}')
+
+    def _found(self, uid: UUID) -> tuple[Path, str, str]:
+        """The index holding an entry by its gppufs id, its path there and its row; every index the Lake keeps is looked in, its latest."""
+        for folder in [self.indexes, *self.indexes.rglob('*')]:
+            if folder.is_dir() and (index := self.latest(folder)) is not None:
+                with _opened(index) as db:
+                    row = db.execute("SELECT path, metadata FROM gppufs_entries WHERE metadata->>'$.gppu.id' = ?", (str(uid),)).fetchone()
+                if row is not None:
+                    return index, *row
+        raise LookupError(f'entry {uid}: no index the Lake keeps holds it')
 
     def entry(self, uid: UUID) -> dict[str, Any]:
-        """One entry with every instance of it, the latest first."""
-        with self._open() as db:
-            found = db.execute(ENTRY, (uid,)).fetchone()
-        if found is None:
-            raise LookupError(f'entry {uid}: the catalog holds no such entry')
-        return found
+        """One entry by its gppufs id, with the index holding it and its path there, and what gppufs holds of it."""
+        index, path, metadata = self._found(uid)
+        return self._entry(path, metadata) | {'index': index.relative_to(self.indexes).as_posix(), 'path': path,
+                                              'gppu': json.loads(metadata)['gppu']}
 
 
 def api(catalog: Catalog):
     """catalog as REST resources, a FastAPI app an APIApp serves at /lake/catalog, mounted before the Lake's at /lake, whose paths
     are uris and would take it. Needs FastAPI (the `ld` extra).
 
-    GET /locations                  Linked Data's locations whose entries are in the catalog, as one tree
+    GET /locations                  Linked Data's locations an index holds, as one tree
     GET /locations/{id}/entries     what is at a location's root, a line of JSON each, by name
     GET /locations/{id}/entry?path= the entry path names below a location's root
-    GET /entries/{uid}              one entry with every instance of it
+    GET /entries/{uid}              one entry by its gppufs id
     GET /entries/{uid}/entries      what is directly inside an entry, a line of JSON each, by name
     GET /entries?path=              what is directly inside the folder path names as the desktop shows the catalog, a line each
     GET /columns                    the columns an entry is described by, each its internal name and its name in words
@@ -793,8 +840,8 @@ def _seconds(value: str) -> float:
 
 class CatalogFileSystem(AbstractFileSystem):
     """The catalog through its API, an fsspec filesystem: Linked Data's locations are folders, each under the one above it, and in
-    each is what the catalog holds at its root. ls reads a folder a line at a time and keeps what it read, which info answers from;
-    an entry is shown modified when its source last changed it and created when its source says it was, SharePoint's Created.
+    each is what the indexes hold at its root. ls reads a folder a line at a time, by its path, and keeps what it read, which info
+    answers from; an entry is shown modified when its source last changed it and created when its source says it was.
     A path is the catalog's own, or the address of what a location holds, `m365://karelin/sharepoint/...`, read as its location's
     path and the path below it. Read-only: the catalog holds what an entry is, and its bytes are what the Lake gives at the entry's
     address. client is the API's, made from url, or one a caller gives, such as a test's."""
@@ -838,7 +885,7 @@ class CatalogFileSystem(AbstractFileSystem):
 
     @staticmethod
     def _entry(row: dict[str, Any], name: str) -> dict[str, Any]:
-        """A catalog row as fsspec has an entry; its uid is `id`, since a FUSE bridge reads `uid` as the owner's."""
+        """A catalog row as fsspec has an entry; its gppufs id is `id`, since a FUSE bridge reads `uid` as the owner's."""
         folder = row['kind'] == 'folder'
         entry = {'name': name, 'type': 'directory' if folder else 'file', 'size': 0 if folder else row['size'] or 0,
                  'id': row['id'], 'content_type': row['content_type'], 'columns': row['columns']}
@@ -852,12 +899,11 @@ class CatalogFileSystem(AbstractFileSystem):
         location, below = self._where(path)
         rows = [{'name': key, 'type': 'directory', 'size': 0} for key in self._locations()
                 if key.rpartition('/')[0] == path and key != path]
-        if location is not None and (below or location['lake_id'] is not None):
-            route = f"/entries/{self._id(path, location, below)}/entries" if below else f"/locations/{location['id']}/entries"
+        if location is not None and (below or location['indexed']):
             listed = {}
-            with self.client.stream("GET", f"/lake/catalog{route}") as r:
+            with self.client.stream("GET", "/lake/catalog/entries", params={'path': path}) as r:
                 if r.status_code == 404:
-                    raise FileNotFoundError(f'{route}: {r.read().decode()}')
+                    raise FileNotFoundError(f'{path}: {r.read().decode()}')
                 r.raise_for_status()
                 for line in r.iter_lines():
                     row = json.loads(line)
@@ -867,14 +913,6 @@ class CatalogFileSystem(AbstractFileSystem):
         elif location is None and path:
             raise FileNotFoundError(path)
         return rows if detail else [row['name'] for row in rows]
-
-    def _id(self, path: str, location: dict[str, Any], below: str) -> str:
-        """The uid of the entry at path, below in location: from its folder's listing once it was listed, else the catalog
-        resolves it."""
-        folder, _, name = path.rpartition('/')
-        if name in self._listed.get(folder, {}):
-            return self._listed[folder][name]['id']
-        return self._get(f"/locations/{location['id']}/entry", path=below).json()['id']
 
     def info(self, path: str = '', **kwargs: Any) -> dict[str, Any]:
         path = self._named(path)
