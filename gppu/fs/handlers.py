@@ -646,13 +646,18 @@ class SessionHandler(FileHandler):
     TURNS = {"cx": "_codex_turns", "gemini": "_gemini_turns",
              "cc": "_claude_code_turns", "openclaw": "_openclaw_turns", "agy": "_agy_turns",
              "hermes": "_hermes_turns"}
+    # What parse reads of a Claude Code or a Codex message, the rest dropped as each line is read: a tool's input and output, a
+    # hook's parameters and a thinking block's signature are most of a long session's file, which parse never holds whole.
+    KEPT = {"cc": "_kept_claude_code", "cx": "_kept_codex"}
+    CLAUDE_CODE_KEYS = ("type", "sessionId", "uuid", "parentUuid", "agentId", "isSidechain", "isMeta", "cwd", *TITLES.values(),
+                        *ID_KEYS, *TIME_KEYS)
+    CODEX_KEYS = ("type", "role", "name", "message", "cwd", "source", "thread_source", "parent_thread_id", *ID_KEYS, *TIME_KEYS)
 
     @classmethod
     def parse(cls, path: str | Path) -> Session:
         record = Session(**vars(super().parse(path)))
         path = Path(path).absolute()
-        messages = cls._messages(path)
-        harness = cls._harness(messages[:SNIFF])
+        harness, messages = cls._read(path)
         if harness is None:
             raise ValueError(f"{path}: its messages name no harness")
         turns = getattr(cls, cls.TURNS[harness])(messages)
@@ -1236,6 +1241,71 @@ class SessionHandler(FileHandler):
         if not messages:
             raise ValueError(f"{path}: session file is empty")
         return tuple(messages)
+
+    @classmethod
+    def _read(cls, path: Path) -> tuple[Harness | None, tuple[Mapping[str, Any], ...]]:
+        """A session file as parse reads it, a line at a time: its harness, told by its first SNIFF messages, and its messages
+        as _messages reads them, a Claude Code or a Codex message keeping only what parse reads of it (KEPT)."""
+        messages, harness, kept = [], None, None
+        with path.open("r", encoding="utf-8") as stream:
+            for line in stream:
+                if not line.strip():
+                    continue
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(value, dict):
+                    continue
+                if kept is None and len(messages) == SNIFF:
+                    harness = cls._harness(tuple(messages))
+                    kept = getattr(cls, cls.KEPT[harness]) if harness in cls.KEPT else (lambda message: message)
+                    messages = [kept(message) for message in messages]
+                messages.append(kept(value) if kept else value)
+        if not messages:
+            raise ValueError(f"{path}: session file is empty")
+        return (harness if kept else cls._harness(tuple(messages))), tuple(messages)
+
+    @staticmethod
+    def _kept_blocks(content: Any) -> Any:
+        """A message's content as parse reads it: each block's type and name, and a text block's text."""
+        if not isinstance(content, list):
+            return content
+        return [{key: block[key] for key in ("type", "name") if key in block}
+                | ({"text": block["text"]} if block.get("type") in ("text", "input_text", "output_text") and "text" in block else {})
+                if isinstance(block, Mapping) else block for block in content]
+
+    @classmethod
+    def _kept_claude_code(cls, message: Mapping[str, Any]) -> dict[str, Any]:
+        """What parse reads of a Claude Code message: its own keys, its message's role, model, ids, times and content, a queued
+        prompt's attachment, and the ids and times of its payload and data."""
+        kept = {key: message[key] for key in cls.CLAUDE_CODE_KEYS if key in message}
+        if isinstance(body := message.get("message"), Mapping):
+            kept["message"] = {key: body[key] for key in ("role", "model", *ID_KEYS, *TIME_KEYS) if key in body} | (
+                {"content": cls._kept_blocks(body["content"])} if "content" in body else {})
+        elif "message" in message:
+            kept["message"] = message["message"]
+        if isinstance(attachment := message.get("attachment"), Mapping):
+            kept["attachment"] = attachment if attachment.get("type") == "queued_command" else {"type": attachment.get("type")}
+        for scope in ("payload", "data"):
+            if isinstance(value := message.get(scope), Mapping):
+                kept[scope] = {key: value[key] for key in (*ID_KEYS, *TIME_KEYS) if key in value}
+        return kept
+
+    @classmethod
+    def _kept_codex(cls, message: Mapping[str, Any]) -> dict[str, Any]:
+        """What parse reads of a Codex message: its type, place, ids and times, and of its payload what names the session, its
+        role, a tool call's name, a message's text and content."""
+        kept = {key: message[key] for key in ("type", "ordinal", *ID_KEYS, *TIME_KEYS) if key in message}
+        if isinstance(payload := message.get("payload"), Mapping):
+            kept["payload"] = {key: payload[key] for key in cls.CODEX_KEYS if key in payload} | (
+                {"content": cls._kept_blocks(payload["content"])} if "content" in payload else {})
+        elif "payload" in message:
+            kept["payload"] = message["payload"]
+        for scope in ("message", "data"):
+            if isinstance(value := message.get(scope), Mapping):
+                kept[scope] = {key: value[key] for key in (*ID_KEYS, *TIME_KEYS) if key in value}
+        return kept
 
     @classmethod
     def _walk_values(cls, value: Any) -> Iterator[tuple[str, Any]]:
