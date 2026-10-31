@@ -80,15 +80,17 @@ class Lake:
         account and path of the uri it came from."""
         span = getattr(record, 'span', None) or handlers.Handler.named(obj.name)
         source = urlsplit(str(obj.uri))
+        came = f' from {obj.uri}' if source.netloc or source.path else ''   # a save with no source has no uri to name
         try:
             path = self.templates.render_template(type if type in self.templates.named else 'source',
                 record=record, name=obj.name, start=span.start if span else None, system=source.scheme, account=source.netloc,
                 path=unquote(source.path).strip('/'))
         except UndefinedError as error:   # the template asks for what obj does not say, such as the date of a session with no time
-            raise ValueError(f'{obj.name}: the Lake has no place for a {type} from {obj.uri}: {error}') from error
+            missing = 'what was sent of it gives no time, so it has no date to be placed by' if span is None else str(error)
+            raise ValueError(f'{obj.name}: the Lake has no place for a {type}{came}: {missing}') from error
         path = str(path or '').strip()
         if not path:
-            raise ValueError(f'{obj.name}: the Lake has no place for a {type} from {obj.uri}')
+            raise ValueError(f'{obj.name}: the Lake has no place for a {type}{came}')
         return str(Location.relative(path))
 
     def _recorded(self, uri: y2uri | str, path: Path, record: handlers.Record) -> dict[str, Any]:
