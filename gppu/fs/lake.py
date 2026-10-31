@@ -5,8 +5,9 @@ copies it, storing nothing; the client then has the Lake index what it copied. L
 /lake. The Lake is a catalog on gppufs: a Lake folder is listed through gppufs's GppuFileSystem, its index beside the Lake, and a
 UI lists it through the Lake's API, never the file system or gppufs.
 
-The Lake is configured in two places. Its locations are Linked Data's, a catalog made by gppu.fs.catalog.catalog(). What the Lake
-itself is configured with is the app's, in Env: the uri of the Lake saved objects are stored in, and the templates of its layout
+The Lake is configured in two places. Its locations are Linked Data's, a catalog made by gppu.fs.catalog.catalog(), which reach
+every uri outside the Lake. What the Lake itself is configured with is the app's, in Env: the uri of the Lake saved objects are
+stored in, a folder this host reaches through gppu.fs's FileSystem, and the templates of its layout
 (CRAP Systems/lake/docs/layout.md), one per type of record gppu's handlers read, `source` for any other.
 
   Lake(catalog, store, templates)   the Lake over catalog's locations, saving below store by templates
@@ -26,7 +27,7 @@ from fsspec import AbstractFileSystem
 from jinja2 import UndefinedError
 
 from . import handlers
-from . import CACHE, Container, DataObject, Location, _address, _below
+from . import CACHE, Container, DataObject, FileSystem, Location, _address, _below
 from .catalog import GppuCatalog
 from .gppufs import GppuFileSystem
 from ..gppu import TemplateSet, TimeSpan
@@ -39,11 +40,11 @@ class Lake:
 
     def __init__(self, catalog: GppuCatalog, store: y2uri | str, templates: Mapping[str, str]) -> None:
         self.catalog = catalog
-        location, path = catalog.location_of(store)
-        self.store = Container(location.provider, location.provider.join(location.uri, path))
+        provider = FileSystem()   # the Lake's store is its own configuration, a folder this host reaches, not one of Linked Data's locations
+        self.store = Container(provider, y2uri(store))
         self.templates = TemplateSet(named={'lake': dict(templates)})
         self.files = GppuFileSystem()
-        self.root = self.files._key(location.provider.local(self.store.uri).as_posix())   # the Lake on this host, as gppufs names it
+        self.root = self.files._key(provider.local(self.store.uri).as_posix())   # the Lake on this host, as gppufs names it
         self.files.ls(self.root)   # the Lake's index is at its root, so what it saves is indexed there and never beside a day folder
 
     def _here(self, uri: y2uri | str) -> str | None:
@@ -56,6 +57,9 @@ class Lake:
         return row | {'name': _address(str(self.store.uri), row['name'][len(self.root):].strip('/'))}
 
     def _at(self, uri: y2uri | str) -> tuple[Container, str]:
+        """The Container that reaches uri and its path there: the Lake's store for a uri in the Lake, else its location's."""
+        if (below := _below(str(self.store.uri), str(uri))) is not None:
+            return self.store, unquote(below)
         location, path = self.catalog.location_of(uri)
         return location.container(), str(path)
 

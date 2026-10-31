@@ -126,3 +126,14 @@ def test_the_lake_api_is_an_fsspec_filesystem(tmp_path):
         fs.info('missing.txt')
     with pytest.raises(PermissionError):
         fs.open('a.txt', 'wb')
+
+
+def test_the_lake_reaches_its_store_without_a_location_holding_it(tmp_path):
+    """The Lake's store is its own configuration: a Lake whose store no location of the catalog holds saves and retrieves there."""
+    store = tmp_path / 'store'
+    store.mkdir()
+    lake = Lake(GppuCatalog({'connections': {}, 'locations': {}}), store.as_uri(), LAYOUT)
+    uri = lake.save(DataObject('file://alex-pc/notes/a.txt', b'a', None, 'file', 'a.txt'))
+    assert (store / 'sources' / 'file-alex-pc' / 'notes' / 'a.txt').read_bytes() == b'a'
+    with lake.retrieve(uri).content as content, lake.open(uri) as opened:
+        assert content.read() == opened.read() == b'a'
