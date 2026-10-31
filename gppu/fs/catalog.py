@@ -748,14 +748,15 @@ class Catalog:
         self._put('files', made, 'folder', self._parent(above), above, {'kind': 'folder'})
         return made
 
-    def _orphans(self, files: dict[str, str]) -> None:
-        """Of files, ids by uri, each left with no instance in sight and no file in sight inside it flagged deleted, the deepest
-        first; it keeps its record, its links and its place on a timeline."""
-        for uri, id in sorted(files.items(), key=lambda item: len(item[0]), reverse=True):
-            if not self._get('/fs/instances', filters=json.dumps({'parent_id': {'$eq': id}}), limit=1)['items'] \
-                    and not self._get('/fs/files', filters=json.dumps({'parent_id': {'$eq': id}}), limit=1)['items'] \
-                    and not self._get(f'/fs/files/{id}')['flags'] & DELETED:
-                self._delete('files', id)
+    def _orphans(self, copies: set[str]) -> None:
+        """The files of copies, uris whose instances are gone, each found by its uri, flagged deleted when it is left with no
+        instance in sight and no file in sight inside it, the deepest first; it keeps its record, its links and its place on a
+        timeline."""
+        for uri in sorted({self.file_of(copy) for copy in copies}, key=len, reverse=True):
+            file = self._find('files', uri)
+            if file is not None and not self._get('/fs/instances', filters=json.dumps({'parent_id': {'$eq': file['id']}}), limit=1)['items'] \
+                    and not self._get('/fs/files', filters=json.dumps({'parent_id': {'$eq': file['id']}}), limit=1)['items']:
+                self._delete('files', file['id'])
 
     def load(self, source: str, copy: Path) -> None:
         """An index the Lake received, copy on this host, loaded as the latest copy of its folder's: source is the uri it came from,
@@ -800,12 +801,12 @@ class Catalog:
                       row['file'], span={'start': start, 'end': None, 'bounds': '[)'} if start else None)
             self._put('instances', row['id'], 'instance', ids[path], _address(folder, path),
                       row['instance'] | {'index': folder} | ({} if path else {'loaded': loaded}), kind=row['kind'])
-        kept, left = {row['id'] for row in held}, {}
+        kept, left = {row['id'] for row in held}, set()
         for instance in instances.values():
             if instance['data'].get('index') == folder and instance['id'] not in kept and not instance['flags'] & DELETED:   # gone from the latest copy
                 self._delete('instances', instance['id'])
-                left[instance['meta']['uri']] = instance['parent_id']
-        self._orphans({self.file_of(uri): id for uri, id in left.items()})
+                left.add(instance['meta']['uri'])
+        self._orphans(left)
         if urlsplit(top).scheme == 'm365':
             self._columns = None
 
@@ -930,14 +931,14 @@ class Catalog:
     def unload(self, folder: str) -> None:
         """Everything a folder's index put in the catalog flagged deleted: its instances, and each file left with no instance, as
         when the folder is no longer indexed."""
-        left = {}
+        left = set()
         for instance in self._under('instances', folder).values():
             if instance['data'].get('index') == folder and not instance['flags'] & DELETED:
                 self._delete('instances', instance['id'])
-                left[instance['meta']['uri']] = instance['parent_id']
+                left.add(instance['meta']['uri'])
         if not left:
             raise LookupError(f'{folder}: the catalog holds no index of it')
-        self._orphans({self.file_of(uri): id for uri, id in left.items()})
+        self._orphans(left)
 
     def forget(self, uri: str) -> None:
         """The file the Lake held at a uri, removed from there, flagged deleted in the catalog: its instance, and its file with it."""
@@ -945,7 +946,7 @@ class Catalog:
         if instance is None:
             raise LookupError(f'{uri}: the catalog holds nothing there')
         self._delete('instances', instance['id'])
-        self._orphans({self.file_of(uri): instance['parent_id']})
+        self._orphans({uri})
 
 
 def api(catalog: Catalog):

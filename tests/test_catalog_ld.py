@@ -186,3 +186,20 @@ def test_every_hosts_synced_copy_is_an_instance_of_the_cloud_folders_file(ld, tm
     found.unload('file://alex-pc/D:/Synced')   # the last copy gone: the file goes with it
     with pytest.raises(LookupError):
         found.info('smb://s1.karel.in/SD/2026.work/10/plan.md')
+
+
+def test_a_reload_over_instances_an_earlier_load_wrote_inside_their_folders_flags_them_and_their_files(ld, tmp_path):
+    """Instances written as the catalog wrote them before files, each inside its folder's instance: a reload that no longer holds
+    them flags them deleted, finding each file by its uri, never by what an instance is inside."""
+    projects = tmp_path / 'Projects'
+    projects.mkdir()
+    (projects / 'kept.md').write_text('# kept', encoding='utf-8')
+    found = catalog_of(ld)
+    old = str(__import__('gppu').uuid_create(0x1003))
+    root = str(__import__('gppu').uuid_create(0x1003))
+    for id, parent, uri in ((root, None, 'file://alex-pc/D:/Projects'), (old, root, 'file://alex-pc/D:/Projects/old.md')):
+        assert ld.put(f'/fs/instances/{id}', json={'type': 'markdown', 'parent_id': parent, 'data': {'index': 'file://alex-pc/D:/Projects'},
+                      'meta': {'uri': uri, 'display_name': uri.rpartition('/')[2], 'status': 'active'}}).status_code == 200
+    found.load('file://alex-pc/D:/Projects/.Projects.gppufs.sqlite', indexed(projects))
+    assert ld.get(f'/fs/instances/{old}').json()['flags'] == 4 and ld.get(f'/fs/instances/{root}').json()['flags'] == 4
+    assert [row['name'] for row in found.entries(uri='file://alex-pc/D:/Projects')] == ['kept.md']
