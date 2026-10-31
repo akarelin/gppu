@@ -56,12 +56,17 @@ def test_an_index_is_loaded_as_its_folders_latest_copy_and_read_back(ld, tmp_pat
     assert {(row['name'], row['indexed']) for row in tree.values()} == {('Alex-PC', False), ('data', False), ('Dev', True)}
     root = list(found.entries(location=ld.made['dev']))
     assert [(row['name'], row['kind']) for row in root] == [('note.md', 'file'), ('old.md', 'file'), ('sub', 'folder')]
-    assert root[0]['size'] == 6 and root[0]['id'].startswith('1003') and root[0]['modified'] and root[0]['created']
+    assert root[0]['size'] == 6 and root[0]['id'].startswith('1002') and root[0]['modified'] and root[0]['created']   # a file
     assert [row['name'] for row in found.entries(path='Alex-PC/data/Dev/sub')] == ['a.csv']
     sub = found.at(ld.made['dev'], 'sub')
     assert [row['name'] for row in found.entries(parent=sub)] == ['a.csv']
-    assert (found.entry(sub)['uri'], found.entry(sub)['index']) == ('file://alex-pc/D:/Dev/sub', 'file://alex-pc/D:/Dev')
+    assert (found.entry(sub)['uri'], found.entry(sub)['type']) == ('file://alex-pc/D:/Dev/sub', 'folder')   # a folder is a file
     assert found.info('file://alex-pc/D:/Dev')['parent'] == ld.made['dev']   # a location's folder is inside the location
+    note = found.instances('file://alex-pc/D:/Dev/note.md')   # its one copy, inside its file, by its gppufs id
+    assert [(row['uri'], row['index'], row['id'][:4]) for row in note] == [('file://alex-pc/D:/Dev/note.md', 'file://alex-pc/D:/Dev', '1003')]
+    copy = ld.get(f"/fs/instances/{note[0]['id']}").json()
+    assert (copy['type'], copy['parent_id']) == ('instance', root[0]['id'])
+    assert found.entry(root[0]['id'])['span']['start']   # the file's span starts when its source says it was created
     first = found.loaded('file://alex-pc/D:/Dev')['loaded']
     with pytest.raises(LookupError):
         found.loaded('file://alex-pc/D:/Dev/sub')   # held inside Dev's index, no index of its own
@@ -134,3 +139,39 @@ def test_a_folder_no_longer_indexed_is_unloaded_with_what_its_index_put_there(ld
     for uri in ('file://alex-pc/D:/Work', 'file://alex-pc/D:/Work/notes', 'file://alex-pc/D:/Work/notes/n.md'):
         with pytest.raises(LookupError):
             found.info(uri)
+
+
+def test_every_hosts_synced_copy_is_an_instance_of_the_cloud_folders_file(ld, tmp_path):
+    """A local folder a link links to its cloud folder: each host's copy of a file there is an instance of the one file at the cloud
+    folder's uri and the same path, and the local location lists the cloud folder's files."""
+    made = {}
+    for key, parent, type, uri, name in (('laptop', None, 'host', 'file://alex-laptop', 'Alex-Laptop'),
+                                          ('s1', None, 'location', 'smb://s1.karel.in', 's1'),
+                                          ('cloud', 's1', 'location', 'smb://s1.karel.in/SD/2026.work', 'Work'),
+                                          ('here', 'data', 'location', 'file://alex-pc/D:/Synced', 'Synced'),
+                                          ('there', 'laptop', 'location', 'file://alex-laptop/C:/Synced', 'Synced')):
+        r = ld.post('/fs/locations', json={'type': type, 'parent_id': made.get(parent, ld.made.get(parent)), 'data': {},
+                                           'meta': {'uri': uri, 'display_name': name, 'status': 'active'}})
+        made[key] = r.json()['id']
+    for local in ('here', 'there'):
+        assert ld.post('/fs/links', json={'type': 'link', 'from_id': made[local], 'to_id': made['cloud']}).status_code == 200
+    copies = {}
+    for host, root in (('alex-pc', 'D:'), ('alex-laptop', 'C:')):
+        folder = tmp_path / host / 'Synced'
+        (folder / '10').mkdir(parents=True)
+        (folder / '10' / 'plan.md').write_text(f'# plan on {host}', encoding='utf-8')
+        copies[host] = indexed(folder)
+    found = catalog_of(ld)
+    found.load('file://alex-pc/D:/Synced/.Synced.gppufs.sqlite', copies['alex-pc'])
+    found.load('file://alex-laptop/C:/Synced/.Synced.gppufs.sqlite', copies['alex-laptop'])
+    plan = found.info('file://alex-pc/D:/Synced/10/plan.md')
+    assert plan['uri'] == 'smb://s1.karel.in/SD/2026.work/10/plan.md' == found.info('file://alex-laptop/C:/Synced/10/plan.md')['uri']
+    assert sorted(row['uri'] for row in found.instances('smb://s1.karel.in/SD/2026.work/10/plan.md')) == [
+        'file://alex-laptop/C:/Synced/10/plan.md', 'file://alex-pc/D:/Synced/10/plan.md']
+    assert found.info('smb://s1.karel.in/SD/2026.work')['parent'] == made['cloud']   # the cloud folder's file, inside its location
+    assert [row['name'] for row in found.entries(location=made['here'])] == ['10'] == [row['name'] for row in found.entries(location=made['cloud'])]
+    found.unload('file://alex-laptop/C:/Synced')   # one host's copy gone: the file stays, an instance of the other
+    assert [row['uri'] for row in found.instances('smb://s1.karel.in/SD/2026.work/10/plan.md')] == ['file://alex-pc/D:/Synced/10/plan.md']
+    found.unload('file://alex-pc/D:/Synced')   # the last copy gone: the file goes with it
+    with pytest.raises(LookupError):
+        found.info('smb://s1.karel.in/SD/2026.work/10/plan.md')
