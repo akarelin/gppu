@@ -171,6 +171,10 @@ def test_a_deleted_record_is_out_of_sight_and_read_by_its_id(api):
     assert ok(api.get('/nodes', params={'filters': json.dumps({'parent_id': {'$eq': parent['id']}})}))['total'] == 0
     assert ok(api.get(f"/nodes/{hidden['id']}"))['flags'] == 8
     assert 'read only' in ok(api.put(f"/nodes/{child['id']}", json={'data': {'a': 1}}), 422)['detail']
+    under = {'parent_id': {'$eq': parent['id']}}
+    asked = lambda *more: sorted(r['id'] for r in ok(api.get('/nodes', params={'filters': json.dumps({'$and': [under, *more]})}))['items'])
+    assert asked({'flags': {'$gte': 0}}) == sorted([child['id'], hidden['id']])   # out of sight when the filters ask for flags
+    assert asked({'$or': [{'flags': {'$eq': 4}}]}) == [child['id']]
 
 
 def test_flags_change_only_by_their_transitions(api):

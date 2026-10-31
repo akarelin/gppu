@@ -74,8 +74,8 @@ Params = Page.__params_type__
 
 class Flags(IntFlag):
     """A record's `flags` (# Flags): `ro` and `system` are read only, `deleted` and `archived` read only and out of sight,
-    `system` and `hidden` out of sight. A record out of sight is read by its id, and no list or search returns it. Flags change
-    only by their transitions (`transitions`)."""
+    `system` and `hidden` out of sight. A record out of sight is read by its id, and no list returns it, nor a search unless its
+    filters ask for `flags`. Flags change only by their transitions (`transitions`)."""
     RO = 0x01
     SYSTEM = 0x02
     DELETED = 0x04
@@ -291,15 +291,23 @@ class _Record(SQLModel):
             found += [operators[o](column) if o in ('$isempty', '$isnotempty') else operators[o](column, v) for o, v in value.items()]
         return and_(*found)
 
+    @staticmethod
+    def asks(filters: dict, key: str) -> bool:
+        """Whether a filter document has a condition on `key`, in it or in its `$and` and `$or`."""
+        return any(k == key or k in LOGICAL_OPERATORS and any(_Record.asks(f, key) for f in v) for k, v in filters.items())
+
     @classmethod
     async def search(cls, params, *where, conditions: QueryParams | None = None, order: tuple = ()):
-        """A page of a search: the records in sight of its table that `where` and the `conditions` select, their filters, and
-        their search's text in the text columns and `meta.display_name`, or in its fields; `limit` of them after the last one of the
-        page before (sqlakeyset), in the sort of `conditions`, then in `order`, then by the id, which no two rows share; every
-        match when no limit is given. A key of `meta` is filtered, sorted and searched as a column is, `meta.{key}`."""
-        query, sort = select(cls).where(cls.flags.op('&')(int(UNSEEN)) == 0, *where), []
+        """A page of a search: the records of its table that `where` and the `conditions` select, their filters, and their
+        search's text in the text columns and `meta.display_name`, or in its fields; those in sight, unless the filters ask for
+        `flags`; `limit` of them after the last one of the page before (sqlakeyset), in the sort of `conditions`, then in `order`,
+        then by the id, which no two rows share; every match when no limit is given. A key of `meta` is filtered, sorted and
+        searched as a column is, `meta.{key}`."""
+        filters = parse_filter_query(conditions.filters) if conditions else None
+        seen = () if filters and cls.asks(filters, 'flags') else (cls.flags.op('&')(int(UNSEEN)) == 0,)   # out of sight when asked for
+        query, sort = select(cls).where(*seen, *where), []
         if conditions:
-            if filters := parse_filter_query(conditions.filters):
+            if filters:
                 query = query.where(cls.where(filters, get_comparison_operators(case_sensitive=conditions.case_sensitive)))
             if conditions.search:
                 fields = (conditions.search_fields.split(',') if conditions.search_fields
@@ -399,7 +407,8 @@ def operations(path: str, body: type[_Record], name: str, table: type[_Record]) 
 
     @routes.get(path, response_model=Page[table], summary=f'Search {names}')
     async def search(type: str | None = None, conditions: QueryParams = Depends(), params: Params = Depends()):
-        """Of one `type`, or of every type; records out of sight are not searched.
+        """Of one `type`, or of every type; records out of sight only when the filters ask for `flags`, `{"flags": {"$gte": 0}}`
+        every record.
 
         `filters` is one JSON document of conditions on any column or key of `meta`,
         `{"parent_id": {"$eq": "…"}, "status": {"$ne": "rejected"}, "meta.display_name": {"$contains": "x"}}`, with the operators
