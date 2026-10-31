@@ -10,7 +10,7 @@ import fsspec
 from fastapi import FastAPI, Response
 from fastapi.testclient import TestClient
 
-from gppu.fs.catalog import Catalog, CatalogFileSystem, _text, api, label, paths, where
+from gppu.fs.catalog import CatalogFileSystem, _text, api, label, paths, where
 from gppu.fs.catalog import catalog as locations
 from gppu.fs.gppufs import GppuFileSystem
 from gppu.fs.vfs import DesktopFileSystem
@@ -209,70 +209,3 @@ def test_a_location_on_this_host_by_its_handlers_access_is_read_in_its_folder(tm
     assert str(found.location('top').uri_of('sub')) == 'file://elsewhere/srv/top/sub'
     assert found.location('top').container('sub').ls(detail=False) == ['note.md']
     assert found.location('inner').container().ls(detail=False) == ['note.md']   # below the folder of the location above it
-
-
-def kept(indexes, uri, name, written='261031.120000.000'):
-    """Where the Lake keeps an index as FileIndexer sends it: indexes/{host}/{folder without a drive's colon}/{when} {host} {name}."""
-    host, _, folder = uri.partition('://')[2].partition('/')
-    there = indexes / host / folder.replace(':', '')
-    there.mkdir(parents=True, exist_ok=True)
-    return there / f'{written} {host} {name}'
-
-
-def test_the_catalog_lists_a_location_from_the_latest_index_the_lake_keeps_at_or_above_it(tmp_path):
-    dev = tmp_path / 'Dev'
-    (dev / 'sub').mkdir(parents=True)
-    (dev / 'note.md').write_text('# note', encoding='utf-8')
-    (dev / 'sub' / 'a.csv').write_text('a,b\n1,2\n', encoding='utf-8')
-    fs = GppuFileSystem()
-    with fs.run():
-        fs.ls(dev, recurse=True, refresh=True)
-    indexes = tmp_path / 'indexes'
-    kept(indexes, 'file://alex-pc/D:/Dev', 'Dev.gppufs.sqlite').write_bytes((dev / '.Dev.gppufs.sqlite').read_bytes())
-    kept(indexes, 'file://alex-pc/D:/Dev', 'Dev.gppufs.sqlite', '261030.120000.000').write_bytes(b'not read: an older index')
-    records = [{'id': 'host', 'parent_id': None, 'meta': {'uri': 'file://alex-pc', 'display_name': 'Alex-PC'}, 'data': {}},
-               {'id': 'data', 'parent_id': 'host', 'meta': {'uri': 'file://alex-pc/D:', 'display_name': 'data'}, 'data': {}},
-               {'id': 'dev', 'parent_id': 'data', 'meta': {'uri': 'file://alex-pc/D:/Dev', 'display_name': 'Dev'}, 'data': {}},
-               {'id': 'work', 'parent_id': 'data', 'meta': {'uri': 'file://alex-pc/D:/Work', 'display_name': 'Work'}, 'data': {}}]
-    found = Catalog(lambda: records, indexes)
-    assert sorted((row['id'], row['parent'], row['indexed']) for row in found.locations()) == [
-        ('data', 'host', False), ('dev', 'data', True), ('host', None, False)]
-    root = list(found.entries(location='dev'))
-    assert [(row['name'], row['kind']) for row in root] == [('note.md', 'file'), ('sub', 'folder')]
-    assert root[0]['size'] == 6 and root[0]['id'].startswith('1003') and root[0]['modified'] and root[0]['created']
-    assert [row['name'] for row in found.entries(path='Alex-PC/data/Dev/sub')] == ['a.csv']   # held by the index above it
-    sub = found.at('dev', 'sub')
-    assert [row['name'] for row in found.entries(parent=sub)] == ['a.csv']
-    assert (found.entry(sub)['path'], found.entry(sub)['kind']) == ('sub', 'folder')
-    with pytest.raises(LookupError):
-        list(found.entries(path='Alex-PC/data/Dev/missing'))
-    with pytest.raises(LookupError):
-        list(found.entries(location='work'))   # no index the Lake keeps holds it
-
-
-def test_a_librarys_content_type_and_columns_come_from_its_index(tmp_path):
-    """A SharePoint library's index holds each item as gppufs's m365 store lists it, its content type and columns with it."""
-    import sqlite3
-    from contextlib import closing
-    index = kept(tmp_path / 'indexes', 'm365://karelin/sharepoint/Statements', 'Statements.gppufs.sqlite')
-
-    def row(path, kind, columns=None, content_type=None):
-        own = {'id': f'10030100-0000-0000-0000-00000000000{len(path)}', 'type': kind, 'size': 0 if kind == 'folder' else 100,
-               'modified_at': '2026-05-30 00:00:00+00:00', 'files': None, 'folders': None}
-        return path, json.dumps({'name': path, 'type': 'directory' if kind == 'folder' else 'file', 'created_at': '2026-05-04T00:00:00Z',
-                                 'content_type': content_type, 'columns': columns or {}, 'gppu': own})
-    with closing(sqlite3.connect(index)) as db:
-        db.execute('CREATE TABLE gppufs_entries (path TEXT PRIMARY KEY, metadata TEXT NOT NULL, children TEXT)')
-        db.executemany('INSERT INTO gppufs_entries (path, metadata) VALUES (?, ?)', [
-            row('.', 'folder'),
-            row('a.pdf', 'file', {'ContentType': 'Statement', '_StartDate': '2019-01-01T08:00:00Z', 'FileLeafRef': 'a.pdf'}, 'Statement'),
-            row('b.pdf', 'file', {'ContentType': 'Tax Form', 'TaxYear': 2023.0, 'FileLeafRef': 'b.pdf'}, 'Tax Form')])
-        db.commit()
-    records = [{'id': 'tenant', 'parent_id': None, 'meta': {'uri': 'm365://karelin', 'display_name': 'Karelin'}, 'data': {}},
-               {'id': 'library', 'parent_id': 'tenant', 'meta': {'uri': 'm365://karelin/sharepoint/Statements', 'display_name': 'Statements'}, 'data': {}}]
-    found = Catalog(lambda: records, tmp_path / 'indexes')
-    assert found.columns() == ['ContentType', 'TaxYear', '_StartDate']
-    rows = {row['name']: row for row in found.entries(path='Karelin/Statements')}
-    assert rows['a.pdf']['columns'] == {'ContentType': 'Statement', '_StartDate': '2019-01-01'}
-    assert (rows['b.pdf']['content_type'], rows['b.pdf']['columns'], rows['b.pdf']['created']) == (
-        'Tax Form', {'ContentType': 'Tax Form', 'TaxYear': '2023'}, '2026-05-04T00:00:00Z')

@@ -1,16 +1,17 @@
 """gppu.fs.lake: the Lake. An object is saved to the Lake without a uri, and the Lake decides where it is stored and answers with
 its uri; an object is retrieved by its uri. A client that copies an object to the Lake itself, such as a session hook growing a
 session's copy as its log grows, saves it the same way, with enough of it for its handler, and the Lake answers where the client
-copies it, storing nothing; the client then has the Lake index what it copied. Linked Data is Linked Data and the Lake is the Lake: their APIs are separate, /ld and
-/lake. The Lake is a catalog on gppufs: a Lake folder is listed through gppufs's GppuFileSystem, its index beside the Lake, and a
-UI lists it through the Lake's API, never the file system or gppufs.
+copies it, storing nothing; the client then has the Lake index what it copied. Linked Data is Linked Data and the Lake is the
+Lake: their APIs are separate, /ld and /lake. What the Lake holds is in its catalog (gppu.fs.catalog.Catalog), the one catalog: a
+Lake folder is listed from there, and a UI lists it through the Lake's API, never the file system; the store is read only for the
+bytes of a file saved, copied or opened.
 
 The Lake is configured in two places. Its locations are Linked Data's, a catalog made by gppu.fs.catalog.catalog(), which reach
 every uri outside the Lake. What the Lake itself is configured with is the app's, in Env: the uri of the Lake saved objects are
 stored in, a folder this host reaches through gppu.fs's FileSystem, and the templates of its layout
 (CRAP Systems/lake/docs/layout.md), one per type of record gppu's handlers read, `source` for any other.
 
-  Lake(catalog, store, templates)   the Lake over catalog's locations, saving below store by templates
+  Lake(catalog, store, templates, contents)   the Lake over catalog's locations, saving below store by templates, its catalog contents
   api(lake)                         the Lake as a FastAPI app, which an APIApp serves at /lake among its apis()
   LakeFileSystem(url, root)         the Lake through its API as an fsspec filesystem, what a desktop or a UI browses it with"""
 import io
@@ -28,33 +29,30 @@ from jinja2 import UndefinedError
 
 from . import handlers
 from . import CACHE, Container, DataObject, FileSystem, Location, _address, _below
-from .catalog import GppuCatalog
-from .gppufs import GppuFileSystem
+from .catalog import Catalog, GppuCatalog
 from ..gppu import TemplateSet, TimeSpan
 from .uri import y2uri
 
 PIECE = 1 << 20   # a download is sent a mebibyte at a time
+INDEX = '.gppufs.sqlite'   # how a gppufs index's name ends
 
 class Lake:
-    """Every location in the catalog, read by uri, and one folder, store, where saved objects go."""
+    """Every location in the catalog, read by uri, one folder, store, where saved objects go, and the catalog, contents, which holds
+    what the Lake holds: every file the Lake saves is recorded there, every index it receives is loaded there, and a Lake folder is
+    listed from there, so nothing reads the store but the bytes of a file saved, copied or opened."""
 
-    def __init__(self, catalog: GppuCatalog, store: y2uri | str, templates: Mapping[str, str]) -> None:
+    def __init__(self, catalog: GppuCatalog, store: y2uri | str, templates: Mapping[str, str], contents: Catalog) -> None:
         self.catalog = catalog
         provider = FileSystem()   # the Lake's store is its own configuration, a folder this host reaches, not one of Linked Data's locations
         self.store = Container(provider, y2uri(store))
         self.templates = TemplateSet(named={'lake': dict(templates)})
-        self.files = GppuFileSystem()
-        self.root = self.files._key(provider.local(self.store.uri).as_posix())   # the Lake on this host, as gppufs names it
-        self.files.ls(self.root)   # the Lake's index is at its root, so what it saves is indexed there and never beside a day folder
+        self.contents = contents
+        self.root = provider.local(self.store.uri)   # the Lake on this host
 
-    def _here(self, uri: y2uri | str) -> str | None:
-        """The Lake folder or file a uri names, as gppufs takes it; none for a uri outside the Lake."""
+    def _here(self, uri: y2uri | str) -> Path | None:
+        """The Lake folder or file a uri names, on this host; none for a uri outside the Lake."""
         below = _below(str(self.store.uri), str(uri))
-        return None if below is None else f'{self.root}/{unquote(below)}'.rstrip('/')
-
-    def _row(self, row: dict[str, Any]) -> dict[str, Any]:
-        """A gppufs row as the Lake answers it: named by its uri in the Lake."""
-        return row | {'name': _address(str(self.store.uri), row['name'][len(self.root):].strip('/'))}
+        return None if below is None else self.root / unquote(below)
 
     def _at(self, uri: y2uri | str) -> tuple[Container, str]:
         """The Container that reaches uri and its path there: the Lake's store for a uri in the Lake, else its location's."""
@@ -93,12 +91,20 @@ class Lake:
             raise ValueError(f'{obj.name}: the Lake has no place for a {type} from {obj.uri}')
         return str(Location.relative(path))
 
+    def _recorded(self, uri: y2uri | str, path: Path, record: handlers.Record) -> dict[str, Any]:
+        """The file the Lake holds at uri recorded in its catalog as its handler read it, from path, its copy on this host."""
+        stat = path.stat()
+        return self.contents.record(str(uri), record.type or 'file', {
+            'kind': 'file', 'size': stat.st_size, 'modified': datetime.fromtimestamp(stat.st_mtime).astimezone().isoformat(),
+            'created': None, 'content_type': None, 'columns': {}, 'record': json.loads(json.dumps(vars(record), default=_json))})
+
     def save(self, obj: DataObject, copy: bool = False) -> y2uri:
-        """Store obj where the Lake's layout places it, by what gppu's handlers read of it, and the uri it is stored at. With
-        copy the client copies it there itself: obj is as much of the object as its handler needs, such as a session's first
-        lines, nothing is stored, and the uri is where the client copies it and then has it indexed. Its content is a file under
-        its own name in CACHE while it is read and stored, a stream copied a piece at a time, so a large file is never held
-        whole."""
+        """Store obj where the Lake's layout places it, by what gppu's handlers read of it, record it in the catalog, and the uri it
+        is stored at. A gppufs index is loaded into the catalog as the latest copy of the folder it came from, obj's uri, before it
+        is stored, and refused when it cannot be. With copy the client copies obj there itself: obj is as much of the object as its
+        handler needs, such as a session's first lines, nothing is stored or recorded, and the uri is where the client copies it
+        and then has it indexed. Its content is a file under its own name in CACHE while it is read and stored, a stream copied a
+        piece at a time, so a large file is never held whole."""
         with tempfile.TemporaryDirectory(prefix='lake-', dir=CACHE) as folder:
             scratch = Path(folder) / Path(obj.name).name   # its own name, never a path out of the folder
             with scratch.open('wb') as file:
@@ -107,22 +113,24 @@ class Lake:
                 else:
                     file.write(obj.content if isinstance(obj.content, bytes) else obj.content.encode('utf-8')
                                if isinstance(obj.content, str) else json.dumps(obj.content, ensure_ascii=False).encode('utf-8'))
-            path = self.place(obj, self.read(scratch), handlers.probe(scratch).type)
+            record = self.read(scratch)
+            path = self.place(obj, record, handlers.probe(scratch).type)
+            uri = self.store.provider.join(self.store.uri, Location.relative(path))
             if copy:
-                return self.store.provider.join(self.store.uri, Location.relative(path))
+                return uri
+            if obj.name.endswith(INDEX):
+                self.contents.load(str(obj.uri), scratch)
             with scratch.open('rb') as stream:
                 self.store.write(path, DataObject(obj.uri, stream, obj.identity, obj.kind, obj.name))
-        uri = self.store.provider.join(self.store.uri, Location.relative(path))
-        self.index(uri)   # the catalog holds what was saved
+            self._recorded(uri, scratch, record)
         return uri
 
     def index(self, uri: y2uri | str) -> dict[str, Any]:
-        """The file at uri read again by its handlers into the Lake's catalog, gppufs: what save stored, or what a client copied
-        where save told it to."""
+        """The file a client copied to uri, where save told it to, read by its handlers and recorded in the catalog."""
         here = self._here(uri)
-        if here is None or not Path(here).is_file():
+        if here is None or not here.is_file():
             raise LookupError(f'{uri}: the Lake holds no file there')
-        return self._row(self.files.info(here, refresh=True))   # plainly, as an async route calls save too
+        return self._recorded(uri, here, self.read(here))
 
     def path(self, uri: y2uri | str) -> str:
         """Where uri is below the Lake, as a client that has the Lake mounted joins it to the mount."""
@@ -137,22 +145,25 @@ class Lake:
         return container.read(path)
 
     def ls(self, uri: y2uri | str) -> list[dict[str, Any]]:
-        """What is directly inside uri: a Lake folder from its catalog, gppufs, each entry with what its handlers read; any other
-        through its location's Container."""
-        if (here := self._here(uri)) is not None:
-            return [self._row(row) for row in self.files.ls(here, detail=True)]
+        """What is directly inside uri: a Lake folder from its catalog, each entry as the catalog lists it; any other through its
+        location's Container."""
+        if self._here(uri) is not None:
+            return list(self.contents.entries(uri=str(uri).rstrip('/')))
         container, path = self._at(uri)
         return container.ls(path)
 
     def walk(self, uri: y2uri | str, level: str = 'files', recursive: bool = False) -> list[tuple[dict, list[dict]]]:
-        """Every folder at and below uri with what it holds, read as deep as level."""
+        """Every folder at and below uri with what it holds, read as deep as level, through its location's Container; the Lake
+        is listed from its catalog, a folder at a time (ls), never walked."""
+        if self._here(uri) is not None:
+            raise ValueError(f'{uri}: the Lake is listed from its catalog, a folder at a time, never walked')
         container, path = self._at(uri)
         return list(container.walk(path, level=level, recursive=recursive))
 
     def info(self, uri: y2uri | str) -> dict[str, Any]:
-        """What the handlers found at uri, without its content: in the Lake from its catalog, gppufs."""
-        if (here := self._here(uri)) is not None:
-            return self._row(self.files.info(here))
+        """What is at uri, without its content: in the Lake from its catalog, else through its location's Container."""
+        if self._here(uri) is not None:
+            return self.contents.info(str(uri).rstrip('/'))
         container, path = self._at(uri)
         return container.info(path)
 
@@ -162,9 +173,11 @@ class Lake:
         return container.open(path, mode)
 
     def delete(self, uri: y2uri | str) -> None:
-        """Remove the object at uri."""
+        """Remove the object at uri, and from the catalog when it is in the Lake."""
         container, path = self._at(uri)
         container.delete(path)
+        if self._here(uri) is not None:
+            self.contents.forget(str(uri))
 
 
 def _json(value: Any) -> Any:
@@ -309,16 +322,19 @@ class LakeFileSystem(AbstractFileSystem):
         r.raise_for_status()
         return r
 
-    def _entry(self, row: dict[str, Any]) -> dict[str, Any]:
-        """A Lake row as fsspec has an entry: named by its path below root."""
-        return row | {'name': row['name'][len(self.root):].strip('/')}
+    @staticmethod
+    def _entry(row: dict[str, Any], name: str) -> dict[str, Any]:
+        """An entry of the Lake's catalog as fsspec has an entry: named by its path below root, a folder a directory."""
+        folder = row['kind'] == 'folder'
+        return row | {'name': name, 'type': 'directory' if folder else 'file', 'size': 0 if folder else row['size'] or 0}
 
     def ls(self, path: str = '', detail: bool = True, **kwargs: Any) -> list[dict[str, Any]] | list[str]:
-        rows = [self._entry(row) for row in self._get(path, ls='').json()]
+        path = self._strip_protocol(path).strip('/')
+        rows = [self._entry(row, f"{path}/{row['name']}".strip('/')) for row in self._get(path, ls='').json()]
         return rows if detail else [row['name'] for row in rows]
 
     def info(self, path: str = '', **kwargs: Any) -> dict[str, Any]:
-        return self._entry(self._get(path).json())
+        return self._entry(self._get(path).json(), self._strip_protocol(path).strip('/'))
 
     def _open(self, path: str, mode: str = 'rb', **kwargs: Any) -> BinaryIO:
         if mode != 'rb':
