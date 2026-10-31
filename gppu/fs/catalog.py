@@ -631,6 +631,9 @@ def rows(index: Path) -> list[dict[str, Any]]:
         own = row['gppu']
         if not own.get('id'):
             raise ValueError(f'{index.name}: {path or "its folder"} has no id; gppufs gives every row one when it next writes the index')
+        if not own.get('handlers'):   # a row gppufs kept for what its folder no longer holds, as it did before gppu 4c73238
+            raise ValueError(f'{index.name}: {path or "its folder"} has no handler, a row for what is no longer there; gppufs drops it '
+                             'when it next lists the folder, and the index is sent again')
         created = row.get('created_at') or (datetime.fromtimestamp(row['created']).astimezone().isoformat() if row.get('created') else None)
         handler = own['handlers'][0]
         found.append({'id': own['id'], 'path': path, 'type': 'file' if handler in INSTANCE_KINDS else handler,

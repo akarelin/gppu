@@ -203,3 +203,15 @@ def test_a_reload_over_instances_an_earlier_load_wrote_inside_their_folders_flag
     found.load('file://alex-pc/D:/Projects/.Projects.gppufs.sqlite', indexed(projects))
     assert ld.get(f'/fs/instances/{old}').json()['flags'] == 4 and ld.get(f'/fs/instances/{root}').json()['flags'] == 4
     assert [row['name'] for row in found.entries(uri='file://alex-pc/D:/Projects')] == ['kept.md']
+
+
+def test_an_index_holding_a_row_with_no_handler_is_refused_naming_it(ld, tmp_path):
+    index = tmp_path / '.Stale.gppufs.sqlite'
+    with closing(sqlite3.connect(index)) as db:
+        db.execute('CREATE TABLE gppufs_entries (path TEXT PRIMARY KEY, metadata TEXT NOT NULL, children TEXT)')
+        db.executemany('INSERT INTO gppufs_entries (path, metadata) VALUES (?, ?)', [
+            ('.', json.dumps({'gppu': {'id': str(__import__('gppu').uuid_create(0x1003)), 'type': 'folder', 'handlers': ['folder']}})),
+            ('gone.md', json.dumps({'gppu': {'id': str(__import__('gppu').uuid_create(0x1003)), 'type': 'file', 'handlers': []}}))])
+        db.commit()
+    with pytest.raises(ValueError, match='gone.md has no handler'):
+        catalog_of(ld).load('file://alex-pc/D:/Work/.Stale.gppufs.sqlite', index)
