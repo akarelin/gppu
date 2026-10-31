@@ -32,7 +32,7 @@ from psycopg.errors import UndefinedFunction
 from pydantic import ConfigDict, GetCoreSchemaHandler, GetJsonSchemaHandler, TypeAdapter, ValidationError
 from pydantic_core import core_schema
 from sqlakeyset import custom_bookmark_type
-from sqlalchemy import Computed, DateTime, FetchedValue, Integer, SmallInteger, String, TypeDecorator, and_, literal, or_
+from sqlalchemy import Computed, DateTime, FetchedValue, Float, Integer, SmallInteger, String, TypeDecorator, and_, case, literal, or_
 from sqlalchemy.dialects.postgresql import JSONB, TSTZRANGE, Range
 from sqlalchemy.exc import DataError, IntegrityError, StatementError
 from sqlalchemy.sql.elements import UnaryExpression
@@ -163,11 +163,16 @@ class SpanColumn(TypeDecorator):
 
 
 custom_bookmark_type(Span, 'span', deserializer=SPAN.validate_json, serializer=lambda s: SPAN.dump_json(s).decode())   # a page sorted by span carries one in its cursor
-LEAST = {str: '', int: 0, UUID: UUID(int=0), datetime: datetime.min.replace(tzinfo=ZoneInfo('UTC'))}   # what an empty column is sorted as
+LEAST = {str: '', int: 0, float: -1e308, UUID: UUID(int=0), datetime: datetime.min.replace(tzinfo=ZoneInfo('UTC'))}   # what an empty column is sorted as
 LEAST[Span] = Span(*[LEAST[datetime] + timedelta(days=1)] * 2)   # a span at the least time it holds in any zone: TimeSpan reads its times in gppu's
 
 
 # ++     _Record: every record's columns and its operations; a table's class only defines its table
+
+def numeric(value: Any) -> bool:
+    """Whether a condition's value is a number, or a list of numbers, which a key of `meta` is compared with as a number."""
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)) or (isinstance(value, list) and bool(value) and all(map(numeric, value)))
+
 
 class _Record(SQLModel):
     """Everything stored is a record (# Record), and every type is built on it: its columns and its operations, with no table of
@@ -274,10 +279,12 @@ class _Record(SQLModel):
         return (await cls.db().exec(query.order_by(*order))).all()
 
     @classmethod
-    def key(cls, key: str):
-        """What a filter, a sort or a search reads: a column, or a key of `meta`, `meta.{key}`, as text."""
+    def key(cls, key: str, number: bool = False):
+        """What a filter, a sort or a search reads: a column, or a key of `meta`, `meta.{key}`, as text, or with `number` as the
+        number it holds, none where it holds no number."""
         if key.startswith('meta.') and key[5:]:
-            return cls.meta[key[5:]].astext
+            value = cls.meta[key[5:]]
+            return case((func.jsonb_typeof(value) == 'number', value.astext.cast(Float))) if number else value.astext
         if key not in cls.__table__.columns:
             raise HTTPException(400, f"{cls.__tablename__} has no column {key!r}; a key of meta is 'meta.{{key}}'")
         return getattr(cls, key)
@@ -294,8 +301,8 @@ class _Record(SQLModel):
                 continue
             if not isinstance(value, dict) or set(value) - operators.keys():
                 raise HTTPException(400, f'{key}: its conditions are operators, {", ".join(operators)}, not {value!r}')
-            column = cls.key(key)
-            found += [operators[o](column) if o in ('$isempty', '$isnotempty') else operators[o](column, v) for o, v in value.items()]
+            found += [operators[o](cls.key(key)) if o in ('$isempty', '$isnotempty') else operators[o](cls.key(key, number=numeric(v)), v)
+                      for o, v in value.items()]
         return and_(*found)
 
     @staticmethod
@@ -324,9 +331,9 @@ class _Record(SQLModel):
                 key, _, way = clause.partition(':')
                 if way.strip().lower() not in ('', 'asc', 'desc'):
                     raise HTTPException(400, f'{clause}: a sort is column:asc or column:desc')
-                column = cls.key(key.strip())
-                column = func.lower(column, type_=String()) if isinstance(column.type, String) and not conditions.case_sensitive else column
-                sort.append(column.desc() if way.strip().lower() == 'desc' else column.asc())
+                key, lower = key.strip(), lambda c: func.lower(c, type_=String()) if isinstance(c.type, String) and not conditions.case_sensitive else c
+                columns = [cls.key(key, number=True), lower(cls.key(key))] if key.startswith('meta.') else [lower(cls.key(key))]   # a key of meta: its numbers, then its text
+                sort += [c.desc() if way.strip().lower() == 'desc' else c.asc() for c in columns]
 
         def after(key):
             """A sort key a page can read after: one a record may leave empty, a column's or a key's in `data` or `meta`, sorts that

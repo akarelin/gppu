@@ -109,6 +109,13 @@ def test_a_key_of_meta_is_filtered_sorted_and_searched_as_a_column_is(api):
     assert named(filters=json.dumps(under | {'meta.display_name': {'$startswith': 'g'}})) == ['gamma']
     assert named(filters=json.dumps({'$or': [{'meta.display_name': {'$eq': 'alpha'}}, {'meta.display_name': {'$eq': 'Beta'}}]})) == ['beta', 'Alpha']
     assert named(search='named thing') == ['Named things']
+    ranked = ok(api.post('/nodes', json={'type': 'project', 'meta': {'display_name': 'Ranked things'}}))
+    for rank in (10, 9, 2, None):
+        ok(api.post('/nodes', json={'type': 'task', 'parent_id': ranked['id'], 'meta': {'display_name': f'rank {rank}'} | ({'rank': rank} if rank else {})}))
+    of = json.dumps({'parent_id': {'$eq': ranked['id']}})
+    ranks = lambda **params: [t['meta'].get('rank') for t in pages(api, '/nodes', **params)]
+    assert ranks(filters=of, sort='meta.rank:asc', limit=1) == [None, 2, 9, 10]   # numbers as numbers, one without least
+    assert ranks(filters=json.dumps({'$and': [json.loads(of), {'meta.rank': {'$gt': 5}}]}), sort='meta.rank:desc') == [10, 9]
     assert 'no column' in ok(api.get('/nodes', params={'filters': json.dumps({'name': {'$eq': 'x'}})}), 400)['detail']
 
 
