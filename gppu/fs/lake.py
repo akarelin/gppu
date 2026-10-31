@@ -100,8 +100,8 @@ class Lake:
 
     def save(self, obj: DataObject, copy: bool = False) -> y2uri:
         """Store obj where the Lake's layout places it, by what gppu's handlers read of it, record it in the catalog, and the uri it
-        is stored at. A gppufs index is loaded into the catalog as the latest copy of the folder it came from, obj's uri, before it
-        is stored, and refused when it cannot be. With copy the client copies obj there itself: obj is as much of the object as its
+        is stored at. A gppufs index is stored as any file and received by the catalog, which load() then loads as the latest copy
+        of the folder it came from, obj's uri. With copy the client copies obj there itself: obj is as much of the object as its
         handler needs, such as a session's first lines, nothing is stored or recorded, and the uri is where the client copies it
         and then has it indexed. Its content is a file under its own name in CACHE while it is read and stored, a stream copied a
         piece at a time, so a large file is never held whole."""
@@ -118,12 +118,22 @@ class Lake:
             uri = self.store.provider.join(self.store.uri, Location.relative(path))
             if copy:
                 return uri
-            if obj.name.endswith(INDEX):
-                self.contents.load(str(obj.uri), scratch)
             with scratch.open('rb') as stream:
                 self.store.write(path, DataObject(obj.uri, stream, obj.identity, obj.kind, obj.name))
             self._recorded(uri, scratch, record)
+            if obj.name.endswith(INDEX):
+                self.contents.received(str(obj.uri))   # loaded after the answer, by load()
         return uri
+
+    def load(self, uri: y2uri | str, source: str) -> None:
+        """The index the Lake stored at uri, received from source, loaded into the catalog as the latest copy of its folder's: its
+        bytes copied into CACHE and read there."""
+        with tempfile.TemporaryDirectory(prefix='lake-', dir=CACHE) as folder:
+            copy = Path(folder) / f'index{INDEX}'
+            container, path = self._at(uri)
+            with container.open(path, 'rb') as stream, copy.open('wb') as file:
+                shutil.copyfileobj(stream, file)
+            self.contents.load(source, copy)
 
     def index(self, uri: y2uri | str) -> dict[str, Any]:
         """The file a client copied to uri, where save told it to, read by its handlers and recorded in the catalog."""
@@ -202,13 +212,15 @@ def api(lake: Lake):
     POST   /?name=&source=   save the file that is the body, by its name and the uri it came from, source, where there is one;
                              the answer is the uri the Lake stored it at; with ?copy the client copies the file itself, the body
                              as much of it as its handler needs, and the answer is the uri and the path below the Lake it copies
-                             it to, nothing stored
+                             it to, nothing stored; a gppufs index is stored, answered 202, and loaded into the catalog after,
+                             one at a time, its state at /lake/catalog/indexes?folder=
     POST   /{uri}            index the file a client copied to uri, after answering 202: a long session is read for seconds, and
                              no client waits for it; one file is indexed at a time, and a file copied to again while it is
                              indexed is indexed once more after
     GET    /{uri}            what the handlers found at uri, the Lake itself when no uri is given; ?ls what is inside it,
                              ?walk&level=&recursive= everything below it, ?retrieve the object with its content, ?content its bytes
-    GET    /?failed          each copied file whose last index failed, with its error, until an index of it succeeds
+    GET    /?failed          each copied file whose last index failed, and each index whose last load failed, with its error,
+                             until an index or a load of it succeeds
     DELETE /{uri}            remove the object at uri
 
     A uri no location holds answers 404, a save to a place another object holds 409 and a value the Lake refuses 400, each with
@@ -227,6 +239,22 @@ def api(lake: Lake):
     for refused in (ValueError, TypeError):
         app.add_exception_handler(refused, lambda request, error: reply({'error': str(error)}, 400))
 
+    indexing: dict[str, bool] = {}   # each uri waiting or being indexed, and whether it was copied to again meanwhile
+    failures: dict[str, str] = {}   # each uri whose last index or load failed, and why: the client had its 202 before, so ?failed shows it
+    turn, guard = threading.Lock(), threading.Lock()   # one file indexed at a time; guard keeps indexing and failures whole
+    loads = threading.Lock()   # one index loaded at a time, apart from the copies indexed, as a load takes minutes
+
+    def load(uri: str, source: str) -> None:
+        try:
+            with loads:
+                lake.load(uri, source)
+            with guard:
+                failures.pop(uri, None)
+        except BaseException as error:   # kept for ?failed and the catalog's /indexes, and raised on to the server's log
+            with guard:
+                failures[uri] = f'{type(error).__name__}: {error}'
+            raise
+
     @app.post('/')
     async def save(request: Request, name: str, source: str = '', copy: str | None = None):
         with tempfile.TemporaryFile(dir=CACHE) as body:   # the body streamed to a file as it arrives, never held whole
@@ -236,11 +264,10 @@ def api(lake: Lake):
             uri = lake.save(DataObject(source, body, None, 'file', name), copy is not None)
         if copy is not None:
             return reply({'uri': str(uri), 'path': lake.path(uri)})
+        if name.endswith(INDEX):   # stored and received; loaded after the answer, as a large index loads for minutes
+            return Response(json.dumps({'uri': str(uri)}), status_code=202, media_type='application/json; charset=utf-8',
+                            background=BackgroundTask(load, str(uri), source))
         return reply({'uri': str(uri)}, 201)
-
-    indexing: dict[str, bool] = {}   # each uri waiting or being indexed, and whether it was copied to again meanwhile
-    failures: dict[str, str] = {}   # each uri whose last index failed, and why: the client had its 202 before, so ?failed shows it
-    turn, guard = threading.Lock(), threading.Lock()   # one file indexed at a time; guard keeps indexing and failures whole
 
     def index(uri: str) -> None:
         try:
