@@ -115,7 +115,13 @@ def test_the_api_at_lake_answers_what_the_lake_answers(tmp_path, ld):
     taken = client.post('/lake/', params={'name': f'{UID}.jsonl'}, content=SESSION.replace('hello', 'other').encode())
     assert taken.status_code == 409 and 'error' in taken.json()
     unread = client.post('/lake/', params={'name': f'{UID}.jsonl'}, content=b'{"type": "user", "sessionId": "' + UID.encode() + b'"}\n')
-    assert unread.status_code == 400 and 'no place' in unread.json()['error']   # a session with no time has no date to be placed by
+    assert unread.status_code == 400 and 'gives no time' in unread.json()['error']   # a session with no time has no date to be placed by
+    named = b''.join(json.dumps(line).encode() + b'\n' for line in (   # a session's first lines naming it, as preservator sent them
+        {'type': 'custom-title', 'sessionId': UID, 'customTitle': 'x'}, {'type': 'ai-title', 'sessionId': UID, 'aiTitle': 'x'},
+        {'type': 'permission-mode', 'sessionId': UID, 'permissionMode': 'default'}, {'type': 'file-history-snapshot', 'messageId': 'm'}))
+    unplaced = client.post('/lake/', params={'name': f'{UID}.jsonl', 'copy': ''}, content=named)
+    assert unplaced.status_code == 400 and unplaced.json()['error'] == (
+        f'{UID}.jsonl: the Lake has no place for a session: what was sent of it gives no time, so it has no date to be placed by')
     assert client.post('/lake/', params={'name': 'note.txt'}, content=b'text').status_code == 400
 
 
