@@ -256,6 +256,32 @@ def test_ls_drops_from_the_index_what_is_gone(tmp_path):
     assert sorted(path for (path,) in db.execute('SELECT path FROM gppufs_entries')) == ['.', 'kept.txt']
 
 
+def test_ls_keeps_a_folder_with_an_index_of_its_own(tmp_path):
+  """A folder below holding an index of its own, which the index above finds by its listing, stays found however often the
+  folder above is listed, and its own rows stay when it is listed itself."""
+  (tmp_path / 'top.txt').write_text('top')
+  (tmp_path / 'own' / 'deep').mkdir(parents=True)
+  (tmp_path / 'own' / 'deep' / 'below.txt').write_text('below')
+  fs = GppuFileSystem()
+  fs.split(tmp_path)
+  fs.ls(tmp_path, recurse=True)
+  fs.split(tmp_path / 'own')
+  fs = GppuFileSystem()
+  before = sorted(fs.indexes(tmp_path))
+  assert len(before) == 2, before
+  def rows(index):
+    with closing(sqlite3.connect(index)) as db:
+      return sorted(path for (path,) in db.execute('SELECT path FROM gppufs_entries'))
+  held = {index: rows(index) for index in before}
+  for _ in range(2):
+    fs.ls(tmp_path)
+  fs.ls(tmp_path / 'own')
+  fs.ls(tmp_path / 'own' / 'deep')
+  assert sorted(fs.indexes(tmp_path)) == before
+  assert {index: rows(index) for index in before} == held
+  assert fs.stored(tmp_path / 'own' / 'deep' / 'below.txt') is not None
+
+
 def test_failed_refresh_does_not_destroy_snapshot(tmp_path, monkeypatch):
   (tmp_path / 'note.txt').write_text('cached')
   fs = GppuFileSystem()
