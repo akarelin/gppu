@@ -1265,7 +1265,29 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
     listing.sort(key=lambda entry: (entry['type'] != 'directory', entry['path'].casefold()))
     if rows or listing != children:
       self._store(key, rows, listing)
+    self._drop_gone(key, listing)
     return listing
+
+  def _drop_gone(self, key: str, listing: list[dict]) -> None:
+    """What the index holds directly in the folder at key and its live listing no longer finds, dropped with what is below
+    it, as a walk drops it: a file deleted is gone from the index, and from the catalog it is loaded into. The index is
+    written only when it holds something to drop."""
+    owner = self._owner(key)
+    if owner is None:
+      return
+    here = self._relative(key, owner)
+    prefix = '' if here == '.' else here + '/'
+    now = {self._relative(entry['path'], owner) for entry in listing}
+    with self._database(owner) as database:
+      if database is None:
+        return
+      held = [path for (path,) in database.execute(
+        "SELECT path FROM gppufs_entries WHERE path != '.' AND substr(path, 1, ?) = ? AND instr(substr(path, ?), '/') = 0",
+        (len(prefix), prefix, len(prefix) + 1)).fetchall()]
+    if gone := [path for path in held if path not in now]:
+      with self._database(owner, write=True) as database:
+        database.executemany('DELETE FROM gppufs_entries WHERE path=? OR substr(path, 1, ?)=?',
+                             [(path, len(path) + 1, path + '/') for path in gone])
 
   async def _info(self, path: str | Path, refresh: bool = False, **kwargs) -> dict:
     """Return one native entry with its handler metadata.

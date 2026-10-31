@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import tarfile
@@ -225,6 +226,34 @@ def test_ls_lists_removed_and_added_entries_and_refresh_forgets_removed(tmp_path
   assert fs.info(tmp_path)['gppu']['bytes'] == len('new content')
   with pytest.raises(FileNotFoundError):
     fs.info(source)
+
+
+def test_ls_drops_from_the_index_what_is_gone(tmp_path):
+  """A listing drops from the index what the folder no longer holds, with what was below it, a row an earlier index kept for
+  a file long gone among them, so the catalog an index is loaded into never holds a file that is not there."""
+  (tmp_path / 'gone.txt').write_text('gone')
+  (tmp_path / 'kept.txt').write_text('kept')
+  (tmp_path / 'sub' / 'deep').mkdir(parents=True)
+  (tmp_path / 'sub' / 'deep' / 'below.txt').write_text('below')
+  fs = GppuFileSystem()
+  fs.split(tmp_path)
+  fs.ls(tmp_path, recurse=True)
+  assert fs.stored(tmp_path / 'sub' / 'deep' / 'below.txt') is not None
+  (tmp_path / 'gone.txt').unlink()
+  shutil.rmtree(tmp_path / 'sub')
+  fs.ls(tmp_path)
+  assert fs.stored(tmp_path / 'gone.txt') is None and fs.stored(tmp_path / 'sub') is None
+  assert fs.stored(tmp_path / 'sub' / 'deep' / 'below.txt') is None
+  [index] = fs.indexes(tmp_path)
+  with closing(sqlite3.connect(index)) as db, db:   # a row an earlier index kept for a file gone before its folder was listed
+    metadata = json.loads(db.execute("SELECT metadata FROM gppufs_entries WHERE path='kept.txt'").fetchone()[0])
+    db.execute('INSERT INTO gppufs_entries VALUES (?, ?, NULL)', ('long gone.pdf', json.dumps(metadata | {'name': 'long gone.pdf'})))
+  fs = GppuFileSystem()
+  assert fs.stored(tmp_path / 'long gone.pdf') is not None
+  assert [Path(row['name']).name for row in fs.ls(tmp_path)] == ['kept.txt']
+  assert fs.stored(tmp_path / 'long gone.pdf') is None
+  with closing(sqlite3.connect(index)) as db:
+    assert sorted(path for (path,) in db.execute('SELECT path FROM gppufs_entries')) == ['.', 'kept.txt']
 
 
 def test_failed_refresh_does_not_destroy_snapshot(tmp_path, monkeypatch):
