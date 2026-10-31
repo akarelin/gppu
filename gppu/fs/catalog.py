@@ -792,7 +792,6 @@ class Catalog:
             raise ValueError(f'{folder}: the index holds no row for its folder')
         top = self.file_of(folder)
         files, instances = self._under('files', top), self._under('instances', folder)
-        loaded = datetime.now().astimezone().isoformat()
         ids: dict[str, str] = {}   # each row's path -> its file's id
         for row in held:
             path = row['path']
@@ -804,14 +803,17 @@ class Catalog:
             parent = ids[above] if above in ids else self._parent(uri)   # a row whose folder the index holds no row for: that folder's file
             self._put('files', ids[path], row['type'], parent, uri,
                       row['file'], span={'start': start, 'end': None, 'bounds': '[)'} if start else None)
-            self._put('instances', row['id'], 'instance', ids[path], _address(folder, path),
-                      row['instance'] | {'index': folder} | ({} if path else {'loaded': loaded}), kind=row['kind'])
+            self._put('instances', row['id'], 'instance', ids[path], _address(folder, path), row['instance'] | {'index': folder},
+                      kind=row['kind'])
         kept, left = {row['id'] for row in held}, set()
         for instance in instances.values():
             if instance['data'].get('index') == folder and instance['id'] not in kept and not instance['flags'] & DELETED:   # gone from the latest copy
                 self._delete('instances', instance['id'])
                 left.add(instance['meta']['uri'])
         self._orphans(left)
+        root = held[0]   # the folder's own instance, stamped loaded last, so a load that fails before its end is never taken as loaded
+        self._put('instances', root['id'], 'instance', ids[''], folder,
+                  root['instance'] | {'index': folder, 'loaded': datetime.now().astimezone().isoformat()}, kind=root['kind'])
         if urlsplit(top).scheme == 'm365':
             self._columns = None
 
@@ -930,7 +932,7 @@ class Catalog:
             state = dict(self._received.get(folder, {}))
         if not held and not state:
             raise LookupError(f'{folder}: the catalog holds no index of it')
-        return {'folder': folder, 'loaded': found['data']['loaded'] if held else None, 'received': state.get('received'),
+        return {'folder': folder, 'loaded': found['data'].get('loaded') if held else None, 'received': state.get('received'),
                 'loading': state.get('loading', False), 'error': state.get('error')}
 
     def unload(self, folder: str) -> None:

@@ -231,3 +231,25 @@ def test_a_row_whose_folder_the_index_holds_no_row_for_is_put_inside_that_folder
     found.load('file://alex-pc/D:/Loose/.Loose.gppufs.sqlite', index)
     assert [row['name'] for row in found.entries(uri='file://alex-pc/D:/Loose')] == ['.claude']
     assert [row['name'] for row in found.entries(uri='file://alex-pc/D:/Loose/.claude')] == ['settings.json']
+
+
+def test_a_load_that_fails_before_its_end_leaves_its_folder_unloaded(ld, tmp_path, monkeypatch):
+    """The folder's own instance is stamped loaded last: a load stopped part way leaves no stamp, and the indexer sends it again."""
+    late = tmp_path / 'Late'
+    (late / 'a').mkdir(parents=True)
+    (late / 'a' / 'x.md').write_text('# x', encoding='utf-8')
+    found = catalog_of(ld)
+    put = found._put
+
+    def failing(table, id, type, parent, uri, *args, **kwargs):
+        if uri.endswith('/x.md'):
+            raise RuntimeError('the API stopped answering')
+        return put(table, id, type, parent, uri, *args, **kwargs)
+    monkeypatch.setattr(found, '_put', failing)
+    with pytest.raises(RuntimeError):
+        found.load('file://alex-pc/D:/Late/.Late.gppufs.sqlite', indexed(late))
+    state = found.loaded('file://alex-pc/D:/Late')
+    assert state['loaded'] is None and 'stopped answering' in state['error']
+    monkeypatch.setattr(found, '_put', put)
+    found.load('file://alex-pc/D:/Late/.Late.gppufs.sqlite', indexed(late))
+    assert found.loaded('file://alex-pc/D:/Late')['loaded']
