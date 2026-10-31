@@ -104,6 +104,25 @@ def test_stats_are_aggregated_in_the_index(tmp_path, monkeypatch):
   assert not index(empty).exists()
 
 
+def test_the_index_files_at_and_below_a_folder_are_found_whoever_wrote_them(tmp_path, monkeypatch):
+  """indexes(path): the index holding a folder and every index nested below it, found in the indexes alone, as a new gppufs
+  that wrote none of them finds them: what FileIndexer sends the catalog when it lacks a folder's index."""
+  for name, count in (('big', 40), ('small', 2)):
+    (tmp_path / name / 'deep').mkdir(parents=True)
+    for i in range(count):
+      (tmp_path / name / 'deep' / f'note{i}.md').write_text(f'Text {i}', encoding='utf-8')
+  monkeypatch.setattr(gppu.fs.gppufs, 'INDEX_LIMIT', 32 * 1024)   # big and big/deep split off, as in the test below
+  GppuFileSystem().ls(tmp_path, recurse=True)
+  GppuFileSystem.clear_instance_cache()   # a new process: another gppufs, which knows nothing of which folders hold an index
+  gppu.fs.gppufs._INDEXES.clear()
+  fresh = GppuFileSystem()
+  as_found = lambda paths: sorted(Path(p).resolve() for p in paths)
+  assert as_found(fresh.indexes(tmp_path)) == as_found([index(tmp_path), index(tmp_path / 'big'), index(tmp_path / 'big' / 'deep')])
+  assert as_found(fresh.indexes(tmp_path / 'big')) == as_found([index(tmp_path / 'big'), index(tmp_path / 'big' / 'deep')])
+  assert as_found(fresh.indexes(tmp_path / 'small')) == as_found([index(tmp_path)])   # the index holding it, the root's
+  assert fresh.written(tmp_path) == []   # it wrote none of them
+
+
 def test_an_index_past_the_limit_splits_off_the_folder_holding_most_of_it(tmp_path, monkeypatch):
   """No index grows past INDEX_LIMIT (Alex's proposal of 2026-10-21): the folder below holding the most of an index gets
   one of its own, again further down, until only one folder's own entries are left; listings and statistics stay what

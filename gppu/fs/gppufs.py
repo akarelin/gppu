@@ -601,6 +601,25 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
     with self._lock:
       return [index for index in self._working if key is None or self._within(os.path.dirname(index), key)]
 
+  def indexes(self, path: str | Path) -> list[str]:
+    """The index files at and below path, where they are in their folders, whoever wrote them: the index holding path, the
+    deepest at or above it, and every index nested below path, each found in the index above it, as stats() finds them. An
+    index held in memory or kept in the cache has no file there and is none of them."""
+    with self._lock:
+      key = self._key(path)
+      owner = self._owner(key)
+      found, folders = [], [] if owner is None else [owner]
+      while folders:
+        folder = folders.pop()
+        if (index := self._existing_index(folder)) is not None:
+          found.append(index)
+        with self._database(folder) as database:
+          if database is None:
+            continue
+          nested = [self._absolute(path, folder) for (path,) in database.execute(self._nested).fetchall()]
+        folders.extend(below for below in nested if self._within(below, key))
+      return found
+
   @contextmanager
   def run(self):
     """Writes that reach their folders together: every index a run writes is built in the cache and put into its folder
