@@ -800,7 +800,9 @@ class Catalog:
             found = files.get(uri)
             ids[path] = found['id'] if found else str(uuid_create(0x1002))
             start = _earliest(row['created'], ((found or {}).get('span') or {}).get('start'))
-            self._put('files', ids[path], row['type'], self._parent(top) if not path else ids[path.rpartition('/')[0]], uri,
+            above = path.rpartition('/')[0] if path else None
+            parent = ids[above] if above in ids else self._parent(uri)   # a row whose folder the index holds no row for: that folder's file
+            self._put('files', ids[path], row['type'], parent, uri,
                       row['file'], span={'start': start, 'end': None, 'bounds': '[)'} if start else None)
             self._put('instances', row['id'], 'instance', ids[path], _address(folder, path),
                       row['instance'] | {'index': folder} | ({} if path else {'loaded': loaded}), kind=row['kind'])

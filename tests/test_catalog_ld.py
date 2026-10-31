@@ -215,3 +215,19 @@ def test_an_index_holding_a_row_with_no_handler_is_refused_naming_it(ld, tmp_pat
         db.commit()
     with pytest.raises(ValueError, match='gone.md has no handler'):
         catalog_of(ld).load('file://alex-pc/D:/Work/.Stale.gppufs.sqlite', index)
+
+
+def test_a_row_whose_folder_the_index_holds_no_row_for_is_put_inside_that_folders_file(ld, tmp_path):
+    """As D:\Work's index holds .claude/settings.json and no .claude: the row is loaded inside the file of its folder, found or made."""
+    index = tmp_path / '.Loose.gppufs.sqlite'
+    uid = lambda: str(__import__('gppu').uuid_create(0x1003))
+    with closing(sqlite3.connect(index)) as db:
+        db.execute('CREATE TABLE gppufs_entries (path TEXT PRIMARY KEY, metadata TEXT NOT NULL, children TEXT)')
+        db.executemany('INSERT INTO gppufs_entries (path, metadata) VALUES (?, ?)', [
+            ('.', json.dumps({'gppu': {'id': uid(), 'type': 'folder', 'handlers': ['folder']}})),
+            ('.claude/settings.json', json.dumps({'gppu': {'id': uid(), 'type': 'file', 'handlers': ['file'], 'size': 2}}))])
+        db.commit()
+    found = catalog_of(ld)
+    found.load('file://alex-pc/D:/Loose/.Loose.gppufs.sqlite', index)
+    assert [row['name'] for row in found.entries(uri='file://alex-pc/D:/Loose')] == ['.claude']
+    assert [row['name'] for row in found.entries(uri='file://alex-pc/D:/Loose/.claude')] == ['settings.json']
