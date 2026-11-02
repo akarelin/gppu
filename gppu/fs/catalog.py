@@ -703,6 +703,8 @@ class Catalog:
             return self._first(table, {'parent_id': {'$eq': places[at]['id']}}, flagged), _below(at, uri)
         parts = uri.rstrip('/').split('/')
         above = ['/'.join(parts[:n]) for n in range(len(parts), 3, -1)]   # the uri and each folder above it, below its host
+        if not above:
+            return None, ''
         found = self._get(f'/fs/{table}', filters=json.dumps({'meta.uri': {'$in': above}, 'flags': {'$gte': 0}}), limit=len(above))['items']
         found = sorted((r for r in found if not r['parent_id'] and (flagged or not r['flags'] & DELETED)),
                        key=lambda r: (-len(r['meta']['uri']), r['flags']))
