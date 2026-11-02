@@ -557,6 +557,12 @@ def resolve(folders: dict[str, dict[str, str]], address: str) -> str:
 
 PAGE = 1000   # the records a listing asks Linked Data for at a time, so a folder of any size is never held whole
 DELETED = 0x04   # the flag deleted (Linked Data.md # Flags): a record kept, read only and out of sight until it is un-deleted
+IDS = 120   # ids to one read of what is inside them, so its address, escaped, stays under the 8 kB request line a proxy takes
+
+
+def _name(uri: str) -> str:
+    """The name a uri ends in, as it is: a # or a ? in a name is part of it."""
+    return uri.rstrip('/').rpartition('/')[2]
 WHEN = re.compile(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ')   # how SharePoint gives a date or a time
 
 
@@ -677,31 +683,89 @@ class Catalog:
             if not (cursor := page.get('next')):
                 return
 
-    def _find(self, table: str, uri: str, flagged: bool = False) -> dict[str, Any] | None:
-        """The file or the instance at a uri, in sight; with flagged, one flagged deleted too, one in sight first, as a write
-        un-deletes what it writes again. None when the catalog holds none."""
-        filters = {'meta.uri': {'$eq': uri}} | ({'flags': {'$gte': 0}} if flagged else {})
+    def _places(self) -> dict[str, dict[str, Any]]:
+        """Linked Data's locations by their uris, each without a closing /."""
+        return {r['meta']['uri'].rstrip('/'): r for r in self.records() if r['meta'].get('uri')}
+
+    def _first(self, table: str, filters: dict[str, Any], flagged: bool) -> dict[str, Any] | None:
+        """The file or the instance filters select, in sight; with flagged, one flagged deleted too, one in sight first."""
+        filters = filters | ({'flags': {'$gte': 0}} if flagged else {})
         items = self._get(f'/fs/{table}', filters=json.dumps(filters), sort='flags:asc', limit=1)['items']
         return items[0] if items else None
 
-    def _under(self, table: str, uri: str) -> dict[str, dict[str, Any]]:
-        """The files or the instances at a uri and below it, by their uris, those flagged deleted among them, one in sight at a uri
-        before one flagged."""
-        seen = {'flags': {'$gte': 0}}
-        found = list(self._all(table, {'meta.uri': {'$eq': uri}} | seen))
-        found += self._all(table, {'meta.uri': {'$startswith': uri.rstrip('/') + '/'}} | seen)
-        return {r['meta']['uri']: r for r in sorted(found, key=lambda r: -r['flags'])}
+    def _top(self, table: str, uri: str, flagged: bool, places: dict[str, dict[str, Any]] | None = None
+             ) -> tuple[dict[str, Any] | None, str]:
+        """Where the tree a uri is in starts, and the path below it: the file or the instance at the address of the deepest location
+        at or above the uri, inside that location; where no location is, the one with no parent at or above it, which keeps its
+        own address. None when the catalog holds none."""
+        places = self._places() if places is None else places
+        if (at := max((u for u in places if _below(u, uri) is not None), key=len, default=None)) is not None:
+            return self._first(table, {'parent_id': {'$eq': places[at]['id']}}, flagged), _below(at, uri)
+        parts = uri.rstrip('/').split('/')
+        above = ['/'.join(parts[:n]) for n in range(len(parts), 3, -1)]   # the uri and each folder above it, below its host
+        found = self._get(f'/fs/{table}', filters=json.dumps({'meta.uri': {'$in': above}, 'flags': {'$gte': 0}}), limit=len(above))['items']
+        found = sorted((r for r in found if not r['parent_id'] and (flagged or not r['flags'] & DELETED)),
+                       key=lambda r: (-len(r['meta']['uri']), r['flags']))
+        return (found[0], _below(found[0]['meta']['uri'], uri)) if found else (None, '')
+
+    def _at(self, table: str, uri: str, flagged: bool = False, places: dict[str, dict[str, Any]] | None = None) -> dict[str, Any] | None:
+        """The file or the instance at a uri, found by name from where its tree starts, in sight; with flagged, one flagged deleted
+        too, one in sight first, as a write un-deletes what it writes again. None when the catalog holds none."""
+        found, below = self._top(table, uri, flagged, places)
+        for name in below.split('/') if below else ():
+            if found is None:
+                return None
+            found = self._first(table, {'parent_id': {'$eq': found['id']}, 'meta.display_name': {'$eq': name}}, flagged)
+        return found
+
+    def _tree(self, table: str, top: dict[str, Any], uri: str, held: Callable[[dict[str, Any]], bool] | None = None,
+              left: dict[str, dict[str, Any]] | None = None) -> dict[str, dict[str, Any]]:
+        """A file or an instance at a uri and everything inside it, those flagged deleted among them, by their uris, one in sight at
+        a uri before one flagged; held names what another holds, left out with what is inside it and put in left by its uri."""
+        found, level = {uri: top}, {top['id']: uri}
+        while level:
+            ids, inside = list(level), {}
+            for some in (ids[n:n + IDS] for n in range(0, len(ids), IDS)):
+                for r in self._all(table, {'parent_id': {'$in': some}, 'flags': {'$gte': 0}}):
+                    at = _address(level[r['parent_id']], r['meta']['display_name'])
+                    if held and held(r):
+                        if left is not None:
+                            left[at] = r
+                        continue
+                    if at not in found or found[at]['flags'] & DELETED:
+                        found[at] = r
+                    inside[r['id']] = at
+            level = inside
+        return found
+
+    def _address_of(self, r: dict[str, Any], table: str) -> str | None:
+        """Where a file or an instance is: the address of the location its tree starts in, or of the one at its top with no parent,
+        and the names down to it."""
+        names = []
+        while True:
+            if (parent := r['parent_id']) is None:
+                return _address(r['meta']['uri'], '/'.join(reversed(names))) if r['meta'].get('uri') else None
+            if parent.startswith('1001'):   # a location (Linked Data.md # fs: 0x1001)
+                place = next((p for p in self.records() if p['id'] == parent), None)
+                return _address(place['meta']['uri'], '/'.join(reversed(names))) if place and place['meta'].get('uri') else None
+            names.append(r['meta']['display_name'])
+            r = self._get(f'/fs/{table}/{parent}')
+
+    def _index(self, r: dict[str, Any]) -> bool:
+        """Whether an instance is the folder of an index, whose load stamps it loaded."""
+        return 'loaded' in r['data']
 
     def _inside(self, id: str) -> Iterator[dict[str, Any]]:
         """The files directly inside one, by name."""
         return self._all('files', {'parent_id': {'$eq': id}}, sort='meta.display_name:asc')
 
     def _put(self, table: str, id: str, type: str, parent: str | None, uri: str, data: dict[str, Any],
-             span: dict[str, Any] | None = None, kind: str | None = None) -> None:
-        """A file or an instance written by its id; one flagged deleted, a copy of it back in an index or the Lake, is un-deleted
-        first (# Flags), so it keeps its id, its links and its place on a timeline."""
-        name = PurePosixPath(urlsplit(uri).path).name or urlsplit(uri).netloc
-        meta = {'uri': uri, 'display_name': name, 'status': 'active'} | ({'kind': kind} if kind else {})
+             span: dict[str, Any] | None = None, kind: str | None = None, name: str | None = None) -> None:
+        """A file or an instance written by its id, inside its parent under its name, its address its parent's and its name: only
+        one with no parent keeps its address. One flagged deleted, a copy of it back in an index or the Lake, is un-deleted first
+        (# Flags), so it keeps its id, its links and its place on a timeline."""
+        meta = {'display_name': _name(uri) if name is None else name, 'status': 'active'} | ({'kind': kind} if kind else {}) \
+            | ({} if parent else {'uri': uri})
         body = {'type': type, 'parent_id': parent, 'data': data, 'span': span, 'meta': meta}
         r = self.ld.put(f'/fs/{table}/{id}', json=body)
         if r.status_code == 422 and (held := self.ld.get(f'/fs/{table}/{id}')).is_success and held.json()['flags'] & DELETED:
@@ -734,30 +798,43 @@ class Catalog:
                 return _address(linked[local], below)
         return uri
 
-    def _parent(self, uri: str) -> str | None:
-        """The id of what the file at a uri is inside: the location whose uri it is, else the file of the folder holding it, made
-        when the catalog holds none; none at the top of its host or tenant, where no location is."""
-        by_uri = {r['meta']['uri'].rstrip('/'): r['id'] for r in self.records() if r['meta'].get('uri')}
-        if (location := by_uri.get(uri.rstrip('/'))) is not None:
-            return location
+    def _inside_of(self, table: str, uri: str) -> str | None:
+        """The id of what the file or the instance at a uri is inside: the location whose uri it is, else the file or the instance of
+        the folder holding it, made when the catalog holds none; none at the top of its host or tenant, where no location is."""
+        places = self._places()
+        if (location := places.get(uri.rstrip('/'))) is not None:
+            return location['id']
         above = uri.rstrip('/').rpartition('/')[0]
-        if urlsplit(above).path in ('', '/') and above.rstrip('/') not in by_uri:
+        if urlsplit(above).path in ('', '/') and above.rstrip('/') not in places:
             return None
-        if (found := self._find('files', above, flagged=True)) is not None:
+        if (found := self._at(table, above, flagged=True, places=places)) is not None:
             if found['flags'] & DELETED:
-                self._put('files', found['id'], found['type'], found['parent_id'], above, found['data'], span=found['span'])
+                self._put(table, found['id'], found['type'], found['parent_id'], above, found['data'], span=found['span'],
+                          kind=found['meta'].get('kind'), name=found['meta']['display_name'])
             return found['id']
-        made = str(uuid_create(0x1002))
-        self._put('files', made, 'folder', self._parent(above), above, {'kind': 'folder'})
+        made = str(uuid_create(0x1002 if table == 'files' else 0x1003))
+        self._put(table, made, 'folder' if table == 'files' else 'instance', self._inside_of(table, above), above,
+                  {'kind': 'folder'} if table == 'files' else {})
         return made
+
+    def _parent(self, uri: str) -> str | None:
+        """What the file at a uri is inside (_inside_of)."""
+        return self._inside_of('files', uri)
+
+    def _copies(self, uri: str, linked: dict[str, str] | None = None) -> list[str]:
+        """The uris every copy of the file at a uri can be at: its own, and the same path below each location a link links to the
+        location it is in, a local synced folder of its cloud folder."""
+        linked = self._linked() if linked is None else linked
+        return [uri] + [_address(local, below) for local, cloud in linked.items() if (below := _below(cloud, uri)) is not None]
 
     def _orphans(self, copies: set[str]) -> None:
         """The files of copies, uris whose instances are gone, each found by its uri, flagged deleted when it is left with no
-        instance in sight and no file in sight inside it, the deepest first; it keeps its record, its links and its place on a
-        timeline."""
-        for uri in sorted({self.file_of(copy) for copy in copies}, key=len, reverse=True):
-            file = self._find('files', uri)
-            if file is not None and not self._get('/fs/instances', filters=json.dumps({'parent_id': {'$eq': file['id']}}), limit=1)['items'] \
+        instance in sight at any of its copies' uris and no file in sight inside it, the deepest first; it keeps its record, its
+        links and its place on a timeline."""
+        linked = self._linked()
+        for uri in sorted({self.file_of(copy, linked) for copy in copies}, key=len, reverse=True):
+            file = self._at('files', uri)
+            if file is not None and not any(self._at('instances', copy) for copy in self._copies(uri, linked)) \
                     and not self._get('/fs/files', filters=json.dumps({'parent_id': {'$eq': file['id']}}), limit=1)['items']:
                 self._delete('files', file['id'])
 
@@ -791,39 +868,53 @@ class Catalog:
         if not held or held[0]['path']:
             raise ValueError(f'{folder}: the index holds no row for its folder')
         top = self.file_of(folder)
-        files, instances = self._under('files', top), self._under('instances', folder)
+        file, copy = self._at('files', top, flagged=True), self._at('instances', folder, flagged=True)
+        files = self._tree('files', file, top) if file else {}
+        deeper: dict[str, dict[str, Any]] = {}   # the folders of the indexes inside this one, by their uris
+        instances = self._tree('instances', copy, folder, held=self._index, left=deeper) if copy else {}   # what this index put there
         ids: dict[str, str] = {}   # each row's path -> its file's id
+        copies = {row['path']: row['id'] for row in held}   # each row's path -> its instance's id, its gppufs id
+        inside: dict[str, str | None] = {}   # each row's path -> the id of what its instance is inside
         for row in held:
             path = row['path']
-            uri = _address(top, path)
+            uri, at = _address(top, path), _address(folder, path)
             found = files.get(uri)
             ids[path] = found['id'] if found else str(uuid_create(0x1002))
             start = _earliest(row['created'], ((found or {}).get('span') or {}).get('start'))
             above = path.rpartition('/')[0] if path else None
             parent = ids[above] if above in ids else self._parent(uri)   # a row whose folder the index holds no row for: that folder's file
+            name = path.rpartition('/')[2] if path else None   # as the index names it; the folder's own as its uri does
             self._put('files', ids[path], row['type'], parent, uri,
-                      row['file'], span={'start': start, 'end': None, 'bounds': '[)'} if start else None)
-            self._put('instances', row['id'], 'instance', ids[path], _address(folder, path), row['instance'] | {'index': folder},
-                      kind=row['kind'])
+                      row['file'], span={'start': start, 'end': None, 'bounds': '[)'} if start else None, name=name)
+            # its folder's instance; the folder's own, and a row whose folder the index holds no row for, inside the location at its
+            # address or the instance of the folder holding it, found or made
+            inside[path] = copies[above] if above in copies else self._inside_of('instances', at)
+            self._put('instances', row['id'], 'instance', inside[path], at, row['instance'], kind=row['kind'], name=name)
+        for at, inner in deeper.items():   # an index inside this one stays inside its folder's instance, under its id in this copy
+            above = _below(folder, at).rpartition('/')[0]
+            if above in copies and inner['parent_id'] != copies[above] and not inner['flags'] & DELETED:
+                self._put('instances', inner['id'], inner['type'], copies[above], at, inner['data'], kind=inner['meta'].get('kind'),
+                          name=inner['meta']['display_name'])
         kept, left = {row['id'] for row in held}, set()
-        for instance in instances.values():
-            if instance['data'].get('index') == folder and instance['id'] not in kept and not instance['flags'] & DELETED:   # gone from the latest copy
+        for at, instance in instances.items():
+            if instance['id'] not in kept and not instance['flags'] & DELETED:   # gone from the latest copy
                 self._delete('instances', instance['id'])
-                left.add(instance['meta']['uri'])
+                left.add(at)
         self._orphans(left)
         root = held[0]   # the folder's own instance, stamped loaded last, so a load that fails before its end is never taken as loaded
-        self._put('instances', root['id'], 'instance', ids[''], folder,
-                  root['instance'] | {'index': folder, 'loaded': datetime.now().astimezone().isoformat()}, kind=root['kind'])
+        self._put('instances', root['id'], 'instance', inside[''], folder,
+                  root['instance'] | {'loaded': datetime.now().astimezone().isoformat()}, kind=root['kind'])
         if urlsplit(top).scheme == 'm365':
             self._columns = None
 
     def record(self, uri: str, type: str, data: dict[str, Any]) -> dict[str, Any]:
         """A file the Lake holds at uri recorded as what its handler read, type and data: its file and its instance, each keeping
         the record the catalog has for it; the file as the catalog lists it."""
-        file, instance = self._find('files', uri, flagged=True), self._find('instances', uri, flagged=True)
+        file, instance = self._at('files', uri, flagged=True), self._at('instances', uri, flagged=True)
         id = file['id'] if file else str(uuid_create(0x1002))
         self._put('files', id, type, file['parent_id'] if file else self._parent(uri), uri, data)
-        self._put('instances', instance['id'] if instance else str(uuid_create(0x1003)), 'instance', id, uri,
+        self._put('instances', instance['id'] if instance else str(uuid_create(0x1003)), 'instance',
+                  instance['parent_id'] if instance else self._inside_of('instances', uri), uri,
                   {'size': data.get('size'), 'modified': data.get('modified')})
         return self.info(uri)
 
@@ -831,8 +922,8 @@ class Catalog:
         """Linked Data's locations the catalog holds the folder of, with every location above them, so they make one tree: each
         its id, name, canonical address, parent's id and whether the catalog holds its folder."""
         records = {r['id']: r for r in self.records() if r['meta'].get('uri')}
-        linked = self._linked()
-        indexed = {id for id, r in records.items() if self._find('files', self.file_of(r['meta']['uri'], linked)) is not None}
+        linked, places = self._linked(), self._places()
+        indexed = {id for id, r in records.items() if self._at('files', self.file_of(r['meta']['uri'], linked), places=places) is not None}
         kept: set[str] = set()
         for id in indexed:
             while id in records and id not in kept:
@@ -848,8 +939,9 @@ class Catalog:
         version, who edited it; what only some carry is what a library or a content type adds, a statement's period, a tax form's
         year. Read from every m365 file, the store whose listing carries them."""
         if self._columns is None:
-            counted, items = Counter(), 0
-            for file in self._all('files', {'meta.uri': {'$startswith': 'm365://'}}):
+            counted, items, places = Counter(), 0, self._places()
+            held_by = [self._at('files', uri, places=places) for uri in places if uri.startswith('m365://')]
+            for file in (r for top in held_by if top for r in self._tree('files', top, '').values() if not r['flags'] & DELETED):
                 if held := file['data'].get('columns'):
                     items += 1
                     counted.update(held.keys())
@@ -874,7 +966,7 @@ class Catalog:
 
     def _held(self, uri: str) -> dict[str, Any]:
         """The file a copy at uri is an instance of."""
-        if (found := self._find('files', self.file_of(uri))) is None:
+        if (found := self._at('files', self.file_of(uri))) is None:
             raise LookupError(f'{uri}: the catalog holds nothing there')
         return found
 
@@ -910,24 +1002,34 @@ class Catalog:
             raise LookupError(f'entry {uid}: the catalog holds no such entry')
         r.raise_for_status()
         file = r.json()
-        return self._entry(file) | {'uri': file['meta'].get('uri'), 'parent': file['parent_id'], 'type': file['type'],
+        return self._entry(file) | {'uri': self._address_of(file, 'files'), 'parent': file['parent_id'], 'type': file['type'],
                                     'span': file['span']}
 
     def info(self, uri: str) -> dict[str, Any]:
         """The file a copy at uri is an instance of, as entry() answers it."""
         return self.entry(UUID(self._held(uri)['id']))
 
+    def file_at(self, uri: str, linked: dict[str, str] | None = None) -> str | None:
+        """The id of the file a copy at a uri is an instance of, when the catalog holds that copy; none when it does not. linked is
+        _linked()'s answer, read once by a caller asking for many."""
+        if self._at('instances', uri) is None:
+            return None
+        found = self._at('files', self.file_of(uri, linked))
+        return found['id'] if found else None
+
     def instances(self, uri: str) -> list[dict[str, Any]]:
-        """The copies of the file a copy at uri is an instance of: each its id, uri and kind, and the folder whose index it came from."""
-        return [{'id': r['id'], 'uri': r['meta'].get('uri'), 'kind': r['meta'].get('kind'), 'index': r['data'].get('index')}
-                for r in self._all('instances', {'parent_id': {'$eq': self._held(uri)['id']}})]
+        """The copies of the file a copy at uri is an instance of: each its id, uri and kind."""
+        linked = self._linked()
+        self._held(uri)
+        return [{'id': r['id'], 'uri': copy, 'kind': r['meta'].get('kind')}
+                for copy in self._copies(self.file_of(uri, linked), linked) if (r := self._at('instances', copy))]
 
     def loaded(self, folder: str) -> dict[str, Any]:
         """The copy of a folder's index the catalog holds and the one it received last: when it was loaded, from the database; when
         this process received one, whether it is still loading and why its load failed. An indexer sends an index written since
         the copy it received, or one the catalog lacks."""
-        found = self._find('instances', folder)
-        held = found is not None and found['data'].get('index') == folder
+        found = self._at('instances', folder)
+        held = found is not None and self._index(found)
         with self._guard:
             state = dict(self._received.get(folder, {}))
         if not held and not state:
@@ -939,17 +1041,18 @@ class Catalog:
         """Everything a folder's index put in the catalog flagged deleted: its instances, and each file left with no instance, as
         when the folder is no longer indexed."""
         left = set()
-        for instance in self._under('instances', folder).values():
-            if instance['data'].get('index') == folder and not instance['flags'] & DELETED:
+        copy = self._at('instances', folder)
+        for at, instance in (self._tree('instances', copy, folder, held=self._index) if copy and self._index(copy) else {}).items():
+            if not instance['flags'] & DELETED:
                 self._delete('instances', instance['id'])
-                left.add(instance['meta']['uri'])
+                left.add(at)
         if not left:
             raise LookupError(f'{folder}: the catalog holds no index of it')
         self._orphans(left)
 
     def forget(self, uri: str) -> None:
         """The file the Lake held at a uri, removed from there, flagged deleted in the catalog: its instance, and its file with it."""
-        instance = self._find('instances', uri)
+        instance = self._at('instances', uri)
         if instance is None:
             raise LookupError(f'{uri}: the catalog holds nothing there')
         self._delete('instances', instance['id'])
