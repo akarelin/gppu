@@ -1102,8 +1102,6 @@ def format_since(when) -> str:
 # endregion
 
 
-
-
 # region Async helpers
 def sync(func: Callable) -> Callable:
   """Wrapper to call async functions without await from synchronous code."""
@@ -1377,17 +1375,11 @@ class _EmptyMessageFilter(logging.Filter):
     return bool(record.getMessage().strip() or record.exc_info)
 # endregion
 
+class _mixin: pass
 
 # region Logger
 # ^~            Logger
 TRACE_RULES: dict = {}
-
-
-# endregion
-
-
-# region Mixins
-class _mixin: pass
 
 
 class Logger:
