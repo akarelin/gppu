@@ -1754,7 +1754,7 @@ glob_dict = Env.glob_dict
 
 
 # region App
-class App(_Base, _DC):
+class App(mixin_Logger, mixin_Config, _DC):
   """An app with the data class: what it is constructed with is its data. It has no entry method and no steps;
   construct it and call what the app defines. Read settings with ``self.my(...)``. See docs/app.md."""
   pass
