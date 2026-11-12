@@ -283,5 +283,6 @@ def sidecar_main(
         result = app_class(apps, app_dir).run()
         if not result:
             return 0
-        run_sidecar(
-            result['app'], result.get('args') or (), result.get('inject') or None)
+        # a failed item's output stays on screen until Enter: the menu drawn at once over it would hide its error
+        if code := run_sidecar(result['app'], result.get('args') or (), result.get('inject') or None):
+            input(f"\n{result['app'].get('name', 'The item')} stopped with exit code {code}. Enter returns to the menu. ")
