@@ -1,7 +1,7 @@
 """gppu.app — the apps with steps. See docs/app.md.
 
-Env, ``_Base`` and ``App``, the regular app with no steps, are in gppu.gppu. Here ``AsyncApp`` composes # pyright: ignore[C0301:line-too-long]
-``_Base`` with ``mixin_Stepper``, the YMRO (Y2 Method Resolution Order) init, load and start steps; ``APIApp`` serves HTTP # type: ignore
+Env and ``App``, the regular app with no steps, are in gppu.gppu. Here ``AsyncApp`` composes # pyright: ignore[C0301:line-too-long]
+``mixin_Logger`` and ``mixin_Config`` with ``mixin_Stepper``, the YMRO (Y2 Method Resolution Order) init, load and start steps; ``APIApp`` serves HTTP # type: ignore
 on it. For Textual, use ``gppu.tui.TUIApp``; for MQTT, ``gppu.iot.MqttApp``.
 """
 from __future__ import annotations
@@ -9,11 +9,12 @@ from __future__ import annotations
 import asyncio
 import inspect
 from abc import abstractmethod
+from copy import deepcopy
 from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
 from typing import Any, final
 
-from .gppu import Debug, Env, _Base, _DC, _mixin
+from .gppu import Debug, Env, _DC, _mixin, mixin_Logger, mixin_Config
 
 _trace_mro = False
 
@@ -186,7 +187,7 @@ class mixin_EventLoopBridge(_mixin):
 
 
 # region async application
-class AsyncApp(_Base, mixin_Stepper, mixin_EventLoopBridge):
+class AsyncApp(mixin_Logger, mixin_Config, mixin_Stepper, mixin_EventLoopBridge):
   """Application base for long-lived asyncio services, on the YMRO steps.
 
   Construction runs init; ``run()`` runs init (light loading, with the configuration ready),
@@ -204,7 +205,9 @@ class AsyncApp(_Base, mixin_Stepper, mixin_EventLoopBridge):
   _loop: asyncio.AbstractEventLoop | None
 
   def __init__(self, name: str = '', **kw) -> None:
-    super().__init__(name=name, **kw)
+    super().__init__(**kw)
+    self.name = name or Env.name
+    self._my = deepcopy(Env._my)
     self._task_group = None
     self._background_tasks = set()
     self._loop = None
@@ -299,7 +302,7 @@ class mixin_Rest:
   def rest_manifest(self) -> dict:
     """The classes born under app_path and their members, walked once."""
     if self._rest_manifest is None:
-      seen, stack = set(), [_mixin, _Base, _DC]
+      seen, stack = set(), [_mixin, _DC]
       while stack:
         cls = stack.pop()
         if cls not in seen: seen.add(cls); stack.extend(cls.__subclasses__())

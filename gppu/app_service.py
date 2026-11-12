@@ -81,7 +81,7 @@ class AppService(MqttApp):
   def update_config(data: dict, path: str | y2path = '') -> None:
     """Replace one configuration subtree; an empty path replaces the whole config."""
     if not isinstance(data, dict): raise TypeError('configuration must be a mapping')
-    updated = deepcopy(Env.data) if path else data
+    updated = deepcopy(Env._my) if path else data
     if path:
       node = updated
       *parents, key = y2path(path)
@@ -90,7 +90,7 @@ class AppService(MqttApp):
         node = node[parent]
         if not isinstance(node, dict): raise TypeError(f'configuration parent is not a mapping: {path}')
       node[key] = data
-    changed = AppService._config_changes(Env.data, updated)
+    changed = AppService._config_changes(Env._my, updated)
     AppService.changed_paths = changed
     if Env.initialized and not changed: return
     Env._load_dict(updated)

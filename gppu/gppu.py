@@ -414,8 +414,8 @@ class y2topic(y2path):
 class Path(y2path, pathlib.Path):
   """A file system path: y2path's segments and operators, everything else from pathlib.Path."""
   # _drv, _root, _tail_cached, _str, _parts_normcase_cached, _hash, _info = (_cached() for _ in range(7))
-  # _raw_paths = property(lambda self: [str(self)])
-  # _str_normcase = property(lambda self: pathlib.PurePath(self)._str_normcase)
+  _raw_paths = property(lambda self: [str(self)])
+  _str_normcase = property(lambda self: pathlib.PurePath(self)._str_normcase)
 
   def __truediv__(self, other: str | y2path) -> Path: return type(self)(self, other)
   def __eq__(self, other): return str(self) == str(type(self)(other)) if isinstance(other, PurePath) else y2path.__eq__(self, other)
@@ -1560,9 +1560,9 @@ class mixin_Config(_mixin):
   _my: dict[str, Any] = {}
 
   def _config_from_key(self, key: str) -> None: self._my.update(Env.glob_dict(key))
-  def _config_copy(self, other: mixin_Config) -> None: self._my = dict(other._config_data())
+  def _config_copy(self, other: mixin_Config) -> None: self._my = dict(other._my)
   def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
-  def _config_from_env(self) -> None: self._my = deepcopy(Env._data())
+  def _config_from_env(self) -> None: self._my = deepcopy(Env._my)
 
   def my(self, path: str | y2path, default=None) -> Any: return deepget(path, self._my, default=default)
   def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self._my, default=default)
@@ -1611,7 +1611,7 @@ class Env(mixin_Logger, mixin_Config):
     Env._my = data
     Env.initialized = True
 
-    if 'log_file' in Env.data: Logger.enable_file_logging(log_file=Env.data['log_file'])
+    if 'log_file' in Env._my: Logger.enable_file_logging(log_file=Env._my['log_file'])
 
 
   @staticmethod
@@ -1620,7 +1620,7 @@ class Env(mixin_Logger, mixin_Config):
     Env.initialized = False
 
 
-  glob, glob_int, glob_list, glob_dict = (mixin_Config.__dict__[n] for n in ('my', 'my_int', 'my_list', 'my_dict'))
+  glob, glob_int, glob_list, glob_dict = (classmethod(mixin_Config.__dict__[n]) for n in ('my', 'my_int', 'my_list', 'my_dict'))
   # @staticmethod
   # @sync
   # async def dump():
@@ -1673,10 +1673,10 @@ class Env(mixin_Logger, mixin_Config):
     override."""
     Env.from_env(name=APP['name'], config=APP['config'], topology=APP['topology'])
     for key in ('log_file', 'trace_rules'):
-      if APP[key] is not None and key not in Env.data: Env.data[key] = APP[key]
+      if APP[key] is not None and key not in Env._my: Env._my[key] = APP[key]
     if APP['cli']: Env.from_argv(sys.argv[1:])
-    if isinstance(rules := Env.data.get('trace_rules'), dict): TRACE_RULES.update(rules)
-    if Env.data.get('log_file'): Logger.enable_file_logging(log_file=Env.data['log_file'])
+    if isinstance(rules := Env._my.get('trace_rules'), dict): TRACE_RULES.update(rules)
+    if Env._my.get('log_file'): Logger.enable_file_logging(log_file=Env._my['log_file'])
 
   @staticmethod
   def _topology_file() -> Path:
@@ -1714,7 +1714,7 @@ class Env(mixin_Logger, mixin_Config):
       if not arg.startswith('--') or len(arg) == 2: continue
       name, value = arg[2:], True
       if i < len(argv) and not argv[i].startswith('--'): value, i = argv[i], i + 1
-      node = Env.data
+      node = Env._my
       *parents, key = y2path(name)
       for parent in parents: node = node.setdefault(parent, {})
       node[key] = value

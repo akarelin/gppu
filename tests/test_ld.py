@@ -41,7 +41,7 @@ def api():
     """The core, the fs API and the sessions API, and a session's messages in order, on a database made from gppu.ld's SQL (ld.sql)."""
     with psycopg.connect(DSN, autocommit=True) as server:
         server.execute(f'CREATE DATABASE {DB}')
-    previous, initialized = Env.data, Env.initialized
+    previous, initialized = Env._my, Env.initialized
     try:
         with psycopg.connect(STORE, autocommit=True) as db:
             db.execute((Path(__file__).parent / 'ld.sql').read_text(encoding='utf-8'))
@@ -51,7 +51,7 @@ def api():
             yield client
     finally:
         Env.reset()
-        Env.data, Env.initialized = previous, initialized
+        Env._my, Env.initialized = previous, initialized
         with psycopg.connect(DSN, autocommit=True) as server:
             server.execute(f'DROP DATABASE {DB} WITH (FORCE)')
 

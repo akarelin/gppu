@@ -73,6 +73,4 @@ disable = [
 
 [tool.pylint.basic]
 class-rgx = "^([A-Z][a-zA-Z0-9]*|mixin_[A-Za-z][a-zA-Z0-9]*)$"
-
-[tool.pylint.basic]
 good-names = ["_trace_mro"]

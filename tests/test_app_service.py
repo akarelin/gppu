@@ -10,14 +10,14 @@ from gppu import AppService, Env, mixin_Mqtt
 
 @pytest.fixture(autouse=True)
 def environment():
-  previous, initialized = Env.data, Env.initialized
+  previous, initialized = Env._my, Env.initialized
   listeners = AppService._listeners
   AppService._listeners = []
   Env.reset()
   yield
   Env.reset()
   AppService._listeners = listeners
-  Env.data, Env.initialized = previous, initialized
+  Env._my, Env.initialized = previous, initialized
 
 
 def test_reload_reports_only_affected_paths():

@@ -1,8 +1,7 @@
-"""Tests for dict utilities: deepget, deepget_int, deepget_list, deepget_dict,
-dict_all_paths, dict_element_append, dict_sort_keylen, deepdict."""
+"""Tests for dict utilities: deepget, deepget_int, deepget_list, deepget_dict, deepdict."""
 from gppu import (
     deepget, deepget_int, deepget_list, deepget_dict,
-    dict_all_paths, dict_element_append, dict_sort_keylen, deepdict,
+    deepdict,
 )
 
 
@@ -74,70 +73,6 @@ class TestDeepgetTyped:
     def test_deepget_dict_returns_default_for_non_dict(self):
         d = {"config": "string"}
         assert deepget_dict("config", d, default={}) == {}
-
-
-class TestDictAllPaths:
-    def test_flat_dict(self):
-        d = {"a": 1, "b": 2}
-        paths = dict_all_paths(d)
-        assert "a" in paths
-        assert "b" in paths
-
-    def test_nested_dict(self):
-        d = {"a": {"b": {"c": 1}}}
-        paths = dict_all_paths(d)
-        assert "a" in paths
-        assert "a/b" in paths
-        assert "a/b/c" in paths
-
-    def test_mixed_dict(self):
-        d = {"x": 1, "y": {"z": 2}}
-        paths = dict_all_paths(d)
-        assert set(paths) == {"x", "y", "y/z"}
-
-
-class TestDictElementAppend:
-    def test_append_to_new_key(self):
-        d = {}
-        dict_element_append(d, "k", "v")
-        assert d["k"] == ["v"]
-
-    def test_append_to_existing_list(self):
-        d = {"k": [1]}
-        dict_element_append(d, "k", 2)
-        assert d["k"] == [1, 2]
-
-    def test_append_to_existing_string(self):
-        d = {"k": "old"}
-        dict_element_append(d, "k", "new")
-        assert d["k"] == ["old", "new"]
-
-    def test_unique_prevents_duplicates(self):
-        d = {"k": [1, 2]}
-        dict_element_append(d, "k", 2, unique=True)
-        assert d["k"] == [1, 2]
-
-    def test_append_list_value(self):
-        d = {}
-        dict_element_append(d, "k", [1, 2, 3])
-        assert d["k"] == [1, 2, 3]
-
-
-class TestDictSortKeylen:
-    def test_sorts_by_key_length_descending(self):
-        d = {"a": 1, "bb": 2, "ccc": 3}
-        result = dict_sort_keylen(d)
-        keys = list(result.keys())
-        assert keys == ["ccc", "bb", "a"]
-
-    def test_sorts_ascending(self):
-        d = {"a": 1, "bb": 2, "ccc": 3}
-        result = dict_sort_keylen(d, reverse=False)
-        keys = list(result.keys())
-        assert keys == ["a", "bb", "ccc"]
-
-    def test_non_dict_returns_empty(self):
-        assert dict_sort_keylen("not a dict") == {}
 
 
 class TestDeepdict:

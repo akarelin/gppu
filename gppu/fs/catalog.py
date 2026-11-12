@@ -28,7 +28,7 @@ from fsspec.asyn import AsyncFileSystem
 from fsspec.core import split_protocol
 from fsspec.spec import AbstractFileSystem
 
-from ..app import glob
+from ..gppu import glob
 from ..gppu import TemplateSet, TimeSpan, full_path, uuid_create, y2path
 from .uri import y2uri
 from . import FileSystem, Location, Provider, _address, _below

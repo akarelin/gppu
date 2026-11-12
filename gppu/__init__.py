@@ -16,7 +16,6 @@ from .gppu import (
     glob_list,
     glob_dict,
     mixin_Config,
-    _Base,
     App,
 )
 
@@ -84,9 +83,6 @@ from .gppu import (
     deepget_float,
     deepget_list,
     deepdict,
-    dict_all_paths,
-    dict_element_append,
-    dict_sort_keylen,
 
     # Type safety and coercion
     safe_int,
@@ -167,7 +163,7 @@ __all__ = [
 
     # Dictionary utilities
     'deepget', 'deepget_dict', 'deepget_float', 'deepget_int', 'deepget_list',
-    'deepdict', 'dict_all_paths', 'dict_element_append', 'dict_sort_keylen',
+    'deepdict',
 
     # Type utilities
     'safe_int', 'safe_float', 'safe_list', 'safe_timedelta',
@@ -202,7 +198,7 @@ __all__ = [
     'APP', 'glob', 'glob_int', 'glob_list', 'glob_dict',
 
     # Foundation classes
-    '_Base', 'App', 'AsyncApp', 'APIApp', 'mixin_Rest',
+    'App', 'AsyncApp', 'APIApp', 'mixin_Rest',
 
     # y2xxx classes
     'y2list', 'y2path', 'y2uri', 'y2topic', 'y2slug', 'y2eid',

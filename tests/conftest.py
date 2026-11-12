@@ -37,7 +37,7 @@ def ld():
     db = f'gppu_catalog_test_{uuid4().hex[:12]}'   # its own, so no other database on the server is touched
     with psycopg.connect(dsn, autocommit=True) as server:
         server.execute(f'CREATE DATABASE {db}')
-    previous, initialized = Env.data, Env.initialized
+    previous, initialized = Env._my, Env.initialized
     try:
         store = dsn.rsplit('/', 1)[0] + '/' + db
         with psycopg.connect(store, autocommit=True) as made:
@@ -47,6 +47,6 @@ def ld():
             yield client
     finally:
         Env.reset()
-        Env.data, Env.initialized = previous, initialized
+        Env._my, Env.initialized = previous, initialized
         with psycopg.connect(dsn, autocommit=True) as server:
             server.execute(f'DROP DATABASE {db} WITH (FORCE)')

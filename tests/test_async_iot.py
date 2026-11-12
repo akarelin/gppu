@@ -13,7 +13,7 @@ from gppu import AsyncApp, Env, mixin_EventLoopBridge, HTTPControl, JSONHTTPCont
 from gppu.iot import aiohttp
 
 
-Env.data = {}
+Env._my = {}
 Env.initialized = True
 
 

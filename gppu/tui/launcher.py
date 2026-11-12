@@ -631,7 +631,7 @@ class TUIApp(mixin_Config, TextualApp):
     sections: list[tuple[str, str]] = [
       ('Env', f'initialized={Env.initialized}'),
     ]
-    for key, val in Env.data.items():
+    for key, val in Env._my.items():
       sections.append((key, pprint.pformat(val)))
     if self._my:
       sections.append(('Instance config', pprint.pformat(self._my)))
