@@ -41,20 +41,18 @@ from string import Template
 from contextlib import contextmanager
 
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
 try: _ver_full = _pkg_version('gppu')
 except PackageNotFoundError: _ver_full = '0.0.0'
-
-
 _ver_parts = _ver_full.split('.')
 VER_GPPU_BASE = '.'.join(_ver_parts[:3])
 VER_GPPU_BUILD = _ver_parts[3] if len(_ver_parts) > 3 else '0'
 VER_GPPU = _ver_full
 
+MY_TZ = ZoneInfo("America/Los_Angeles")
 
-# region Bootstrap log: the console, plain, from gppu's first line; Logger adds colours, trace rules and the file mirror
 _log_root = logging.getLogger('gppu'); _log_root.setLevel(logging.DEBUG)
 _sh = logging.StreamHandler(sys.stderr); _log_root.addHandler(_sh)
-# endregion
 
 
 # region OS
@@ -181,6 +179,7 @@ def probe_path(path: str | Path) -> dict:
 
 
 # region Safe typecasting
+
 def safe_float(o, default: float = float("NaN")) -> float:
   if o is None: return default
   if isinstance(o, str):
@@ -200,8 +199,6 @@ def safe_timedelta(o: object) -> float:
   try: then = dt.fromisoformat(str(o)).timestamp()
   except: then = 0.0
   return now_ts() - then
-
-MY_TZ = ZoneInfo("America/Los_Angeles")
 def safe_datetime(o: object) -> dt | None:
   if isinstance(o, int | float): 
     try: result = dt.fromtimestamp(o, MY_TZ)
@@ -217,7 +214,6 @@ def safe_datetime(o: object) -> dt | None:
     except: return None
     if result.tzinfo is None: return result.replace(tzinfo=MY_TZ)
     return result.astimezone(MY_TZ)
-
 # endregion
 
 
@@ -229,10 +225,12 @@ def now_ts(): return dt.now().timestamp()
 def timestamp(): return dt.now().strftime("%y%m%d-%H%M")
 def datestamp(): return dt.now().strftime("%y%m%d")
 
+
 def prepend_datestamp(path, separator=" ") -> Path:
   datestamp_str = datestamp()  
   _ = Path(path)
   return _.parent / f"{datestamp_str}{separator}{_.name}"
+
 
 def append_timestamp(path, separator=" ") -> Path:
   timestamp_str = timestamp()
@@ -413,22 +411,11 @@ class y2topic(y2path):
   def is_wildcard(self) -> bool: return bool(set(self.data) & {"#", "+"})
 
 
-class _cached:
-  """A pathlib cache slot that holds only while the segments it was computed from are unchanged."""
-  def __set_name__(self, owner, name): self.name = name
-  def __get__(self, o, t=None):
-    if o is None: return self
-    key, value = o.__dict__.get(self.name, (None, None))
-    if key != str(o): raise AttributeError(self.name)
-    return value
-  def __set__(self, o, v): o.__dict__[self.name] = (str(o), v)
-
-
 class Path(y2path, pathlib.Path):
   """A file system path: y2path's segments and operators, everything else from pathlib.Path."""
-  _drv, _root, _tail_cached, _str, _parts_normcase_cached, _hash, _info = (_cached() for _ in range(7))
-  _raw_paths = property(lambda self: [str(self)])
-  _str_normcase = property(lambda self: pathlib.PurePath(self)._str_normcase)
+  # _drv, _root, _tail_cached, _str, _parts_normcase_cached, _hash, _info = (_cached() for _ in range(7))
+  # _raw_paths = property(lambda self: [str(self)])
+  # _str_normcase = property(lambda self: pathlib.PurePath(self)._str_normcase)
 
   def __truediv__(self, other: str | y2path) -> Path: return type(self)(self, other)
   def __eq__(self, other): return str(self) == str(type(self)(other)) if isinstance(other, PurePath) else y2path.__eq__(self, other)
@@ -608,41 +595,41 @@ def deepget_dict(path: str | y2path, d: dict, default: dict = {}) -> dict:
   return _ if isinstance(_ := deepget(path, d, default), dict) else default
 
 
-def dict_sort_keylen(d, reverse: bool = True) -> dict:
-  if not isinstance(d,dict): return {}
-  return dict(sorted(d.items(), key=lambda key: len(key[0]), reverse=reverse))
+# def dict_sort_keylen(d, reverse: bool = True) -> dict:
+#   if not isinstance(d,dict): return {}
+#   return dict(sorted(d.items(), key=lambda key: len(key[0]), reverse=reverse))
 
 
-def dict_element_append(d: dict, key: str, value, unique=False) -> None:
-  """ coerces key value in dict to list, than appends value to it
-      Replaces safe_add_unique """
-  key = str(key)
-  if isinstance(value, list):
-    for v in value: dict_element_append(d, key, v, unique)
-  elif not d.get(key): d[key] = [value]
-  elif isinstance(d[key], str): d[key] = [d[key], value]
-  elif isinstance(d[key], list):
-    if unique and value in d[key]: pass
-    else: d[key] += [value]
-  else: raise Exception(f"Unrecognized type: {type(d[key])}")
+# def dict_element_append(d: dict, key: str, value, unique=False) -> None:
+#   """ coerces key value in dict to list, than appends value to it
+#       Replaces safe_add_unique """
+#   key = str(key)
+#   if isinstance(value, list):
+#     for v in value: dict_element_append(d, key, v, unique)
+#   elif not d.get(key): d[key] = [value]
+#   elif isinstance(d[key], str): d[key] = [d[key], value]
+#   elif isinstance(d[key], list):
+#     if unique and value in d[key]: pass
+#     else: d[key] += [value]
+#   else: raise Exception(f"Unrecognized type: {type(d[key])}")
 
 
-def dict_all_paths(d: dict) -> list:
-  """Returns all paths in a dict as a list of strings"""
-  result: list = []
-  for key, value in d.items():
-    if isinstance(value, dict):
-      new_keys: list = dict_all_paths(value)
-      result.append(key)
-      for innerkey in new_keys: result.append(f'{key}/{innerkey}')
-    else: result.append(key)
-  return result
+# def dict_all_paths(d: dict) -> list:
+#   """Returns all paths in a dict as a list of strings"""
+#   result: list = []
+#   for key, value in d.items():
+#     if isinstance(value, dict):
+#       new_keys: list = dict_all_paths(value)
+#       result.append(key)
+#       for innerkey in new_keys: result.append(f'{key}/{innerkey}')
+#     else: result.append(key)
+#   return result
 # endregion
 
 
 # region working with yaml files: dict_to_yml, dict_from_yml, dict_sanitize
 KEYS_FORCE_STRING = ['parent', '']
-KEYS_DROP = ['api', 'adapi', 'AD', 'context', 'hide_attributes']
+KEYS_DROP = ['api', 'context', 'hide_attributes']
 KEYS_FIRST = ['name', 'seid', 'path']
 
 
@@ -685,7 +672,7 @@ def dict_sanitize(data: dict | list, sort_keys=False) -> dict | list:
   def _isstring(o) -> bool:
     relatives = {type(o).__qualname__}
     relatives |= {c.__qualname__ for c in o.__class__.__mro__}
-    return bool({'y2list', 'str', 'y2topic', 'y2path', 'ADBase'} & relatives)
+    return bool({'y2list', 'str', 'y2topic', 'y2path'} & relatives)
   _islist = lambda o: not _isstring(o) and isinstance(o, (list, set))
   _isdict = lambda o: not _isstring(o) and (isinstance(o, (dict, defaultdict, UserDict)) or hasattr(o, 'as_dict') or (hasattr(o, 'data') and isinstance(o.data, dict)))
   _isnumber = lambda o: isinstance(o, (float, int))
@@ -730,8 +717,6 @@ def dict_from_yml(filename: str | Path) -> dict:
   dir_stack: list[Path] = [filename.parent]
 
   class Loader(YmlLoader): pass
-    # def __init__(self, stream: Any) -> None:
-    #   super().__init__(stream)
 
 
   def yml_include(loader: FullLoader, node: Node) -> Any:
@@ -1022,7 +1007,6 @@ class TemplateSet:
   @staticmethod
   def _label(row: dict) -> str: return str(row.get('uid') or row.get('name') or 'row')
 # endregion
-
 
 
 # region Human-readable formatters
@@ -1396,6 +1380,7 @@ class Logger:
   _console.addFilter(_EmptyMessageFilter())
   _file_handlers: dict[str, logging.Handler] = {}   # on the shared parent, so classes made earlier receive them
 
+
   @staticmethod
   def init_logger(name: str = 'gppu', trace_rules: dict | None = None) -> None:
     """Name the global logger, and optionally set the trace rules."""
@@ -1404,6 +1389,7 @@ class Logger:
       TRACE_RULES.clear()
       TRACE_RULES.update(trace_rules)
     Logger._logger = Logger._root if name == 'gppu' else Logger._root.getChild(name)
+
 
   @staticmethod
   def enable_file_logging(name: str | None = None, log_dir: str | Path | None = None,
@@ -1434,6 +1420,7 @@ class Logger:
     Logger._file_handlers[key] = fh
     return path
 
+
   @staticmethod
   def file_log(msg: str, *args, level: int = logging.INFO) -> None:
     """Emit a line only to gppu's file handler(s), bypassing the console handler.
@@ -1451,6 +1438,7 @@ class Logger:
       if record.levelno >= h.level:
         h.handle(record)
 
+
   @staticmethod
   def _log(level: int, args: tuple, logger, options: dict) -> None:
     target = Logger._logger if logger is None else logger
@@ -1462,6 +1450,7 @@ class Logger:
     del frame
     stacklevel = options.pop('stacklevel') if 'stacklevel' in options else 1
     target.log(level, _LogColorizer.ANSI.sub('', pcp(*args)), extra=extra, stacklevel=stacklevel + 2, **options)
+
 
   @staticmethod
   def Debug(*a, logger=None, **kw): Logger._log(logging.DEBUG, a, logger, kw)
@@ -1567,12 +1556,6 @@ class _DC(UserDict):
 
 
 # region Configuration mixins
-class _either:
-  """A method that binds to the instance, or to the class when called on the class, as on Env."""
-  def __init__(self, fn: Callable) -> None: self.fn = fn
-  def __get__(self, obj, cls) -> Callable: return partial(self.fn, cls if obj is None else obj)
-
-
 class mixin_Config(_mixin):
   _my: dict[str, Any] = {}
 
@@ -1580,47 +1563,37 @@ class mixin_Config(_mixin):
   def _config_copy(self, other: mixin_Config) -> None: self._my = dict(other._config_data())
   def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
   def _config_from_env(self) -> None: self._my = deepcopy(Env._data())
-  def _config_data(self) -> dict: return self._my
 
-  @_either
-  def my(self, path: str | y2path, default=None) -> Any: return self._config_data() if path == '' else deepget(path, self._config_data(), default=default)
-  @_either
-  def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self._config_data(), default=default)
-  @_either
-  def my_float(self, path: str | y2path, default: float = float('nan')) -> float: return deepget_float(path, self._config_data(), default=default)
-  @_either
-  def my_list(self, path: str | y2path, default: list = []) -> list: return deepget_list(path, self._config_data(), default=default or [])
-  @_either
-  def my_dict(self, path: str | y2path, default: dict = {}) -> dict: return self._config_data() if path == '' else deepget_dict(path, self._config_data(), default=default or {})
+  def my(self, path: str | y2path, default=None) -> Any: return deepget(path, self._my, default=default)
+  def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self._my, default=default)
+  def my_float(self, path: str | y2path, default: float = float('nan')) -> float: return deepget_float(path, self._my, default=default)
+  def my_list(self, path: str | y2path, default: list = []) -> list: return deepget_list(path, self._my, default=default or [])
+  def my_dict(self, path: str | y2path, default: dict = {}) -> dict: return deepget_dict(path, self._my, default=default or {})
 
 
-class _Base(mixin_Logger, mixin_Config):
-  """An object with its log and its configuration: named as given, or after the program, and its ``_my`` a copy of
-  Env, which loads the program's default environment on its first read, as for a script. Env and the apps are these."""
-  _base_path: Path
+# class _Base(mixin_Logger, mixin_Config):
+#   """An object with its log and its configuration: named as given, or after the program, and its ``_my`` a copy of
+#   Env, which loads the program's default environment on its first read, as for a script. Env and the apps are these."""
+#   _base_path: Path
 
-  def __init__(self, name: str = '', **kw) -> None:
-    super().__init__(**kw)
-    self.name = name or Env.name
-    self._my = deepcopy(Env._data())
-    self._base_path = Path('.')
-
-  # def my_path(self, path) -> Path: return self._base_path / self.my(path)
+#   def __init__(self, name: str = '', **kw) -> None:
+#     super().__init__(**kw)
+#     self.name = name or Env.name
+#     self._my = deepcopy(Env._data())
+#     self._base_path = Path('.')
 
 # endregion
 
 
 # region Env: the configuration
-class Env(_Base):
-  """The program's environment: the special app, static and global, one per program; an app object copies it."""
+class Env(mixin_Logger, mixin_Config):
+  """The program's environment: singleton app object. It's my is glob"""
   home: Path = Path.home()
   user: str = getpass.getuser()
   os: OSType = detect_os()
-  platform: str = {OSType.W11: 'windows', OSType.WSL: 'wsl', OSType.LINUX: 'debian', OSType.MACOS: 'macos'}[os]   # the shared configuration's words
   host: str = socket.gethostname().split('.')[0].lower()
 
   _global_log = True
-  data: dict[str, Any] = {}
   initialized: bool = False
 
   name: str = ''
@@ -1628,69 +1601,60 @@ class Env(_Base):
 
   @staticmethod
   def _load_dict(d: dict) -> None:
-    s = json.dumps(d)
-    data = json.loads(Template(s).safe_substitute())
-    if not isinstance(data, dict): raise TypeError('configuration must be a mapping')
-    if 'trace_rules' in data and not isinstance(data['trace_rules'], dict):
-      raise TypeError('trace_rules must be a mapping')
-    if 'log_file' in data and (not isinstance(data['log_file'], str) or not data['log_file'].strip()):
-      raise ValueError('File logging requires an explicit log_file in configuration')
-    if 'trace_rules' in Env.data and 'trace_rules' not in data: TRACE_RULES.clear()
-    if Env.initialized or Env.data: Env.reset(); Info('INFO', 'Environment', 'WRED', 'reset()')
-    Env.data = data
+    _ = json.dumps(d)
+    data = json.loads(Template(_).safe_substitute())
+
+    if Env.initialized or Env._my: 
+      Env.reset()
+      Info('INFO', 'Environment', 'WRED', 'reset()')
+
+    Env._my = data
     Env.initialized = True
-    if 'trace_rules' in Env.data:
-      rules = Env.glob('trace_rules')
-      if not isinstance(rules, dict): raise TypeError('trace_rules must be a mapping')
-      TRACE_RULES.clear()
-      TRACE_RULES.update(rules)
+
     if 'log_file' in Env.data: Logger.enable_file_logging(log_file=Env.data['log_file'])
+
 
   @staticmethod
   def reset() -> None:
-    for handler in tuple(Logger._file_handlers.values()):
-      Logger._root.removeHandler(handler)
-      handler.close()
-    Logger._file_handlers.clear()
-    Env.data = {}
+    Env._my = {}
     Env.initialized = False
 
-  @staticmethod
-  def _data() -> dict:
-    """The configuration; a script that reads it first loads the default environment, from beside the script."""
-    if not Env.initialized: Env.init()
-    return Env.data
-
-  @staticmethod
-  def _config_data() -> dict: return Env._data()
 
   glob, glob_int, glob_list, glob_dict = (mixin_Config.__dict__[n] for n in ('my', 'my_int', 'my_list', 'my_dict'))
-  @staticmethod
-  @sync
-  async def dump():
-    Dump('Env.data', Env.data)
-    return await asyncio.sleep(0)  # Make it truly async
+  # @staticmethod
+  # @sync
+  # async def dump():
+  #   Dump('Env.data', Env.data)
+  #   return await asyncio.sleep(0)  # Make it truly async
+
 
   @staticmethod
   def from_dict(d: dict) -> None:
-    """Initialize Env from a dict. A ``topology`` key (a yaml path) is loaded as
-    the base data; ``tunables`` (an inline dict) and the remaining keys override
-    it — mirroring Y2's Environment loader. Without ``topology`` the dict itself
-    is the data (back-compatible)."""
-    config = dict(d)
-    topology = config.pop('topology', None)
-    tunables = config.pop('tunables', None)
-    data = dict_from_yml(topology) if topology else {}
-    if isinstance(tunables, dict): data.update(tunables)
-    data.update(config)
-    Env._load_dict(data)
+    """
+    Initialize Env from a dict. 
+    A topology key (a yaml path) is loaded as the base data; 
+    tunables (an inline dict) and the remaining keys override it — mirroring Y2's Environment loader. 
+    Without topology the dict itself is the data (back-compatible).
+    """
+    # config = dict(d)
+    # topology = config.pop('topology', None)
+    # tunables = config.pop('tunables', None)
+    # data = dict_from_yml(topology) if topology else {}
+    # if isinstance(tunables, dict): data.update(tunables)
+    # data.update(config)
+    Env._load_dict(d)
+
 
   @staticmethod
   def from_env(name: Optional[str] = None, app_path: Optional[Path] = None, config: str | Path | None = None,
                topology: bool = False) -> None:
-    """Initialize Env from name + app_path, resolving config file and loading YAML; ``config`` names the file, and
-    ``topology`` puts the nearest ``_config/config.yaml`` upward under it."""
+    """
+    Initialize Env from name + app_path, resolving config file and loading YAML
+    config names the file, and
+    topology puts the nearest ``_config/config.yaml`` upward under it.
+    """
     Env._main_file, Env._main_dir = Env._main()
+
     Env.name = name or Env._program_name()
     Env.app_path = Env._resolve_app_path(app_path)
     Env.config_file = full_path(config) if config else Env._config_file()
@@ -1787,8 +1751,6 @@ glob_int = Env.glob_int
 glob_list = Env.glob_list
 glob_dict = Env.glob_dict
 # endregion
-
-
 
 
 # region App
