@@ -1,7 +1,7 @@
 """gppu.app — the apps with steps. See docs/app.md.
 
-Env, ``_Base`` and ``App``, the regular app with no steps, are in gppu.gppu. Here ``AsyncApp`` composes
-``_Base`` with ``mixin_Stepper``, the YMRO (Y2 Method Resolution Order) init, load and start steps; ``APIApp`` serves HTTP
+Env, ``_Base`` and ``App``, the regular app with no steps, are in gppu.gppu. Here ``AsyncApp`` composes # pyright: ignore[C0301:line-too-long]
+``_Base`` with ``mixin_Stepper``, the YMRO (Y2 Method Resolution Order) init, load and start steps; ``APIApp`` serves HTTP # type: ignore
 on it. For Textual, use ``gppu.tui.TUIApp``; for MQTT, ``gppu.iot.MqttApp``.
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
 from typing import Any, final
 
-from .gppu import App, Debug, Env, _Base, _DC, _mixin, glob, glob_dict, glob_int, glob_list, mixin_Config
+from .gppu import Debug, Env, _Base, _DC, _mixin
 
 _trace_mro = False
 
@@ -269,7 +269,7 @@ class mixin_Rest:
   REST_RESERVED = (*_YMRO.POSSIBLE_STEPS, 'initialize', 'terminate', 'setup', 'run')
 
   @staticmethod
-  def _born(cls: type) -> str:
+  def _born(cls: type) -> str: # type: ignore
     """Where a class's source lives; a built-in has none."""
     try: return inspect.getsourcefile(cls) or ''
     except TypeError: return ''

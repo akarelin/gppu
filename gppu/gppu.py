@@ -120,7 +120,7 @@ def probe_path(path: str | Path) -> dict:
     "named_handlers": {"conversations.json": "ExportHandler", "conversations-*.json": "ExportHandler"},
   }
 
-  path = pathlib.Path(path)
+  path = pathlib.Path(path) # type: ignore
   info = path.info
   stat = path.stat(follow_symlinks=False)
   attributes = getattr(stat, "st_file_attributes", 0)
@@ -499,7 +499,7 @@ class y2uri:
     return result
 
   @property
-  def query(self) -> str: return self._query
+  def query(self) -> str | None: return self._query
 
   @query.setter
   def query(self, value: str) -> None: self._query = value
