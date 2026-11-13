@@ -9,7 +9,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 - [ ] Env does not initialize from itself: `from_env` goes, Env's configuration is read for it at construction like an app's (in progress)
   - Tried: Env reading the nearest `config.yaml` above the program at construction. The Hosts TUI found nothing, Y2 found `y2/config.yaml` with its `topology:` line, and file_indexer's stale `CRAP/Projects/file_indexer/config.yaml` broke `import gppu`; not committed
   - Compared over every `from_env` caller (`D:\Work\11\13\env-location\rows.txt`): neither the nearest `config.yaml` nor the nearest `_config/config.yaml` reaches Creekview's `_creekview.yaml`, and Linked Data, the lake, CRAP's ETLs, CCTV and the Kuma and devops scripts sit in neither of the two environments
-  - Open: which environment those programs read
+  - Settled by SPEC: they read Hosts, and Y2's apps read Creekview; nothing walks folders. Next: a program declares Creekview by an import or its first line, and Env reads the declared environment from its repository at construction, on Alex-PC, in the Y2 container and in the frozen display-control
 - [x] No topology: `topology` parameter and `_topology_file` removed
 - [x] `APP`, `_app` and `init` removed
 - [x] Nothing outside `mixin_Config` reads `_my`
