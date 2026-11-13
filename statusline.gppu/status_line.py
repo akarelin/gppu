@@ -17,7 +17,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from functools import cache
 
-from gppu import TColor, Env, Warn
+from gppu import App, TColor, Env, Warn
 from gppu.gppu import Path, _colorize
 from jinja2 import Environment, Undefined
 
@@ -388,7 +388,12 @@ def _pre_render(stats):
             **{name: fn(stats) for name, fn in _FORMATTERS.items()}}
 
 
+class StatusLine(App):
+    """The status line is an app with no environment: starting it gives Env its home, host, user and os."""
+
+
 def main():
+    StatusLine()
     data = json.loads(sys.stdin.read())
     stats = build_stats(data)
     rendered = _pre_render(stats)

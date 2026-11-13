@@ -6,7 +6,7 @@ from collections import Counter
 
 from gppu.data import Cache
 from gppu.gppu import Path
-from gppu.fs.handlers import probe
+from gppu.fs.handlers import HANDLERS, SessionHandler, probe
 
 CACHE_DIR = Path(tempfile.gettempdir()) / "claude_statusline_cache"
 # Bump when the meaning of a cached count changes. v4: counts from the session record's
@@ -53,18 +53,20 @@ def _is_user_prompt(msg):
 
 
 def _read(path):
-    """Counts of one whole transcript, from the session record gppu.fs.handlers parses: (tools, counts, meta, subagent).
+    """Counts of one whole transcript, read through gppu.fs.handlers: (tools, counts, meta, subagent).
 
-    Everything comes from the record's messages, each one's data being its line: the session's
+    Whether it is a subagent's comes from the session record its handler parses. Everything else comes
+    from its messages, its user and assistant lines as SessionHandler reads them: the session's
     first and last time, its version, cwd and branch from the first meta line, prompts, replies,
     tools, errors and tokens.
     """
-    record = probe(path).parse(path)
+    record = HANDLERS[probe(path).type].parse(path)
     tools = Counter()
     counts = _new_counts()
     meta = _new_meta()
-    for m in record["messages"]:
-        e = m["data"]
+    for e in SessionHandler.lines(path):
+        if e.get("type") not in ("user", "assistant"):
+            continue
         msg = e["message"]
         meta["first_ts"] = meta["first_ts"] or e["timestamp"]
         meta["last_ts"] = e["timestamp"]
@@ -86,7 +88,7 @@ def _read(path):
             counts["output"] += u.get("output_tokens", 0)
             counts["cache_read"] += u.get("cache_read_input_tokens", 0)
             counts["cache_create"] += u.get("cache_creation_input_tokens", 0)
-    return dict(tools), counts, meta, record["data"]["subagent"]
+    return dict(tools), counts, meta, record.data["subagent"]
 
 
 def _merge_counts(a, b):
