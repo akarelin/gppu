@@ -12,6 +12,58 @@ Usage:
     python w11-events.py --stats            # recalculate stats and exit
 """
 
+"""
+  manifest:
+    name: Event Viewer
+    description: Windows Event Viewer logs — history, common errors, live tail
+    script: w11-events.py
+    icon: "\U0001F4CB"
+    modes:
+      default:
+        name: Default
+      refresh:
+        name: Refresh stats
+        args: [--stats]
+        inline: true
+      clear-logs:
+        name: Clear logs
+        args: [--clear-logs]
+        inline: true
+      ask:
+        name: Custom...
+        ask_for:
+          - name: days
+          - name: level
+            options: [Critical, Error, Warning, Information, Verbose, All]
+
+  logs:
+    - Application
+    - System
+    - Security
+    - Microsoft-Windows-Kernel-PnP/Configuration
+
+  level: Warning    # Critical, Error, Warning, Information, Verbose, All
+  days: 30
+  dedup: true
+  max_message_length: 300
+
+  event_categories:
+    app:
+      icon: "\U0001F4BB"
+    service:
+      icon: "\u2699\uFE0F"
+    device:
+      icon: "\U0001F50C"
+    system:
+      icon: "\U0001F5A5\uFE0F"
+    windows:
+      icon: "\U0001FA9F"
+    security:
+      icon: "\U0001F512"
+  error_rules: !include error_rules.yaml
+
+"""
+
 from __future__ import annotations
 
 import argparse

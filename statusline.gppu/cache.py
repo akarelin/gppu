@@ -6,7 +6,7 @@ from collections import Counter
 
 from gppu.data import Cache
 from gppu.gppu import Path
-from gppu.handlers import probe
+from gppu.fs.handlers import probe
 
 CACHE_DIR = Path(tempfile.gettempdir()) / "claude_statusline_cache"
 # Bump when the meaning of a cached count changes. v4: counts from the session record's
@@ -53,7 +53,7 @@ def _is_user_prompt(msg):
 
 
 def _read(path):
-    """Counts of one whole transcript, from the session record gppu.handlers parses: (tools, counts, meta, subagent).
+    """Counts of one whole transcript, from the session record gppu.fs.handlers parses: (tools, counts, meta, subagent).
 
     Everything comes from the record's messages, each one's data being its line: the session's
     first and last time, its version, cwd and branch from the first meta line, prompts, replies,
@@ -105,7 +105,7 @@ def _merge_meta(a, b):
 
 
 def transcript_stats_cached(path, ttl):
-    """Read the transcript and its subagents through gppu.handlers, each file again only when it changed.
+    """Read the transcript and its subagents through gppu.fs.handlers, each file again only when it changed.
 
     Returns (Counter of tools, counts dict, meta dict, subagent_count).
     """

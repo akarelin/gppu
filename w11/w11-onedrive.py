@@ -16,6 +16,54 @@ Usage:
     python w11-onedrive.py dbexplore --output . # save report to current dir
 """
 
+"""
+  manifest:
+    name: OneDrive Diagnostics
+    description: OneDrive sync diagnostics & conflict cleanup
+    script: w11-onedrive.py
+    icon: "\u2601"
+    modes:
+      diag:
+        name: Sync Diagnostics
+        args: [diag]
+      diag-watch:
+        name: Sync Diagnostics (live)
+        args: [diag, --watch]
+      dbexplore:
+        name: DB Explorer (report)
+        args: [dbexplore]
+      reset:
+        name: Reset OneDrive
+        args: [reset]
+      conflicts:
+        name: Conflict Analysis
+        args: [conflicts]
+        ask_for:
+          - name: account
+            options: accounts  # resolved from config key below
+
+  accounts:
+    - Business1
+    - Business2
+
+  watch_interval: 10
+
+  hostnames:
+    - Mailstore
+    - Alex-PC
+
+  hostname_stopwords:
+    - OCR
+    - Logitech
+    - Small-1
+
+  conflict_scan_exclude:
+    - .git
+    - node_modules
+    - __pycache__
+
+"""
+
 from __future__ import annotations
 
 import os
