@@ -566,7 +566,7 @@ class TUIApp(mixin_Config, TextualApp):
   work; Textual owns the event loop. Load configuration with ``Env.from_env()``
   before ``MyApp.main()`` when needed.
   Read it through ``glob(...)``. To use ``self.my(...)``, first give the app its own
-  configuration with ``self._config_from_key(key)`` or ``self._config_from_dict(mapping)``.
+  configuration with ``self._config_load(glob_dict(key))`` or ``self._config_load(yaml_file)``.
 
   Works standalone (``app.run()``) or embedded in a TUILauncher via AppScreen.
   Use ``self.done(result)`` to finish — it calls ``exit()`` or ``dismiss()``

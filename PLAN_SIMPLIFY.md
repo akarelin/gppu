@@ -8,6 +8,8 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 - [x] `examples/basic.py` uses Hosts, with Info and Debug output controlled by Hosts' logging settings; verified console output and the declared log file
 - [x] App construction takes the environment declaration and selects the app's section using its own name; Fleet declares Hosts and holds only its host rows (RAN 0e342ca65): its own glob, load, render and values are gone, and its callers read gppu's glob
 - [x] App's environment is optional, and a declared environment loads before the app starts, AsyncApp's init included; an app with none starts with empty configuration
+- [x] Env and every app load through one loader, `_config_load` on `mixin_Config`: `Env.init` gives it the environment file, an app its own YAML file (`config=`, independent from the environment) or else its section; `_config_from_key`, `_config_from_dict` and `_config_copy` are gone
+- [ ] The loader applies templates: which templates fill at load, and with what values, is open; today it fills none, as released gppu does
 - [x] Env and State are each one instance; Env's methods read `self`
 - [x] `glob`, `glob_int`, `glob_list`, `glob_dict` are globals; every caller in gppu, RAN, CRAP, IoT and Y2 uses them
 - [x] No configuration comparison and no change listeners: `_config_changes`, `changed_paths`, `on_change` removed
@@ -61,6 +63,7 @@ These move in the same commit as the release. The Hosts tools that construct Fle
 - Every `Env.from_env` caller in RAN, CRAP, IoT and Y2, and the "Configuration without an app" line in the global CLAUDE.md that names `Env.from_env`
 - `TemplateSet`'s callers outside gppu use Jinja: lake's `graph_configuration.py`, `sources` and Dagster definitions, the LinkML Dagster runtime, admin_ui's `file_configuration.py`
 - Creekview's `generator`, behavior and `base_object` configuration, with Y2's release
+- Y2's `y2app.py` calls `_config_from_dict`; it calls `_config_load`
 - Every reader of `Env.data`, which is `Env._my` now, reads `glob_dict('')`: lake's `graph_configuration.py` and `m365/config.py`, display-control and its Intune scripts, Y2's `ui/creekview.py`, and the Preservator, Session Manager and FileIndexer tests
 
 ## Found outside this task

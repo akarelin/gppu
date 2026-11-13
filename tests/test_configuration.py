@@ -1,4 +1,4 @@
-"""An app declares its environment, Hosts or IoT; Env loads it once, then the app reads its own section."""
+"""An app declares its environment, Hosts or IoT; Env loads it once. An app given its own configuration file reads that, independent from the environment; one given none reads its own section of the environment."""
 import pytest
 
 from gppu import App, Env, Logger, OSType, glob, jinja_template
@@ -124,3 +124,67 @@ def test_fleet_node_templates_keep_booleans_and_omit_empty_conditional_keys():
     assert jinja_template(source, platform='W11', host='alex-pc') == {
         'enabled': True, 'windows': {'items': ['alex-pc', '', '123', False, 0]}}
     assert jinja_template(source, platform='Linux', host='seven') == {'enabled': False}
+
+
+def test_app_loads_its_own_configuration_without_an_environment(home):
+    own = home / 'example.yaml'
+    own.write_text('mount_point: "G:"\nsources: !include sources.yaml\n', encoding='utf-8')
+    (home / 'sources.yaml').write_text('Lake: //s1/Lake\n', encoding='utf-8')
+    app = Example(config=own)
+    assert app.my('mount_point') == 'G:'
+    assert app.my('sources/Lake') == '//s1/Lake'
+    assert not Env.initialized
+    assert glob('') == {}
+
+
+def test_own_configuration_is_independent_from_the_environment(home):
+    own = home / 'example.yaml'
+    own.write_text('enabled: true\n', encoding='utf-8')
+    app = Example(environment='Hosts', config=own)
+    assert app.my('enabled') is True
+    assert app.my('names') is None
+    assert glob('example') == {'enabled': False, 'names': ['seven']}
+    app.my_dict('').update(added=1)
+    assert glob('example/added') is None
+
+
+def test_missing_own_configuration_raises(home):
+    with pytest.raises(FileNotFoundError):
+        Example(config=home / 'missing.yaml')
+
+
+def test_loading_keeps_literal_strings(home):
+    own = home / 'example.yaml'
+    own.write_text('path: \'C:\\Users\\Alex\\"quoted"\'\nshell: "$HOME ${missing}"\nempty: ""\n', encoding='utf-8')
+    app = Example(config=own)
+    assert app.my('path') == 'C:\\Users\\Alex\\"quoted"'
+    assert app.my('shell') == '$HOME ${missing}'
+    assert app.my('empty') == ''
+
+
+def test_async_app_keeps_its_steps():
+    from gppu import AsyncApp, YStepper
+
+    assert AsyncApp.init is YStepper.init
+
+    class Example(AsyncApp):
+        steps = []
+
+        def init(self):
+            self.steps.append('init')
+            return super().init()
+
+        def load(self):
+            self.steps.append('load')
+            return super().load()
+
+        def start(self):
+            self.steps.append('start')
+            return super().start()
+
+    import asyncio
+    app = Example(environment='Hosts')
+    assert app.steps == ['init']
+    asyncio.run(app.run())
+    assert app.steps == ['init', 'init', 'load', 'start']
+    assert app.initialized and app.loaded and app.started

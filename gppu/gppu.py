@@ -1568,9 +1568,10 @@ class mixin_Config(_mixin):
   _my: dict[str, Any] = {}
 
 
-  def _config_from_key(self, key: str) -> None: self._config_from_dict(self._my | glob_dict(key))
-  def _config_copy(self, other: mixin_Config) -> None: self._my = dict(other._my)
-  def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
+  def _config_load(self, source: Mapping | str | Path) -> None:
+    """The one loader of Env and every app: a YAML file, or a section already loaded, becomes this object's own
+    configuration, a copy of its source."""
+    self._my = deepcopy(dict(source)) if isinstance(source, Mapping) else dict_from_yml(source)
 
 
   def my(self, path: str | y2path, default=None) -> Any: return deepget(path, self._my, default=default)
@@ -1586,14 +1587,15 @@ class _Base(mixin_Logger, mixin_Config): pass
 # region App
 class App(_Base, _DC):
   """An app knows its name from its class. Its environment, Hosts or IoT, is optional: when it has one, the
-  environment loads first, then the app starts on its own section of it."""
+  environment loads first. Its own configuration is the YAML file it is given, independent from the environment;
+  an app given none starts on its own section of the environment."""
   name: str
 
-  def __init__(self, environment: str | None = None, **kw) -> None:
+  def __init__(self, environment: str | None = None, config: str | Path | None = None, **kw) -> None:
     super().__init__(**kw)
     if not self.name: self.name = type(self).__name__.lower()
     Env.init(environment=environment)
-    self._config_from_key(self.name)
+    self._config_load(glob_dict(self.name) if config is None else config)
 # endregion
 
 # class _Base(mixin_Logger, mixin_Config):
@@ -1645,10 +1647,9 @@ class _Env(_Base):
 
       if path.exists():
         self._env_root = path.parent
-        data = dict_from_yml(path)
-        if 'log_file' in data: Logger.enable_file_logging(log_file=data['log_file'])
-        if 'trace_rules' in data: Logger.init_logger(trace_rules=data['trace_rules'])
-        self._config_from_dict(data)
+        self._config_load(path)
+        if 'log_file' in self._my: Logger.enable_file_logging(log_file=self._my['log_file'])
+        if 'trace_rules' in self._my: Logger.init_logger(trace_rules=self._my['trace_rules'])
         self.initialized = True
       else: raise FileNotFoundError(path)
     elif environment: raise ValueError(f'Unknown environment {environment!r}: one of {", ".join(_ENV_PATHS)}')

@@ -25,7 +25,7 @@
 - State is state: not a `_Base`, with no configuration and no logger.
 
 ## Apps
-- App initialization takes its environment; the app already knows its name.
+- App initialization takes its environment; the app already knows its name. An app loads its own configuration, which is independent from the environment.
 - App's functionality lives in one place, and configuration is read from MQTT in one place.
 - AsyncApp does its own init and does not rely on `_Base`.
 

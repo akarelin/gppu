@@ -15,13 +15,17 @@ glob('hosts')           # the rest of Hosts
 
 The app already has its identity: `Example` selects `example`, and `Fleet` selects `fleet`. An explicit name remains an override for existing callers. The app's section is its own copy.
 
+An app's own configuration is independent from the environment: `Example(config='example.yaml')` loads that YAML file as the app's own, whether or not it declares an environment. An app given no file loads its section of the environment.
+
+Env and every app load through the same code, `_config_load(source)` on `mixin_Config`: a YAML file, or a section already loaded, becomes the object's own configuration as a copy.
+
 ## Env.init
 
 App construction calls `Env.init(environment=...)`. Env is the global singleton app; nothing else loads it.
 
 - It sets `host`, `os`, `user` and `home`, so an app without an environment has them too.
 - A declared name selects one YAML file: Hosts is `RAN/Hosts/_config/config.yaml`, IoT is `IoT/_Creekview/_creekview.yaml`. The path is under `D:\Dev` on Windows and under the home folder elsewhere. YAML `!include` paths are relative to the file that includes them.
-- The file's `log_file` and `trace_rules` apply to gppu's logger, then the file becomes the configuration that `glob(...)` reads.
+- `_config_load` reads the file into Env, so it becomes the configuration that `glob(...)` reads; its `log_file` and `trace_rules` then apply to gppu's logger.
 - The environment loads once. Later apps share it, with or without a declaration, until `Env.reset()`.
 - An unknown name, a missing file and invalid YAML raise. Nothing searches folders or guesses a program's configuration.
 
