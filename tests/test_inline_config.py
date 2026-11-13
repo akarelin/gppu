@@ -41,7 +41,7 @@ def test_python_script_reads_its_manifest_global_without_running(tmp_path):
 
 
 def test_python_script_reads_as_its_yaml_file_would(tmp_path):
-    (tmp_path / 'example.yaml').write_text(MANIFEST.replace('\\\\', '\\'), encoding='utf-8')
+    (tmp_path / 'example.yaml').write_text(MANIFEST, encoding='utf-8')
     assert dict_from_yml(python_script(tmp_path)) == dict_from_yml(tmp_path / 'example.yaml')
 
 
