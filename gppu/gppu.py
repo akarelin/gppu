@@ -1776,9 +1776,15 @@ glob_dict = Env.glob_dict
 # region App
 class App(_Base, _DC):
   """An app with the data class: what it is constructed with is its data. It has no entry method and no steps;
-  construct it and call what the app defines. Read the configuration with ``glob(...)`` and the app's own with
-  ``self.my(...)``. See docs/app.md."""
+  construct it and call what the app defines. Its name is the one it is constructed with, or the program's, and its
+  own configuration, the section under its name, is read for it at construction: ``self.my(...)`` reads it, and
+  ``glob(...)`` the rest of the configuration. See docs/app.md."""
   name: str
+
+  def __init__(self, **kw) -> None:
+    super().__init__(**kw)
+    if not self.name: self.name = Env.name
+    self._config_from_key(self.name)
 # endregion
 
 
