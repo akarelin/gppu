@@ -631,8 +631,8 @@ class TUIApp(mixin_Config, TextualApp):
     sections: list[tuple[str, str]] = [
       ('Env', f'name={Env.name} initialized={Env.initialized}'),
     ]
-    if self._my:
-      sections.append(('Instance config', pprint.pformat(self._my)))
+    if own := self.my_dict(''):
+      sections.append(('Instance config', pprint.pformat(own)))
     self.push_screen(InfoScreen(sections))
 
   def loading(self, selector: str | None = None):

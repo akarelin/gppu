@@ -1619,14 +1619,14 @@ class _Env(_Base):
     _ = json.dumps(d)
     data = json.loads(Template(_).safe_substitute())
 
-    if self.initialized or self._my: 
+    if self.initialized:
       self.reset()
       Info('INFO', 'Environment', 'WRED', 'reset()')
 
     self._my = data
     self.initialized = True
 
-    if 'log_file' in self._my: Logger.enable_file_logging(log_file=self._my['log_file'])
+    if log_file := self.my('log_file'): Logger.enable_file_logging(log_file=log_file)
 
 
   def update_config(self, data: dict, path: str | y2path = '') -> None:
