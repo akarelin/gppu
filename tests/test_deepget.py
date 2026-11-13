@@ -3,6 +3,7 @@ from gppu import (
     deepget, deepget_int, deepget_list, deepget_dict,
     deepdict,
 )
+from gppu import glob
 
 
 class TestDeepget:
@@ -46,7 +47,7 @@ class TestDeepget:
     def test_environment_reads_a_nested_false(self):
         from gppu import Env
         Env.from_dict({"rest": {"enabled": False}})
-        assert Env.glob("rest/enabled") is False
+        assert glob("rest/enabled") is False
 
 
 class TestDeepgetTyped:

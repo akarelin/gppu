@@ -9,6 +9,7 @@ from pathlib import Path
 
 import yaml
 
+from examples import handler_ls
 from examples.handler_ls import listing, main
 from gppu import Env
 from gppu.fs.catalog import GppuCatalog
@@ -40,7 +41,7 @@ def test_main_lists_the_catalog_and_one_location_with_an_argument(tmp_path, monk
   (location / 'plain.txt').write_text('plain', encoding='utf-8')
   catalog = catalog_for(tmp_path, location)
   monkeypatch.setattr(Env, 'from_env', staticmethod(lambda **kwargs: None))
-  monkeypatch.setattr(Env, 'glob', staticmethod(lambda key: {'catalog': str(catalog)}[key]))
+  monkeypatch.setattr(handler_ls, 'glob', lambda key: {'catalog': str(catalog)}[key])
   monkeypatch.setattr(sys, 'argv', ['handler_ls.py'])
   main()
   rows = json.loads(capsys.readouterr().out)

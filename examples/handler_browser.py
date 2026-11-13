@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from gppu import Env, Error, format_size
+from gppu import glob
 from gppu.fs.catalog import GppuCatalog
 from gppu.fs.gppufs import GppuFileSystem
 from gppu.tui import TreeEntry, TreeTable, TreeTableColumn, TUIApp
@@ -203,7 +204,7 @@ class HandlerBrowser(TUIApp):
 
 def main() -> None:
   Env.from_env(name='handlers', app_path=Path(__file__).parent)
-  HandlerBrowser(GppuCatalog(Env.glob('catalog'))).run()
+  HandlerBrowser(GppuCatalog(glob('catalog'))).run()
 
 
 if __name__ == '__main__':

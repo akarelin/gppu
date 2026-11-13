@@ -2,6 +2,7 @@
 import pytest
 
 from gppu import Env, Runtime, State, _Base, cache
+from gppu import glob
 
 
 @pytest.fixture(autouse=True)
@@ -18,7 +19,7 @@ def test_state_is_an_app_apart_from_env():
     State.set('hosts/s2/online', True)
     assert State.my('hosts/s2/online') is True
     assert State.my_dict('hosts') == {'s2': {'online': True}}
-    assert Env.glob('hosts/s2/online') is None
+    assert glob('hosts/s2/online') is None
 
 
 def test_listeners_hear_their_path_and_what_is_under_or_above_it():

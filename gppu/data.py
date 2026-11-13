@@ -4,6 +4,7 @@ from typing import Any, ClassVar, Optional
 from contextlib import asynccontextmanager, contextmanager
 
 from .gppu import Env, _Base
+from .gppu import glob
 from .gppu import _DC
 
 
@@ -17,7 +18,7 @@ class _PersistentBase(_Base):
 
   def __init__(self, **kw):
     super().__init__(**kw)
-    self.db_connection_string = Env.glob('db') or self.my('db') or ''
+    self.db_connection_string = glob('db') or self.my('db') or ''
     if not self.db_connection_string:
       raise ValueError("Database connection string 'db' not found in config")
 

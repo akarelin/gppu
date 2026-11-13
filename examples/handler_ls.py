@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from gppu import Env
+from gppu import glob
 from gppu.fs.catalog import GppuCatalog
 
 
@@ -17,7 +18,7 @@ def listing(gppufs: GppuCatalog, path: str | None = None) -> str:
 
 def main() -> None:
   Env.from_env(name='handlers', app_path=Path(__file__).parent)
-  print(listing(GppuCatalog(Env.glob('catalog')), *sys.argv[1:2]))
+  print(listing(GppuCatalog(glob('catalog')), *sys.argv[1:2]))
 
 
 if __name__ == '__main__':

@@ -29,6 +29,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from gppu import Env, dict_from_yml, dict_to_yml
+from gppu import glob, glob_dict, glob_int, glob_list
 from gppu.tui import TUIApp, StatusHeader
 from textual import work
 from textual.app import ComposeResult
@@ -1320,8 +1321,8 @@ def run_stats_cli(log_names, level, days, max_msg_len, hostname):
     print(f'Recalculating stats for {hostname} -> {stats_file}')
     def progress(msg):
         print(f'  {msg}')
-    error_tracker = CommonErrorTracker(Env.glob_dict('error_rules'),
-                                       categories=Env.glob_dict('event_categories'))
+    error_tracker = CommonErrorTracker(glob_dict('error_rules'),
+                                       categories=glob_dict('event_categories'))
     path = recalculate_stats(log_names, level, days, max_msg_len, stats_file, hostname,
                              error_tracker=error_tracker, progress_cb=progress)
     print(f'\nSaved: {path}')
@@ -1355,18 +1356,18 @@ def main():
     elif args.logs:
         log_names = args.logs
     else:
-        log_names = Env.glob_list('logs', default=['Application', 'System', 'Security'])
+        log_names = glob_list('logs', default=['Application', 'System', 'Security'])
 
-    level = args.level or Env.glob('level', default='Warning')
-    days = args.days or Env.glob_int('days', default=10)
-    do_dedup = not args.no_dedup and Env.glob('dedup', default=True)
-    max_msg_len = Env.glob_int('max_message_length', default=300)
+    level = args.level or glob('level', default='Warning')
+    days = args.days or glob_int('days', default=10)
+    do_dedup = not args.no_dedup and glob('dedup', default=True)
+    max_msg_len = glob_int('max_message_length', default=300)
     export_path = args.export
     hostname = socket.gethostname()
 
     # Common errors patterns (resolved via !include in YAML)
-    error_tracker = CommonErrorTracker(Env.glob_dict('error_rules'),
-                                       categories=Env.glob_dict('event_categories'))
+    error_tracker = CommonErrorTracker(glob_dict('error_rules'),
+                                       categories=glob_dict('event_categories'))
 
     if args.clear_logs:
         print(f'Clearing {len(log_names)} logs (requires admin)...')

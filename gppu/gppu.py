@@ -1582,7 +1582,7 @@ class _DC(UserDict):
 class mixin_Config(_mixin):
   _my: dict[str, Any] = {}
 
-  def _config_from_key(self, key: str) -> None: self._my = self._my | Env.glob_dict(key)
+  def _config_from_key(self, key: str) -> None: self._my = self._my | glob_dict(key)
   def _config_copy(self, other: mixin_Config) -> None: self._my = dict(other._my)
   def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
 
@@ -1625,92 +1625,39 @@ class _Env(_Base):
   name: str = ''
   app_path: Path
 
-  @staticmethod
-  def _load_dict(d: dict) -> None:
+  def _load_dict(self, d: dict) -> None:
     _ = json.dumps(d)
     data = json.loads(Template(_).safe_substitute())
 
-    if Env.initialized or Env._my: 
-      Env.reset()
+    if self.initialized or self._my: 
+      self.reset()
       Info('INFO', 'Environment', 'WRED', 'reset()')
 
-    Env._my = data
-    Env.initialized = True
+    self._my = data
+    self.initialized = True
 
-    if 'log_file' in Env._my: Logger.enable_file_logging(log_file=Env._my['log_file'])
-
-
-  changed_paths: frozenset[str] = frozenset()
-  _listeners: list[tuple[str, Callable[[frozenset[str]], None]]] = []
-
-  @staticmethod
-  def _config_changes(before: dict, after: dict, prefix: str = '') -> frozenset[str]:
-    changed = set()
-    for key in before.keys() | after.keys():
-      path = f'{prefix}/{key}' if prefix else str(key)
-      if key not in before or key not in after:
-        changed.add(path)
-      elif isinstance(before[key], dict) and isinstance(after[key], dict):
-        changed.update(Env._config_changes(before[key], after[key], path))
-      elif isinstance(before[key], list) and isinstance(after[key], list):
-        if json.dumps(before[key], sort_keys=True) != json.dumps(after[key], sort_keys=True): changed.add(path)
-      elif type(before[key]) is not type(after[key]) or before[key] != after[key]:
-        changed.add(path)
-    return frozenset(changed)
+    if 'log_file' in self._my: Logger.enable_file_logging(log_file=self._my['log_file'])
 
 
-  @staticmethod
-  def on_change(callback: Callable[[frozenset[str]], None], path: str | y2path = '') -> Callable[[], None]:
-    """Observe changed slash paths after loading; return a callable to unsubscribe.
-
-    Callbacks are synchronous. The consumer decides how to apply each change.
-    Registrations survive configuration reloads and Env.reset().
-    """
-    if inspect.iscoroutinefunction(callback): raise TypeError('configuration change callbacks must be synchronous')
-    entry = (str(path).strip('/'), callback)
-    Env._listeners.append(entry)
-    def unsubscribe():
-      if entry in Env._listeners: Env._listeners.remove(entry)
-    return unsubscribe
-
-  @staticmethod
-  def update_config(data: dict, path: str | y2path = '') -> None:
+  def update_config(self, data: dict, path: str | y2path = '') -> None:
     """Replace one configuration subtree; an empty path replaces the whole config."""
     if not isinstance(data, dict): raise TypeError('configuration must be a mapping')
-    if path:
-      # only the subtree the topic replaces is compared and written
-      *parents, key = y2path(path)
-      before = Env.glob(path)
-      changed = Env._config_changes({} if before is None else {key: before}, {key: data}, '/'.join(parents))
-      Env.changed_paths = changed
-      if Env.initialized and not changed: return
-      deepset(path, Env._my, data)
-    else:
-      # a topic on the root carries the whole configuration, so the whole is what it replaces
-      changed = Env._config_changes(Env.glob_dict(''), data)
-      Env.changed_paths = changed
-      if Env.initialized and not changed: return
-      Env._load_dict(data)
-    for watched, callback in tuple(Env._listeners):
-      relevant = frozenset(key for key in changed if paths_meet(watched, key))
-      if relevant: callback(relevant)
+    if path: deepset(path, self._my, data)
+    else: self._load_dict(data)
 
-  @staticmethod
-  def reset() -> None:
-    Env._my = {}
-    Env.initialized = False
+  def reset(self) -> None:
+    self._my = {}
+    self.initialized = False
 
 
-  glob, glob_int, glob_list, glob_dict = mixin_Config.my, mixin_Config.my_int, mixin_Config.my_list, mixin_Config.my_dict
   # @staticmethod
   # @sync
   # async def dump():
-  #   Dump('Env.data', Env.data)
+  #   Dump('self.data', self.data)
   #   return await asyncio.sleep(0)  # Make it truly async
 
 
-  @staticmethod
-  def from_dict(d: dict) -> None:
+  def from_dict(self, d: dict) -> None:
     """
     Initialize Env from a dict. 
     A topology key (a yaml path) is loaded as the base data; 
@@ -1723,69 +1670,62 @@ class _Env(_Base):
     # data = dict_from_yml(topology) if topology else {}
     # if isinstance(tunables, dict): data.update(tunables)
     # data.update(config)
-    Env._load_dict(d)
+    self._load_dict(d)
 
 
-  @staticmethod
-  def from_env(name: Optional[str] = None, app_path: Optional[Path] = None, config: str | Path | None = None,
+  def from_env(self, name: Optional[str] = None, app_path: Optional[Path] = None, config: str | Path | None = None,
                topology: bool = False) -> None:
     """
     Initialize Env from name + app_path, resolving config file and loading YAML
     config names the file, and
     topology puts the nearest ``_config/config.yaml`` upward under it.
     """
-    Env._main_file, Env._main_dir = Env._main()
+    self._main_file, self._main_dir = self._main()
 
-    Env.name = name or Env._program_name()
-    Env.app_path = Env._resolve_app_path(app_path)
-    Env.config_file = full_path(config) if config else Env._config_file()
+    self.name = name or self._program_name()
+    self.app_path = self._resolve_app_path(app_path)
+    self.config_file = full_path(config) if config else self._config_file()
 
-    Logger.init_logger(Env.name)
+    Logger.init_logger(self.name)
 
-    config_data = dict_from_yml(Env.config_file) if Env.config_file else {}
-    if topology and 'topology' not in config_data: config_data['topology'] = Env._topology_file()
-    Env.from_dict(config_data)   # resolves a `topology:` key if the config has one
+    config_data = dict_from_yml(self.config_file) if self.config_file else {}
+    if topology and 'topology' not in config_data: config_data['topology'] = self._topology_file()
+    self.from_dict(config_data)   # resolves a `topology:` key if the config has one
 
-  @staticmethod
-  def init() -> None:
+  def init(self) -> None:
     """Create the environment from ``APP``: ``name``, ``config`` (the file; found by the name when it is not set),
     ``topology`` (the nearest ``_config/config.yaml`` upward goes under the configuration), ``cli`` (the command
     line goes over it), and the log's ``log_file`` and ``trace_rules``, which the configuration and the command line
     override."""
-    Env.from_env(name=APP['name'], config=APP['config'], topology=APP['topology'])
+    self.from_env(name=APP['name'], config=APP['config'], topology=APP['topology'])
     for key in ('log_file', 'trace_rules'):
-      if APP[key] is not None and key not in Env._my: Env._my[key] = APP[key]
-    if APP['cli']: Env.from_argv(sys.argv[1:])
-    if isinstance(rules := Env._my.get('trace_rules'), dict): TRACE_RULES.update(rules)
-    if Env._my.get('log_file'): Logger.enable_file_logging(log_file=Env._my['log_file'])
+      if APP[key] is not None and key not in self._my: self._my[key] = APP[key]
+    if APP['cli']: self.from_argv(sys.argv[1:])
+    if isinstance(rules := self._my.get('trace_rules'), dict): TRACE_RULES.update(rules)
+    if self._my.get('log_file'): Logger.enable_file_logging(log_file=self._my['log_file'])
 
-  @staticmethod
-  def _topology_file() -> Path:
-    for parent in (Env.app_path, *Env.app_path.parents):
+  def _topology_file(self) -> Path:
+    for parent in (self.app_path, *self.app_path.parents):
       if (candidate := parent / '_config' / 'config.yaml').exists(): return candidate
-    raise FileNotFoundError(f"The program needs a topology: no _config/config.yaml walking up from '{Env.app_path}'")
+    raise FileNotFoundError(f"The program needs a topology: no _config/config.yaml walking up from '{self.app_path}'")
 
-  @staticmethod
-  def _main() -> tuple[Path, Path]:
+  def _main(self) -> tuple[Path, Path]:
     import __main__
     main_file = Path(getattr(__main__, '__file__', 'app')).resolve()
     return main_file, main_file.parent
 
-  @staticmethod
-  def _program_name() -> str:
+  def _program_name(self) -> str:
     # Under PyInstaller __main__.__file__ resolves to __main__; use exe name instead
-    return Path(sys.executable).stem if getattr(sys, 'frozen', False) else Env._main()[0].stem
+    return Path(sys.executable).stem if getattr(sys, 'frozen', False) else self._main()[0].stem
 
-  @staticmethod
-  def _app() -> dict:
+  def _app(self) -> dict:
     """APP as every program starts with it: named after the program, its configuration found by that name, no
     topology, no command line."""
-    Env._main_file, Env._main_dir = Env._main()
-    Env.name, Env.app_path = Env._program_name(), Env._main_dir
-    return {'name': Env.name, 'config': None, 'topology': False, 'cli': False, 'log_file': None, 'trace_rules': None}
+    self._main_file, self._main_dir = self._main()
+    self.name, self.app_path = self._program_name(), self._main_dir
+    return {'name': self.name, 'config': None, 'topology': False, 'cli': False, 'log_file': None, 'trace_rules': None}
 
-  @staticmethod
-  def from_argv(argv: list[str]) -> None:
+  def from_argv(self, argv: list[str]) -> None:
     """The command line over the configuration: ``--key value`` sets that key to the string, ``--verbose`` with no
     value after it sets ``verbose`` to True, and a slash path names a nested key. Arguments that are not a key or its
     value are the program's own."""
@@ -1795,28 +1735,26 @@ class _Env(_Base):
       if not arg.startswith('--') or len(arg) == 2: continue
       name, value = arg[2:], True
       if i < len(argv) and not argv[i].startswith('--'): value, i = argv[i], i + 1
-      deepset(name, Env._my, value)
+      deepset(name, self._my, value)
 
-  @staticmethod
-  def _resolve_app_path(app_path: Optional[Path] = None) -> Path:
-    if not app_path: return Env._main_dir
+  def _resolve_app_path(self, app_path: Optional[Path] = None) -> Path:
+    if not app_path: return self._main_dir
     if app_path.is_absolute(): return app_path
     # Walk up from script location to find the relative path
-    parent = Env._main_dir
+    parent = self._main_dir
     while parent != parent.parent:
       candidate = parent / app_path
       if candidate.exists(): return candidate
       parent = parent.parent
-    return Env._main_dir / app_path
+    return self._main_dir / app_path
 
-  @staticmethod
-  def _config_file() -> Path | None:
+  def _config_file(self) -> Path | None:
     """``<name>.yaml`` then ``config.yaml``, searched from ``app_path`` upward —
     so a service in a subdir (e.g. /app/brultech) finds the suite's /app/config.yaml.
     A program with none runs on the command line alone."""
-    stem = Path(Env.name).with_suffix('.yaml').name
+    stem = Path(self.name).with_suffix('.yaml').name
     names = (stem, 'config.yaml')
-    for parent in (Env.app_path, *Env.app_path.parents):
+    for parent in (self.app_path, *self.app_path.parents):
       for name in names:
         candidate = parent / name
         if candidate.exists(): return candidate
@@ -1824,12 +1762,9 @@ class _Env(_Base):
 
 Env = _Env()
 
-# Global aliases for Env.glob* methods
+# the configuration's readers are globals: Env's my readers
 APP: dict = Env._app()   # what the program's environment is created from; a program sets its keys at its start
-glob = Env.glob
-glob_int = Env.glob_int
-glob_list = Env.glob_list
-glob_dict = Env.glob_dict
+glob, glob_int, glob_list, glob_dict = Env.my, Env.my_int, Env.my_list, Env.my_dict
 # endregion
 
 

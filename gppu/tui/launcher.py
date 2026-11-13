@@ -5,7 +5,7 @@ Each consumer creates a thin wrapper with its own Env initialization and brandin
 
 Usage::
 
-    from gppu import Env
+    from gppu import Env, glob, glob_dict, glob_list
     from gppu.tui import TUILauncher, launcher_main, load_app_registry
 
     class MyApp(TUILauncher):
@@ -31,7 +31,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-from gppu import Env, App, mixin_Config, dict_from_yml
+from gppu import Env, App, mixin_Config, dict_from_yml, glob, glob_dict, glob_list
 from gppu.gppu import Logger, _EmptyMessageFilter, _LogColorizer
 from gppu.gppu import OSType
 from rich.text import Text
@@ -285,13 +285,13 @@ def read_manifest(app_dir: Path, config_file: str, nav: str | None = None) -> di
 
 
 def load_app_registry(app_dir: Path) -> dict[str, dict]:
-    """Load app manifests from the YAML configs named in ``Env.glob_dict('apps')``.
+    """Load app manifests from the YAML configs named in ``glob_dict('apps')``.
 
     A value is either one manifest path, or a mapping of manifest paths whose key is the nav the launcher files them
     under: which submenu an item appears in is the launcher's business, so a manifest never has to know.
     """
     apps: dict[str, dict] = {}
-    for key, entry in Env.glob_dict('apps').items():
+    for key, entry in glob_dict('apps').items():
         group = entry if isinstance(entry, dict) else {key: entry}
         for item_key, config_file in group.items():
             if manifest := read_manifest(app_dir, config_file, key if isinstance(entry, dict) else None):
@@ -303,7 +303,7 @@ def load_registry(app_dir: Path) -> dict[str, dict]:
     """Everything one launcher offers: the manifests named in ``apps:``, then the sidecars in every directory named
     in ``utilities:``. Both are read relative to app_dir. This is what a launcher calls."""
     from .sidecar import load_sidecar_registry
-    directories = [(app_dir / directory).resolve() for directory in Env.glob_list('utilities')]
+    directories = [(app_dir / directory).resolve() for directory in glob_list('utilities')]
     return load_app_registry(app_dir) | (load_sidecar_registry(*directories) if directories else {})
 
 
@@ -565,7 +565,7 @@ class TUIApp(mixin_Config, TextualApp):
   Subclass and define ``compose()`` for widgets and ``on_mount()`` for startup
   work; Textual owns the event loop. Load configuration with ``Env.from_env()``
   before ``MyApp.main()`` when needed.
-  Read it through ``Env.glob(...)``. To use ``self.my(...)``, first give the app its own
+  Read it through ``glob(...)``. To use ``self.my(...)``, first give the app its own
   configuration with ``self._config_from_key(key)`` or ``self._config_from_dict(mapping)``.
 
   Works standalone (``app.run()``) or embedded in a TUILauncher via AppScreen.

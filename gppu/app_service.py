@@ -2,8 +2,8 @@
 
 Its configuration's ``config_mqtt/topics`` maps each retained MQTT topic to the configuration
 path the topic's payload replaces. When the service starts it listens on them; each message
-replaces that subtree of ``Env`` through ``Env.update_config``, and the callbacks registered with
-``Env.on_change`` hear which paths changed. ``AppService.from_mqtt(source)`` reads the topics once, at startup, and returns.
+replaces that subtree of ``Env`` through ``Env.update_config``, the same as loading it again.
+``AppService.from_mqtt(source)`` reads the topics once, at startup, and returns.
 """
 from __future__ import annotations
 
@@ -17,9 +17,8 @@ from .iot import MqttApp
 class AppService(MqttApp):
   """An MqttApp that runs all the time and reloads its configuration from MQTT.
 
-  ``config_mqtt/topics`` in its configuration names the topics. Register what reacts to a
-  change with ``Env.on_change(callback, path)``; the configuration is already replaced
-  when a callback runs, so it reads ``Env`` as usual.
+  ``config_mqtt/topics`` in its configuration names the topics; each message replaces that
+  subtree of ``Env``, and the app reads it with ``glob`` as usual.
   """
 
   _config_paths: dict[str, str]
