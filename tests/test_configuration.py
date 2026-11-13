@@ -1,158 +1,121 @@
-"""App construction receives the environment and selects its own configuration."""
-from copy import deepcopy
-
+"""An app declares its environment, Hosts or IoT; Env loads it once, then the app reads its own section."""
 import pytest
 
-from gppu import App, Env, glob, glob_dict, jinja_template
+from gppu import App, Env, Logger, OSType, glob, jinja_template
 
 
 @pytest.fixture(autouse=True)
-def environment():
-    previous, initialized, name = deepcopy(glob_dict('')), Env.initialized, Env.name
-    Env.reset()
-    yield
-    Env.name = name
-    App(environment=previous)
-    if not initialized:
-        Env.reset()
-
-
-def test_declared_file_resolves_includes_from_its_directory(tmp_path, monkeypatch):
-    configuration = tmp_path / 'environment'
-    configuration.mkdir()
-    (configuration / 'hosts.yaml').write_text('seven: {tags: [server]}\n', encoding='utf-8')
-    entry = configuration / 'config.yaml'
-    entry.write_text('hosts: !include hosts.yaml\n', encoding='utf-8')
-    monkeypatch.chdir(tmp_path)
-    App(environment=entry)
-    assert Env.initialized
-    assert glob('hosts/seven/tags') == ['server']
-
-
-def test_environment_path_follows_relocated_repository_not_working_directory(tmp_path, monkeypatch):
-    import subprocess
-    import sys
-
-    workspace = tmp_path / 'relocated'
-    repository = workspace / 'gppu'
-    program = repository / 'examples' / 'basic.py'
-    program.parent.mkdir(parents=True)
-    program.write_text('', encoding='utf-8')
-    subprocess.run(['git', 'init', '--quiet', str(repository)], check=True)
-    hosts = workspace / 'RAN' / 'Hosts' / '_config'
+def home(tmp_path, monkeypatch):
+    """Hosts and IoT in a temporary home, which Env reads as on a host that is not Windows."""
+    hosts = tmp_path / 'RAN' / 'Hosts' / '_config'
     hosts.mkdir(parents=True)
-    (hosts / 'config.yaml').write_text('hosts: !include hosts.yaml\n', encoding='utf-8')
-    (hosts / 'hosts.yaml').write_text('example: true\n', encoding='utf-8')
-    creekview = workspace / 'IoT' / '_Creekview' / '_creekview.yaml'
-    creekview.parent.mkdir(parents=True)
-    creekview.write_text('creekview: true\n', encoding='utf-8')
-    monkeypatch.setattr(sys, 'argv', [str(program)])
-    monkeypatch.chdir(tmp_path)
-    assert Env.resolve_path('Hosts') == hosts / 'config.yaml'
-    App(environment='Hosts')
-    assert glob('hosts/example') is True
-    assert Env.resolve_path('IoT') == creekview
-    App(environment='IoT')
-    assert glob('creekview') is True
+    (hosts / 'config.yaml').write_text(
+        'fixture_hosts: !include rows.yaml\nexample: {enabled: false, names: [seven]}\nsecond: {value: 2}\n',
+        encoding='utf-8')
+    (hosts / 'rows.yaml').write_text('fixture-row: {tags: [fixture]}\n', encoding='utf-8')
+    creekview = tmp_path / 'IoT' / '_Creekview'
+    creekview.mkdir(parents=True)
+    (creekview / '_creekview.yaml').write_text('fixture_creekview: true\n', encoding='utf-8')
+    monkeypatch.setattr('gppu.gppu.detect_os', lambda: OSType.LINUX)
+    monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.setenv('USERPROFILE', str(tmp_path))
+    Env.reset()
+    yield tmp_path
+    Env.reset()
 
 
-def test_app_section_is_its_own_configuration():
-    source = {'shared': {'value': 42}, 'example': {'enabled': False, 'names': ['seven']}}
-    class Example(App):
-        pass
+class Example(App):
+    pass
 
-    app = Example(environment=source)
-    source['example']['names'].append('trix')
+
+def test_app_with_an_environment_loads_it_first():
+    app = Example(environment='Hosts')
+    assert Env.initialized
+    assert glob('fixture_hosts/fixture-row/tags') == ['fixture']
     assert app.name == 'example'
     assert app.my('enabled') is False
-    assert app.my('names') == ['seven']
-    assert app.my('shared') is None
-    assert glob('shared/value') == 42
+    assert app.my('fixture_hosts') is None
+
+
+def test_iot_reads_creekview():
+    App(environment='IoT')
+    assert glob('fixture_creekview') is True
+
+
+def test_app_without_an_environment_starts_with_no_configuration():
+    app = Example()
+    assert not Env.initialized
+    assert app.my('enabled') is None
+    assert glob('example') is None
+    assert Env.os is OSType.LINUX and Env.host and Env.user
+
+
+def test_later_apps_share_the_loaded_environment():
+    class Second(App):
+        pass
+
+    Example(environment='Hosts')
+    assert Second().my('value') == 2
+    App(environment='IoT')
+    assert glob('fixture_creekview') is None
+
+
+def test_the_section_is_the_apps_own_copy():
+    app = Example(environment='Hosts')
     app.my('names').append('iot')
     assert app.my('names') == ['seven', 'iot']
     assert glob('example/names') == ['seven']
 
 
-def test_missing_declared_file_raises_without_searching_or_replacing_environment(tmp_path):
-    (tmp_path / 'config.yaml').write_text('wrong: true\n', encoding='utf-8')
-    App(environment={'existing': True})
-    with pytest.raises(FileNotFoundError):
-        App(environment=tmp_path / 'missing.yaml')
-    assert glob_dict('') == {'existing': True}
-
-
-def test_reload_replaces_configuration_and_preserves_literal_strings():
-    App(environment={'old': True})
-    App(environment={'path': 'C:\\Users\\Alex\\"quoted"', 'shell': '$HOME ${missing}', 'empty': ''})
-    assert glob('old') is None
-    assert glob('path') == 'C:\\Users\\Alex\\"quoted"'
-    assert glob('shell') == '$HOME ${missing}'
-    assert glob('empty') == ''
-
-
-@pytest.mark.parametrize('contents', ['[one, two]', 'value', 'key: [broken'])
-def test_invalid_yaml_does_not_replace_the_shared_environment(tmp_path, contents):
-    import yaml
-
-    Env.load({'existing': {'value': True}})
-    entry = tmp_path / 'invalid.yaml'
-    entry.write_text(contents, encoding='utf-8')
-    with pytest.raises((TypeError, ValueError, yaml.YAMLError)):
-        Env.load(entry)
-    assert glob_dict('') == {'existing': {'value': True}}
-
-
-def test_loading_without_an_app_copies_and_replaces_the_environment():
-    source = {'shared': {'values': [1]}}
-    Env.load(source)
-    source['shared']['values'].append(2)
-    assert glob('shared/values') == [1]
-    Env.load({'replacement': True})
-    assert glob_dict('') == {'replacement': True}
-
-
-def test_later_apps_share_the_environment_without_a_source():
-    class First(App):
-        pass
-
-    class Second(App):
-        pass
-
-    first = First(environment={'first': {'value': 1}, 'second': {'value': 2}, 'shared': True})
-    second = Second()
-    assert first.my('value') == 1
-    assert second.my('value') == 2
-    assert glob('shared') is True
-
-
-def test_app_without_an_environment_starts_with_no_configuration():
-    class Example(App):
-        pass
-
-    app = Example()
-    assert not Env.initialized
-    assert app.my('mode') is None
+def test_reset_lets_the_next_app_load_another_environment():
+    App(environment='Hosts')
+    Env.reset()
+    App(environment='IoT')
+    assert glob('fixture_creekview') is True
     assert glob('example') is None
 
 
-def test_async_init_sees_its_configuration_after_environment_loading():
+def test_unknown_environment_raises():
+    with pytest.raises(ValueError, match='Unknown environment'):
+        App(environment='Creekview')
+    assert not Env.initialized
+
+
+def test_missing_environment_file_raises(home):
+    (home / 'IoT' / '_Creekview' / '_creekview.yaml').unlink()
+    with pytest.raises(FileNotFoundError):
+        App(environment='IoT')
+    assert not Env.initialized
+
+
+def test_async_init_sees_its_configuration_after_the_environment_loads():
     from gppu import AsyncApp
 
     class Example(AsyncApp):
         def init(self):
-            self.seen = (self.my('enabled'), glob('shared'))
+            self.seen = (self.my('enabled'), glob('second/value'))
             return super().init()
 
-    app = Example(environment={'example': {'enabled': False}, 'shared': True})
-    assert app.seen == (False, True)
+    assert Example(environment='Hosts').seen == (False, 2)
 
 
-@pytest.mark.parametrize('value', [None, '', True])
-def test_declared_invalid_log_file_raises_without_replacing_environment(value):
-    Env.load({'existing': True})
+def test_environment_applies_its_trace_rules(home):
+    (home / 'RAN' / 'Hosts' / '_config' / 'config.yaml').write_text(
+        'trace_rules: {all: true, Basic: false}\n', encoding='utf-8')
+    previous = dict(Logger.trace_rules)
+    try:
+        App(environment='Hosts')
+        assert Logger.trace_rules == {'all': True, 'Basic': False}
+    finally:
+        Logger.init_logger(trace_rules=previous)
+
+
+@pytest.mark.parametrize('value', ["''", 'true'])
+def test_invalid_log_file_raises(home, value):
+    (home / 'RAN' / 'Hosts' / '_config' / 'config.yaml').write_text(f'log_file: {value}\n', encoding='utf-8')
     with pytest.raises(ValueError, match='explicit log_file'):
-        Env.load({'log_file': value})
-    assert glob_dict('') == {'existing': True}
+        App(environment='Hosts')
+    assert not Env.initialized
 
 
 def test_fleet_node_templates_keep_booleans_and_omit_empty_conditional_keys():
@@ -161,17 +124,3 @@ def test_fleet_node_templates_keep_booleans_and_omit_empty_conditional_keys():
     assert jinja_template(source, platform='W11', host='alex-pc') == {
         'enabled': True, 'windows': {'items': ['alex-pc', '', '123', False, 0]}}
     assert jinja_template(source, platform='Linux', host='seven') == {'enabled': False}
-
-
-def test_environment_applies_debug_rules_and_rejects_invalid_rules():
-    from gppu import Logger
-
-    previous = dict(Logger.trace_rules)
-    try:
-        Env.load({'trace_rules': {'all': True, 'Basic': False}})
-        assert Logger.trace_rules == {'all': True, 'Basic': False}
-        with pytest.raises(TypeError, match='mapping'):
-            Env.load({'trace_rules': True})
-        assert glob('trace_rules') == {'all': True, 'Basic': False}
-    finally:
-        Logger.init_logger(trace_rules=previous)

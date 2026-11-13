@@ -3,22 +3,23 @@
 Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share one State and one Env. Env is the global singleton app; it loads like any app and never initializes from itself. Alex's instructions are in [SPEC.md](SPEC.md).
 
 ## Env
-- [x] App declares `environment='Hosts'` or `environment='IoT'`; GPPU selects the corresponding YAML filename and resolves it from the program's repository. Basic runs with Hosts; both names verified after repository relocation
-- [x] `Env.resolve_path` constructs repository-qualified YAML filenames from the program's Git repository location; relocated Hosts and Creekview paths verified independently of cwd. Environments have no Python module or `.pth` dependency
+- [x] App declares `environment='Hosts'` or `environment='IoT'`; `Env.init` selects the corresponding YAML file under `D:\Dev` on Windows and the home folder elsewhere. Basic runs with Hosts
+- [x] App construction calls `Env.init(environment=...)`: it sets `host`, `os`, `user` and `home`, loads the declared environment once and applies its `log_file` and `trace_rules`; later apps share it until `Env.reset()`. An unknown name or a missing file raises. `Env.load` and `Env.resolve_path` are commented out
 - [x] `examples/basic.py` uses Hosts, with Info and Debug output controlled by Hosts' logging settings; verified console output and the declared log file
 - [x] App construction takes the environment declaration and selects the app's section using its own name; Fleet takes Hosts and delegates Jinja rendering to gppu; verified against the existing Hosts configuration and renderer
-- [x] `Env.load` loads a declared mapping or YAML file without an app; App's environment is optional, and a supplied environment loads before AsyncApp's init. Configuration, YAML and Jinja checks pass; Fleet's actual host selections and configuration strings match its previous implementation, including required-input errors
+- [x] App's environment is optional, and a declared environment loads before the app starts, AsyncApp's init included; an app with none starts with empty configuration
 - [x] Env and State are each one instance; Env's methods read `self`
 - [x] `glob`, `glob_int`, `glob_list`, `glob_dict` are globals; every caller in gppu, RAN, CRAP, IoT and Y2 uses them
 - [x] No configuration comparison and no change listeners: `_config_changes`, `changed_paths`, `on_change` removed
-- [ ] Env does not initialize from itself: `from_env` goes, Env's configuration is read for it at construction like an app's (in progress)
+- [x] Env does not initialize from itself: `from_env` is gone, and Env's configuration is read for it by App construction
   - Tried: Env reading the nearest `config.yaml` above the program at construction. The Hosts TUI found nothing, Y2 found `y2/config.yaml` with its `topology:` line, and file_indexer's stale `CRAP/Projects/file_indexer/config.yaml` broke `import gppu`; not committed
   - Compared over every `from_env` caller (`D:\Work\11\13\env-location\rows.txt`): neither the nearest `config.yaml` nor the nearest `_config/config.yaml` reaches Creekview's `_creekview.yaml`, and Linked Data, the lake, CRAP's ETLs, CCTV and the Kuma and devops scripts sit in neither of the two environments
   - Settled by SPEC: they read Hosts, and Y2's apps read Creekview; nothing walks folders. Y2 main does not load Creekview on gppu master today, because master no longer reads its `topology:` line. The "Next" written here (a program declares Creekview by an import or its first line) is superseded by SPEC: app initialization takes its environment
 - [x] No topology: `topology` parameter and `_topology_file` removed
 - [x] `APP`, `_app` and `init` removed
 - [x] Nothing outside `mixin_Config` reads `_my`
-- [ ] `_config_file`, `_program_name`, `_main`, `_resolve_app_path` removed with `from_env`
+- [x] `_config_file`, `_program_name`, `_main`, `_resolve_app_path` removed with `from_env`
+- [ ] gppu's tests that set the environment with `Env.from_dict` or `Env.from_env` have no public way to set one now that Env takes only Hosts or IoT
 - [ ] The command line overrides the app, not Env: `Env.from_argv` removed, the app's own configuration takes the command line
 
 ## Templates

@@ -1,6 +1,6 @@
 # Configuration
 
-App construction takes the environment declaration. It is a mapping or the declared YAML entry point; YAML `!include` paths are relative to the file that includes them. Missing files and invalid YAML raise directly. Nothing searches parent folders or guesses a program's configuration.
+An app declares its environment by name at construction: `Hosts` or `IoT`. The environment is optional. When an app has one, the environment loads first, then the app starts on its own section of it.
 
 ```python
 from gppu import App, glob
@@ -8,21 +8,27 @@ from gppu import App, glob
 class Example(App):
     pass
 
-app = Example(environment={'shared': {'enabled': True}, 'example': {'mode': 'review'}})
-assert app.my('mode') == 'review'
-assert glob('shared/enabled') is True
+app = Example(environment='Hosts')
+app.my('mode')          # the `example:` section of Hosts
+glob('hosts')           # the rest of Hosts
 ```
 
-The app already has its identity: `Example` selects `example`, and `Fleet` selects `fleet`. An explicit name remains an override for existing callers. App calls `Env.load(environment)` before selecting its own section. The input and the app's own section are independent copies. The environment is optional: an app without a declaration shares the loaded Env, or starts with empty configuration when none has been loaded. Supplying a declaration again replaces the environment. A declared `log_file` enables GPPU file logging; an invalid path raises.
+The app already has its identity: `Example` selects `example`, and `Fleet` selects `fleet`. An explicit name remains an override for existing callers. The app's section is its own copy.
 
-Code without an app loads the same environment with `Env.load(declaration)`, then reads it with `glob(...)` or `glob_dict('')`. `Env.reset()` clears the configuration. YAML loading preserves dollar expressions and Jinja templates for later rendering.
+## Env.init
 
-Declare the environment in the app constructor: `Basic(environment='Hosts')` or `MyApp(environment='IoT')`. GPPU maps Hosts to `RAN/Hosts/_config/config.yaml` and IoT to `IoT/_Creekview/_creekview.yaml`. The app supplies no filename. Omitting the environment still shares an already loaded environment, or starts without configuration when none is loaded.
+App construction calls `Env.init(environment=...)`. Env is the global singleton app; nothing else loads it.
 
-`trace_rules` is a mapping applied to GPPU's logger when the environment loads. `examples/basic.py` declares Hosts; its Info and Debug calls use that YAML file's `trace_rules` and `log_file`. Run the example from the GPPU repository with `python -m examples.basic`.
+- It sets `host`, `os`, `user` and `home`, so an app without an environment has them too.
+- A declared name selects one YAML file: Hosts is `RAN/Hosts/_config/config.yaml`, IoT is `IoT/_Creekview/_creekview.yaml`. The path is under `D:\Dev` on Windows and under the home folder elsewhere. YAML `!include` paths are relative to the file that includes them.
+- The file's `log_file` and `trace_rules` apply to gppu's logger, then the file becomes the configuration that `glob(...)` reads.
+- The environment loads once. Later apps share it, with or without a declaration, until `Env.reset()`.
+- An unknown name, a missing file and invalid YAML raise. Nothing searches folders or guesses a program's configuration.
 
-An environment is a YAML file, not a module. `Env.resolve_path(environment)` selects the named environment's filename and constructs its path from the directory containing the program's repository. Git identifies the repository root from the program's location. The repositories share a parent directory, so both environments follow relocated repositories independently of the working directory. Explicit YAML filenames are also accepted; absolute filenames remain absolute. Git and a program inside a repository are required for named environments and relative filenames; errors propagate directly. No configuration folders are searched. Fleet declares Hosts in its constructor; `fleet.load()` shares the loaded environment on later calls. This port requires the development GPPU API.
+An app without an environment, and none loaded, starts with empty configuration; `glob(...)` returns None.
+
+`examples/basic.py` declares Hosts; its Info and Debug lines follow that file's `trace_rules` and `log_file`. Run it from the gppu repository with `python -m examples.basic`.
+
+## Templates
 
 `jinja_template(node, **values)` renders strings, lists and mappings, including mapping keys. Jinja expressions return native objects; plain strings keep their type. Empty rendered keys are omitted, supporting Fleet's conditional configuration keys. Missing Jinja inputs raise. Loading leaves templates intact so Fleet can render them with the selected host's values later.
-
-Verification covers relative YAML includes, missing declared files, replacement without modifying input, app section isolation, literal paths and dollar expressions, conditional keys, and existing Jinja/YAML tests. A read-only comparison against Fleet's previous renderer verifies the actual Hosts configuration's rendered values and selections without changing configuration.

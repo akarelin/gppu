@@ -8,14 +8,14 @@ from gppu import App, glob
 class Example(App):
     pass
 
-app = Example(environment={'example': {'greeting': 'Hello'}, 'shared': True})
+app = Example(environment='Hosts')
 app.Info(app.my('greeting'))
-assert glob('shared') is True
+assert glob('hosts')
 ```
 
 ## The environment
 
-`Env` is the global singleton environment. App initialization calls `Env.load` when it receives an environment declaration, before selecting the app's own section. The declaration is optional; subsequent apps share the loaded environment, and apps with no loaded environment start with empty configuration. Env also holds what needs no file: `host`, `os`, `user`, `home`.
+`Env` is the global singleton environment. App initialization calls `Env.init(environment=...)` before selecting the app's own section. The environment is optional; the first app that declares one loads it, later apps share it, and apps with no loaded environment start with empty configuration. `Env.init` also sets what needs no file: `host`, `os`, `user`, `home`.
 
 ## State and Runtime
 

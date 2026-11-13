@@ -1585,14 +1585,14 @@ class _Base(mixin_Logger, mixin_Config): pass
 
 # region App
 class App(_Base, _DC):
-  """An app knows its name from its class. Its environment is optional: when it has one, the environment loads
-  first, then the app starts on its own section of it."""
+  """An app knows its name from its class. Its environment, Hosts or IoT, is optional: when it has one, the
+  environment loads first, then the app starts on its own section of it."""
   name: str
 
-  def __init__(self, environment: Mapping | str | Path | None = None, **kw) -> None:
+  def __init__(self, environment: str | None = None, **kw) -> None:
     super().__init__(**kw)
     if not self.name: self.name = type(self).__name__.lower()
-    if environment is not None: Env.load(environment)
+    Env.init(environment=environment)
     self._config_from_key(self.name)
 # endregion
 
@@ -1636,20 +1636,23 @@ class _Env(_Base):
     self.os = detect_os()
     self.host = socket.gethostname().split('.')[0].lower()
     self.user = getpass.getuser()
+    self.home = Path.home()
 
-    if environment := kw.get('environment', '') in _ENV_PATHS:
+    if (environment := kw.get('environment', '')) in _ENV_PATHS:
       if self.os == OSType.W11: path = Path("D:\\Dev")
-      else: path = Path("~")
+      else: path = Path("~").expanduser()
       path /= Path(_ENV_PATHS[environment])
 
       if path.exists():
         self._env_root = path.parent
-        dict_from_yml
+        data = dict_from_yml(path)
+        if 'log_file' in data: Logger.enable_file_logging(log_file=data['log_file'])
+        if 'trace_rules' in data: Logger.init_logger(trace_rules=data['trace_rules'])
+        self._config_from_dict(data)
+        self.initialized = True
+      else: raise FileNotFoundError(path)
+    elif environment: raise ValueError(f'Unknown environment {environment!r}: one of {", ".join(_ENV_PATHS)}')
 
-
-    
-
-    
 
 
   # def resolve_path(self, environment: str | Path) -> Path:

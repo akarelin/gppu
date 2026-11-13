@@ -629,7 +629,7 @@ class TUIApp(mixin_Config, TextualApp):
     """Show the environment and the app's own configuration from any TUI app."""
     import pprint
     sections: list[tuple[str, str]] = [
-      ('Env', f'name={Env.name} initialized={Env.initialized}'),
+      ('Env', f'initialized={Env.initialized}'),
     ]
     if own := self.my_dict(''):
       sections.append(('Instance config', pprint.pformat(own)))
