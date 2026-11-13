@@ -1626,7 +1626,7 @@ class _Env(_Base):
     self._my = data
     self.initialized = True
 
-    if log_file := self.my('log_file'): Logger.enable_file_logging(log_file=log_file)
+    if 'log_file' in data: Logger.enable_file_logging(log_file=data['log_file'])
 
 
   def update_config(self, data: dict, path: str | y2path = '') -> None:
