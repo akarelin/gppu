@@ -16,7 +16,7 @@ Usage:
     python w11-onedrive.py dbexplore --output . # save report to current dir
 """
 
-"""
+MANIFEST = """
   manifest:
     name: OneDrive Diagnostics
     description: OneDrive sync diagnostics & conflict cleanup

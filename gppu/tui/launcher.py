@@ -32,6 +32,7 @@ import webbrowser
 from pathlib import Path
 
 from gppu import Env, App, mixin_Config, dict_from_yml, glob, glob_dict, glob_list
+from gppu.gppu import INLINE_CONFIG
 from gppu.gppu import Logger, _EmptyMessageFilter, _LogColorizer
 from gppu.gppu import OSType
 from rich.text import Text
@@ -265,8 +266,9 @@ def _absolute(base: Path, value):
 
 
 def read_manifest(app_dir: Path, config_file: str, nav: str | None = None) -> dict:
-    """One YAML config as a launcher item: its script and cwd resolved against the manifest's own directory, so a
-    launcher can list manifests that live anywhere, and the nav the launcher files it under. Empty when the config
+    """One YAML config, or the inline config of a script, as a launcher item: its script and cwd resolved against the
+    manifest's own directory, so a launcher can list manifests that live anywhere, and the nav the launcher files it
+    under. A script's inline manifest that names no script or url launches the script itself. Empty when the config
     holds no manifest."""
     path = (app_dir / config_file).resolve()
     cfg = dict_from_yml(path)
@@ -274,6 +276,8 @@ def read_manifest(app_dir: Path, config_file: str, nav: str | None = None) -> di
     if not manifest:
         return {}
     manifest['_config'] = {k: v for k, v in cfg.items() if k != 'manifest'}
+    if path.suffix.lower() in INLINE_CONFIG and not {'script', 'url'} & manifest.keys():
+        manifest['script'] = path.name
     for key in ('script', 'cwd'):
         if key in manifest:
             manifest[key] = _absolute(path.parent, manifest[key])

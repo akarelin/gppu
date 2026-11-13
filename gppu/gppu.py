@@ -9,6 +9,7 @@ from yaml.nodes import Node
 import re
 import os
 import threading
+import ast
 
 import inspect
 import logging
@@ -726,7 +727,40 @@ class YmlLoader(FullLoader):
   """dict_from_yml's loader; a module adds its tags here, as gppu.vault adds ``!secret``."""
 
 
+INLINE_CONFIG = ('.py', '.cmd', '.ps1')   # the scripts that carry their configuration inline
+
+
+def inline_config(filename: str | Path) -> str:
+  """The YAML a script carries inline: in a .py the string its global MANIFEST is assigned, read without running
+  the script; in a .cmd the :: lines it opens with; in a .ps1 the .NOTES of the <# #> block it opens with, nothing
+  below either block read. A script with none raises."""
+  filename = full_path(filename)
+  suffix = filename.suffix.lower()
+  with open(filename, encoding='utf-8-sig') as f:
+    if suffix == '.py':
+      for node in ast.parse(f.read(), str(filename)).body:
+        if (isinstance(node, ast.Assign) and [getattr(target, 'id', None) for target in node.targets] == ['MANIFEST']
+            and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)): return node.value.value
+    elif suffix == '.cmd':
+      lines = []
+      for line in f:
+        if not line.startswith('::'): break
+        lines.append(line[2:])
+      if lines: return ''.join(lines)
+    elif suffix == '.ps1':
+      lines = iter(f)
+      if next((line for line in lines if line.strip()), '').strip() == '<#':
+        notes, keyword = [], None
+        for line in lines:
+          if line.strip() == '#>': break
+          if re.fullmatch(r'\.[A-Za-z]+', line.strip()): keyword = line.strip().upper()
+          elif keyword == '.NOTES': notes.append(line)
+        if notes: return ''.join(notes)
+  raise ValueError(f'{filename}: no inline configuration')
+
+
 def dict_from_yml(filename: str | Path) -> dict:
+  """A YAML file, or the configuration a script carries inline (inline_config), with its includes."""
   filename = full_path(filename)
   dir_stack: list[Path] = [filename.parent]
 
@@ -746,7 +780,9 @@ def dict_from_yml(filename: str | Path) -> dict:
 
   Loader.add_constructor("!include", yml_include)
 
-  with open(filename, encoding='utf-8') as f: data = yaml.load(f, Loader=Loader)
+  if filename.suffix.lower() in INLINE_CONFIG: data = yaml.load(inline_config(filename), Loader=Loader)
+  else:
+    with open(filename, encoding='utf-8') as f: data = yaml.load(f, Loader=Loader)
 
   return dict(data or {})
 

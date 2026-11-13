@@ -1,6 +1,6 @@
 # w11 — Windows 11 Superapp launcher configuration
-# Each app points to its config file which contains a manifest section.
+# Each app points to the script whose inline config contains its manifest section.
 
 apps:
-  events: w11-events.yaml
-  onedrive: w11-onedrive.yaml
+  events: w11-events.py
+  onedrive: w11-onedrive.py

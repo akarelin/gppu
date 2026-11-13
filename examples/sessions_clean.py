@@ -3,7 +3,7 @@ with its subagents and the folder beside it. gppufs streams each harness's folde
 decides where each goes as it arrives and shows it in its colour. Nothing moves without --run. The TUI launcher runs it in the
 background from the manifest in sessions_clean.yaml."""
 
-"""
+MANIFEST = """
   manifest:
     name: sessions-clean
     description: Move finished Claude Code and Codex sessions into the archive, on gppufs

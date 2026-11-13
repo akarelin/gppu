@@ -12,7 +12,7 @@ Usage:
     python w11-events.py --stats            # recalculate stats and exit
 """
 
-"""
+MANIFEST = """
   manifest:
     name: Event Viewer
     description: Windows Event Viewer logs — history, common errors, live tail
