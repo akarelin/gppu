@@ -1778,7 +1778,7 @@ class App(_Base, _DC):
   """An app with the data class: what it is constructed with is its data. It has no entry method and no steps;
   construct it and call what the app defines. Read the configuration with ``glob(...)`` and the app's own with
   ``self.my(...)``. See docs/app.md."""
-  pass
+  name: str
 # endregion
 
 
