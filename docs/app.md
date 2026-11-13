@@ -38,7 +38,7 @@ Caching is the standard library's: gppu exports `cache`, `lru_cache` and `cached
 
 ## Objects that need more
 
-`_Base` is the parent the environment and the apps share: `mixin_Logger`, the log under the class's own name, with `mixin_Config`, the configuration. `_Base` has no body of its own. An object built on it reads its configuration, `_my`, with `self.my(...)`, `self.my_int(...)`, `self.my_list(...)` and `self.my_dict(...)`.
+`_Base` is the parent the environment and the apps share: `mixin_Logger`, the log under the class's own name, with `mixin_Config`, the configuration. `_Base` has no body of its own. An object built on it reads the program's configuration only with `glob(...)`, `glob_int(...)`, `glob_list(...)` and `glob_dict(...)`, never Env's `_my`. Its own configuration, `_my`, starts empty: `self._config_from_key(key)` lays the configuration's section `key` into it, and `self.my(...)`, `self.my_int(...)`, `self.my_list(...)` and `self.my_dict(...)` read it.
 
 - `App` is `_Base` with the data class `_DC`, for a program that is more than a script: what it is constructed with is its data.
 - `AsyncApp` composes `_Base` with `mixin_Stepper`, the YMRO steps, and `mixin_EventLoopBridge`. Construction runs `init`; `await app.run()` runs `init`, `load` and `start` on the app's loop and returns when the work they spawned with `self._spawn(...)` has finished. `app.stop()` cancels it.

@@ -1563,7 +1563,6 @@ class mixin_Config(_mixin):
   def _config_from_key(self, key: str) -> None: self._my = self._my | Env.glob_dict(key)
   def _config_copy(self, other: mixin_Config) -> None: self._my = dict(other._my)
   def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
-  def _config_from_env(self) -> None: self._my = deepcopy(Env._my)
 
   def my(self, path: str | y2path, default=None) -> Any: return deepget(path, self._my, default=default)
   def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self._my, default=default)
@@ -1760,7 +1759,8 @@ glob_dict = Env.glob_dict
 # region App
 class App(_Base, _DC):
   """An app with the data class: what it is constructed with is its data. It has no entry method and no steps;
-  construct it and call what the app defines. Read settings with ``self.my(...)``. See docs/app.md."""
+  construct it and call what the app defines. Read the configuration with ``glob(...)`` and the app's own with
+  ``self.my(...)``. See docs/app.md."""
   pass
 # endregion
 

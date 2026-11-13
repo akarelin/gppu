@@ -565,8 +565,8 @@ class TUIApp(mixin_Config, TextualApp):
   Subclass and define ``compose()`` for widgets and ``on_mount()`` for startup
   work; Textual owns the event loop. Load configuration with ``Env.from_env()``
   before ``MyApp.main()`` when needed.
-  Read it through ``Env.glob(...)``. To use ``self.my(...)``, first copy config
-  with ``self._config_from_env()`` or ``self._config_from_dict(mapping)``.
+  Read it through ``Env.glob(...)``. To use ``self.my(...)``, first give the app its own
+  configuration with ``self._config_from_key(key)`` or ``self._config_from_dict(mapping)``.
 
   Works standalone (``app.run()``) or embedded in a TUILauncher via AppScreen.
   Use ``self.done(result)`` to finish — it calls ``exit()`` or ``dismiss()``
@@ -631,7 +631,7 @@ class TUIApp(mixin_Config, TextualApp):
     sections: list[tuple[str, str]] = [
       ('Env', f'initialized={Env.initialized}'),
     ]
-    for key, val in Env._my.items():
+    for key, val in Env.glob_dict('').items():
       sections.append((key, pprint.pformat(val)))
     if self._my:
       sections.append(('Instance config', pprint.pformat(self._my)))

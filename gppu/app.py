@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 from abc import abstractmethod
-from copy import deepcopy
 from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
 from typing import Any, final
@@ -207,7 +206,7 @@ class AsyncApp(_Base, mixin_Stepper, mixin_EventLoopBridge):
   def __init__(self, name: str = '', **kw) -> None:
     super().__init__(**kw)
     self.name = name or Env.name
-    self._my = deepcopy(Env._my)
+    self._config_from_key(self.name)
     self._task_group = None
     self._background_tasks = set()
     self._loop = None

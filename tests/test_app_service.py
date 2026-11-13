@@ -113,7 +113,7 @@ def mqtt_source(monkeypatch, retained, topics):
     finally: client.closed = True
 
   monkeypatch.setattr(mixin_Mqtt, '_mqtt_client', connect)
-  Env.from_dict({'local': {'keep': True}, 'config_mqtt': {'topics': topics}})
+  Env.from_dict({'local': {'keep': True}, 'consumer': {'config_mqtt': {'topics': topics}}})
   return client, {'connection': {'hostname': 'test-broker'}, 'topics': topics}
 
 
@@ -123,7 +123,7 @@ def test_mqtt_startup_loads_all_declared_topics_and_disconnects(monkeypatch):
       {'config/dc': b'scene: pc\n', 'config/ov': b'{"url":"https://ov"}'},
       {'config/dc': 'dc', 'config/ov': 'ov'})
     async with asyncio.timeout(2): await AppService.from_mqtt(source)
-    assert Env.glob_dict('') == {'local': {'keep': True}, 'config_mqtt': {'topics': source['topics']}, 'dc': {'scene': 'pc'}, 'ov': {'url': 'https://ov'}}
+    assert Env.glob_dict('') == {'local': {'keep': True}, 'consumer': {'config_mqtt': {'topics': source['topics']}}, 'dc': {'scene': 'pc'}, 'ov': {'url': 'https://ov'}}
     assert client.subscriptions == [('config/dc', 1), ('config/ov', 1)]
     assert client.closed
     assert client.connections == 1
@@ -175,7 +175,7 @@ def test_constructing_a_service_does_not_start_a_connection(monkeypatch):
     app.connection = source['connection']
     assert client.connections == 0
     assert app._mqtt_task is None
-    assert Env.glob_dict('') == {'local': {'keep': True}, 'config_mqtt': {'topics': source['topics']}}
+    assert Env.glob_dict('') == {'local': {'keep': True}, 'consumer': {'config_mqtt': {'topics': source['topics']}}}
   asyncio.run(run())
 
 
@@ -186,7 +186,7 @@ def test_bad_config_on_existing_connection_fails_visibly(monkeypatch):
     app.connection = source['connection']
     async with asyncio.timeout(2):
       with pytest.raises(ExceptionGroup): await app.run()
-    assert Env.glob_dict('') == {'local': {'keep': True}, 'config_mqtt': {'topics': source['topics']}}
+    assert Env.glob_dict('') == {'local': {'keep': True}, 'consumer': {'config_mqtt': {'topics': source['topics']}}}
     assert client.closed
     assert client.connections == 1
   asyncio.run(run())
@@ -198,7 +198,7 @@ def test_mqtt_bad_payload_fails_visibly_and_preserves_config(monkeypatch, payloa
     client, source = mqtt_source(monkeypatch, {'config/dc': payload}, {'config/dc': 'dc'})
     async with asyncio.timeout(2):
       with pytest.raises(ExceptionGroup): await AppService.from_mqtt(source)
-    assert Env.glob_dict('') == {'local': {'keep': True}, 'config_mqtt': {'topics': source['topics']}}
+    assert Env.glob_dict('') == {'local': {'keep': True}, 'consumer': {'config_mqtt': {'topics': source['topics']}}}
     assert client.closed
   asyncio.run(run())
 
