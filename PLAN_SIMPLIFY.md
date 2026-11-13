@@ -6,7 +6,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 - [x] App declares `environment='Hosts'` or `environment='IoT'`; `Env.init` selects the corresponding YAML file under `D:\Dev` on Windows and the home folder elsewhere. Basic runs with Hosts
 - [x] App construction calls `Env.init(environment=...)`: it sets `host`, `os`, `user` and `home`, loads the declared environment once and applies its `log_file` and `trace_rules`; later apps share it until `Env.reset()`. An unknown name or a missing file raises. `Env.load` and `Env.resolve_path` are commented out
 - [x] `examples/basic.py` uses Hosts, with Info and Debug output controlled by Hosts' logging settings; verified console output and the declared log file
-- [x] App construction takes the environment declaration and selects the app's section using its own name; Fleet takes Hosts and delegates Jinja rendering to gppu; verified against the existing Hosts configuration and renderer
+- [x] App construction takes the environment declaration and selects the app's section using its own name; Fleet declares Hosts and holds only its host rows (RAN 0e342ca65): its own glob, load, render and values are gone, and its callers read gppu's glob
 - [x] App's environment is optional, and a declared environment loads before the app starts, AsyncApp's init included; an app with none starts with empty configuration
 - [x] Env and State are each one instance; Env's methods read `self`
 - [x] `glob`, `glob_int`, `glob_list`, `glob_dict` are globals; every caller in gppu, RAN, CRAP, IoT and Y2 uses them
@@ -36,7 +36,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
     - Not built: the Release for `y2` from main ran twice on 2026-11-13 and published nothing. The first run failed on Y2 main's own tests: after 6620f62, every test that rebuilds State needs the topology's macros in its Env (fixed in y2 89e7d34 and 7c19ccc). The second run failed `AppRosterTest`: iot's live `y2.yaml` gives Tuya and Sensibo no `key`, so the live tree is behind IoT master (read on the y2-ui Creekview page). It needs IoT master pulled on iot, then a Release run and the stack deploy; SSH to iot is refused for this session
   - [ ] Then Y2's generator branch in `construct_template`, the `generators` registration and the `generators` fixture in `tests/test_semantic_layer.py` go
 - [ ] Creekview's `templates:` hold named Jinja templates that return the object, and `template:` names one; behavior and `base_object` go
-- [ ] Y2's own template code goes: `templates.py`, `load_templates`, `base_object`, `object_from_base`, `construct_template`, `render_config`; fleet's own Jinja goes
+- [ ] Y2's own template code goes: `templates.py`, `load_templates`, `base_object`, `object_from_base`, `construct_template`, `render_config`
 
 ## State and Runtime
 - [x] State is a plain object: `State.get(path)`, `State.set(path, value)`
@@ -54,7 +54,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 - [ ] Configuration from MQTT read in one place: one listener on a topic prefix, the last part of the topic names the section; no topic-to-path table, no `from_mqtt` startup copy
 
 ## Switches at the next gppu release
-These run on the released gppu today and move in the same commit as the release:
+These move in the same commit as the release. The Hosts tools that construct Fleet (Preservator, configs, list-sessions, list-sessions2, sessions-clean, start-page) run on neither gppu today: the installed 3.7.0 has no `App(environment=)`, and master has no `from_argv`, `from_env` or `from_dict`. The rest run on the released gppu:
 - Preservator: `self.my('config')` and `self.my('steps')`
 - display-control (`IoT/PCC`): `on_change` and `AppService.update_config`/`changed_paths` callers; MQTT configuration by topic prefix
 - The programs that write the command line over Env: Preservator, `list-sessions.py`, display-control, Intune's three scripts, `setup-ld-monitors.py`, `operon_remove.py`, `sync_to_operon.py`, `openapi_query.py`, gppu's `examples/basic.py` and `examples/sessions_clean.py`
@@ -65,3 +65,4 @@ These run on the released gppu today and move in the same commit as the release:
 
 ## Found outside this task
 - Y2: `test_insteon`, `test_kasa2mqtt`, `test_scene_light_contract` and `test_creekview_editor` fail each run on its own, on the running v6.1.7.5730 and on main alike; none is in the Release's verify step
+- Hosts: `configs.py`'s and `start-page.py`'s `load_config` read `fleet.platforms`, which Fleet has not had since 2026-09-30
