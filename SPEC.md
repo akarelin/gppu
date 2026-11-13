@@ -12,8 +12,9 @@
 ## Templates
 - Configuration can be a template, and an application reads that configuration from the template.
 - There are two kinds of templates: Jinja, and the basic template filled by `safe_substitute`.
+- Generators are gone; Jinja replaced them.
 - A template is a named template, and `template:` names it. Templates are simple inline functions that return lists, dicts or scalars to be merged into dicts; they return objects, not text.
-- YAML anchors are YAML, resolved by the YAML standard. They are not Jinja, and configuration files are not rendered as text.
+- YAML anchors are YAML, resolved by the YAML standard. They are not Jinja.
 
 ## State
 - State is state: not a `_Base`, with no configuration and no logger.
