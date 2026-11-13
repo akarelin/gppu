@@ -25,6 +25,8 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
   - [x] `TemplateSet` has no generators or behaviors; the lake passes none
   - [x] Y2 builds the base object from a template's data, not its unrendered Jinja (y2 6620f62), so a template can name a button after its base object is built
   - [ ] The Insteon button's generator: `D:\Work\11\12\creekview-generators\insteon-button-release.patch` lands with the Y2 deploy from main, at the same y2 restart; on Y2 main it constructs identically, on the running v6.1.7.5730 it changes the buttons' state topics. The live tree takes IoT master first: it constructs identically on 5730, and Y2 main needs it
+    - Y2 main on released gppu: builds every object as 5730 does, validates with and without the patch, and fails no test 5730 passes (fixed today: apps shared one configuration dict, the inspector page's totals, tests using `Env.update_config`)
+    - The deploy waits on a read of iot (running image, live checkout, logs): this session's ssh to iot is refused
   - [ ] Then Y2's generator branch in `construct_template`, the `generators` registration and the `generators` fixture in `tests/test_semantic_layer.py` go
 - [ ] Creekview's `templates:` hold named Jinja templates that return the object, and `template:` names one; behavior and `base_object` go
 - [ ] Y2's own template code goes: `templates.py`, `load_templates`, `base_object`, `object_from_base`, `construct_template`, `render_config`; fleet's own Jinja goes
