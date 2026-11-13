@@ -2,20 +2,15 @@
 
 Its configuration's ``config_mqtt/topics`` maps each retained MQTT topic to the configuration
 path the topic's payload replaces. When the service starts it listens on them; each message
-replaces that subtree of ``Env``, and the callbacks registered with ``on_change`` hear which
-paths changed. ``AppService.from_mqtt(source)`` reads the topics once, at startup, and returns.
+replaces that subtree of ``Env`` through ``Env.update_config``, and the callbacks registered with
+``Env.on_change`` hear which paths changed. ``AppService.from_mqtt(source)`` reads the topics once, at startup, and returns.
 """
 from __future__ import annotations
-
-import inspect
-import json
-from collections.abc import Callable
-from copy import deepcopy
 
 import yaml
 
 from .gppu import Env
-from .gppu import y2path, y2topic
+from .gppu import paths_meet, y2topic
 from .iot import MqttApp
 
 
@@ -23,29 +18,11 @@ class AppService(MqttApp):
   """An MqttApp that runs all the time and reloads its configuration from MQTT.
 
   ``config_mqtt/topics`` in its configuration names the topics. Register what reacts to a
-  change with ``AppService.on_change(callback, path)``; the configuration is already replaced
+  change with ``Env.on_change(callback, path)``; the configuration is already replaced
   when a callback runs, so it reads ``Env`` as usual.
   """
 
-  changed_paths: frozenset[str] = frozenset()
-  _listeners: list[tuple[str, Callable[[frozenset[str]], None]]] = []
   _config_paths: dict[str, str]
-
-  @staticmethod
-  def _config_changes(before: dict, after: dict, prefix: str = '') -> frozenset[str]:
-    changed = set()
-    for key in before.keys() | after.keys():
-      path = f'{prefix}/{key}' if prefix else str(key)
-      if key not in before or key not in after:
-        changed.add(path)
-      elif isinstance(before[key], dict) and isinstance(after[key], dict):
-        changed.update(AppService._config_changes(before[key], after[key], path))
-      elif isinstance(before[key], list) and isinstance(after[key], list):
-        if json.dumps(before[key], sort_keys=True) != json.dumps(after[key], sort_keys=True): changed.add(path)
-      elif type(before[key]) is not type(after[key]) or before[key] != after[key]:
-        changed.add(path)
-    return frozenset(changed)
-
 
   @staticmethod
   def _config_topics(topics: dict[str, str]) -> dict[str, str]:
@@ -57,48 +34,10 @@ class AppService(MqttApp):
         raise ValueError('MQTT configuration topics must be exact topic names')
       if not isinstance(path, str) or (path and any(not part for part in path.split('/'))):
         raise ValueError('MQTT configuration paths must be slash paths or empty for the root')
-      if any(not path or not other or path == other or path.startswith(other + '/')
-             or other.startswith(path + '/') for other in paths):
+      if any(paths_meet(path, other) for other in paths):
         raise ValueError('MQTT configuration paths must not overlap')
       paths.append(path)
     return dict(topics)
-
-  @staticmethod
-  def on_change(callback: Callable[[frozenset[str]], None], path: str | y2path = '') -> Callable[[], None]:
-    """Observe changed slash paths after loading; return a callable to unsubscribe.
-
-    Callbacks are synchronous. The consumer decides how to apply each change.
-    Registrations survive configuration reloads and Env.reset().
-    """
-    if inspect.iscoroutinefunction(callback): raise TypeError('configuration change callbacks must be synchronous')
-    entry = (str(path).strip('/'), callback)
-    AppService._listeners.append(entry)
-    def unsubscribe():
-      if entry in AppService._listeners: AppService._listeners.remove(entry)
-    return unsubscribe
-
-  @staticmethod
-  def update_config(data: dict, path: str | y2path = '') -> None:
-    """Replace one configuration subtree; an empty path replaces the whole config."""
-    if not isinstance(data, dict): raise TypeError('configuration must be a mapping')
-    if path:
-      # only the subtree the topic replaces is compared and written
-      *parents, key = y2path(path)
-      before = Env.glob(path)
-      changed = AppService._config_changes({} if before is None else {key: before}, {key: data}, '/'.join(parents))
-      AppService.changed_paths = changed
-      if Env.initialized and not changed: return
-      Env._load_path(path, data)
-    else:
-      # a topic on the root carries the whole configuration, so the whole is what it replaces
-      changed = AppService._config_changes(Env.glob_dict(''), data)
-      AppService.changed_paths = changed
-      if Env.initialized and not changed: return
-      Env._load_dict(data)
-    for watched, callback in tuple(AppService._listeners):
-      relevant = frozenset(key for key in changed if not watched or key == watched
-                           or key.startswith(watched + '/') or watched.startswith(key + '/'))
-      if relevant: callback(relevant)
 
   @staticmethod
   async def from_mqtt(config: dict) -> None:
@@ -121,7 +60,7 @@ class AppService(MqttApp):
   async def _receive_config(self, topic: y2topic, payload: object) -> None:
     data = yaml.safe_load(payload) if isinstance(payload, str) else payload
     if not isinstance(data, dict): raise TypeError(f'MQTT configuration must be a mapping: {topic}')
-    AppService.update_config(data, self._config_paths[str(topic)])
+    Env.update_config(data, self._config_paths[str(topic)])
 
 
 class _StartupConfig(AppService):

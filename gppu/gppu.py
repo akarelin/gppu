@@ -580,6 +580,29 @@ def deepget(path: str | y2path, d: dict, default=None):
   #   if not d: return default
   # return d  
   # return reduce(lambda x, k: x.get(k) if x else None, path.split('/'), dict(d)) or default  
+def deepset(path: str | y2path, d: dict, value) -> None:
+  """The value written at a slash path, its missing parents made; a parent there that is not a mapping is refused
+  before anything is written."""
+  *parents, key = y2path(path)
+  node = d
+  for parent in parents:
+    if parent not in node: break
+    node = node[parent]
+    if not isinstance(node, dict): raise TypeError(f'parent is not a mapping: {path}')
+  node = d
+  for parent in parents:
+    if parent not in node: node[parent] = {}
+    node = node[parent]
+  node[key] = value
+
+
+def paths_meet(watched: str | y2path, changed: str | y2path) -> bool:
+  """Whether a change at one slash path concerns a watcher of another: the same path, or one under the other. The
+  empty path, the root, is above every other."""
+  watched, changed = str(watched).strip('/'), str(changed).strip('/')
+  return not watched or not changed or changed == watched or changed.startswith(watched + '/') or watched.startswith(changed + '/')
+
+
 def deepget_int(path: str | y2path, d: dict, default: int = 0) -> int:
   """ Returns int at path, or default if not found """
   _ = deepget(path, d, default)
@@ -1617,22 +1640,60 @@ class Env(_Base):
     if 'log_file' in Env._my: Logger.enable_file_logging(log_file=Env._my['log_file'])
 
 
-  @staticmethod
-  def _load_path(path: str | y2path, data: dict) -> None:
-    """One subtree of the configuration replaced, as a reload of that path brings it. A parent on the path that is
-    there and is not a mapping is refused before anything is written."""
-    *parents, key = y2path(path)
-    node = Env._my
-    for parent in parents:
-      if parent not in node: break
-      node = node[parent]
-      if not isinstance(node, dict): raise TypeError(f'configuration parent is not a mapping: {path}')
-    node = Env._my
-    for parent in parents:
-      if parent not in node: node[parent] = {}
-      node = node[parent]
-    node[key] = data
+  changed_paths: frozenset[str] = frozenset()
+  _listeners: list[tuple[str, Callable[[frozenset[str]], None]]] = []
 
+  @staticmethod
+  def _config_changes(before: dict, after: dict, prefix: str = '') -> frozenset[str]:
+    changed = set()
+    for key in before.keys() | after.keys():
+      path = f'{prefix}/{key}' if prefix else str(key)
+      if key not in before or key not in after:
+        changed.add(path)
+      elif isinstance(before[key], dict) and isinstance(after[key], dict):
+        changed.update(Env._config_changes(before[key], after[key], path))
+      elif isinstance(before[key], list) and isinstance(after[key], list):
+        if json.dumps(before[key], sort_keys=True) != json.dumps(after[key], sort_keys=True): changed.add(path)
+      elif type(before[key]) is not type(after[key]) or before[key] != after[key]:
+        changed.add(path)
+    return frozenset(changed)
+
+
+  @staticmethod
+  def on_change(callback: Callable[[frozenset[str]], None], path: str | y2path = '') -> Callable[[], None]:
+    """Observe changed slash paths after loading; return a callable to unsubscribe.
+
+    Callbacks are synchronous. The consumer decides how to apply each change.
+    Registrations survive configuration reloads and Env.reset().
+    """
+    if inspect.iscoroutinefunction(callback): raise TypeError('configuration change callbacks must be synchronous')
+    entry = (str(path).strip('/'), callback)
+    Env._listeners.append(entry)
+    def unsubscribe():
+      if entry in Env._listeners: Env._listeners.remove(entry)
+    return unsubscribe
+
+  @staticmethod
+  def update_config(data: dict, path: str | y2path = '') -> None:
+    """Replace one configuration subtree; an empty path replaces the whole config."""
+    if not isinstance(data, dict): raise TypeError('configuration must be a mapping')
+    if path:
+      # only the subtree the topic replaces is compared and written
+      *parents, key = y2path(path)
+      before = Env.glob(path)
+      changed = Env._config_changes({} if before is None else {key: before}, {key: data}, '/'.join(parents))
+      Env.changed_paths = changed
+      if Env.initialized and not changed: return
+      deepset(path, Env._my, data)
+    else:
+      # a topic on the root carries the whole configuration, so the whole is what it replaces
+      changed = Env._config_changes(Env.glob_dict(''), data)
+      Env.changed_paths = changed
+      if Env.initialized and not changed: return
+      Env._load_dict(data)
+    for watched, callback in tuple(Env._listeners):
+      relevant = frozenset(key for key in changed if paths_meet(watched, key))
+      if relevant: callback(relevant)
 
   @staticmethod
   def reset() -> None:
@@ -1734,10 +1795,7 @@ class Env(_Base):
       if not arg.startswith('--') or len(arg) == 2: continue
       name, value = arg[2:], True
       if i < len(argv) and not argv[i].startswith('--'): value, i = argv[i], i + 1
-      node = Env._my
-      *parents, key = y2path(name)
-      for parent in parents: node = node.setdefault(parent, {})
-      node[key] = value
+      deepset(name, Env._my, value)
 
   @staticmethod
   def _resolve_app_path(app_path: Optional[Path] = None) -> Path:
@@ -1804,21 +1862,13 @@ class State(_Base):
 
     @classmethod
     def set(cls, path: str | y2path, value: Any) -> None:
-        path = y2path(path)
-        *parents, key = path
+        changed = str(y2path(path))
         with cls._lock:
-            node = cls._my
-            for parent in parents:
-                if parent not in node: node[parent] = {}
-                node = node[parent]
-                if not isinstance(node, dict): raise TypeError(f'state parent is not a mapping: {path}')
-            old = node.get(key)
+            old = deepget(changed, cls._my)
             if old == value: return
-            node[key] = value
-        changed = str(path)
+            deepset(changed, cls._my, value)
         for watched, callback in tuple(cls._listeners):
-            if not watched or changed == watched or changed.startswith(watched + '/') or watched.startswith(changed + '/'):
-                callback(path=changed, old=old, new=value)
+            if paths_meet(watched, changed): callback(path=changed, old=old, new=value)
 
     @classmethod
     def listen(cls, callback: Callable[..., Any], path: str | y2path = '') -> Callable[[], None]:

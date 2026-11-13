@@ -11,59 +11,59 @@ from gppu import AppService, Env, mixin_Mqtt
 @pytest.fixture(autouse=True)
 def environment():
   previous, initialized = Env._my, Env.initialized
-  listeners = AppService._listeners
-  AppService._listeners = []
+  listeners = Env._listeners
+  Env._listeners = []
   Env.reset()
   yield
   Env.reset()
-  AppService._listeners = listeners
+  Env._listeners = listeners
   Env._my, Env.initialized = previous, initialized
 
 
 def test_reload_reports_only_affected_paths():
   Env.from_dict({'dc': {'scene': 'pc', 'removed': True}, 'other': 1})
   seen, unrelated = [], []
-  unsubscribe = AppService.on_change(seen.append, 'dc')
-  AppService.on_change(unrelated.append, 'other')
-  AppService.update_config({'scene': 'laptop'}, 'dc')
+  unsubscribe = Env.on_change(seen.append, 'dc')
+  Env.on_change(unrelated.append, 'other')
+  Env.update_config({'scene': 'laptop'}, 'dc')
   assert seen == [frozenset({'dc/scene', 'dc/removed'})]
   assert unrelated == []
-  AppService.update_config({'scene': 'laptop'}, 'dc')
+  Env.update_config({'scene': 'laptop'}, 'dc')
   assert len(seen) == 1
-  assert AppService.changed_paths == frozenset()
+  assert Env.changed_paths == frozenset()
   unsubscribe()
-  AppService.update_config({'scene': 'mac'}, 'dc')
+  Env.update_config({'scene': 'mac'}, 'dc')
   assert len(seen) == 1
 
 
 def test_subtree_replacement_preserves_other_config_and_reports_removal():
   Env.from_dict({'dc': {'scene': 'pc', 'stale': True}, 'ov': {'url': 'https://ov'}})
   seen = []
-  AppService.on_change(seen.append, 'dc/stale')
-  AppService.update_config({'scene': 'pc'}, 'dc')
+  Env.on_change(seen.append, 'dc/stale')
+  Env.update_config({'scene': 'pc'}, 'dc')
   assert Env.glob_dict('') == {'dc': {'scene': 'pc'}, 'ov': {'url': 'https://ov'}}
   assert seen == [frozenset({'dc/stale'})]
-  AppService.update_config({'ov': {'url': 'https://ov'}})
+  Env.update_config({'ov': {'url': 'https://ov'}})
   assert seen[-1] == frozenset({'dc'})
 
 
 def test_invalid_config_does_not_replace_current_values():
   Env.from_dict({'dc': {'scene': 'pc'}})
   seen = []
-  AppService.on_change(seen.append)
-  with pytest.raises(TypeError, match='mapping'): AppService.update_config(['bad'])
-  with pytest.raises(TypeError, match='mapping'): AppService.update_config({'trace_rules': False})
+  Env.on_change(seen.append)
+  with pytest.raises(TypeError, match='mapping'): Env.update_config(['bad'])
+  with pytest.raises(TypeError, match='mapping'): Env.update_config({'trace_rules': False})
   assert Env.glob_dict('') == {'dc': {'scene': 'pc'}}
   assert seen == []
 
 
 def test_scalar_type_changes_are_reported():
   Env.from_dict({'enabled': False})
-  AppService.update_config({'enabled': 0})
-  assert AppService.changed_paths == frozenset({'enabled'})
-  AppService.update_config({'values': [False]})
-  AppService.update_config({'values': [0]})
-  assert AppService.changed_paths == frozenset({'values'})
+  Env.update_config({'enabled': 0})
+  assert Env.changed_paths == frozenset({'enabled'})
+  Env.update_config({'values': [False]})
+  Env.update_config({'values': [0]})
+  assert Env.changed_paths == frozenset({'values'})
 
 
 def test_removing_configured_trace_rules_clears_them():
@@ -71,9 +71,9 @@ def test_removing_configured_trace_rules_clears_them():
   previous = dict(TRACE_RULES)
   try:
     Env.from_dict({'trace_rules': {'all': True}})
-    AppService.update_config({})
+    Env.update_config({})
     assert TRACE_RULES == {}
-    assert AppService.changed_paths == frozenset({'trace_rules'})
+    assert Env.changed_paths == frozenset({'trace_rules'})
   finally:
     TRACE_RULES.clear()
     TRACE_RULES.update(previous)
@@ -138,8 +138,8 @@ def test_mqtt_config_reuses_running_app_connection_and_preserves_device_messages
     def changed(paths):
       seen.append(paths)
       ready.set()
-    AppService.on_change(changed, 'dc')
-    AppService.on_change(other.append, 'ov')
+    Env.on_change(changed, 'dc')
+    Env.on_change(other.append, 'ov')
     app = AppService(name='consumer')
     app.connection = source['connection']
     task = asyncio.create_task(app.run())
