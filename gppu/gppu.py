@@ -1564,14 +1564,6 @@ class mixin_Config(_mixin):
   _my: dict[str, Any] = {}
 
 
-  # def configure(self, source: Mapping | str | Path) -> None:
-  #   """Read declared configuration, from a mapping or a YAML entry point with its includes."""
-  #   data = dict(source) if isinstance(source, Mapping) else dict_from_yml(source)
-  #   self._config_from_dict(data)
-  #   self.initialized = True
-  #   if 'log_file' in data: Logger.enable_file_logging(log_file=data['log_file'])
-
-
   def _config_from_key(self, key: str) -> None: self._my = self._my | glob_dict(key)
   def _config_copy(self, other: mixin_Config) -> None: self._my = dict(other._my)
   def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
