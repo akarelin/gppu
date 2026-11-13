@@ -29,6 +29,32 @@ def test_declared_file_resolves_includes_from_its_directory(tmp_path, monkeypatc
     assert glob('hosts/seven/tags') == ['server']
 
 
+def test_environment_path_follows_relocated_repository_not_working_directory(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+
+    workspace = tmp_path / 'relocated'
+    repository = workspace / 'gppu'
+    program = repository / 'examples' / 'basic.py'
+    program.parent.mkdir(parents=True)
+    program.write_text('', encoding='utf-8')
+    subprocess.run(['git', 'init', '--quiet', str(repository)], check=True)
+    hosts = workspace / 'RAN' / 'Hosts' / '_config'
+    hosts.mkdir(parents=True)
+    (hosts / 'config.yaml').write_text('hosts: !include hosts.yaml\n', encoding='utf-8')
+    (hosts / 'hosts.yaml').write_text('example: true\n', encoding='utf-8')
+    creekview = workspace / 'IoT' / '_Creekview' / '_creekview.yaml'
+    creekview.parent.mkdir(parents=True)
+    creekview.write_text('creekview: true\n', encoding='utf-8')
+    monkeypatch.setattr(sys, 'argv', [str(program)])
+    monkeypatch.chdir(tmp_path)
+    assert Env.resolve_path('RAN/Hosts/_config/config.yaml') == hosts / 'config.yaml'
+    App(environment='RAN/Hosts/_config/config.yaml')
+    assert glob('hosts/example') is True
+    App(environment='IoT/_Creekview/_creekview.yaml')
+    assert glob('creekview') is True
+
+
 def test_app_section_is_its_own_configuration():
     source = {'shared': {'value': 42}, 'example': {'enabled': False, 'names': ['seven']}}
     class Example(App):

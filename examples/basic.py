@@ -1,5 +1,4 @@
 """A basic app using the shared Hosts environment and its logging settings."""
-from Hosts.environment import Hosts
 from gppu import App, Env
 
 
@@ -10,4 +9,4 @@ class Basic(App):
 
 
 if __name__ == '__main__':
-    Basic(environment=Hosts).main()
+    Basic(environment='RAN/Hosts/_config/config.yaml').main()

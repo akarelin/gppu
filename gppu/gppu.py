@@ -19,6 +19,7 @@ import builtins
 import json
 import getpass
 import socket
+import subprocess
 from jinja2 import DictLoader, FileSystemLoader, StrictUndefined, Undefined
 from jinja2.nativetypes import NativeEnvironment
 from jinja2.sandbox import SandboxedEnvironment
@@ -1624,9 +1625,19 @@ class _Env(_Base):
   name: str = ''
 
 
+  def resolve_path(self, environment: str | Path) -> Path:
+    """Resolve a repository-qualified YAML path beside the program's repository."""
+    path = Path(environment).expanduser()
+    if path.is_absolute(): return full_path(path)
+    program = Path(sys.argv[0]).resolve()
+    repository = Path(subprocess.check_output(
+      ['git', '-C', str(program.parent), 'rev-parse', '--show-toplevel'], text=True).strip())
+    return full_path(path, repository.parent)
+
+
   def load(self, environment: Mapping | str | Path) -> None:
     """The environment, a mapping or the YAML file that declares it, replaces the configuration."""
-    data = dict(environment) if isinstance(environment, Mapping) else dict_from_yml(environment)
+    data = dict(environment) if isinstance(environment, Mapping) else dict_from_yml(self.resolve_path(environment))
     if not isinstance(data, dict): raise TypeError('Environment configuration must be a mapping')
     if 'trace_rules' in data and not isinstance(data['trace_rules'], Mapping):
       raise TypeError('trace_rules must be a mapping')
