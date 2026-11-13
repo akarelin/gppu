@@ -1587,11 +1587,16 @@ class mixin_Config(_mixin):
 
   def _config_load(self, source: Mapping | str | Path) -> None:
     """The one loader of Env and every app: a YAML file, or a section already loaded, becomes this object's own
-    configuration, a copy of its source, with its templates applied. A Jinja value that reads only ``glob`` is
-    filled here, ``glob`` reading the environment filled; Jinja that reads anything else, and ``$`` text, stay."""
+    configuration, a copy of its source, with its templates applied. A Jinja value that reads only ``glob``,
+    ``glob_int``, ``glob_list`` or ``glob_dict`` is filled here, each reading the environment filled; Jinja that reads
+    anything else, and ``$`` text, stay."""
     self._my = deepcopy(dict(source)) if isinstance(source, Mapping) else dict_from_yml(source)
-    def read(path: str) -> Any: return jinja_fill(glob(path), glob=read)
-    self._my = jinja_fill(self._my, glob=read)
+    def read(path: str) -> Any: return jinja_fill(glob(path), **readers)
+    readers = {'glob': read,
+               'glob_int': lambda path: _ if isinstance(_ := read(path), int) else 0,
+               'glob_list': lambda path: _ if isinstance(_ := read(path), list) else [],
+               'glob_dict': lambda path: _ if isinstance(_ := read(path), dict) else {}}
+    self._my = jinja_fill(self._my, **readers)
 
 
   def my(self, path: str | y2path, default=None) -> Any: return deepget(path, self._my, default=default)

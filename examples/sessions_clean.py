@@ -2,6 +2,40 @@
 with its subagents and the folder beside it. gppufs streams each harness's folder and its handlers read each session; this
 decides where each goes as it arrives and shows it in its colour. Nothing moves without --run. The TUI launcher runs it in the
 background from the manifest in sessions_clean.yaml."""
+
+"""
+  manifest:
+    name: sessions-clean
+    description: Move finished Claude Code and Codex sessions into the archive, on gppufs
+    nav: Sessions
+    icon: 🧹
+    platform: [W11]
+    script: sessions_clean.py
+    modes:
+      default:
+        name: Dry run — show what would move
+        inline: true
+      run:
+        name: Move the files
+        args: [--run]
+        inline: true
+      keep:
+        name: Move, custom protection window
+        args: [--run]
+        inline: true
+        ask_for:
+          - name: keep_hours
+            default: 24
+  home: '~'
+  sessions: [.claude/projects, .codex/sessions]
+  archive: D:/SD.agents/claude.not
+  buckets:
+    human: _human
+    orphan: _session
+    damaged: _readable
+  keep_hours: 24
+  run: false
+"""
 import asyncio
 import os
 import sys

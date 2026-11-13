@@ -188,6 +188,26 @@ example: {enabled: false}
     assert glob('shell') == 'export PATH="$HOME/.cargo/bin:$PATH"'
 
 
+def test_loading_fills_the_jinja_that_reads_the_typed_globs(home):
+    (home / 'RAN' / 'Hosts' / '_config' / 'config.yaml').write_text('''
+shares: [Public, Lake]
+port: 4318
+server_mounts: >-
+  {%- set mounts = {} -%}
+  {%- for share in glob_list('shares') -%}{%- set _ = mounts.update({'/mnt/S1/' ~ share: '//s1/' ~ share}) -%}{%- endfor -%}
+  {{- mounts -}}
+seven: "{{ glob_dict('server_mounts') }}"
+trix: >-
+  {{ dict(glob_dict('server_mounts'), **{'/mnt/S9/TulaCo-M365': '//s9/TulaCo\\\\040-\\\\040M365'}) }}
+next_port: "{{ glob_int('port') + 1 }}"
+''', encoding='utf-8')
+    Example(environment='Hosts')
+    mounts = {'/mnt/S1/Public': '//s1/Public', '/mnt/S1/Lake': '//s1/Lake'}
+    assert glob('seven') == mounts
+    assert glob('trix') == {**mounts, '/mnt/S9/TulaCo-M365': '//s9/TulaCo\\040-\\040M365'}
+    assert glob('next_port') == 4319
+
+
 def test_own_configuration_fills_its_jinja_from_the_environment(home):
     (home / 'RAN' / 'Hosts' / '_config' / 'config.yaml').write_text('globals: {url: "https://otel"}\n', encoding='utf-8')
     own = home / 'example.yaml'
