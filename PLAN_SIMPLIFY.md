@@ -16,6 +16,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 ## Templates
 - [ ] Env reads a templated configuration with the two kinds of templates, Jinja and the basic `$` one, so `glob` and `self.my` return it filled in. (Env's `$` pass gets no values today; it once filled `$code_path`, `$shared_data_path` and `$shared_data`.)
 - [ ] `TemplateSet` (template, generator, behavior, refs) goes; gppu's `fs` catalog, lake and objects use Jinja
+- [ ] Creekview's `templates:` hold named Jinja templates that return the object, and `template:` names one; generator, behavior and `base_object` go
 - [ ] Y2's own template code goes: `templates.py`, `load_templates`, `base_object`, `object_from_base`, `construct_template`, `render_config`; fleet's own Jinja goes
 
 ## State and Runtime
