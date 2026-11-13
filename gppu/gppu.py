@@ -1560,21 +1560,17 @@ class _DC(UserDict):
 
 
 # region Configuration mixins
+
+
+
 class mixin_Config(_mixin):
   _my: dict[str, Any] = {}
 
 
-  def _config_from_key(self, key: str, environment: Mapping | str | Path | None = None) -> None:
-    if environment is None and not Env.initialized:
-      raise ValueError('App initialization requires an environment declaration')
-    if environment is not None:
-      data = dict(environment) if isinstance(environment, Mapping) else dict_from_yml(environment)
-      Env._config_from_dict(data)
-      Env.initialized = True
-      if 'log_file' in data: Logger.enable_file_logging(log_file=data['log_file'])
-    self._config_from_dict(self._my | glob_dict(key))
+  def _config_from_key(self, key: str) -> None: self._config_from_dict(self._my | glob_dict(key))
   def _config_copy(self, other: mixin_Config) -> None: self._my = dict(other._my)
   def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
+
 
   def my(self, path: str | y2path, default=None) -> Any: return deepget(path, self._my, default=default)
   def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self._my, default=default)
@@ -1585,6 +1581,19 @@ class mixin_Config(_mixin):
 
 class _Base(mixin_Logger, mixin_Config): pass
 
+
+# region App
+class App(_Base, _DC):
+  """An app knows its name from its class. Its environment is optional: when it has one, the environment loads
+  first, then the app starts on its own section of it."""
+  name: str
+
+  def __init__(self, environment: Mapping | str | Path | None = None, **kw) -> None:
+    super().__init__(**kw)
+    if not self.name: self.name = type(self).__name__.lower()
+    if environment is not None: Env.load(environment)
+    self._config_from_key(self.name)
+# endregion
 
 # class _Base(mixin_Logger, mixin_Config):
 #   """An object with its log and its configuration: named as given, or after the program, and its ``_my`` a copy of
@@ -1615,6 +1624,15 @@ class _Env(_Base):
   name: str = ''
 
 
+  def load(self, environment: Mapping | str | Path) -> None:
+    """The environment, a mapping or the YAML file that declares it, replaces the configuration."""
+    data = dict(environment) if isinstance(environment, Mapping) else dict_from_yml(environment)
+    if not isinstance(data, dict): raise TypeError('Environment configuration must be a mapping')
+    if 'log_file' in data: Logger.enable_file_logging(log_file=data['log_file'])
+    self._config_from_dict(data)
+    self.initialized = True
+
+
   def reset(self) -> None:
     self._my = {}
     self.initialized = False
@@ -1624,52 +1642,4 @@ Env = _Env()
 
 # the configuration's readers are globals: Env's my readers
 glob, glob_int, glob_list, glob_dict = Env.my, Env.my_int, Env.my_list, Env.my_dict
-# endregion
-
-
-# region State and Runtime
-# class _State:
-#     """The program's state: the values its apps know now, apart from the configuration they were given. ``State`` is
-#     its one instance: ``State.set(path, value)`` writes a value at a slash path and ``State.get(path)`` reads it."""
-
-#     def __init__(self) -> None:
-#         self.values: dict[str, Any] = {}
-
-#     def get(self, path: str | y2path) -> Any:
-#         return deepget(path, self.values)
-
-#     def set(self, path: str | y2path, value: Any) -> None:
-#         deepset(path, self.values, value)
-
-
-# State = _State()
-
-
-# class Runtime:
-#     """The container of the program's apps: one per program, like Env and State, which all its apps share. An app
-#     joins with ``Runtime.register_app(app)`` under its name, and ``Runtime.apps`` holds them in the order they joined.
-#     Apps tell each other with events: ``Runtime.listen_event(callback, event)`` registers a callback, called as
-#     ``callback(event=..., data=...)`` by ``Runtime.fire_event(event, **data)``, and returns the call that removes it.
-#     A callback registered with no event hears every one."""
-#     apps: dict[str, Any] = {}
-#     _event_listeners: list[tuple[str | None, Callable[..., Any]]] = []
-
-#     @classmethod
-#     def register_app(cls, app: Any) -> Any:
-#         cls.apps[app.name] = app
-#         return app
-
-#     @classmethod
-#     def listen_event(cls, callback: Callable[..., Any], event: str | None = None) -> Callable[[], None]:
-#         entry = (event, callback)
-#         cls._event_listeners.append(entry)
-
-#         def unlisten() -> None:
-#             if entry in cls._event_listeners: cls._event_listeners.remove(entry)
-#         return unlisten
-
-#     @classmethod
-#     def fire_event(cls, event: str, **data: Any) -> None:
-#         for expected, callback in tuple(cls._event_listeners):
-#             if expected is None or expected == event: callback(event=event, data=dict(data))
 # endregion

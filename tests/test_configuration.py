@@ -63,6 +63,27 @@ def test_reload_replaces_configuration_and_preserves_literal_strings():
     assert glob('empty') == ''
 
 
+@pytest.mark.parametrize('contents', ['[one, two]', 'value', 'key: [broken'])
+def test_invalid_yaml_does_not_replace_the_shared_environment(tmp_path, contents):
+    import yaml
+
+    Env.load({'existing': {'value': True}})
+    entry = tmp_path / 'invalid.yaml'
+    entry.write_text(contents, encoding='utf-8')
+    with pytest.raises((TypeError, ValueError, yaml.YAMLError)):
+        Env.load(entry)
+    assert glob_dict('') == {'existing': {'value': True}}
+
+
+def test_loading_without_an_app_copies_and_replaces_the_environment():
+    source = {'shared': {'values': [1]}}
+    Env.load(source)
+    source['shared']['values'].append(2)
+    assert glob('shared/values') == [1]
+    Env.load({'replacement': True})
+    assert glob_dict('') == {'replacement': True}
+
+
 def test_later_apps_share_the_environment_without_a_source():
     class First(App):
         pass
@@ -77,9 +98,34 @@ def test_later_apps_share_the_environment_without_a_source():
     assert glob('shared') is True
 
 
-def test_first_app_requires_an_environment_declaration():
-    with pytest.raises(ValueError, match='environment declaration'):
-        App()
+def test_app_without_an_environment_starts_with_no_configuration():
+    class Example(App):
+        pass
+
+    app = Example()
+    assert not Env.initialized
+    assert app.my('mode') is None
+    assert glob('example') is None
+
+
+def test_async_init_sees_its_configuration_after_environment_loading():
+    from gppu import AsyncApp
+
+    class Example(AsyncApp):
+        def init(self):
+            self.seen = (self.my('enabled'), glob('shared'))
+            return super().init()
+
+    app = Example(environment={'example': {'enabled': False}, 'shared': True})
+    assert app.seen == (False, True)
+
+
+@pytest.mark.parametrize('value', [None, '', True])
+def test_declared_invalid_log_file_raises_without_replacing_environment(value):
+    Env.load({'existing': True})
+    with pytest.raises(ValueError, match='explicit log_file'):
+        Env.load({'log_file': value})
+    assert glob_dict('') == {'existing': True}
 
 
 def test_fleet_node_templates_keep_booleans_and_omit_empty_conditional_keys():

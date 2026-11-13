@@ -15,7 +15,7 @@ assert glob('shared') is True
 
 ## The environment
 
-`Env` is the global singleton environment. App initialization loads its declaration through the shared configuration mixin before selecting the app's own section. Subsequent apps share it. Env also holds what needs no file: `host`, `os`, `user`, `home`.
+`Env` is the global singleton environment. App initialization calls `Env.load` when it receives an environment declaration, before selecting the app's own section. The declaration is optional; subsequent apps share the loaded environment, and apps with no loaded environment start with empty configuration. Env also holds what needs no file: `host`, `os`, `user`, `home`.
 
 ## State and Runtime
 
@@ -34,7 +34,7 @@ Caching is the standard library's: gppu exports `cache`, `lru_cache` and `cached
 `_Base` is the parent the environment and the apps share: `mixin_Logger`, the log under the class's own name, with `mixin_Config`, the configuration. `_Base` has no body of its own. An object built on it reads the program's configuration only with `glob(...)`, `glob_int(...)`, `glob_list(...)` and `glob_dict(...)`, never Env's `_my`. Its own configuration, `_my`, starts empty: `self._config_from_key(key)` lays the configuration's section `key` into it, and `self.my(...)`, `self.my_int(...)`, `self.my_list(...)` and `self.my_dict(...)` read it.
 
 - `App` is `_Base` with the data class `_DC`, for a program that is more than a script: what it is constructed with is its data.
-- `AsyncApp` composes `_Base` with `mixin_Stepper`, the YMRO steps, and `mixin_EventLoopBridge`. Construction runs `init`; `await app.run()` runs `init`, `load` and `start` on the app's loop and returns when the work they spawned with `self._spawn(...)` has finished. `app.stop()` cancels it.
+- `AsyncApp` composes `App` with `mixin_Stepper`, the YMRO steps, and `mixin_EventLoopBridge`. Construction runs `init`; `await app.run()` runs `init`, `load` and `start` on the app's loop and returns when the work they spawned with `self._spawn(...)` has finished. `app.stop()` cancels it.
   - `init` does light loading, what can be loaded and parsed, as a constructor does.
   - `load` does the heavy loading of data.
   - `start` comes last; at its end the callbacks and timers start working.

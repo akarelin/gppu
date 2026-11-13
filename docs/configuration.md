@@ -13,7 +13,9 @@ assert app.my('mode') == 'review'
 assert glob('shared/enabled') is True
 ```
 
-The app already has its identity: `Example` selects `example`, and `Fleet` selects `fleet`. An explicit name remains an override for existing callers. The shared configuration mixin loads the declared environment before selecting that section; Env uses the mixin's same dictionary-loading implementation. The input and the app's own section are independent copies. Later apps can omit the declaration and share the loaded Env. The first app must provide it; otherwise construction raises. Supplying a declaration again replaces the environment. A declared `log_file` enables GPPU file logging.
+The app already has its identity: `Example` selects `example`, and `Fleet` selects `fleet`. An explicit name remains an override for existing callers. App calls `Env.load(environment)` before selecting its own section. The input and the app's own section are independent copies. The environment is optional: an app without a declaration shares the loaded Env, or starts with empty configuration when none has been loaded. Supplying a declaration again replaces the environment. A declared `log_file` enables GPPU file logging; an invalid path raises.
+
+Code without an app loads the same environment with `Env.load(declaration)`, then reads it with `glob(...)` or `glob_dict('')`. `Env.reset()` clears the configuration. YAML loading preserves dollar expressions and Jinja templates for later rendering.
 
 The environment owns its location. `RAN/Hosts/environment.py` declares Hosts from its repository's `_config/config.yaml`. Fleet receives that declaration in its constructor, without its caller supplying an app name or loading Env separately. `fleet.load()` returns the app and shares an already loaded environment on later calls. This port requires the development GPPU API; the installed 3.7.0 release has the earlier loading API.
 

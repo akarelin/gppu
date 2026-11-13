@@ -4,6 +4,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 
 ## Env
 - [x] App construction takes the environment declaration and selects the app's section using its own name; Fleet takes Hosts and delegates Jinja rendering to gppu; verified against the existing Hosts configuration and renderer
+- [x] `Env.load` loads a declared mapping or YAML file without an app; App's environment is optional, and a supplied environment loads before AsyncApp's init. Configuration, YAML and Jinja checks pass; Fleet's actual host selections and configuration strings match its previous implementation, including required-input errors
 - [x] Env and State are each one instance; Env's methods read `self`
 - [x] `glob`, `glob_int`, `glob_list`, `glob_dict` are globals; every caller in gppu, RAN, CRAP, IoT and Y2 uses them
 - [x] No configuration comparison and no change listeners: `_config_changes`, `changed_paths`, `on_change` removed
@@ -44,7 +45,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 
 ## Apps
 - [x] AsyncApp is an App: its name and own configuration come from App's construction
-- [x] App and AsyncApp in `app.py`; MqttApp and AppService in `iot.py`; `app_service.py` gone
+- [x] App in `gppu.py`, AsyncApp in `app.py`; MqttApp and AppService in `iot.py`; `app_service.py` gone
 - [x] AppService's startup read (`from_mqtt`) and its running service are one class
 - [ ] Configuration from MQTT read in one place: one listener on a topic prefix, the last part of the topic names the section; no topic-to-path table, no `from_mqtt` startup copy
 

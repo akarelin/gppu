@@ -16,6 +16,7 @@ from .gppu import (
     glob_dict,
     mixin_Config,
     _Base,
+    App,
 
     # caching, from the standard library
     cache,
@@ -24,8 +25,6 @@ from .gppu import (
 )
 
 from .app import (
-    App,
-
     # apps with steps
     AsyncApp,
     APIApp,
