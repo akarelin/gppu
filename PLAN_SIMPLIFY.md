@@ -21,7 +21,8 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 
 ## Apps
 - [x] AsyncApp is an App: its name and own configuration come from App's construction
-- [ ] App, AsyncApp, MqttApp and AppService in one place instead of `gppu.py`, `app.py`, `iot.py`, `app_service.py`
+- [x] App and AsyncApp in `app.py`; MqttApp and AppService in `iot.py`; `app_service.py` gone
+- [x] AppService's startup read (`from_mqtt`) and its running service are one class
 - [ ] Configuration from MQTT read in one place: one listener on a topic prefix, the last part of the topic names the section; no topic-to-path table, no `from_mqtt` startup copy
 
 ## Switches at the next gppu release

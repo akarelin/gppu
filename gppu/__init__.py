@@ -16,7 +16,6 @@ from .gppu import (
     glob_dict,
     mixin_Config,
     _Base,
-    App,
     State,
     Runtime,
 
@@ -27,6 +26,8 @@ from .gppu import (
 )
 
 from .app import (
+    App,
+
     # apps with steps
     AsyncApp,
     APIApp,
@@ -136,6 +137,7 @@ from .iot import (
     # mqtt library (aiomqtt optional — gppu[mqtt])
     mixin_Mqtt,
     MqttApp,
+    AppService,
 
     # event-loop and device-control bridges
     mixin_EventLoopBridge,
@@ -144,7 +146,6 @@ from .iot import (
     JSONHTTPControl,
 )
 
-from .app_service import AppService   # an app that runs all the time and reloads its configuration from MQTT
 
 __version__ = VER_GPPU
 __all__ = [

@@ -35,7 +35,9 @@ try:
 except ImportError:
   aiohttp = None  # type: ignore[assignment]
 from .app import AsyncApp, AsyncSubmission, mixin_EventLoopBridge
-from .gppu import _DC, _DC_BASE_TYPE_MAP, y2list, y2path, y2topic, y2uri
+import yaml
+
+from .gppu import Env, _DC, _DC_BASE_TYPE_MAP, y2list, y2path, y2topic, y2uri
 
 
 
@@ -303,6 +305,36 @@ class MqttApp(mixin_Mqtt, AsyncApp):
   async def __start(self) -> None:
     await self.subscribe()
     self._start_mqtt()
+
+
+class AppService(MqttApp):
+  """An MqttApp whose configuration arrives over MQTT: ``config_mqtt/topics`` in its own configuration maps each
+  retained topic to the configuration path its payload replaces in Env, the same as loading it again.
+  ``AppService.from_mqtt(config)`` reads the topics once, at startup, then disconnects."""
+
+  def __init(self) -> None:
+    self.topics = self.my('config_mqtt/topics')
+    self.until_loaded: set[str] | None = None   # from_mqtt: the topics still to arrive
+
+  @staticmethod
+  async def from_mqtt(config: dict) -> None:
+    """Each of ``config['topics']`` read once from ``config['connection']``, then the connection closed."""
+    app = AppService(name='config-mqtt')
+    app.connection, app.topics, app.until_loaded = config['connection'], config['topics'], set(config['topics'])
+    await app.run()
+
+  async def __load(self) -> None:
+    if not self.topics or any('+' in topic or '#' in topic for topic in self.topics):
+      raise ValueError('MQTT configuration topics must be exact topic names')
+    for topic in self.topics: await self.mqtt_listen(self._receive_config, topic, qos=1, raise_errors=True)
+
+  async def _receive_config(self, topic: y2topic, payload: object) -> None:
+    data = yaml.safe_load(payload) if isinstance(payload, str) else payload
+    if not isinstance(data, dict): raise TypeError(f'MQTT configuration must be a mapping: {topic}')
+    Env.update_config(data, self.topics[str(topic)])
+    if self.until_loaded is not None:
+      self.until_loaded.discard(str(topic))
+      if not self.until_loaded: self.stop()
 # endregion
 
 

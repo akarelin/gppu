@@ -168,6 +168,6 @@ def test_mqtt_bad_payload_fails_visibly_and_preserves_config(monkeypatch, payloa
 def test_mqtt_rejects_indeterminate_sources(topics):
   async def run():
     Env.from_dict({})
-    with pytest.raises(ValueError):
+    with pytest.raises(ExceptionGroup):
       await AppService.from_mqtt({'connection': {'hostname': 'test-broker'}, 'topics': topics})
   asyncio.run(run())
