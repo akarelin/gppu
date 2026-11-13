@@ -9,7 +9,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 - [ ] Env does not initialize from itself: `from_env` goes, Env's configuration is read for it at construction like an app's (in progress)
   - Tried: Env reading the nearest `config.yaml` above the program at construction. The Hosts TUI found nothing, Y2 found `y2/config.yaml` with its `topology:` line, and file_indexer's stale `CRAP/Projects/file_indexer/config.yaml` broke `import gppu`; not committed
   - Compared over every `from_env` caller (`D:\Work\11\13\env-location\rows.txt`): neither the nearest `config.yaml` nor the nearest `_config/config.yaml` reaches Creekview's `_creekview.yaml`, and Linked Data, the lake, CRAP's ETLs, CCTV and the Kuma and devops scripts sit in neither of the two environments
-  - Settled by SPEC: they read Hosts, and Y2's apps read Creekview; nothing walks folders. Next: a program declares Creekview by an import or its first line, and Env reads the declared environment from its repository at construction, on Alex-PC, in the Y2 container and in the frozen display-control
+  - Settled by SPEC: they read Hosts, and Y2's apps read Creekview; nothing walks folders. Y2 main does not load Creekview on gppu master today, because master no longer reads its `topology:` line. Next: a program declares Creekview by an import or its first line, and Env reads the declared environment from its repository at construction, on Alex-PC, in the Y2 container and in the frozen display-control
 - [x] No topology: `topology` parameter and `_topology_file` removed
 - [x] `APP`, `_app` and `init` removed
 - [x] Nothing outside `mixin_Config` reads `_my`
@@ -26,7 +26,8 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
   - [x] Y2 builds the base object from a template's data, not its unrendered Jinja (y2 6620f62), so a template can name a button after its base object is built
   - [ ] The Insteon button's generator: `D:\Work\11\12\creekview-generators\insteon-button-release.patch` lands with the Y2 deploy from main, at the same y2 restart; on Y2 main it constructs identically, on the running v6.1.7.5730 it changes the buttons' state topics. The live tree takes IoT master first: it constructs identically on 5730, and Y2 main needs it
     - Y2 main on released gppu: builds every object as 5730 does, validates with and without the patch, and fails no test 5730 passes (fixed today: apps shared one configuration dict, the inspector page's totals, tests using `Env.update_config`)
-    - The deploy waits on a read of iot (running image, live checkout, logs): this session's ssh to iot is refused
+    - The release now verifies the live tree as y2 starts it (`AppRosterTest`), so a tree the image cannot run fails the release instead of y2's start
+    - Not built: dispatching the Release for `y2` and reading iot were both refused for this session; the restart is Alex's word (`y2/docs/DEBUG_RUNBOOK.md`)
   - [ ] Then Y2's generator branch in `construct_template`, the `generators` registration and the `generators` fixture in `tests/test_semantic_layer.py` go
 - [ ] Creekview's `templates:` hold named Jinja templates that return the object, and `template:` names one; behavior and `base_object` go
 - [ ] Y2's own template code goes: `templates.py`, `load_templates`, `base_object`, `object_from_base`, `construct_template`, `render_config`; fleet's own Jinja goes
