@@ -559,6 +559,12 @@ class y2uri:
   # def __add__(self, path: y2path | str) -> 'y2uri':
   #   return self / path
 
+def paths_meet(watched: str | y2path, changed: str | y2path) -> bool:
+  """Whether a change at one slash path concerns a watcher of another: the same path, or one under the other. The
+  empty path, the root, is above every other."""
+  watched, changed = str(watched).strip('/'), str(changed).strip('/')
+  return not watched or not changed or changed == watched or changed.startswith(watched + '/') or watched.startswith(changed + '/')
+
 # endregion
 
 
@@ -580,29 +586,6 @@ def deepget(path: str | y2path, d: dict, default=None):
   #   if not d: return default
   # return d  
   # return reduce(lambda x, k: x.get(k) if x else None, path.split('/'), dict(d)) or default  
-def deepset(path: str | y2path, d: dict, value) -> None:
-  """The value written at a slash path, its missing parents made; a parent there that is not a mapping is refused
-  before anything is written."""
-  *parents, key = y2path(path)
-  node = d
-  for parent in parents:
-    if parent not in node: break
-    node = node[parent]
-    if not isinstance(node, dict): raise TypeError(f'parent is not a mapping: {path}')
-  node = d
-  for parent in parents:
-    if parent not in node: node[parent] = {}
-    node = node[parent]
-  node[key] = value
-
-
-def paths_meet(watched: str | y2path, changed: str | y2path) -> bool:
-  """Whether a change at one slash path concerns a watcher of another: the same path, or one under the other. The
-  empty path, the root, is above every other."""
-  watched, changed = str(watched).strip('/'), str(changed).strip('/')
-  return not watched or not changed or changed == watched or changed.startswith(watched + '/') or watched.startswith(changed + '/')
-
-
 def deepget_int(path: str | y2path, d: dict, default: int = 0) -> int:
   """ Returns int at path, or default if not found """
   _ = deepget(path, d, default)
@@ -617,6 +600,22 @@ def deepget_list(path: str | y2path, d: dict, default: list = []) -> list:
 def deepget_dict(path: str | y2path, d: dict, default: dict = {}) -> dict:
   """ Returns dict at path, or default if not found """
   return _ if isinstance(_ := deepget(path, d, default), dict) else default
+
+
+def deepset(path: str | y2path, d: dict, value) -> None:
+  """The value written at a slash path, its missing parents made; a parent there that is not a mapping is refused
+  before anything is written."""
+  *parents, key = y2path(path)
+  node = d
+  for parent in parents:
+    if parent not in node: break
+    node = node[parent]
+    if not isinstance(node, dict): raise TypeError(f'parent is not a mapping: {path}')
+  node = d
+  for parent in parents:
+    if parent not in node: node[parent] = {}
+    node = node[parent]
+  node[key] = value
 
 
 # def dict_sort_keylen(d, reverse: bool = True) -> dict:
