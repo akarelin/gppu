@@ -35,4 +35,6 @@ An app without an environment, and none loaded, starts with empty configuration;
 
 ## Templates
 
-`jinja_template(node, **values)` renders strings, lists and mappings, including mapping keys. Jinja expressions return native objects; plain strings keep their type. Empty rendered keys are omitted, supporting Fleet's conditional configuration keys. Missing Jinja inputs raise. Loading leaves templates intact so Fleet can render them with the selected host's values later.
+`jinja_template(node, **values)` renders strings, lists and mappings, including mapping keys. Jinja expressions return native objects; plain strings keep their type. Empty rendered keys are omitted, supporting Fleet's conditional configuration keys. Missing Jinja inputs raise.
+
+Loading applies templates: `_config_load` fills every Jinja value, key or string, that reads only `glob`, and `glob` there reads the environment already filled, so one filled value can read another. Hosts' `globals/server_mounts` generates the S1 mounts from `locations`, and a server row's `mounts: "{{ glob('globals/server_mounts') }}"` reads them. Jinja that reads `host`, `platform`, `my` or any other name stays as written, so Fleet can render it with the selected host's values later. `$` text, such as a runbook's `$HOME`, stays as written.
