@@ -24,13 +24,21 @@ if glob('greeting'): Info(glob('greeting'))
 
 `Env` is an app of a special kind: static, global, one per program, created from `APP` on the first read of its configuration. It also holds what needs no file: `host`, `platform`, `os`, `user`, `home`.
 
+## State and Runtime
+
+`State` is the program's state: what its apps know now, as Env is what they were told. Like Env it is an app of the special kind, one per program and there from import, and its `_my` holds its values. `State.my(path)` and the typed readers read a value by slash path, and `State.set(path, value)` writes one. `State.listen(callback, path)` registers a callback; each change at the path, under it or above it calls it as `callback(path=..., old=..., new=...)`. A reload replaces Env's `_my` whole, and State's is never reloaded, so the configuration and the state are kept apart.
+
+`Runtime` is the container of the program's apps, one per program. All the apps in it share the one Env and the one State. An app joins with `Runtime.register_app(app)` under its name, and `Runtime.apps` holds them in the order they joined. Apps tell each other with events: `Runtime.listen_event(callback, event)` registers a callback, and `Runtime.fire_event(event, **data)` calls it as `callback(event=..., data=...)`. A callback registered with no event hears every event.
+
+Caching is the standard library's: gppu exports `cache`, `lru_cache` and `cached_property` from `functools`. `gppu.data.Cache` is the persistent cache, on disk or in a database.
+
 ## The log
 
 `Logger` is the program's log: on the console from gppu's first line, with colours and trace rules, mirrored to a file once `Logger.enable_file_logging(log_file=...)` is called or the configuration names a `log_file`. `Logger.trace_rules` decides which `Debug` lines show; `{'all': True}` shows them all. A line names where it came from: `<module>` for a script, `Class.method` for a method.
 
 ## Objects that need more
 
-`_Base` is the parent the environment and the apps share: `mixin_Logger`, the log under the class's own name, with `mixin_Config`, the configuration. An object built on it is named as given or after the program, and its `_my` is a copy of Env, read with `self.my(...)`, `self.my_int(...)`, `self.my_list(...)` and `self.my_dict(...)`.
+`_Base` is the parent the environment and the apps share: `mixin_Logger`, the log under the class's own name, with `mixin_Config`, the configuration. `_Base` has no body of its own. An object built on it reads its configuration, `_my`, with `self.my(...)`, `self.my_int(...)`, `self.my_list(...)` and `self.my_dict(...)`.
 
 - `App` is `_Base` with the data class `_DC`, for a program that is more than a script: what it is constructed with is its data.
 - `AsyncApp` composes `_Base` with `mixin_Stepper`, the YMRO steps, and `mixin_EventLoopBridge`. Construction runs `init`; `await app.run()` runs `init`, `load` and `start` on the app's loop and returns when the work they spawned with `self._spawn(...)` has finished. `app.stop()` cancels it.

@@ -16,7 +16,15 @@ from .gppu import (
     glob_list,
     glob_dict,
     mixin_Config,
+    _Base,
     App,
+    State,
+    Runtime,
+
+    # caching, from the standard library
+    cache,
+    lru_cache,
+    cached_property,
 )
 
 from .app import (
@@ -192,13 +200,16 @@ __all__ = [
     'format_size', 'format_duration', 'format_since',
 
     # Env
-    'Env',
+    'Env', 'State', 'Runtime',
 
     # Config access
     'APP', 'glob', 'glob_int', 'glob_list', 'glob_dict',
 
     # Foundation classes
-    'App', 'AsyncApp', 'APIApp', 'mixin_Rest',
+    '_Base', 'App', 'AsyncApp', 'APIApp', 'mixin_Rest',
+
+    # caching, from the standard library
+    'cache', 'lru_cache', 'cached_property',
 
     # y2xxx classes
     'y2list', 'y2path', 'y2uri', 'y2topic', 'y2slug', 'y2eid',

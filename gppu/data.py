@@ -3,11 +3,11 @@ from __future__ import annotations
 from typing import Any, ClassVar, Optional
 from contextlib import asynccontextmanager, contextmanager
 
-from .gppu import Env, mixin_Logger, mixin_Config
+from .gppu import Env, _Base
 from .gppu import _DC
 
 
-class _PersistentBase(mixin_Logger, mixin_Config):
+class _PersistentBase(_Base):
   """Base class for database-backed components.
 
   Handles common DB connection string resolution from config.

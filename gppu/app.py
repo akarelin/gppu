@@ -1,7 +1,7 @@
 """gppu.app — the apps with steps. See docs/app.md.
 
-Env and ``App``, the regular app with no steps, are in gppu.gppu. Here ``AsyncApp`` composes # pyright: ignore[C0301:line-too-long]
-``mixin_Logger`` and ``mixin_Config`` with ``mixin_Stepper``, the YMRO (Y2 Method Resolution Order) init, load and start steps; ``APIApp`` serves HTTP # type: ignore
+Env, ``_Base`` and ``App``, the regular app with no steps, are in gppu.gppu. Here ``AsyncApp`` composes # pyright: ignore[C0301:line-too-long]
+``_Base`` with ``mixin_Stepper``, the YMRO (Y2 Method Resolution Order) init, load and start steps; ``APIApp`` serves HTTP # type: ignore
 on it. For Textual, use ``gppu.tui.TUIApp``; for MQTT, ``gppu.iot.MqttApp``.
 """
 from __future__ import annotations
@@ -14,7 +14,7 @@ from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
 from typing import Any, final
 
-from .gppu import Debug, Env, _DC, _mixin, mixin_Logger, mixin_Config
+from .gppu import Debug, Env, _Base, _DC, _mixin
 
 _trace_mro = False
 
@@ -187,7 +187,7 @@ class mixin_EventLoopBridge(_mixin):
 
 
 # region async application
-class AsyncApp(mixin_Logger, mixin_Config, mixin_Stepper, mixin_EventLoopBridge):
+class AsyncApp(_Base, mixin_Stepper, mixin_EventLoopBridge):
   """Application base for long-lived asyncio services, on the YMRO steps.
 
   Construction runs init; ``run()`` runs init (light loading, with the configuration ready),
@@ -302,7 +302,7 @@ class mixin_Rest:
   def rest_manifest(self) -> dict:
     """The classes born under app_path and their members, walked once."""
     if self._rest_manifest is None:
-      seen, stack = set(), [_mixin, _DC]
+      seen, stack = set(), [_mixin, _Base, _DC]
       while stack:
         cls = stack.pop()
         if cls not in seen: seen.add(cls); stack.extend(cls.__subclasses__())

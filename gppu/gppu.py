@@ -8,6 +8,7 @@ from yaml.loader import FullLoader
 from yaml.nodes import Node
 import re
 import os
+import threading
 
 import inspect
 import logging
@@ -27,7 +28,7 @@ from typing import TypeAlias, ClassVar, Callable, Protocol
 from collections import defaultdict, UserDict, UserList
 from collections.abc import Mapping
 from enum import Enum
-from functools import wraps, partial, cache
+from functools import wraps, partial, cache, lru_cache, cached_property
 from datetime import datetime as dt, timedelta, timezone
 from zoneinfo import ZoneInfo
 from uuid import UUID, uuid7
@@ -1559,7 +1560,7 @@ class _DC(UserDict):
 class mixin_Config(_mixin):
   _my: dict[str, Any] = {}
 
-  def _config_from_key(self, key: str) -> None: self._my.update(Env.glob_dict(key))
+  def _config_from_key(self, key: str) -> None: self._my = self._my | Env.glob_dict(key)
   def _config_copy(self, other: mixin_Config) -> None: self._my = dict(other._my)
   def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
   def _config_from_env(self) -> None: self._my = deepcopy(Env._my)
@@ -1569,6 +1570,9 @@ class mixin_Config(_mixin):
   def my_float(self, path: str | y2path, default: float = float('nan')) -> float: return deepget_float(path, self._my, default=default)
   def my_list(self, path: str | y2path, default: list = []) -> list: return deepget_list(path, self._my, default=default or [])
   def my_dict(self, path: str | y2path, default: dict = {}) -> dict: return deepget_dict(path, self._my, default=default or {})
+
+
+class _Base(mixin_Logger, mixin_Config): pass
 
 
 # class _Base(mixin_Logger, mixin_Config):
@@ -1586,7 +1590,7 @@ class mixin_Config(_mixin):
 
 
 # region Env: the configuration
-class Env(mixin_Logger, mixin_Config):
+class Env(_Base):
   """The program's environment: singleton app object. It's my is glob"""
   home: Path = Path.home()
   user: str = getpass.getuser()
@@ -1754,8 +1758,80 @@ glob_dict = Env.glob_dict
 
 
 # region App
-class App(mixin_Logger, mixin_Config, _DC):
+class App(_Base, _DC):
   """An app with the data class: what it is constructed with is its data. It has no entry method and no steps;
   construct it and call what the app defines. Read settings with ``self.my(...)``. See docs/app.md."""
   pass
+# endregion
+
+
+# region State and Runtime
+class State(_Base):
+    """The program's state: what its apps know now, as Env is what they were told. One per program and there from
+    import, it is an app like Env: its ``_my`` holds the values, read by slash path with ``State.my(path)`` and the
+    typed readers, and written with ``State.set(path, value)``. ``State.listen(callback, path)`` registers a callback
+    that hears each change at the path, under it or above it as ``callback(path=..., old=..., new=...)``, and returns
+    the call that removes it. A reload replaces Env's ``_my`` whole; State's is never reloaded, so the two are kept
+    apart."""
+    _my: dict[str, Any] = {}
+    _listeners: list[tuple[str, Callable[..., Any]]] = []
+    _lock = threading.RLock()
+
+    my, my_int, my_float, my_list, my_dict = (classmethod(mixin_Config.__dict__[n]) for n in ('my', 'my_int', 'my_float', 'my_list', 'my_dict'))  # pyright: ignore[reportAssignmentType]
+
+    @classmethod
+    def set(cls, path: str | y2path, value: Any) -> None:
+        path = y2path(path)
+        *parents, key = path
+        with cls._lock:
+            node = cls._my
+            for parent in parents:
+                if parent not in node: node[parent] = {}
+                node = node[parent]
+                if not isinstance(node, dict): raise TypeError(f'state parent is not a mapping: {path}')
+            old = node.get(key)
+            if old == value: return
+            node[key] = value
+        changed = str(path)
+        for watched, callback in tuple(cls._listeners):
+            if not watched or changed == watched or changed.startswith(watched + '/') or watched.startswith(changed + '/'):
+                callback(path=changed, old=old, new=value)
+
+    @classmethod
+    def listen(cls, callback: Callable[..., Any], path: str | y2path = '') -> Callable[[], None]:
+        entry = (str(y2path(path)) if path else '', callback)
+        cls._listeners.append(entry)
+
+        def unlisten() -> None:
+            if entry in cls._listeners: cls._listeners.remove(entry)
+        return unlisten
+
+
+class Runtime:
+    """The container of the program's apps: one per program, like Env and State, which all its apps share. An app
+    joins with ``Runtime.register_app(app)`` under its name, and ``Runtime.apps`` holds them in the order they joined.
+    Apps tell each other with events: ``Runtime.listen_event(callback, event)`` registers a callback, called as
+    ``callback(event=..., data=...)`` by ``Runtime.fire_event(event, **data)``, and returns the call that removes it.
+    A callback registered with no event hears every one."""
+    apps: dict[str, Any] = {}
+    _event_listeners: list[tuple[str | None, Callable[..., Any]]] = []
+
+    @classmethod
+    def register_app(cls, app: Any) -> Any:
+        cls.apps[app.name] = app
+        return app
+
+    @classmethod
+    def listen_event(cls, callback: Callable[..., Any], event: str | None = None) -> Callable[[], None]:
+        entry = (event, callback)
+        cls._event_listeners.append(entry)
+
+        def unlisten() -> None:
+            if entry in cls._event_listeners: cls._event_listeners.remove(entry)
+        return unlisten
+
+    @classmethod
+    def fire_event(cls, event: str, **data: Any) -> None:
+        for expected, callback in tuple(cls._event_listeners):
+            if expected is None or expected == event: callback(event=event, data=dict(data))
 # endregion
