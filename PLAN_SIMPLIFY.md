@@ -3,6 +3,7 @@
 Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share one State and one Env. Env is the global singleton app; it loads like any app and never initializes from itself. Alex's instructions are in [SPEC.md](SPEC.md).
 
 ## Env
+- [x] Env and apps read declared configuration through `configure(mapping_or_yaml)`; `RAN/Hosts/fleet.py` uses it and delegates its Jinja rendering to gppu; verified against the existing Hosts configuration and renderer
 - [x] Env and State are each one instance; Env's methods read `self`
 - [x] `glob`, `glob_int`, `glob_list`, `glob_dict` are globals; every caller in gppu, RAN, CRAP, IoT and Y2 uses them
 - [x] No configuration comparison and no change listeners: `_config_changes`, `changed_paths`, `on_change` removed

@@ -16,8 +16,6 @@ from .gppu import (
     glob_dict,
     mixin_Config,
     _Base,
-    State,
-    Runtime,
 
     # caching, from the standard library
     cache,
@@ -200,7 +198,7 @@ __all__ = [
     'format_size', 'format_duration', 'format_since',
 
     # Env
-    'Env', 'State', 'Runtime',
+    'Env',
 
     # Config access
     'glob', 'glob_int', 'glob_list', 'glob_dict',
