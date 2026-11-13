@@ -16,7 +16,12 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 ## Templates
 - [ ] Env reads a templated configuration with the two kinds of templates, Jinja and the basic `$` one, so `glob` and `self.my` return it filled in. (Env's `$` pass gets no values today; it once filled `$code_path`, `$shared_data_path` and `$shared_data`.)
 - [ ] `TemplateSet` (template, generator, behavior, refs) goes; gppu's `fs` catalog, lake and objects use Jinja
-- [ ] Creekview's `templates:` hold named Jinja templates that return the object, and `template:` names one; generator, behavior and `base_object` go
+- [ ] Generators go from Creekview; their Jinja moves onto the templates (in progress)
+  - [x] Groups, AV and the z2 ring: macros the templates call; the construction dump shows no difference
+  - [ ] Insteon motion sensors: the template's `motion_posts` value calls the helper `motion_posts`, which Y2 reads as a merge with the row's own value; the helper's name changes in Y2, so this lands with Y2's release
+  - [ ] Insteon templates (`insteon_kpl`, `insteon_scene`, `insteon_yala_scene`, the entity and button generators)
+  - [ ] Y2's generator branch in `construct_template` and the `generators` registration go
+- [ ] Creekview's `templates:` hold named Jinja templates that return the object, and `template:` names one; behavior and `base_object` go
 - [ ] Y2's own template code goes: `templates.py`, `load_templates`, `base_object`, `object_from_base`, `construct_template`, `render_config`; fleet's own Jinja goes
 
 ## State and Runtime
