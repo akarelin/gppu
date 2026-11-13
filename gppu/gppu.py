@@ -1611,106 +1611,14 @@ class _Env(_Base):
 
   _global_log = True
   initialized: bool = False
-  _my: dict[str, Any] = {}
 
   name: str = ''
-  app_path: Path
-
-  def _load_dict(self, d: dict) -> None:
-    _ = json.dumps(d)
-    data = json.loads(Template(_).safe_substitute())
-
-    if self.initialized:
-      self.reset()
-      Info('INFO', 'Environment', 'WRED', 'reset()')
-
-    self._my = data
-    self.initialized = True
-
-    if 'log_file' in data: Logger.enable_file_logging(log_file=data['log_file'])
-
-
-  # def update_config(self, data: dict, path: str | y2path = '') -> None:
-  #   """Replace one configuration subtree; an empty path replaces the whole config."""
-  #   if not isinstance(data, dict): raise TypeError('configuration must be a mapping')
-  #   if path: deepset(path, self._my, data)
-  #   else: self._load_dict(data)
 
 
   def reset(self) -> None:
     self._my = {}
     self.initialized = False
 
-
-  # def from_dict(self, d: dict) -> None:
-  #   """The configuration is the given dict."""
-  #   # config = dict(d)
-  #   # topology = config.pop('topology', None)
-  #   # tunables = config.pop('tunables', None)
-  #   # data = dict_from_yml(topology) if topology else {}
-  #   # if isinstance(tunables, dict): data.update(tunables)
-  #   # data.update(config)
-  #   self._load_dict(d)
-
-
-  # def from_env(self, name: Optional[str] = None, app_path: Optional[Path] = None, config: str | Path | None = None) -> None:
-  #   """The configuration from ``config``, or from ``<name>.yaml`` or ``config.yaml`` searched upward from app_path."""
-  #   self._main_file, self._main_dir = self._main()
-
-  #   self.name = name or self._program_name()
-  #   self.app_path = self._resolve_app_path(app_path)
-  #   self.config_file = full_path(config) if config else self._config_file()
-
-  #   Logger.init_logger(self.name)
-
-  #   self.from_dict(dict_from_yml(self.config_file) if self.config_file else {})
-
-
-  # def _main(self) -> tuple[Path, Path]:
-  #   import __main__
-  #   main_file = Path(getattr(__main__, '__file__', 'app')).resolve()
-  #   return main_file, main_file.parent
-
-
-  # def _program_name(self) -> str:
-  #   # Under PyInstaller __main__.__file__ resolves to __main__; use exe name instead
-  #   return Path(sys.executable).stem if getattr(sys, 'frozen', False) else self._main()[0].stem
-
-
-  def from_argv(self, argv: list[str]) -> None:
-    """The command line over the configuration: ``--key value`` sets that key to the string, ``--verbose`` with no
-    value after it sets ``verbose`` to True, and a slash path names a nested key. Arguments that are not a key or its
-    value are the program's own."""
-    i = 0
-    while i < len(argv):
-      arg, i = argv[i], i + 1
-      if not arg.startswith('--') or len(arg) == 2: continue
-      name, value = arg[2:], True
-      if i < len(argv) and not argv[i].startswith('--'): value, i = argv[i], i + 1
-      deepset(name, self._my, value)
-
-  def _resolve_app_path(self, app_path: Optional[Path] = None) -> Path:
-    if not app_path: return self._main_dir
-    if app_path.is_absolute(): return app_path
-    # Walk up from script location to find the relative path
-    parent = self._main_dir
-    while parent != parent.parent:
-      candidate = parent / app_path
-      if candidate.exists(): return candidate
-      parent = parent.parent
-    return self._main_dir / app_path
-
-  # def _config_file(self) -> Path | None:
-  #   """``<name>.yaml`` then ``config.yaml``, searched from ``app_path`` upward —
-  #   so a service in a subdir (e.g. /app/brultech) finds the suite's /app/config.yaml.
-  #   A program with none runs on the command line alone."""
-  #   stem = Path(self.name).with_suffix('.yaml').name
-  #   names = (stem, 'config.yaml')
-  #   for parent in (self.app_path, *self.app_path.parents):
-  #     for name in names:
-  #       candidate = parent / name
-  #       if candidate.exists(): return candidate
-  #   return None
 
 Env = _Env()
 
