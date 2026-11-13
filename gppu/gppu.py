@@ -52,7 +52,6 @@ VER_GPPU_BUILD = _ver_parts[3] if len(_ver_parts) > 3 else '0'
 VER_GPPU = _ver_full
 
 MY_TZ = ZoneInfo("America/Los_Angeles")
-_ENVIRONMENTS = {'Hosts': 'RAN/Hosts/_config/config.yaml', 'IoT': 'IoT/_Creekview/_creekview.yaml'}
 
 _log_root = logging.getLogger('gppu'); _log_root.setLevel(logging.DEBUG)
 _sh = logging.StreamHandler(sys.stderr); _log_root.addHandler(_sh)
@@ -98,7 +97,6 @@ def full_path(path: str | Path, base_dir: str | Path | None = None, *, strict: b
   if not result.is_absolute(): result = (Path.cwd() if base_dir is None else full_path(base_dir)) / result
   
   return result.resolve(strict=strict)
-
 
 
 def probe_path(path: str | Path) -> dict:
@@ -1616,39 +1614,66 @@ class App(_Base, _DC):
 
 class _Env(_Base):
   """The program's environment: singleton app object. It's my is glob"""
-  home: Path = Path.home()
-  user: str = getpass.getuser()
-  os: OSType = detect_os()
-  host: str = socket.gethostname().split('.')[0].lower()
+  home: Path
+  user: str
+  os: OSType
+  host: str
+  _env_root: Path
 
   _global_log = True
-  initialized: bool = False
 
-  name: str = ''
-
-
-  def resolve_path(self, environment: str | Path) -> Path:
-    """Resolve Hosts, IoT, or an explicit YAML filename from the program's repository."""
-    if isinstance(environment, str) and environment in _ENVIRONMENTS:
-      environment = _ENVIRONMENTS[environment]
-    path = Path(environment).expanduser()
-    if path.is_absolute(): return full_path(path)
-    program = Path(sys.argv[0]).resolve()
-    repository = Path(subprocess.check_output(
-      ['git', '-C', str(program.parent), 'rev-parse', '--show-toplevel'], text=True).strip())
-    return full_path(path, repository.parent)
+  @property
+  def initialized(self) -> bool: return getattr(self, '_initialized', False)
+  @initialized.setter
+  def initialized(self, value: bool): self._initialized = value
 
 
-  def load(self, environment: Mapping | str | Path) -> None:
-    """The environment, a mapping or the YAML file that declares it, replaces the configuration."""
-    data = dict(environment) if isinstance(environment, Mapping) else dict_from_yml(self.resolve_path(environment))
-    if not isinstance(data, dict): raise TypeError('Environment configuration must be a mapping')
-    if 'trace_rules' in data and not isinstance(data['trace_rules'], Mapping):
-      raise TypeError('trace_rules must be a mapping')
-    if 'log_file' in data: Logger.enable_file_logging(log_file=data['log_file'])
-    if 'trace_rules' in data: Logger.init_logger(trace_rules=data['trace_rules'])
-    self._config_from_dict(data)
-    self.initialized = True
+  def init(self, **kw):
+    _ENV_PATHS = {"Hosts": "RAN/Hosts/_config/config.yaml", "IoT": "IoT/_Creekview/_creekview.yaml"}
+
+    if self.initialized: return
+
+    self.os = detect_os()
+    self.host = socket.gethostname().split('.')[0].lower()
+    self.user = getpass.getuser()
+
+    if environment := kw.get('environment', '') in _ENV_PATHS:
+      if self.os == OSType.W11: path = Path("D:\\Dev")
+      else: path = Path("~")
+      path /= Path(_ENV_PATHS[environment])
+
+      if path.exists():
+        self._env_root = path.parent
+        dict_from_yml
+
+
+    
+
+    
+
+
+  # def resolve_path(self, environment: str | Path) -> Path:
+  #   """Resolve Hosts, IoT, or an explicit YAML filename from the program's repository."""
+  #   if isinstance(environment, str) and environment in _ENVIRONMENTS:
+  #     environment = _ENVIRONMENTS[environment]
+  #   path = Path(environment).expanduser()
+  #   if path.is_absolute(): return full_path(path)
+  #   program = Path(sys.argv[0]).resolve()
+  #   repository = Path(subprocess.check_output(
+  #     ['git', '-C', str(program.parent), 'rev-parse', '--show-toplevel'], text=True).strip())
+  #   return full_path(path, repository.parent)
+
+
+  # def load(self, environment: Mapping | str | Path) -> None:
+  #   """The environment, a mapping or the YAML file that declares it, replaces the configuration."""
+  #   data = dict(environment) if isinstance(environment, Mapping) else dict_from_yml(self.resolve_path(environment))
+  #   if not isinstance(data, dict): raise TypeError('Environment configuration must be a mapping')
+  #   if 'trace_rules' in data and not isinstance(data['trace_rules'], Mapping):
+  #     raise TypeError('trace_rules must be a mapping')
+  #   if 'log_file' in data: Logger.enable_file_logging(log_file=data['log_file'])
+  #   if 'trace_rules' in data: Logger.init_logger(trace_rules=data['trace_rules'])
+  #   self._config_from_dict(data)
+  #   self.initialized = True
 
 
   def reset(self) -> None:
