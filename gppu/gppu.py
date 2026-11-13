@@ -19,7 +19,7 @@ import builtins
 import json
 import getpass
 import socket
-from jinja2 import DictLoader, FileSystemLoader, StrictUndefined
+from jinja2 import DictLoader, FileSystemLoader, StrictUndefined, Undefined
 from jinja2.nativetypes import NativeEnvironment
 from jinja2.sandbox import SandboxedEnvironment
 
@@ -860,10 +860,16 @@ def _jinja_compile(template: str):
   return JinjaEnvironment().from_string(template)
 
 
-def jinja_template(template: str, /, **data) -> Any:
-  """Render Jinja to a string, scalar, list or mapping; missing inputs raise."""
+def jinja_template(template: Any, /, **data) -> Any:
+  """Render Jinja strings, including keys and values of a configuration node; missing inputs raise."""
+  if isinstance(template, dict):
+    return {key: jinja_template(value, **data) for key, value in
+            ((jinja_template(key, **data), value) for key, value in template.items()) if key != ''}
+  if isinstance(template, list): return [jinja_template(value, **data) for value in template]
+  if not isinstance(template, str): return template
+  if '{{' not in template and '{%' not in template and '{#' not in template: return template
   value = _jinja_compile(template).render(**data)
-  if isinstance(value, StrictUndefined): str(value)
+  if isinstance(value, Undefined): return str(value)
   return value
 
 
@@ -1557,6 +1563,15 @@ class _DC(UserDict):
 class mixin_Config(_mixin):
   _my: dict[str, Any] = {}
 
+
+  # def configure(self, source: Mapping | str | Path) -> None:
+  #   """Read declared configuration, from a mapping or a YAML entry point with its includes."""
+  #   data = dict(source) if isinstance(source, Mapping) else dict_from_yml(source)
+  #   self._config_from_dict(data)
+  #   self.initialized = True
+  #   if 'log_file' in data: Logger.enable_file_logging(log_file=data['log_file'])
+
+
   def _config_from_key(self, key: str) -> None: self._my = self._my | glob_dict(key)
   def _config_copy(self, other: mixin_Config) -> None: self._my = dict(other._my)
   def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
@@ -1586,6 +1601,7 @@ class _Base(mixin_Logger, mixin_Config): pass
 
 
 # region Env: the configuration
+
 class _Env(_Base):
   """The program's environment: singleton app object. It's my is glob"""
   home: Path = Path.home()
