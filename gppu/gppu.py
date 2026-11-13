@@ -561,9 +561,9 @@ class y2uri:
 
 def paths_meet(watched: str | y2path, changed: str | y2path) -> bool:
   """Whether a change at one slash path concerns a watcher of another: the same path, or one under the other. The
-  empty path, the root, is above every other."""
+  empty path watches everything."""
   watched, changed = str(watched).strip('/'), str(changed).strip('/')
-  return not watched or not changed or changed == watched or changed.startswith(watched + '/') or watched.startswith(changed + '/')
+  return not watched or changed == watched or changed.startswith(watched + '/') or watched.startswith(changed + '/')
 
 # endregion
 
@@ -580,12 +580,8 @@ def deepget(path: str | y2path, d: dict, default=None):
     if not isinstance(_, Mapping) or pp not in _: return default
     _ = _[pp]
   return _
-  # if '/' not in path or path in d: return d.get(path, default)
-  # for p in path.split('/'):
-  #   d = d.get(p)
-  #   if not d: return default
-  # return d  
-  # return reduce(lambda x, k: x.get(k) if x else None, path.split('/'), dict(d)) or default  
+
+
 def deepget_int(path: str | y2path, d: dict, default: int = 0) -> int:
   """ Returns int at path, or default if not found """
   _ = deepget(path, d, default)
