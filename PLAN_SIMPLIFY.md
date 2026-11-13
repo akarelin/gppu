@@ -28,13 +28,14 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
   - [ ] The Insteon button's generator: `D:\Work\11\12\creekview-generators\insteon-button-release.patch` lands with the Y2 deploy from main, at the same y2 restart; on Y2 main it constructs identically, on the running v6.1.7.5730 it changes the buttons' state topics. The live tree takes IoT master first: it constructs identically on 5730, and Y2 main needs it
     - Y2 main on released gppu: builds every object as 5730 does, validates with and without the patch, and fails no test 5730 passes (fixed today: apps shared one configuration dict, the inspector page's totals, tests using `Env.update_config`)
     - The release now verifies the live tree as y2 starts it (`AppRosterTest`), so a tree the image cannot run fails the release instead of y2's start
-    - Not built: dispatching the Release for `y2` and reading iot were both refused for this session; the restart is Alex's word (`y2/docs/DEBUG_RUNBOOK.md`)
+    - Not built: the Release for `y2` from main ran twice on 2026-11-13 and published nothing. The first run failed on Y2 main's own tests: after 6620f62, every test that rebuilds State needs the topology's macros in its Env (fixed in y2 89e7d34 and 7c19ccc). The second run failed `AppRosterTest`: iot's live `y2.yaml` gives Tuya and Sensibo no `key`, so the live tree is behind IoT master (read on the y2-ui Creekview page). It needs IoT master pulled on iot, then a Release run and the stack deploy; SSH to iot is refused for this session
   - [ ] Then Y2's generator branch in `construct_template`, the `generators` registration and the `generators` fixture in `tests/test_semantic_layer.py` go
 - [ ] Creekview's `templates:` hold named Jinja templates that return the object, and `template:` names one; behavior and `base_object` go
 - [ ] Y2's own template code goes: `templates.py`, `load_templates`, `base_object`, `object_from_base`, `construct_template`, `render_config`; fleet's own Jinja goes
 
 ## State and Runtime
 - [x] State is a plain object: `State.get(path)`, `State.set(path, value)`
+  - In Alex's working copy of `gppu/gppu.py` on 2026-11-13, gppu's `State` and `Runtime` are commented out
 - [x] `paths_meet` and State's listeners removed
 - [ ] Y2's State and Runtime are gppu's
 
@@ -56,3 +57,6 @@ These run on the released gppu today and move in the same commit as the release:
 - `TemplateSet`'s callers outside gppu use Jinja: lake's `graph_configuration.py`, `sources` and Dagster definitions, the LinkML Dagster runtime, admin_ui's `file_configuration.py`
 - Creekview's `generator`, behavior and `base_object` configuration, with Y2's release
 - Every reader of `Env.data`, which is `Env._my` now, reads `glob_dict('')`: lake's `graph_configuration.py` and `m365/config.py`, display-control and its Intune scripts, Y2's `ui/creekview.py`, and the Preservator, Session Manager and FileIndexer tests
+
+## Found outside this task
+- Y2: `test_insteon`, `test_kasa2mqtt`, `test_scene_light_contract` and `test_creekview_editor` fail each run on its own, on the running v6.1.7.5730 and on main alike; none is in the Release's verify step
