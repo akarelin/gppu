@@ -162,6 +162,39 @@ def test_loading_keeps_literal_strings(home):
     assert app.my('empty') == ''
 
 
+def test_loading_fills_the_jinja_that_reads_only_glob(home):
+    (home / 'RAN' / 'Hosts' / '_config' / 'config.yaml').write_text('''
+globals: {url: "https://otel", port: 4318, mount: /mnt/S1}
+shares: [Public, Lake]
+endpoint: "{{ glob('globals/url') }}/v1/logs"
+port: "{{ glob('globals/port') }}"
+mounts: >-
+  {%- set mounts = {} -%}
+  {%- for share in glob('shares') -%}{%- set _ = mounts.update({glob('globals/mount') ~ '/' ~ share: '//s1/' ~ share}) -%}{%- endfor -%}
+  {{- mounts -}}
+copied: "{{ glob('mounts') }}"
+bin: "{{ glob('globals/mount') }}/{{ platform }}"
+"{{ 'windows' if platform == 'W11' }}": true
+shell: 'export PATH="$HOME/.cargo/bin:$PATH"'
+example: {enabled: false}
+''', encoding='utf-8')
+    Example(environment='Hosts')
+    assert glob('endpoint') == 'https://otel/v1/logs'
+    assert glob('port') == 4318
+    assert glob('mounts') == {'/mnt/S1/Public': '//s1/Public', '/mnt/S1/Lake': '//s1/Lake'}
+    assert glob('copied') == glob('mounts')
+    assert glob('bin') == "{{ glob('globals/mount') }}/{{ platform }}"
+    assert glob("{{ 'windows' if platform == 'W11' }}") is True
+    assert glob('shell') == 'export PATH="$HOME/.cargo/bin:$PATH"'
+
+
+def test_own_configuration_fills_its_jinja_from_the_environment(home):
+    (home / 'RAN' / 'Hosts' / '_config' / 'config.yaml').write_text('globals: {url: "https://otel"}\n', encoding='utf-8')
+    own = home / 'example.yaml'
+    own.write_text('''endpoint: "{{ glob('globals/url') }}/v1/traces"\n''', encoding='utf-8')
+    assert Example(environment='Hosts', config=own).my('endpoint') == 'https://otel/v1/traces'
+
+
 def test_async_app_keeps_its_steps():
     from gppu import AsyncApp, YStepper
 

@@ -20,7 +20,7 @@ import json
 import getpass
 import socket
 import subprocess
-from jinja2 import DictLoader, FileSystemLoader, StrictUndefined, Undefined
+from jinja2 import DictLoader, FileSystemLoader, StrictUndefined, Undefined, meta
 from jinja2.nativetypes import NativeEnvironment
 from jinja2.sandbox import SandboxedEnvironment
 
@@ -874,6 +874,23 @@ def jinja_template(template: Any, /, **data) -> Any:
   return value
 
 
+@cache
+def _jinja_inputs(template: str) -> frozenset[str]:
+  """The names a Jinja string reads beyond gppu's own Jinja globals."""
+  environment = JinjaEnvironment()
+  return frozenset(meta.find_undeclared_variables(environment.parse(template))) - set(environment.globals)
+
+
+def jinja_fill(node: Any, /, **data) -> Any:
+  """Render the Jinja strings of a configuration node, keys included, that read only the given names. Jinja that
+  reads any other name stays as written, for the app that renders it later."""
+  if isinstance(node, dict): return {jinja_fill(key, **data): jinja_fill(value, **data) for key, value in node.items()}
+  if isinstance(node, list): return [jinja_fill(value, **data) for value in node]
+  if isinstance(node, str) and ('{{' in node or '{%' in node) and (inputs := _jinja_inputs(node)) and inputs <= data.keys():
+    return jinja_template(node, **data)
+  return node
+
+
 def jinja_document(filename: str | Path, /, **data) -> str:
   """Render a template file to text, with its own directory as the search path."""
   filename = full_path(filename)
@@ -1570,8 +1587,11 @@ class mixin_Config(_mixin):
 
   def _config_load(self, source: Mapping | str | Path) -> None:
     """The one loader of Env and every app: a YAML file, or a section already loaded, becomes this object's own
-    configuration, a copy of its source."""
+    configuration, a copy of its source, with its templates applied. A Jinja value that reads only ``glob`` is
+    filled here, ``glob`` reading the environment filled; Jinja that reads anything else, and ``$`` text, stay."""
     self._my = deepcopy(dict(source)) if isinstance(source, Mapping) else dict_from_yml(source)
+    def read(path: str) -> Any: return jinja_fill(glob(path), glob=read)
+    self._my = jinja_fill(self._my, glob=read)
 
 
   def my(self, path: str | y2path, default=None) -> Any: return deepget(path, self._my, default=default)
