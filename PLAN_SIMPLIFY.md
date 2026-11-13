@@ -10,7 +10,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 - [ ] Env does not initialize from itself: `from_env` goes, Env's configuration is read for it at construction like an app's (in progress)
   - Tried: Env reading the nearest `config.yaml` above the program at construction. The Hosts TUI found nothing, Y2 found `y2/config.yaml` with its `topology:` line, and file_indexer's stale `CRAP/Projects/file_indexer/config.yaml` broke `import gppu`; not committed
   - Compared over every `from_env` caller (`D:\Work\11\13\env-location\rows.txt`): neither the nearest `config.yaml` nor the nearest `_config/config.yaml` reaches Creekview's `_creekview.yaml`, and Linked Data, the lake, CRAP's ETLs, CCTV and the Kuma and devops scripts sit in neither of the two environments
-  - Settled by SPEC: they read Hosts, and Y2's apps read Creekview; nothing walks folders. Y2 main does not load Creekview on gppu master today, because master no longer reads its `topology:` line. Next: a program declares Creekview by an import or its first line, and Env reads the declared environment from its repository at construction, on Alex-PC, in the Y2 container and in the frozen display-control
+  - Settled by SPEC: they read Hosts, and Y2's apps read Creekview; nothing walks folders. Y2 main does not load Creekview on gppu master today, because master no longer reads its `topology:` line. The "Next" written here (a program declares Creekview by an import or its first line) is superseded by SPEC: app initialization takes its environment
 - [x] No topology: `topology` parameter and `_topology_file` removed
 - [x] `APP`, `_app` and `init` removed
 - [x] Nothing outside `mixin_Config` reads `_my`
@@ -35,7 +35,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 
 ## State and Runtime
 - [x] State is a plain object: `State.get(path)`, `State.set(path, value)`
-  - In Alex's working copy of `gppu/gppu.py` on 2026-11-13, gppu's `State` and `Runtime` are commented out
+  - gppu's `State` and `Runtime` are commented out in `gppu/gppu.py` and no longer exported (2026-11-13)
 - [x] `paths_meet` and State's listeners removed
 - [ ] Y2's State and Runtime are gppu's
 
