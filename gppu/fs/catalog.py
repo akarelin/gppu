@@ -145,7 +145,7 @@ class GppuCatalog(AsyncFileSystem):
     self.connections = {
       uid: connection_rules.resolve({'uid': uid, **row})
       for uid, row in definitions.items()
-      if uid not in ('templates', 'macros', 'generators') and not uid.endswith('_templates')
+      if uid not in ('templates', 'macros') and not uid.endswith('_templates')
     }
     for connection in self.connections.values():
       if 'provider' not in connection:
@@ -166,7 +166,7 @@ class GppuCatalog(AsyncFileSystem):
     if isinstance(tree, Mapping):
       templates = tree['templates'] if 'templates' in tree else {}
       entries = [{'uid': uid, **row} for uid, row in tree.items()
-                 if uid not in ('templates', 'macros', 'generators') and not uid.endswith('_templates')]
+                 if uid not in ('templates', 'macros') and not uid.endswith('_templates')]
     elif isinstance(tree, list):
       templates = config['location_templates'] if 'location_templates' in config else {}
       entries = tree

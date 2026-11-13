@@ -33,23 +33,19 @@ hosts:
 
 Alex, 2026-09-16: "Templates are generating dicts that are used to create objects. Startup/restart only. Templates are used to override class property behavior. Mostly by returning a value using jinja for calculations (regex matching of filenames in handlers). Templates can be stacked and applied in order. Templates have all needed to understand what they do in the same file."
 
-`TemplateSet` compiles one table's `macros`, `generators` and `templates` once and
-resolves a row against them. A row names the template it is an instance of — one name,
-or a list applied in order — and carries only what differs:
+`TemplateSet` compiles one table's `macros` and `templates` once and resolves a row
+against them. A row names the template it is an instance of — one name, or a list
+applied in order — and carries only what differs:
 
     1. template = the named templates, in order          (rightmost wins)
-    2. values   = template | row
-    3. data     = generator(values) | template | row      (rightmost wins)
-    4. each Jinja value of the template renders against data, in template order
-    5. data     = data | behavior(data)
+    2. data     = template | row                          (rightmost wins)
+    3. each Jinja value of the template renders against data, in template order
 
 A template value written in Jinja renders against the merged row, so the template says
 in one place what it computes; a value the row carries is data and is never rendered. A
 value renders against what is settled, so a later value sees an earlier one, and a value
-still to be rendered is not a name yet. A generator or a behavior is a named Jinja
-template that returns an object, never text; a behavior runs after the merge, so it is
-the only thing that can rewrite a key the row itself carries. A row un-inherits a key
-its template carries by setting it to null. An unknown template fails the resolution.
+still to be rendered is not a name yet. A row un-inherits a key its template carries by
+setting it to null. An unknown template fails the resolution.
 
 ```yaml
 templates:
