@@ -1618,19 +1618,6 @@ class App(_Base, _DC):
     self._config_load(glob_dict(self.name) if config is None else config)
 # endregion
 
-# class _Base(mixin_Logger, mixin_Config):
-#   """An object with its log and its configuration: named as given, or after the program, and its ``_my`` a copy of
-#   Env, which loads the program's default environment on its first read, as for a script. Env and the apps are these."""
-#   _base_path: Path
-
-#   def __init__(self, name: str = '', **kw) -> None:
-#     super().__init__(**kw)
-#     self.name = name or Env.name
-#     self._my = deepcopy(Env._data())
-#     self._base_path = Path('.')
-
-# endregion
-
 
 # region Env: the configuration
 
@@ -1673,31 +1660,6 @@ class _Env(_Base):
         self.initialized = True
       else: raise FileNotFoundError(path)
     elif environment: raise ValueError(f'Unknown environment {environment!r}: one of {", ".join(_ENV_PATHS)}')
-
-
-
-  # def resolve_path(self, environment: str | Path) -> Path:
-  #   """Resolve Hosts, IoT, or an explicit YAML filename from the program's repository."""
-  #   if isinstance(environment, str) and environment in _ENVIRONMENTS:
-  #     environment = _ENVIRONMENTS[environment]
-  #   path = Path(environment).expanduser()
-  #   if path.is_absolute(): return full_path(path)
-  #   program = Path(sys.argv[0]).resolve()
-  #   repository = Path(subprocess.check_output(
-  #     ['git', '-C', str(program.parent), 'rev-parse', '--show-toplevel'], text=True).strip())
-  #   return full_path(path, repository.parent)
-
-
-  # def load(self, environment: Mapping | str | Path) -> None:
-  #   """The environment, a mapping or the YAML file that declares it, replaces the configuration."""
-  #   data = dict(environment) if isinstance(environment, Mapping) else dict_from_yml(self.resolve_path(environment))
-  #   if not isinstance(data, dict): raise TypeError('Environment configuration must be a mapping')
-  #   if 'trace_rules' in data and not isinstance(data['trace_rules'], Mapping):
-  #     raise TypeError('trace_rules must be a mapping')
-  #   if 'log_file' in data: Logger.enable_file_logging(log_file=data['log_file'])
-  #   if 'trace_rules' in data: Logger.init_logger(trace_rules=data['trace_rules'])
-  #   self._config_from_dict(data)
-  #   self.initialized = True
 
 
   def reset(self) -> None:
