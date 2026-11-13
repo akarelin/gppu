@@ -1636,7 +1636,7 @@ class Env(_Base):
     """
     Initialize Env from a dict. 
     A topology key (a yaml path) is loaded as the base data; 
-    tunables (an inline dict) and the remaining keys override it — mirroring Y2's Environment loader. 
+    the remaining keys override it — mirroring Y2's Environment loader. 
     Without topology the dict itself is the data (back-compatible).
     """
     # config = dict(d)
