@@ -14,7 +14,7 @@ def clean():
 
 
 def test_state_is_an_app_apart_from_env():
-    assert issubclass(State, _Base) and issubclass(Env, _Base)
+    assert isinstance(State, _Base) and isinstance(Env, _Base)
     State.set('hosts/s2/online', True)
     assert State.my('hosts/s2/online') is True
     assert State.my_dict('hosts') == {'s2': {'online': True}}

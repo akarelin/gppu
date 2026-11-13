@@ -1611,7 +1611,7 @@ class _Base(mixin_Logger, mixin_Config): pass
 
 
 # region Env: the configuration
-class Env(_Base):
+class _Env(_Base):
   """The program's environment: singleton app object. It's my is glob"""
   home: Path = Path.home()
   user: str = getpass.getuser()
@@ -1620,6 +1620,7 @@ class Env(_Base):
 
   _global_log = True
   initialized: bool = False
+  _my: dict[str, Any] = {}
 
   name: str = ''
   app_path: Path
@@ -1700,7 +1701,7 @@ class Env(_Base):
     Env.initialized = False
 
 
-  glob, glob_int, glob_list, glob_dict = (classmethod(mixin_Config.__dict__[n]) for n in ('my', 'my_int', 'my_list', 'my_dict'))
+  glob, glob_int, glob_list, glob_dict = mixin_Config.my, mixin_Config.my_int, mixin_Config.my_list, mixin_Config.my_dict
   # @staticmethod
   # @sync
   # async def dump():
@@ -1821,6 +1822,8 @@ class Env(_Base):
         if candidate.exists(): return candidate
     return None
 
+Env = _Env()
+
 # Global aliases for Env.glob* methods
 APP: dict = Env._app()   # what the program's environment is created from; a program sets its keys at its start
 glob = Env.glob
@@ -1846,37 +1849,38 @@ class App(_Base, _DC):
 
 
 # region State and Runtime
-class State(_Base):
-    """The program's state: what its apps know now, as Env is what they were told. One per program and there from
-    import, it is an app like Env: its ``_my`` holds the values, read by slash path with ``State.my(path)`` and the
+class _State(_Base):
+    """The program's state: what its apps know now, as Env is what they were told. ``State`` is its one instance, there
+    from import, an app like Env: its ``_my`` holds the values, read by slash path with ``State.my(path)`` and the
     typed readers, and written with ``State.set(path, value)``. ``State.listen(callback, path)`` registers a callback
     that hears each change at the path, under it or above it as ``callback(path=..., old=..., new=...)``, and returns
     the call that removes it. A reload replaces Env's ``_my`` whole; State's is never reloaded, so the two are kept
     apart."""
-    _my: dict[str, Any] = {}
-    _listeners: list[tuple[str, Callable[..., Any]]] = []
-    _lock = threading.RLock()
 
-    my, my_int, my_float, my_list, my_dict = (classmethod(mixin_Config.__dict__[n]) for n in ('my', 'my_int', 'my_float', 'my_list', 'my_dict'))  # pyright: ignore[reportAssignmentType]
+    def __init__(self) -> None:
+        self._my: dict[str, Any] = {}
+        self._listeners: list[tuple[str, Callable[..., Any]]] = []
+        self._lock = threading.RLock()
 
-    @classmethod
-    def set(cls, path: str | y2path, value: Any) -> None:
+    def set(self, path: str | y2path, value: Any) -> None:
         changed = str(y2path(path))
-        with cls._lock:
-            old = deepget(changed, cls._my)
+        with self._lock:
+            old = deepget(changed, self._my)
             if old == value: return
-            deepset(changed, cls._my, value)
-        for watched, callback in tuple(cls._listeners):
+            deepset(changed, self._my, value)
+        for watched, callback in tuple(self._listeners):
             if paths_meet(watched, changed): callback(path=changed, old=old, new=value)
 
-    @classmethod
-    def listen(cls, callback: Callable[..., Any], path: str | y2path = '') -> Callable[[], None]:
+    def listen(self, callback: Callable[..., Any], path: str | y2path = '') -> Callable[[], None]:
         entry = (str(y2path(path)) if path else '', callback)
-        cls._listeners.append(entry)
+        self._listeners.append(entry)
 
         def unlisten() -> None:
-            if entry in cls._listeners: cls._listeners.remove(entry)
+            if entry in self._listeners: self._listeners.remove(entry)
         return unlisten
+
+
+State = _State()
 
 
 class Runtime:
