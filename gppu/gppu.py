@@ -218,7 +218,6 @@ def safe_datetime(o: object) -> dt | None:
 # endregion
 
 
-
 # region Time helpers
 def now_str(): return dt.now().strftime("%Y%m%d.%H%M%S")
 def now_ts(): return dt.now().timestamp()
@@ -699,6 +698,7 @@ def dict_sanitize(data: dict | list, sort_keys=False) -> dict | list:
 #   return dumper.represent_dict(dict(enumerate(data)))
 def _tuple_representer(dumper: Dumper, data: tuple) -> Node:
   return dumper.represent_dict(dict(enumerate(data)))
+
 
 def dict_to_yml(filename: str | Path, data=None, sort_keys=False):
   class IndentedListDumper(yaml.Dumper):
@@ -1614,55 +1614,52 @@ class _Env(_Base):
     if 'log_file' in data: Logger.enable_file_logging(log_file=data['log_file'])
 
 
-  def update_config(self, data: dict, path: str | y2path = '') -> None:
-    """Replace one configuration subtree; an empty path replaces the whole config."""
-    if not isinstance(data, dict): raise TypeError('configuration must be a mapping')
-    if path: deepset(path, self._my, data)
-    else: self._load_dict(data)
+  # def update_config(self, data: dict, path: str | y2path = '') -> None:
+  #   """Replace one configuration subtree; an empty path replaces the whole config."""
+  #   if not isinstance(data, dict): raise TypeError('configuration must be a mapping')
+  #   if path: deepset(path, self._my, data)
+  #   else: self._load_dict(data)
+
 
   def reset(self) -> None:
     self._my = {}
     self.initialized = False
 
 
-  # @staticmethod
-  # @sync
-  # async def dump():
-  #   Dump('self.data', self.data)
-  #   return await asyncio.sleep(0)  # Make it truly async
+  # def from_dict(self, d: dict) -> None:
+  #   """The configuration is the given dict."""
+  #   # config = dict(d)
+  #   # topology = config.pop('topology', None)
+  #   # tunables = config.pop('tunables', None)
+  #   # data = dict_from_yml(topology) if topology else {}
+  #   # if isinstance(tunables, dict): data.update(tunables)
+  #   # data.update(config)
+  #   self._load_dict(d)
 
 
-  def from_dict(self, d: dict) -> None:
-    """The configuration is the given dict."""
-    # config = dict(d)
-    # topology = config.pop('topology', None)
-    # tunables = config.pop('tunables', None)
-    # data = dict_from_yml(topology) if topology else {}
-    # if isinstance(tunables, dict): data.update(tunables)
-    # data.update(config)
-    self._load_dict(d)
+  # def from_env(self, name: Optional[str] = None, app_path: Optional[Path] = None, config: str | Path | None = None) -> None:
+  #   """The configuration from ``config``, or from ``<name>.yaml`` or ``config.yaml`` searched upward from app_path."""
+  #   self._main_file, self._main_dir = self._main()
+
+  #   self.name = name or self._program_name()
+  #   self.app_path = self._resolve_app_path(app_path)
+  #   self.config_file = full_path(config) if config else self._config_file()
+
+  #   Logger.init_logger(self.name)
+
+  #   self.from_dict(dict_from_yml(self.config_file) if self.config_file else {})
 
 
-  def from_env(self, name: Optional[str] = None, app_path: Optional[Path] = None, config: str | Path | None = None) -> None:
-    """The configuration from ``config``, or from ``<name>.yaml`` or ``config.yaml`` searched upward from app_path."""
-    self._main_file, self._main_dir = self._main()
+  # def _main(self) -> tuple[Path, Path]:
+  #   import __main__
+  #   main_file = Path(getattr(__main__, '__file__', 'app')).resolve()
+  #   return main_file, main_file.parent
 
-    self.name = name or self._program_name()
-    self.app_path = self._resolve_app_path(app_path)
-    self.config_file = full_path(config) if config else self._config_file()
 
-    Logger.init_logger(self.name)
+  # def _program_name(self) -> str:
+  #   # Under PyInstaller __main__.__file__ resolves to __main__; use exe name instead
+  #   return Path(sys.executable).stem if getattr(sys, 'frozen', False) else self._main()[0].stem
 
-    self.from_dict(dict_from_yml(self.config_file) if self.config_file else {})
-
-  def _main(self) -> tuple[Path, Path]:
-    import __main__
-    main_file = Path(getattr(__main__, '__file__', 'app')).resolve()
-    return main_file, main_file.parent
-
-  def _program_name(self) -> str:
-    # Under PyInstaller __main__.__file__ resolves to __main__; use exe name instead
-    return Path(sys.executable).stem if getattr(sys, 'frozen', False) else self._main()[0].stem
 
   def from_argv(self, argv: list[str]) -> None:
     """The command line over the configuration: ``--key value`` sets that key to the string, ``--verbose`` with no
@@ -1687,17 +1684,17 @@ class _Env(_Base):
       parent = parent.parent
     return self._main_dir / app_path
 
-  def _config_file(self) -> Path | None:
-    """``<name>.yaml`` then ``config.yaml``, searched from ``app_path`` upward —
-    so a service in a subdir (e.g. /app/brultech) finds the suite's /app/config.yaml.
-    A program with none runs on the command line alone."""
-    stem = Path(self.name).with_suffix('.yaml').name
-    names = (stem, 'config.yaml')
-    for parent in (self.app_path, *self.app_path.parents):
-      for name in names:
-        candidate = parent / name
-        if candidate.exists(): return candidate
-    return None
+  # def _config_file(self) -> Path | None:
+  #   """``<name>.yaml`` then ``config.yaml``, searched from ``app_path`` upward —
+  #   so a service in a subdir (e.g. /app/brultech) finds the suite's /app/config.yaml.
+  #   A program with none runs on the command line alone."""
+  #   stem = Path(self.name).with_suffix('.yaml').name
+  #   names = (stem, 'config.yaml')
+  #   for parent in (self.app_path, *self.app_path.parents):
+  #     for name in names:
+  #       candidate = parent / name
+  #       if candidate.exists(): return candidate
+  #   return None
 
 Env = _Env()
 
@@ -1707,48 +1704,48 @@ glob, glob_int, glob_list, glob_dict = Env.my, Env.my_int, Env.my_list, Env.my_d
 
 
 # region State and Runtime
-class _State:
-    """The program's state: the values its apps know now, apart from the configuration they were given. ``State`` is
-    its one instance: ``State.set(path, value)`` writes a value at a slash path and ``State.get(path)`` reads it."""
+# class _State:
+#     """The program's state: the values its apps know now, apart from the configuration they were given. ``State`` is
+#     its one instance: ``State.set(path, value)`` writes a value at a slash path and ``State.get(path)`` reads it."""
 
-    def __init__(self) -> None:
-        self.values: dict[str, Any] = {}
+#     def __init__(self) -> None:
+#         self.values: dict[str, Any] = {}
 
-    def get(self, path: str | y2path) -> Any:
-        return deepget(path, self.values)
+#     def get(self, path: str | y2path) -> Any:
+#         return deepget(path, self.values)
 
-    def set(self, path: str | y2path, value: Any) -> None:
-        deepset(path, self.values, value)
-
-
-State = _State()
+#     def set(self, path: str | y2path, value: Any) -> None:
+#         deepset(path, self.values, value)
 
 
-class Runtime:
-    """The container of the program's apps: one per program, like Env and State, which all its apps share. An app
-    joins with ``Runtime.register_app(app)`` under its name, and ``Runtime.apps`` holds them in the order they joined.
-    Apps tell each other with events: ``Runtime.listen_event(callback, event)`` registers a callback, called as
-    ``callback(event=..., data=...)`` by ``Runtime.fire_event(event, **data)``, and returns the call that removes it.
-    A callback registered with no event hears every one."""
-    apps: dict[str, Any] = {}
-    _event_listeners: list[tuple[str | None, Callable[..., Any]]] = []
+# State = _State()
 
-    @classmethod
-    def register_app(cls, app: Any) -> Any:
-        cls.apps[app.name] = app
-        return app
 
-    @classmethod
-    def listen_event(cls, callback: Callable[..., Any], event: str | None = None) -> Callable[[], None]:
-        entry = (event, callback)
-        cls._event_listeners.append(entry)
+# class Runtime:
+#     """The container of the program's apps: one per program, like Env and State, which all its apps share. An app
+#     joins with ``Runtime.register_app(app)`` under its name, and ``Runtime.apps`` holds them in the order they joined.
+#     Apps tell each other with events: ``Runtime.listen_event(callback, event)`` registers a callback, called as
+#     ``callback(event=..., data=...)`` by ``Runtime.fire_event(event, **data)``, and returns the call that removes it.
+#     A callback registered with no event hears every one."""
+#     apps: dict[str, Any] = {}
+#     _event_listeners: list[tuple[str | None, Callable[..., Any]]] = []
 
-        def unlisten() -> None:
-            if entry in cls._event_listeners: cls._event_listeners.remove(entry)
-        return unlisten
+#     @classmethod
+#     def register_app(cls, app: Any) -> Any:
+#         cls.apps[app.name] = app
+#         return app
 
-    @classmethod
-    def fire_event(cls, event: str, **data: Any) -> None:
-        for expected, callback in tuple(cls._event_listeners):
-            if expected is None or expected == event: callback(event=event, data=dict(data))
+#     @classmethod
+#     def listen_event(cls, callback: Callable[..., Any], event: str | None = None) -> Callable[[], None]:
+#         entry = (event, callback)
+#         cls._event_listeners.append(entry)
+
+#         def unlisten() -> None:
+#             if entry in cls._event_listeners: cls._event_listeners.remove(entry)
+#         return unlisten
+
+#     @classmethod
+#     def fire_event(cls, event: str, **data: Any) -> None:
+#         for expected, callback in tuple(cls._event_listeners):
+#             if expected is None or expected == event: callback(event=event, data=dict(data))
 # endregion
