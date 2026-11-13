@@ -7,8 +7,10 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 - [x] `glob`, `glob_int`, `glob_list`, `glob_dict` are globals; every caller in gppu, RAN, CRAP, IoT and Y2 uses them
 - [x] No configuration comparison and no change listeners: `_config_changes`, `changed_paths`, `on_change` removed
 - [ ] Env does not initialize from itself: `from_env` goes, Env's configuration is read for it at construction like an app's
-- [ ] No topology: `topology` parameter and `_topology_file` removed
-- [ ] `APP`, `_app` and `init` removed
+- [x] No topology: `topology` parameter and `_topology_file` removed
+- [x] `APP`, `_app` and `init` removed
+- [x] Nothing outside `mixin_Config` reads `_my`
+- [ ] Env resolves the configuration's templates when it loads (`TemplateSet`), so `glob` and `self.my` return resolved values; Y2's `load_templates` and fleet's own Jinja go
 - [ ] `_config_file`, `_program_name`, `_main`, `_resolve_app_path` removed with `from_env`
 - [ ] The command line overrides the app, not Env: `Env.from_argv` removed, the app's own configuration takes the command line
 
@@ -18,6 +20,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 - [ ] Y2's State and Runtime are gppu's
 
 ## Apps
+- [x] AsyncApp is an App: its name and own configuration come from App's construction
 - [ ] App, AsyncApp, MqttApp and AppService in one place instead of `gppu.py`, `app.py`, `iot.py`, `app_service.py`
 - [ ] Configuration from MQTT read in one place: one listener on a topic prefix, the last part of the topic names the section; no topic-to-path table, no `from_mqtt` startup copy
 
