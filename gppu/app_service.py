@@ -10,7 +10,7 @@ from __future__ import annotations
 import yaml
 
 from .gppu import Env
-from .gppu import paths_meet, y2topic
+from .gppu import y2topic
 from .iot import MqttApp
 
 
@@ -27,15 +27,11 @@ class AppService(MqttApp):
   def _config_topics(topics: dict[str, str]) -> dict[str, str]:
     if not isinstance(topics, dict) or not topics:
       raise ValueError('MQTT configuration requires a topic to Env path mapping')
-    paths = []
     for topic, path in topics.items():
       if not isinstance(topic, str) or not topic or '+' in topic or '#' in topic:
         raise ValueError('MQTT configuration topics must be exact topic names')
       if not isinstance(path, str) or (path and any(not part for part in path.split('/'))):
         raise ValueError('MQTT configuration paths must be slash paths or empty for the root')
-      if any(paths_meet(path, other) for other in paths):
-        raise ValueError('MQTT configuration paths must not overlap')
-      paths.append(path)
     return dict(topics)
 
   @staticmethod

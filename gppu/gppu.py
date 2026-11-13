@@ -559,12 +559,6 @@ class y2uri:
   # def __add__(self, path: y2path | str) -> 'y2uri':
   #   return self / path
 
-def paths_meet(watched: str | y2path, changed: str | y2path) -> bool:
-  """Whether a change at one slash path concerns a watcher of another: the same path, or one under the other. The
-  empty path watches everything."""
-  watched, changed = str(watched).strip('/'), str(changed).strip('/')
-  return not watched or changed == watched or changed.startswith(watched + '/') or watched.startswith(changed + '/')
-
 # endregion
 
 
@@ -1780,35 +1774,18 @@ class App(_Base, _DC):
 
 
 # region State and Runtime
-class _State(_Base):
-    """The program's state: what its apps know now, as Env is what they were told. ``State`` is its one instance, there
-    from import, an app like Env: its ``_my`` holds the values, read by slash path with ``State.my(path)`` and the
-    typed readers, and written with ``State.set(path, value)``. ``State.listen(callback, path)`` registers a callback
-    that hears each change at the path, under it or above it as ``callback(path=..., old=..., new=...)``, and returns
-    the call that removes it. A reload replaces Env's ``_my`` whole; State's is never reloaded, so the two are kept
-    apart."""
+class _State:
+    """The program's state: the values its apps know now, apart from the configuration they were given. ``State`` is
+    its one instance: ``State.set(path, value)`` writes a value at a slash path and ``State.get(path)`` reads it."""
 
     def __init__(self) -> None:
-        self._my: dict[str, Any] = {}
-        self._listeners: list[tuple[str, Callable[..., Any]]] = []
-        self._lock = threading.RLock()
+        self.values: dict[str, Any] = {}
+
+    def get(self, path: str | y2path) -> Any:
+        return deepget(path, self.values)
 
     def set(self, path: str | y2path, value: Any) -> None:
-        changed = str(y2path(path))
-        with self._lock:
-            old = deepget(changed, self._my)
-            if old == value: return
-            deepset(changed, self._my, value)
-        for watched, callback in tuple(self._listeners):
-            if paths_meet(watched, changed): callback(path=changed, old=old, new=value)
-
-    def listen(self, callback: Callable[..., Any], path: str | y2path = '') -> Callable[[], None]:
-        entry = (str(y2path(path)) if path else '', callback)
-        self._listeners.append(entry)
-
-        def unlisten() -> None:
-            if entry in self._listeners: self._listeners.remove(entry)
-        return unlisten
+        deepset(path, self.values, value)
 
 
 State = _State()

@@ -26,7 +26,7 @@ if glob('greeting'): Info(glob('greeting'))
 
 ## State and Runtime
 
-`State` is the program's state: what its apps know now, as Env is what they were told. Like Env it is an app of the special kind, one per program and there from import, and its `_my` holds its values. `State.my(path)` and the typed readers read a value by slash path, and `State.set(path, value)` writes one. `State.listen(callback, path)` registers a callback; each change at the path, under it or above it calls it as `callback(path=..., old=..., new=...)`. A reload replaces Env's `_my` whole, and State's is never reloaded, so the configuration and the state are kept apart.
+`State` is the program's state: the values its apps know now, apart from the configuration they were given. It is one object, there from import: `State.set(path, value)` writes a value at a slash path and `State.get(path)` reads it.
 
 `Runtime` is the container of the program's apps, one per program. All the apps in it share the one Env and the one State. An app joins with `Runtime.register_app(app)` under its name, and `Runtime.apps` holds them in the order they joined. Apps tell each other with events: `Runtime.listen_event(callback, event)` registers a callback, and `Runtime.fire_event(event, **data)` calls it as `callback(event=..., data=...)`. A callback registered with no event hears every event.
 

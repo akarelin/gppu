@@ -164,8 +164,8 @@ def test_mqtt_bad_payload_fails_visibly_and_preserves_config(monkeypatch, payloa
   asyncio.run(run())
 
 
-@pytest.mark.parametrize('topics', [{}, {'config/#': 'dc'}, {'a': 'dc', 'b': 'dc/scenes'}, {'a': '', 'b': 'dc'}])
-def test_mqtt_rejects_indeterminate_or_overlapping_sources(topics):
+@pytest.mark.parametrize('topics', [{}, {'config/#': 'dc'}])
+def test_mqtt_rejects_indeterminate_sources(topics):
   async def run():
     Env.from_dict({})
     with pytest.raises(ValueError):
