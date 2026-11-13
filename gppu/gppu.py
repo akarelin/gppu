@@ -1628,7 +1628,10 @@ class _Env(_Base):
     """The environment, a mapping or the YAML file that declares it, replaces the configuration."""
     data = dict(environment) if isinstance(environment, Mapping) else dict_from_yml(environment)
     if not isinstance(data, dict): raise TypeError('Environment configuration must be a mapping')
+    if 'trace_rules' in data and not isinstance(data['trace_rules'], Mapping):
+      raise TypeError('trace_rules must be a mapping')
     if 'log_file' in data: Logger.enable_file_logging(log_file=data['log_file'])
+    if 'trace_rules' in data: Logger.init_logger(trace_rules=data['trace_rules'])
     self._config_from_dict(data)
     self.initialized = True
 

@@ -17,6 +17,8 @@ The app already has its identity: `Example` selects `example`, and `Fleet` selec
 
 Code without an app loads the same environment with `Env.load(declaration)`, then reads it with `glob(...)` or `glob_dict('')`. `Env.reset()` clears the configuration. YAML loading preserves dollar expressions and Jinja templates for later rendering.
 
+`trace_rules` is a mapping applied to GPPU's logger when the environment loads. `examples/basic.py` imports `Hosts` from `Hosts.environment` and passes it to `Basic`; its Info and Debug calls use Hosts' `trace_rules` and `log_file`. Hosts' repository must be on Python's import path. In Alex's shared virtual environment, `ran.pth` declares that repository. Run the example from the GPPU repository with `python -m examples.basic`.
+
 The environment owns its location. `RAN/Hosts/environment.py` declares Hosts from its repository's `_config/config.yaml`. Fleet receives that declaration in its constructor, without its caller supplying an app name or loading Env separately. `fleet.load()` returns the app and shares an already loaded environment on later calls. This port requires the development GPPU API; the installed 3.7.0 release has the earlier loading API.
 
 `jinja_template(node, **values)` renders strings, lists and mappings, including mapping keys. Jinja expressions return native objects; plain strings keep their type. Empty rendered keys are omitted, supporting Fleet's conditional configuration keys. Missing Jinja inputs raise. Loading leaves templates intact so Fleet can render them with the selected host's values later.

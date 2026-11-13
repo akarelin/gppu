@@ -134,3 +134,17 @@ def test_fleet_node_templates_keep_booleans_and_omit_empty_conditional_keys():
     assert jinja_template(source, platform='W11', host='alex-pc') == {
         'enabled': True, 'windows': {'items': ['alex-pc', '', '123', False, 0]}}
     assert jinja_template(source, platform='Linux', host='seven') == {'enabled': False}
+
+
+def test_environment_applies_debug_rules_and_rejects_invalid_rules():
+    from gppu import Logger
+
+    previous = dict(Logger.trace_rules)
+    try:
+        Env.load({'trace_rules': {'all': True, 'Basic': False}})
+        assert Logger.trace_rules == {'all': True, 'Basic': False}
+        with pytest.raises(TypeError, match='mapping'):
+            Env.load({'trace_rules': True})
+        assert glob('trace_rules') == {'all': True, 'Basic': False}
+    finally:
+        Logger.init_logger(trace_rules=previous)

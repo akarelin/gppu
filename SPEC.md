@@ -10,6 +10,7 @@
 - There is no topology file.
 - The command line overrides an application's behaviour, not the environment.
 - Configuration folders hold no Python code.
+- An app does not require an environment. The basic.py example uses Hosts and its debug logging.
 
 ## Templates
 - Configuration can be a template, and an application reads that configuration from the template.

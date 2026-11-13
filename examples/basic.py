@@ -1,13 +1,13 @@
-"""The simplest app: load a mapping, read its own greeting, and log it."""
-from gppu import App
-
-ENVIRONMENT = {'basic': {'greeting': 'Hello'}}
+"""A basic app using the shared Hosts environment and its logging settings."""
+from Hosts.environment import Hosts
+from gppu import App, Env
 
 
 class Basic(App):
     def main(self):
-        self.Info(self.my('greeting'))
+        self.Info('started on', Env.host, Env.os.value, 'as', Env.user)
+        self.Debug('debug logging from the Hosts environment')
 
 
 if __name__ == '__main__':
-    Basic(environment=ENVIRONMENT).main()
+    Basic(environment=Hosts).main()

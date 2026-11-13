@@ -3,6 +3,7 @@
 Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share one State and one Env. Env is the global singleton app; it loads like any app and never initializes from itself. Alex's instructions are in [SPEC.md](SPEC.md).
 
 ## Env
+- [x] `examples/basic.py` uses Hosts, with Info and Debug output controlled by Hosts' logging settings; verified console output and the declared log file
 - [x] App construction takes the environment declaration and selects the app's section using its own name; Fleet takes Hosts and delegates Jinja rendering to gppu; verified against the existing Hosts configuration and renderer
 - [x] `Env.load` loads a declared mapping or YAML file without an app; App's environment is optional, and a supplied environment loads before AsyncApp's init. Configuration, YAML and Jinja checks pass; Fleet's actual host selections and configuration strings match its previous implementation, including required-input errors
 - [x] Env and State are each one instance; Env's methods read `self`
