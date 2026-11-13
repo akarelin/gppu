@@ -9,7 +9,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 - [x] App construction takes the environment declaration and selects the app's section using its own name; Fleet declares Hosts and holds only its host rows (RAN 0e342ca65): its own glob, load, render and values are gone, and its callers read gppu's glob
 - [x] App's environment is optional, and a declared environment loads before the app starts, AsyncApp's init included; an app with none starts with empty configuration
 - [x] Env and every app load through one loader, `_config_load` on `mixin_Config`: `Env.init` gives it the environment file, an app its own YAML file (`config=`, independent from the environment) or else its section; `_config_from_key`, `_config_from_dict` and `_config_copy` are gone
-- [x] The loader applies templates: `_config_load` fills the Jinja that reads only `glob`; Hosts' four OTEL endpoints fill at load, Creekview loads unchanged, and Hosts' S1 mounts are generated from `locations` (RAN cecdd4e00), identical to the hand-written rows
+- [x] The loader applies templates: `_config_load` fills the Jinja that reads only `glob`, `glob_int`, `glob_list` or `glob_dict`; Hosts' four OTEL endpoints fill at load, Creekview loads unchanged, and Hosts' S1 mounts are generated from `locations` (RAN cecdd4e00), identical to the hand-written rows
 - [x] Env and State are each one instance; Env's methods read `self`
 - [x] `glob`, `glob_int`, `glob_list`, `glob_dict` are globals; every caller in gppu, RAN, CRAP, IoT and Y2 uses them
 - [x] No configuration comparison and no change listeners: `_config_changes`, `changed_paths`, `on_change` removed
