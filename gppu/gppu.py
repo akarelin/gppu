@@ -1648,12 +1648,7 @@ class _Env(_Base):
 
 
   def from_dict(self, d: dict) -> None:
-    """
-    Initialize Env from a dict. 
-    A topology key (a yaml path) is loaded as the base data; 
-    the remaining keys override it — mirroring Y2's Environment loader. 
-    Without topology the dict itself is the data (back-compatible).
-    """
+    """The configuration is the given dict."""
     # config = dict(d)
     # topology = config.pop('topology', None)
     # tunables = config.pop('tunables', None)
@@ -1663,13 +1658,8 @@ class _Env(_Base):
     self._load_dict(d)
 
 
-  def from_env(self, name: Optional[str] = None, app_path: Optional[Path] = None, config: str | Path | None = None,
-               topology: bool = False) -> None:
-    """
-    Initialize Env from name + app_path, resolving config file and loading YAML
-    config names the file, and
-    topology puts the nearest ``_config/config.yaml`` upward under it.
-    """
+  def from_env(self, name: Optional[str] = None, app_path: Optional[Path] = None, config: str | Path | None = None) -> None:
+    """The configuration from ``config``, or from ``<name>.yaml`` or ``config.yaml`` searched upward from app_path."""
     self._main_file, self._main_dir = self._main()
 
     self.name = name or self._program_name()
@@ -1678,26 +1668,7 @@ class _Env(_Base):
 
     Logger.init_logger(self.name)
 
-    config_data = dict_from_yml(self.config_file) if self.config_file else {}
-    if topology and 'topology' not in config_data: config_data['topology'] = self._topology_file()
-    self.from_dict(config_data)   # resolves a `topology:` key if the config has one
-
-  def init(self) -> None:
-    """Create the environment from ``APP``: ``name``, ``config`` (the file; found by the name when it is not set),
-    ``topology`` (the nearest ``_config/config.yaml`` upward goes under the configuration), ``cli`` (the command
-    line goes over it), and the log's ``log_file`` and ``trace_rules``, which the configuration and the command line
-    override."""
-    self.from_env(name=APP['name'], config=APP['config'], topology=APP['topology'])
-    for key in ('log_file', 'trace_rules'):
-      if APP[key] is not None and key not in self._my: self._my[key] = APP[key]
-    if APP['cli']: self.from_argv(sys.argv[1:])
-    if isinstance(rules := self._my.get('trace_rules'), dict): TRACE_RULES.update(rules)
-    if self._my.get('log_file'): Logger.enable_file_logging(log_file=self._my['log_file'])
-
-  def _topology_file(self) -> Path:
-    for parent in (self.app_path, *self.app_path.parents):
-      if (candidate := parent / '_config' / 'config.yaml').exists(): return candidate
-    raise FileNotFoundError(f"The program needs a topology: no _config/config.yaml walking up from '{self.app_path}'")
+    self.from_dict(dict_from_yml(self.config_file) if self.config_file else {})
 
   def _main(self) -> tuple[Path, Path]:
     import __main__
@@ -1707,13 +1678,6 @@ class _Env(_Base):
   def _program_name(self) -> str:
     # Under PyInstaller __main__.__file__ resolves to __main__; use exe name instead
     return Path(sys.executable).stem if getattr(sys, 'frozen', False) else self._main()[0].stem
-
-  def _app(self) -> dict:
-    """APP as every program starts with it: named after the program, its configuration found by that name, no
-    topology, no command line."""
-    self._main_file, self._main_dir = self._main()
-    self.name, self.app_path = self._program_name(), self._main_dir
-    return {'name': self.name, 'config': None, 'topology': False, 'cli': False, 'log_file': None, 'trace_rules': None}
 
   def from_argv(self, argv: list[str]) -> None:
     """The command line over the configuration: ``--key value`` sets that key to the string, ``--verbose`` with no
@@ -1753,7 +1717,6 @@ class _Env(_Base):
 Env = _Env()
 
 # the configuration's readers are globals: Env's my readers
-APP: dict = Env._app()   # what the program's environment is created from; a program sets its keys at its start
 glob, glob_int, glob_list, glob_dict = Env.my, Env.my_int, Env.my_list, Env.my_dict
 # endregion
 

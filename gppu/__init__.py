@@ -10,7 +10,6 @@ from .fs import Container, DataObject, FileSystem, Location, Provider
 from .gppu import (
     # Env, its configuration mixins and the regular apps
     Env,
-    APP,
     glob,
     glob_int,
     glob_list,
@@ -203,7 +202,7 @@ __all__ = [
     'Env', 'State', 'Runtime',
 
     # Config access
-    'APP', 'glob', 'glob_int', 'glob_list', 'glob_dict',
+    'glob', 'glob_int', 'glob_list', 'glob_dict',
 
     # Foundation classes
     '_Base', 'App', 'AsyncApp', 'APIApp', 'mixin_Rest',

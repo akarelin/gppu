@@ -1,28 +1,21 @@
 # Apps
 
-Any Python program that imports gppu is already an app. Importing gppu gives it its environment, `Env`, which it never needs to know of: `Info`, `Warn`, `Error`, `Debug` and `glob` are Env's members promoted to module names. [examples/basic.py](../examples/basic.py) is the whole of it:
+Any Python program on gppu loads its environment, `Env`, and reads it: `Info`, `Warn`, `Error`, `Debug` and `glob` are Env's members promoted to module names. [examples/basic.py](../examples/basic.py) is the whole of it:
 
 ```python
-from gppu import APP, Env, Info, glob
+import sys
 
-APP['cli'] = True
+from gppu import Env, Info, glob
+
+Env.from_env()
+Env.from_argv(sys.argv[1:])
 Info('started on', Env.host)
 if glob('greeting'): Info(glob('greeting'))
 ```
 
-## APP: what the program says about itself
-
-`APP` is a dictionary every program has from the import, of what its environment is created from. A program changes its keys at its start, before anything reads the environment; one that is content with them says nothing.
-
-- `name`: the program's name; at first, the stem of the script.
-- `config`: the configuration file; when it is not set, `<name>.yaml` or `config.yaml`, searched upward from the program's folder. A program with none runs without one.
-- `topology`: True when the program needs the topology: the nearest `_config/config.yaml` upward, such as `RAN/Hosts/_config/config.yaml` or `CRAP/_config/config.yaml`, goes under its configuration.
-- `cli`: True when the program's command line overrides its configuration, the data and the log's parameters alike. It only lets the command line override; a full CLI app, with a schema, is not gppu's. `--key value` sets that key, a bare `--flag` sets it to True, and a slash path names a nested key, `--chrome/profile Work`; arguments that are not a key or its value are the program's own.
-- `log_file` and `trace_rules`: the log's parameters, which the configuration and the command line override: `--log_file C:/.cache/x.log` mirrors the log to that file, `--trace_rules/all` shows every Debug line.
-
 ## The environment
 
-`Env` is an app of a special kind: static, global, one per program, created from `APP` on the first read of its configuration. It also holds what needs no file: `host`, `platform`, `os`, `user`, `home`.
+`Env` is an app of a special kind: static, global, one per program, loaded by `Env.from_env()`. It also holds what needs no file: `host`, `platform`, `os`, `user`, `home`.
 
 ## State and Runtime
 

@@ -1,7 +1,7 @@
 """gppu.app — the apps with steps. See docs/app.md.
 
 Env, ``_Base`` and ``App``, the regular app with no steps, are in gppu.gppu. Here ``AsyncApp`` composes # pyright: ignore[C0301:line-too-long]
-``_Base`` with ``mixin_Stepper``, the YMRO (Y2 Method Resolution Order) init, load and start steps; ``APIApp`` serves HTTP # type: ignore
+``App`` with ``mixin_Stepper``, the YMRO (Y2 Method Resolution Order) init, load and start steps; ``APIApp`` serves HTTP # type: ignore
 on it. For Textual, use ``gppu.tui.TUIApp``; for MQTT, ``gppu.iot.MqttApp``.
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
 from typing import Any, final
 
-from .gppu import Debug, Env, _Base, _DC, _mixin
+from .gppu import App, Debug, Env, _Base, _DC, _mixin
 
 _trace_mro = False
 
@@ -186,7 +186,7 @@ class mixin_EventLoopBridge(_mixin):
 
 
 # region async application
-class AsyncApp(_Base, mixin_Stepper, mixin_EventLoopBridge):
+class AsyncApp(App, mixin_Stepper, mixin_EventLoopBridge):
   """Application base for long-lived asyncio services, on the YMRO steps.
 
   Construction runs init; ``run()`` runs init (light loading, with the configuration ready),
@@ -203,10 +203,8 @@ class AsyncApp(_Base, mixin_Stepper, mixin_EventLoopBridge):
   _background_tasks: set[asyncio.Task[Any]]
   _loop: asyncio.AbstractEventLoop | None
 
-  def __init__(self, name: str = '', **kw) -> None:
+  def __init__(self, **kw) -> None:
     super().__init__(**kw)
-    self.name = name or Env.name
-    self._config_from_key(self.name)
     self._task_group = None
     self._background_tasks = set()
     self._loop = None

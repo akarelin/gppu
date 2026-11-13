@@ -9,12 +9,13 @@ import time
 from collections import Counter
 from pathlib import Path, PurePosixPath
 
-from gppu import APP, glob
+from gppu import Env, glob
 from gppu.fs.gppufs import GppuFileSystem
 from gppu.fs.handlers import SessionHandler
 from gppu.tui.progress import Marker, legend_ansi, marker_ansi
 
-APP['cli'] = True
+Env.from_env()
+Env.from_argv(sys.argv[1:])
 SESSION = ('session', *SessionHandler.UID)   # a session is probed as one and read as its harness's
 COLOUR = sys.stdout.isatty() or bool(os.environ.get('FORCE_COLOR'))
 MARKS = {   # where a session goes, as the row shows it
