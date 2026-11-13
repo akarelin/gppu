@@ -1,21 +1,21 @@
 # Apps
 
-Any Python program on gppu loads its environment, `Env`, and reads it: `Info`, `Warn`, `Error`, `Debug` and `glob` are Env's members promoted to module names. [examples/basic.py](../examples/basic.py) is the whole of it:
+An app receives its environment declaration at construction and reads its own configuration under its known name. All apps in the process share `Env`; `glob` reads the shared configuration. See [configuration.md](configuration.md).
 
 ```python
-import sys
+from gppu import App, glob
 
-from gppu import Env, Info, glob
+class Example(App):
+    pass
 
-Env.from_env()
-Env.from_argv(sys.argv[1:])
-Info('started on', Env.host)
-if glob('greeting'): Info(glob('greeting'))
+app = Example(environment={'example': {'greeting': 'Hello'}, 'shared': True})
+app.Info(app.my('greeting'))
+assert glob('shared') is True
 ```
 
 ## The environment
 
-`Env` is an app of a special kind: static, global, one per program, loaded by `Env.from_env()`. It also holds what needs no file: `host`, `platform`, `os`, `user`, `home`.
+`Env` is the global singleton environment. App initialization loads its declaration through the shared configuration mixin before selecting the app's own section. Subsequent apps share it. Env also holds what needs no file: `host`, `os`, `user`, `home`.
 
 ## State and Runtime
 

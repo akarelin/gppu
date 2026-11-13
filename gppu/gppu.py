@@ -1564,7 +1564,15 @@ class mixin_Config(_mixin):
   _my: dict[str, Any] = {}
 
 
-  def _config_from_key(self, key: str) -> None: self._my = self._my | glob_dict(key)
+  def _config_from_key(self, key: str, environment: Mapping | str | Path | None = None) -> None:
+    if environment is None and not Env.initialized:
+      raise ValueError('App initialization requires an environment declaration')
+    if environment is not None:
+      data = dict(environment) if isinstance(environment, Mapping) else dict_from_yml(environment)
+      Env._config_from_dict(data)
+      Env.initialized = True
+      if 'log_file' in data: Logger.enable_file_logging(log_file=data['log_file'])
+    self._config_from_dict(self._my | glob_dict(key))
   def _config_copy(self, other: mixin_Config) -> None: self._my = dict(other._my)
   def _config_from_dict(self, d: dict) -> None: self._my = deepcopy(d)
 

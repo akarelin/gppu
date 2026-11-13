@@ -13,7 +13,7 @@ from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
 from typing import Any, final
 
-from .gppu import Debug, Env, _Base, _DC, _mixin
+from .gppu import Debug, Env, Path, _Base, _DC, _mixin
 
 _trace_mro = False
 
@@ -21,15 +21,15 @@ _trace_mro = False
 # region App
 class App(_Base, _DC):
   """An app with the data class: what it is constructed with is its data. It has no entry method and no steps;
-  construct it and call what the app defines. Its name is the one it is constructed with, or the program's, and its
+  construct it with its environment and call what the app defines. Its name comes from its own class, and its
   own configuration, the section under its name, is read for it at construction: ``self.my(...)`` reads it, and
   ``glob(...)`` the rest of the configuration. See docs/app.md."""
   name: str
 
-  def __init__(self, **kw) -> None:
+  def __init__(self, environment: Mapping | str | Path | None = None, **kw) -> None:
     super().__init__(**kw)
-    if not self.name: self.name = Env.name
-    self._config_from_key(self.name)
+    if not self.name: self.name = type(self).__name__.lower()
+    self._config_from_key(self.name, environment)
 # endregion
 
 
