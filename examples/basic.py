@@ -9,4 +9,4 @@ class Basic(App):
 
 
 if __name__ == '__main__':
-    Basic(environment='RAN/Hosts/_config/config.yaml').main()
+    Basic(environment='Hosts').main()

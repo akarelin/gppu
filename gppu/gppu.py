@@ -52,6 +52,7 @@ VER_GPPU_BUILD = _ver_parts[3] if len(_ver_parts) > 3 else '0'
 VER_GPPU = _ver_full
 
 MY_TZ = ZoneInfo("America/Los_Angeles")
+_ENVIRONMENTS = {'Hosts': 'RAN/Hosts/_config/config.yaml', 'IoT': 'IoT/_Creekview/_creekview.yaml'}
 
 _log_root = logging.getLogger('gppu'); _log_root.setLevel(logging.DEBUG)
 _sh = logging.StreamHandler(sys.stderr); _log_root.addHandler(_sh)
@@ -97,6 +98,7 @@ def full_path(path: str | Path, base_dir: str | Path | None = None, *, strict: b
   if not result.is_absolute(): result = (Path.cwd() if base_dir is None else full_path(base_dir)) / result
   
   return result.resolve(strict=strict)
+
 
 
 def probe_path(path: str | Path) -> dict:
@@ -1626,7 +1628,9 @@ class _Env(_Base):
 
 
   def resolve_path(self, environment: str | Path) -> Path:
-    """Resolve a repository-qualified YAML path beside the program's repository."""
+    """Resolve Hosts, IoT, or an explicit YAML filename from the program's repository."""
+    if isinstance(environment, str) and environment in _ENVIRONMENTS:
+      environment = _ENVIRONMENTS[environment]
     path = Path(environment).expanduser()
     if path.is_absolute(): return full_path(path)
     program = Path(sys.argv[0]).resolve()

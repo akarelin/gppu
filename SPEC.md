@@ -8,6 +8,7 @@
 - Apps share the Hosts environment. The only other apps are Y2's, and they share Creekview.
 - Configuration is not found by hard-coding or by walking up and down folders.
 - An environment is a single YAML file. Its path is constructed from the location of the repository.
+- An app declares Hosts or IoT; the rest is determined from that declaration.
 - There is no topology file.
 - The command line overrides an application's behaviour, not the environment.
 - Configuration folders hold no Python code.

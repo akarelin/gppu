@@ -3,6 +3,7 @@
 Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share one State and one Env. Env is the global singleton app; it loads like any app and never initializes from itself. Alex's instructions are in [SPEC.md](SPEC.md).
 
 ## Env
+- [x] App declares `environment='Hosts'` or `environment='IoT'`; GPPU selects the corresponding YAML filename and resolves it from the program's repository. Basic runs with Hosts; both names verified after repository relocation
 - [x] `Env.resolve_path` constructs repository-qualified YAML filenames from the program's Git repository location; relocated Hosts and Creekview paths verified independently of cwd. Environments have no Python module or `.pth` dependency
 - [x] `examples/basic.py` uses Hosts, with Info and Debug output controlled by Hosts' logging settings; verified console output and the declared log file
 - [x] App construction takes the environment declaration and selects the app's section using its own name; Fleet takes Hosts and delegates Jinja rendering to gppu; verified against the existing Hosts configuration and renderer

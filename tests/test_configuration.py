@@ -48,10 +48,11 @@ def test_environment_path_follows_relocated_repository_not_working_directory(tmp
     creekview.write_text('creekview: true\n', encoding='utf-8')
     monkeypatch.setattr(sys, 'argv', [str(program)])
     monkeypatch.chdir(tmp_path)
-    assert Env.resolve_path('RAN/Hosts/_config/config.yaml') == hosts / 'config.yaml'
-    App(environment='RAN/Hosts/_config/config.yaml')
+    assert Env.resolve_path('Hosts') == hosts / 'config.yaml'
+    App(environment='Hosts')
     assert glob('hosts/example') is True
-    App(environment='IoT/_Creekview/_creekview.yaml')
+    assert Env.resolve_path('IoT') == creekview
+    App(environment='IoT')
     assert glob('creekview') is True
 
 
