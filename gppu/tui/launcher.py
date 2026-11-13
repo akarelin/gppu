@@ -626,13 +626,11 @@ class TUIApp(mixin_Config, TextualApp):
       self.push_screen(_DebugScreen(self._debug_lines))
 
   def action_show_info(self) -> None:
-    """Show the shared configuration screen from any TUI app."""
+    """Show the environment and the app's own configuration from any TUI app."""
     import pprint
     sections: list[tuple[str, str]] = [
-      ('Env', f'initialized={Env.initialized}'),
+      ('Env', f'name={Env.name} initialized={Env.initialized}'),
     ]
-    for key, val in Env.glob_dict('').items():
-      sections.append((key, pprint.pformat(val)))
     if self._my:
       sections.append(('Instance config', pprint.pformat(self._my)))
     self.push_screen(InfoScreen(sections))

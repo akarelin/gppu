@@ -81,19 +81,20 @@ class AppService(MqttApp):
   def update_config(data: dict, path: str | y2path = '') -> None:
     """Replace one configuration subtree; an empty path replaces the whole config."""
     if not isinstance(data, dict): raise TypeError('configuration must be a mapping')
-    updated = deepcopy(Env.glob_dict('')) if path else data
     if path:
-      node = updated
+      # only the subtree the topic replaces is compared and written
       *parents, key = y2path(path)
-      for parent in parents:
-        if parent not in node: node[parent] = {}
-        node = node[parent]
-        if not isinstance(node, dict): raise TypeError(f'configuration parent is not a mapping: {path}')
-      node[key] = data
-    changed = AppService._config_changes(Env.glob_dict(''), updated)
-    AppService.changed_paths = changed
-    if Env.initialized and not changed: return
-    Env._load_dict(updated)
+      before = Env.glob(path)
+      changed = AppService._config_changes({} if before is None else {key: before}, {key: data}, '/'.join(parents))
+      AppService.changed_paths = changed
+      if Env.initialized and not changed: return
+      Env._load_path(path, data)
+    else:
+      # a topic on the root carries the whole configuration, so the whole is what it replaces
+      changed = AppService._config_changes(Env.glob_dict(''), data)
+      AppService.changed_paths = changed
+      if Env.initialized and not changed: return
+      Env._load_dict(data)
     for watched, callback in tuple(AppService._listeners):
       relevant = frozenset(key for key in changed if not watched or key == watched
                            or key.startswith(watched + '/') or watched.startswith(key + '/'))

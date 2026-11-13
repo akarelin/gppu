@@ -1618,6 +1618,23 @@ class Env(_Base):
 
 
   @staticmethod
+  def _load_path(path: str | y2path, data: dict) -> None:
+    """One subtree of the configuration replaced, as a reload of that path brings it. A parent on the path that is
+    there and is not a mapping is refused before anything is written."""
+    *parents, key = y2path(path)
+    node = Env._my
+    for parent in parents:
+      if parent not in node: break
+      node = node[parent]
+      if not isinstance(node, dict): raise TypeError(f'configuration parent is not a mapping: {path}')
+    node = Env._my
+    for parent in parents:
+      if parent not in node: node[parent] = {}
+      node = node[parent]
+    node[key] = data
+
+
+  @staticmethod
   def reset() -> None:
     Env._my = {}
     Env.initialized = False
