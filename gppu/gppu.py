@@ -874,11 +874,11 @@ def jinja_document(filename: str | Path, /, **data) -> str:
 
 
 class TemplateSet:
-  """The macros, generators and templates of one configuration, compiled once.
+  """The macros and templates of one configuration, compiled once.
 
   The configuration's Jinja is of two kinds, evaluated at different times:
 
-  - Startup: templates, generators, behaviors and refs, evaluated once while the
+  - Startup: templates and refs, evaluated once while the
     configuration loads (`resolve`). What they compute is the row's data.
   - Runtime: the named templates of the `*_templates` blocks (`render_template`) and
     the macros code calls (`Env.<table>.<macro>(...)`), evaluated when code asks,
@@ -893,15 +893,11 @@ class TemplateSet:
   carries is data and is never rendered. Resolving a row is
 
       1. template = the named templates, in order          (rightmost wins)
-      2. values   = template | row
-      3. data     = generator(values) | template | row      (rightmost wins)
-      4. each Jinja value of the template renders against data, in template order
-      5. data     = data | behavior(data)
+      2. data     = template | row                          (rightmost wins)
+      3. each Jinja value of the template renders against data, in template order
 
-  so an explicit value always beats a computed one. A generator and a behavior are
-  named Jinja templates that return an object, never text; a behavior runs after the
-  merge and so is the only thing that can rewrite a key the row itself carries. A row
-  un-inherits a key its template carries by setting it to null.
+  so an explicit value always beats a computed one. A row un-inherits a key its
+  template carries by setting it to null.
 
   A template declares what its rows reference with `refs`, field to table:
   `{connections: connections}` says the field's value (or each of its values, or each
@@ -916,10 +912,10 @@ class TemplateSet:
   blocks are the configuration's, not one table's, so any rule may render any of them.
   """
 
-  RESERVED = ('template', 'generator', 'behavior', 'refs')
+  RESERVED = ('template', 'refs')
   BUILTINS = ('dict', 'list', 'int', 'float', 'str', 'bool', 'len', 'round', 'sorted', 'min', 'max', 'range')
 
-  def __init__(self, macros: str = '', generators: dict | None = None, templates: dict | None = None,
+  def __init__(self, macros: str = '', templates: dict | None = None,
                context: dict | None = None, named: dict[str, dict] | None = None, **globals):
     self.environment = JinjaEnvironment()
     self.environment.globals.update(context or {})
@@ -932,11 +928,9 @@ class TemplateSet:
     self.environment.globals['render_template'] = self.render_template
     if macros:                                                                             # every macro the block
       module = self.environment.from_string(macros).make_module()                          # defines, callable by
-      self.environment.globals.update({name: getattr(module, name)                         # name from any generator
+      self.environment.globals.update({name: getattr(module, name)                         # name from any template
                                        for name in dir(module) if not name.startswith('_')})
     self.templates = dict(templates or {})
-    self.generators = {name: self.environment.from_string(source)
-                       for name, source in (generators or {}).items()}
 
   # -- runtime: what code evaluates when it asks ----------------------------------------
   def render_template(self, name: str, /, **values) -> Any:
@@ -946,12 +940,6 @@ class TemplateSet:
     return self.environment.get_template(name).render(values)
 
   # -- startup: what the configuration evaluates while it loads ---------------------------
-  def _computed(self, name: str, values: dict) -> dict:
-    if name not in self.generators: raise KeyError(f'no generator named {name!r}')
-    computed = self.generators[name].render(values)
-    if not isinstance(computed, dict): raise TypeError(f'generator {name!r} returned {type(computed).__name__}, not an object')
-    return computed
-
   def layers(self, row: dict) -> list[dict]:
     """The templates a row names, in the order they apply."""
     names = row.get('template') or []
@@ -970,21 +958,18 @@ class TemplateSet:
     return merged
 
   def values(self, row: dict) -> dict:
-    """The template's data with the row over it: what the generator is given."""
+    """The template's data with the row over it."""
     return self.template(row) | row
 
   def resolve(self, row: dict) -> dict:
     template = self.template(row)
-    values = template | row
-    computed = self._computed(values['generator'], values) if values.get('generator') else {}
-    data = computed | template | row
+    data = template | row
     pending = [key for key, value in template.items()                                      # a Jinja value of the template
                if key not in row and key not in self.RESERVED and self._is_jinja(value)]    # renders against the merged row;
     while pending:                                                                         # the row's own value is data and
       key = pending.pop(0)                                                                 # is never rendered. It sees what
       settled = {k: v for k, v in data.items() if k != key and k not in pending}           # is settled: a value still to be
       data[key] = self.environment.from_string(template[key]).render(settled)              # rendered is not a name yet
-    if name := values.get('behavior'): data = data | self._computed(name, data)
     self.check(self._label(row), data, template.get('refs') or {})
     return {k: v for k, v in data.items() if k not in self.RESERVED and v is not None}
 
