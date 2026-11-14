@@ -30,6 +30,8 @@
 - App's functionality lives in one place, and configuration is read from MQTT in one place.
 - AsyncApp does its own init and does not rely on `_Base`.
 - TUI apps support inline configs: a script carries its own configuration and manifest, as `examples/sessions_clean.py` does. A Python script assigns its manifest to a global variable.
+- Running processes in parallel is not part of a TUI, since a command-line app runs them too. It is an app's method, like its timers (run after, run in, run at).
+- Every TUI app is an async app. Every app is a `_DC`, whose data holds everything the app is given, so no app sets its own attributes from it again.
 
 ## Y2
 - Y2 only creates apps, and they share one State and one Env.
@@ -38,4 +40,3 @@
 ## Code
 - Every new method or class is justified.
 - Code uses public methods, never protected members.
-
