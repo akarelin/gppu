@@ -63,6 +63,7 @@ These move in the same commit as the release. gppu 3.7.2 is released and alex-pc
 - The programs that write the command line over Env: display-control, Intune's three scripts, `setup-ld-monitors.py`, `operon_remove.py`, `sync_to_operon.py` and `openapi_query.py`
 - Every `Env.from_env` caller in RAN, CRAP, IoT and Y2, and the "Configuration without an app" line in the global CLAUDE.md that names `Env.from_env`
 - `TemplateSet`'s callers outside gppu use Jinja: lake's `graph_configuration.py`, `sources` and Dagster definitions, the LinkML Dagster runtime, admin_ui's `file_configuration.py`
+- Preservator's `Layout`: a `TemplateSet` of the Lake's templates under `Lake.place`, which reads nothing else; it calls gppu's `place` that needs no Lake
 - Creekview's `generator`, behavior and `base_object` configuration, with Y2's release
 - Y2's `y2app.py` calls `_config_from_dict`; it calls `_config_load`
 - Every reader of `Env.data`, which is `Env._my` now, reads `glob_dict('')`: lake's `graph_configuration.py` and `m365/config.py`, display-control and its Intune scripts, Y2's `ui/creekview.py`, and the Preservator, Session Manager and FileIndexer tests
