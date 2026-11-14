@@ -17,6 +17,7 @@ from .gppu import (
     mixin_Config,
     _Base,
     App,
+    TimerHandle,
 
     # caching, from the standard library
     cache,
@@ -203,7 +204,7 @@ __all__ = [
     'glob', 'glob_int', 'glob_list', 'glob_dict',
 
     # Foundation classes
-    '_Base', 'App', 'AsyncApp', 'APIApp', 'mixin_Rest',
+    '_Base', 'App', 'TimerHandle', 'AsyncApp', 'APIApp', 'mixin_Rest',
 
     # caching, from the standard library
     'cache', 'lru_cache', 'cached_property',

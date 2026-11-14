@@ -9,6 +9,8 @@ from yaml.nodes import Node
 import re
 import os
 import threading
+import heapq
+import time
 import ast
 
 import inspect
@@ -29,6 +31,8 @@ from typing import Union, Any, Literal, List, Optional, Tuple, Dict, DefaultDict
 from typing import TypeAlias, ClassVar, Callable, Protocol
 from collections import defaultdict, UserDict, UserList
 from collections.abc import Mapping
+from dataclasses import dataclass
+from itertools import count
 from enum import Enum
 from functools import wraps, partial, cache, lru_cache, cached_property
 from datetime import datetime as dt, timedelta, timezone
@@ -1578,19 +1582,165 @@ class mixin_Config(_mixin):
 class _Base(mixin_Logger, mixin_Config): pass
 
 
+# region Timers: Y2's, an app's timers held by one thread
+def _callback_wrapper(callback: Callable[..., Any]) -> Callable[..., Any]:
+  """The callback called with only the keywords it takes."""
+  signature = inspect.signature(callback)
+
+  def wrapped(*args: Any, **data: Any) -> Any:
+    if not signature.parameters: return callback()
+    if any(p.kind == p.VAR_KEYWORD for p in signature.parameters.values()):
+      return callback(*args, **data)
+    allowed = {
+      name for name, param in signature.parameters.items()
+      if param.kind in (param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY)
+    }
+    return callback(*args, **{k: v for k, v in data.items() if k in allowed})
+
+  return wrapped
+
+
+@dataclass
+class TimerHandle:
+  """An armed timer: the callback's name, whether it fires once or repeats, its interval, and when it next fires
+  (epoch seconds)."""
+  id: int
+  name: str = ''
+  kind: str = ''
+  interval: float | None = None
+  next_run: float = 0.0
+  _cancelled: bool = False
+  _spent: bool = False          # a one-shot that has fired
+
+  def cancel(self) -> None:
+    self._cancelled = True
+
+  @property
+  def running(self) -> bool:
+    return not self._cancelled and not self._spent
+
+
+class _Scheduler:
+  """One thread holds every armed timer, instead of one thread per arm.
+
+  `threading.Timer` parks an OS thread for the whole delay, and `run_every`
+  builds a fresh one on every tick: the live process carried 976 parked
+  threads having created 460,972 of them at ~8/s. A due callback still gets a
+  thread of its own, so one slow callback cannot hold up the rest — the same
+  concurrency the Timer-per-arm had, without the parked threads.
+
+  Deadlines are monotonic (a wall-clock step must not move an armed timer);
+  `TimerHandle.next_run` stays epoch seconds, which is what the container view
+  renders. A cancelled entry is skipped when it comes due rather than removed,
+  so the heap holds it until then."""
+
+  def __init__(self) -> None:
+    self._heap: list[tuple[float, int, TimerHandle, Callable[[], None]]] = []
+    self._wake = threading.Condition()
+    self._thread: threading.Thread | None = None
+
+  def arm(self, handle: TimerHandle, fire: Callable[[], None], delay: float) -> None:
+    with self._wake:
+      heapq.heappush(self._heap, (time.monotonic() + delay, handle.id, handle, fire))
+      if self._thread is None:
+        self._thread = threading.Thread(target=self._run, name='y2-timers', daemon=True)
+        self._thread.start()
+      self._wake.notify()
+
+  def _run(self) -> None:
+    while True:
+      with self._wake:
+        while not self._heap: self._wake.wait()
+        due, _, handle, fire = self._heap[0]
+        remaining = due - time.monotonic()
+        if remaining > 0:
+          self._wake.wait(remaining)      # a nearer arm notifies; re-read the head
+          continue
+        heapq.heappop(self._heap)
+      if handle._cancelled: continue
+      threading.Thread(target=fire, daemon=True).start()
+
+
+_SCHEDULER = _Scheduler()
+# endregion
+
+
 # region App
-class App(_Base, _DC):
+class App(_DC, _Base):
   """An app knows its name from its class. Its environment, Hosts or IoT, is optional: when it has one, the
   environment loads first. Its own configuration is the YAML file it is given, independent from the environment;
   an app given none starts on its own section of the environment. The command line it is given, ``argv``, goes over
-  its own configuration, never over the environment."""
+  its own configuration, never over the environment.
+
+  Its timers are Y2's: ``run_later`` fires a callback once after a delay, and arming it again under the same key
+  replaces it; ``run_every`` fires it at an interval. ``timers`` holds every armed timer by its id, ``h_timeouts``
+  those armed under a key."""
   name: str
+  _timer_ids = count(1)
 
   def __init__(self, environment: str | None = None, config: str | Path | None = None, argv: list[str] = [], **kw) -> None:
-    super().__init__(**kw)
+    _DC.__init__(self, **kw)   # its data; a class composed with it initializes its other bases itself, as TUIApp does Textual
     if not self.name: self.name = type(self).__name__.lower()
+    self.timers: dict[int, TimerHandle] = {}
+    self.h_timeouts: dict[str, TimerHandle] = {}
     Env.init(environment=environment)
     self._config_load(glob_dict(self.name) if config is None else config, argv)
+
+  def run_later(self, callback: Callable[..., Any], *, delay: int | float, key: str | None = None, **data: Any) -> TimerHandle:
+    if key is not None:
+      previous = self.h_timeouts.pop(key, None)
+      if previous is not None:
+        previous.cancel()
+        self.timers.pop(previous.id, None)
+    name = getattr(callback, '__name__', '') or getattr(getattr(callback, 'func', None), '__name__', '')
+    callback = _callback_wrapper(callback)
+    handle = TimerHandle(id=next(self._timer_ids), name=name, kind='once', next_run=now_ts() + float(delay))
+
+    def wrapped() -> None:
+      handle._spent = True                  # a one-shot is spent once it fires, and so is its slot under the key
+      self.timers.pop(handle.id, None)
+      if self.h_timeouts.get(key) is handle: del self.h_timeouts[key]
+      if handle._cancelled: return
+      callback(**data)
+
+    self.timers[handle.id] = handle
+    if key is not None: self.h_timeouts[key] = handle
+    _SCHEDULER.arm(handle, wrapped, float(delay))
+    return handle
+
+  def run_every(self, callback: Callable[..., Any], *, start: int | float, interval: int | float, **data: Any) -> TimerHandle:
+    name = getattr(callback, '__name__', '') or getattr(getattr(callback, 'func', None), '__name__', '')
+    callback = _callback_wrapper(callback)
+    handle = TimerHandle(id=next(self._timer_ids), name=name, kind='interval',
+                         interval=float(interval), next_run=now_ts() + float(start))
+
+    def wrapped() -> None:
+      if handle._cancelled: return
+      try:
+        callback(**data)
+      finally:
+        # Space completions without overlap; a failed poll must not stop the timer.
+        if not handle._cancelled:
+          handle.next_run = now_ts() + float(interval)
+          _SCHEDULER.arm(handle, wrapped, float(interval))
+
+    self.timers[handle.id] = handle
+    _SCHEDULER.arm(handle, wrapped, float(start))
+    return handle
+
+  def cancel_timer(self, handle: TimerHandle) -> None:
+    handle.cancel()
+    self.timers.pop(handle.id, None)
+
+  def timer_running(self, handle: TimerHandle) -> bool:
+    return handle.running
+
+  def cancel_timers(self) -> None:
+    """Every timer this app armed, cancelled."""
+    for handle in list(self.h_timeouts.values()) + list(self.timers.values()):
+      handle.cancel()
+    self.timers.clear()
+    self.h_timeouts.clear()
 # endregion
 
 
