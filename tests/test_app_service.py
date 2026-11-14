@@ -1,46 +1,12 @@
-"""AppService: configuration replaced from MQTT, the same as loading it again."""
+"""AppService: configuration from MQTT replaces a section of the app's own configuration, the same as loading it again."""
 import asyncio
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
 
-from gppu import AppService, Env, mixin_Mqtt
-from gppu import glob, glob_dict
-
-
-@pytest.fixture(autouse=True)
-def environment():
-  previous, initialized = Env._my, Env.initialized
-  Env.reset()
-  yield
-  Env.reset()
-  Env._my, Env.initialized = previous, initialized
-
-
-def test_subtree_replacement_preserves_other_config():
-  Env.from_dict({'dc': {'scene': 'pc', 'stale': True}, 'ov': {'url': 'https://ov'}})
-  Env.update_config({'scene': 'laptop'}, 'dc')
-  assert glob_dict('dc') == {'scene': 'laptop'}
-  assert glob('ov/url') == 'https://ov'
-
-
-def test_invalid_config_does_not_replace_current_values():
-  Env.from_dict({'dc': {'scene': 'pc'}})
-  with pytest.raises(TypeError, match='mapping'): Env.update_config(['bad'])
-  assert glob_dict('dc') == {'scene': 'pc'}
-
-
-def test_removing_configured_trace_rules_clears_them():
-  from gppu import TRACE_RULES
-  previous = dict(TRACE_RULES)
-  try:
-    Env.from_dict({'trace_rules': {'all': True}})
-    Env.update_config({})
-    assert TRACE_RULES == {}
-  finally:
-    TRACE_RULES.clear()
-    TRACE_RULES.update(previous)
+from gppu import AppService, mixin_Mqtt
+from gppu import glob_dict
 
 
 class Messages:
@@ -67,6 +33,7 @@ class Client:
 
 
 def mqtt_source(monkeypatch, retained, topics):
+  """A broker holding *retained*, and the app's own configuration naming *topics*."""
   client = Client(retained)
 
   @asynccontextmanager
@@ -77,47 +44,44 @@ def mqtt_source(monkeypatch, retained, topics):
     finally: client.closed = True
 
   monkeypatch.setattr(mixin_Mqtt, '_mqtt_client', connect)
-  Env.from_dict({'local': {'keep': True}, 'consumer': {'config_mqtt': {'topics': topics}}})
-  return client, {'connection': {'hostname': 'test-broker'}, 'topics': topics}
+  return client, {'local': {'keep': True}, 'connection': {'hostname': 'test-broker'}, 'config_mqtt': {'topics': topics}}
 
 
-def test_mqtt_startup_loads_all_declared_topics_and_disconnects(monkeypatch):
+def test_mqtt_startup_loads_every_topic_into_its_own_configuration_and_disconnects(monkeypatch):
   async def run():
-    client, source = mqtt_source(monkeypatch,
+    environment = glob_dict('')
+    client, config = mqtt_source(monkeypatch,
       {'config/dc': b'scene: pc\n', 'config/ov': b'{"url":"https://ov"}'},
       {'config/dc': 'dc', 'config/ov': 'ov'})
-    async with asyncio.timeout(2): await AppService.from_mqtt(source)
-    assert glob_dict('') == {'local': {'keep': True}, 'consumer': {'config_mqtt': {'topics': source['topics']}}, 'dc': {'scene': 'pc'}, 'ov': {'url': 'https://ov'}}
+    app = AppService(config=config)
+    async with asyncio.timeout(2): await app.from_mqtt()
+    assert app.my_dict('') == {**config, 'dc': {'scene': 'pc'}, 'ov': {'url': 'https://ov'}}
+    assert glob_dict('') == environment
     assert client.subscriptions == [('config/dc', 1), ('config/ov', 1)]
     assert client.closed
     assert client.connections == 1
   asyncio.run(run())
 
 
-def test_mqtt_config_reuses_running_app_connection_and_preserves_device_messages(monkeypatch):
+def test_a_running_app_replaces_the_section_and_its_listener_reads_it_loaded(monkeypatch):
   async def run():
-    client, source = mqtt_source(monkeypatch, {'config/dc': b'scene: pc\nstale: true\n'}, {'config/dc': 'dc'})
-    arrived = asyncio.Event()
+    client, config = mqtt_source(monkeypatch, {'config/dc': b'scene: pc\nstale: true\n'}, {'config/dc': 'dc'})
+    seen, devices = asyncio.Queue(), []
 
     class Consumer(AppService):
-      async def _receive_config(self, topic, payload):
-        await super()._receive_config(topic, payload)
-        arrived.set()
+      async def subscribe(self):
+        await self.mqtt_listen(lambda topic, payload: seen.put_nowait(self.my_dict('dc')), 'config/dc')
+        await self.mqtt_listen(lambda topic, payload: devices.append(payload), 'devices/state')
 
-    app = Consumer(name='consumer')
-    app.connection = source['connection']
+    app = Consumer(config={**config, 'dc': {'scene': 'none'}})
     task = asyncio.create_task(app.run())
     try:
-      async with asyncio.timeout(2): await client.connected.wait()
+      async with asyncio.timeout(2): assert await seen.get() == {'scene': 'pc', 'stale': True}
       transport = app._mqtt_task
-      devices = []
-      await app.mqtt_listen(lambda topic, payload: devices.append(payload), 'devices/state')
-      async with asyncio.timeout(2): await arrived.wait()
-      arrived.clear()
       client.send('devices/state', b'on')
       client.send('config/dc', b'{"scene":"laptop"}')
-      async with asyncio.timeout(2): await arrived.wait()
-      assert glob_dict('dc') == {'scene': 'laptop'}
+      async with asyncio.timeout(2): assert await seen.get() == {'scene': 'laptop'}
+      assert app.my('local/keep') is True
       assert devices == ['on']
       assert client.connections == 1
       assert app._mqtt_task is transport
@@ -131,23 +95,21 @@ def test_mqtt_config_reuses_running_app_connection_and_preserves_device_messages
 
 def test_constructing_a_service_does_not_start_a_connection(monkeypatch):
   async def run():
-    client, source = mqtt_source(monkeypatch, {}, {'config/dc': 'dc'})
-    app = AppService(name='consumer')
-    app.connection = source['connection']
+    client, config = mqtt_source(monkeypatch, {}, {'config/dc': 'dc'})
+    app = AppService(config=config)
     assert client.connections == 0
     assert app._mqtt_task is None
-    assert glob_dict('') == {'local': {'keep': True}, 'consumer': {'config_mqtt': {'topics': source['topics']}}}
+    assert app.my_dict('') == config
   asyncio.run(run())
 
 
 def test_bad_config_on_existing_connection_fails_visibly(monkeypatch):
   async def run():
-    client, source = mqtt_source(monkeypatch, {'config/dc': b'[1,2]'}, {'config/dc': 'dc'})
-    app = AppService(name='consumer')
-    app.connection = source['connection']
+    client, config = mqtt_source(monkeypatch, {'config/dc': b'[1,2]'}, {'config/dc': 'dc'})
+    app = AppService(config=config)
     async with asyncio.timeout(2):
       with pytest.raises(ExceptionGroup): await app.run()
-    assert glob_dict('') == {'local': {'keep': True}, 'consumer': {'config_mqtt': {'topics': source['topics']}}}
+    assert app.my_dict('') == config
     assert client.closed
     assert client.connections == 1
   asyncio.run(run())
@@ -156,18 +118,18 @@ def test_bad_config_on_existing_connection_fails_visibly(monkeypatch):
 @pytest.mark.parametrize('payload', [b'[1,2]', b'null', b'', b'key: [broken'])
 def test_mqtt_bad_payload_fails_visibly_and_preserves_config(monkeypatch, payload):
   async def run():
-    client, source = mqtt_source(monkeypatch, {'config/dc': payload}, {'config/dc': 'dc'})
+    client, config = mqtt_source(monkeypatch, {'config/dc': payload}, {'config/dc': 'dc'})
+    app = AppService(config=config)
     async with asyncio.timeout(2):
-      with pytest.raises(ExceptionGroup): await AppService.from_mqtt(source)
-    assert glob_dict('') == {'local': {'keep': True}, 'consumer': {'config_mqtt': {'topics': source['topics']}}}
+      with pytest.raises(ExceptionGroup): await app.from_mqtt()
+    assert app.my_dict('') == config
     assert client.closed
   asyncio.run(run())
 
 
 @pytest.mark.parametrize('topics', [{}, {'config/#': 'dc'}])
-def test_mqtt_rejects_indeterminate_sources(topics):
+def test_mqtt_rejects_indeterminate_sources(monkeypatch, topics):
   async def run():
-    Env.from_dict({})
-    with pytest.raises(ExceptionGroup):
-      await AppService.from_mqtt({'connection': {'hostname': 'test-broker'}, 'topics': topics})
+    client, config = mqtt_source(monkeypatch, {}, topics)
+    with pytest.raises(ExceptionGroup): await AppService(config=config).from_mqtt()
   asyncio.run(run())

@@ -37,7 +37,7 @@ except ImportError:
 from .app import AsyncApp, AsyncSubmission, mixin_EventLoopBridge
 import yaml
 
-from .gppu import Env, _DC, _DC_BASE_TYPE_MAP, y2list, y2path, y2topic, y2uri
+from .gppu import _DC, _DC_BASE_TYPE_MAP, deepset, y2list, y2path, y2topic, y2uri
 
 
 
@@ -309,19 +309,18 @@ class MqttApp(mixin_Mqtt, AsyncApp):
 
 class AppService(MqttApp):
   """An MqttApp whose configuration arrives over MQTT: ``config_mqtt/topics`` in its own configuration maps each
-  retained topic to the configuration path its payload replaces in Env, the same as loading it again.
-  ``AppService.from_mqtt(config)`` reads the topics once, at startup, then disconnects."""
+  retained topic to the path in its own configuration that its payload replaces, the same as loading it again.
+  An app that acts on new configuration listens to the same topic: its listener runs after the configuration is loaded.
+  ``await app.from_mqtt()`` reads every topic once, then disconnects."""
 
   def __init(self) -> None:
-    self.topics = self.my('config_mqtt/topics')
+    self.topics = self.my_dict('config_mqtt/topics')
     self.until_loaded: set[str] | None = None   # from_mqtt: the topics still to arrive
 
-  @staticmethod
-  async def from_mqtt(config: dict) -> None:
-    """Each of ``config['topics']`` read once from ``config['connection']``, then the connection closed."""
-    app = AppService(name='config-mqtt')
-    app.connection, app.topics, app.until_loaded = config['connection'], config['topics'], set(config['topics'])
-    await app.run()
+  async def from_mqtt(self) -> None:
+    """Each of its topics read once, then the connection closed."""
+    self.until_loaded = set(self.topics)
+    await self.run()
 
   async def __load(self) -> None:
     if not self.topics or any('+' in topic or '#' in topic for topic in self.topics):
@@ -331,7 +330,9 @@ class AppService(MqttApp):
   async def _receive_config(self, topic: y2topic, payload: object) -> None:
     data = yaml.safe_load(payload) if isinstance(payload, str) else payload
     if not isinstance(data, dict): raise TypeError(f'MQTT configuration must be a mapping: {topic}')
-    Env.update_config(data, self.topics[str(topic)])
+    configuration = deepcopy(self.my_dict(''))
+    deepset(self.topics[str(topic)], configuration, data)
+    self._config_load(configuration)
     if self.until_loaded is not None:
       self.until_loaded.discard(str(topic))
       if not self.until_loaded: self.stop()

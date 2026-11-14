@@ -70,7 +70,7 @@ options = Env.glob_dict('database/options')
 
 Config file resolution: looks for `<name>.yaml` then `config.yaml` in the app path. Relative `app_path` values are resolved by walking up from the calling script's directory until a matching subpath is found.
 
-Configuration from MQTT: `AppService` (`gppu.iot`) replaces each configuration path its retained topics name, at startup with `AppService.from_mqtt` and while it runs.
+Configuration from MQTT: `AppService` (`gppu.iot`) replaces each path its retained topics name in its own configuration, at startup with `await app.from_mqtt()` and while it runs.
 
 [Env](docs/environment.md): the global configuration and what any app looks up — its name, host, platform, the trace rules; every object reads it from its `_my`.
 
