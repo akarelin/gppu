@@ -116,7 +116,7 @@ In YAML: `password: !secret db-pass` resolves at load time via `Vault.get`. Requ
 
 ## How Apps Work
 
-Any program that imports gppu is already an app: `Info`, `Warn` and `glob` work from the import, and `APP` is what the program says about itself. See [Apps](docs/app.md) and [examples/basic.py](examples/basic.py).
+`Info`, `Warn` and `glob` work from the import. An `App` declares its environment, loads its own configuration and takes the command line over it. See [Apps](docs/app.md) and [examples/basic.py](examples/basic.py).
 
 ### 1. Use the project's shared configuration
 
@@ -128,16 +128,20 @@ When the script folder needs a configuration entry point, `config.yaml` includes
 
 ### 2. Say what the program is, then do its work
 
-This example takes `logs`, `level` and `days` from the configuration, and lets the command line override them.
+This example takes `logs`, `level` and `days` from its own section of Hosts, `logs:`, and lets the command line override them.
 
 ```python
-from gppu import APP, Info, glob
+import sys
+from gppu import App, Info
 
-APP['cli'] = True
-Info('Reading logs', glob('logs'), glob('level'), glob('days'))
+class Logs(App):
+  def main(self) -> None:
+    Info('Reading logs', self.my('logs'), self.my('level'), self.my('days'))
+
+Logs(environment='Hosts', argv=sys.argv[1:]).main()
 ```
 
-`--days 7` overrides `days`, as a string; a bare `--verbose` sets `verbose` to True. Use `App` for an object that needs more and `AsyncApp` for asyncio work.
+`--days 7` overrides `days`, as a string; a bare `--verbose` sets `verbose` to True. The command line goes over the app's own configuration, never over the environment. Use `App` for an object that needs more and `AsyncApp` for asyncio work.
 
 ### 3. For TUI apps — subclass `TUIApp` and use `Env` the same way:
 

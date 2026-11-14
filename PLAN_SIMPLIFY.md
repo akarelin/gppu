@@ -22,7 +22,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 - [x] Nothing outside `mixin_Config` reads `_my`
 - [x] `_config_file`, `_program_name`, `_main`, `_resolve_app_path` removed with `from_env`
 - [ ] gppu's tests that set the environment with `Env.from_dict` or `Env.from_env` have no public way to set one now that Env takes only Hosts or IoT
-- [ ] The command line overrides the app, not Env: `Env.from_argv` removed, the app's own configuration takes the command line
+- [x] The command line overrides the app, not Env: `Env.from_argv` removed, and `App(argv=...)` puts the command line over the app's own configuration; Preservator and `list-sessions.py` take it (RAN)
 
 ## Templates
 - [ ] Env reads a templated configuration with the two kinds of templates, Jinja and the basic `$` one, so `glob` and `self.my` return it filled in. (Env's `$` pass gets no values today; it once filled `$code_path`, `$shared_data_path` and `$shared_data`.)
@@ -60,7 +60,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 These move in the same commit as the release. The Hosts tools that construct Fleet (Preservator, configs, list-sessions, list-sessions2, sessions-clean, start-page) run on neither gppu today: the installed 3.7.0 has no `App(environment=)`, and master has no `from_argv`, `from_env` or `from_dict`. The rest run on the released gppu:
 - Preservator: `self.my('config')` and `self.my('steps')`
 - display-control (`IoT/PCC`): `on_change` and `AppService.update_config`/`changed_paths` callers; MQTT configuration by topic prefix
-- The programs that write the command line over Env: Preservator, `list-sessions.py`, display-control, Intune's three scripts, `setup-ld-monitors.py`, `operon_remove.py`, `sync_to_operon.py`, `openapi_query.py`, gppu's `examples/basic.py` and `examples/sessions_clean.py`
+- The programs that write the command line over Env: display-control, Intune's three scripts, `setup-ld-monitors.py`, `operon_remove.py`, `sync_to_operon.py`, `openapi_query.py`, gppu's `examples/basic.py` and `examples/sessions_clean.py`
 - Every `Env.from_env` caller in RAN, CRAP, IoT and Y2, and the "Configuration without an app" line in the global CLAUDE.md that names `Env.from_env`
 - `TemplateSet`'s callers outside gppu use Jinja: lake's `graph_configuration.py`, `sources` and Dagster definitions, the LinkML Dagster runtime, admin_ui's `file_configuration.py`
 - Creekview's `generator`, behavior and `base_object` configuration, with Y2's release

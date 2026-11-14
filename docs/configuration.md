@@ -17,6 +17,8 @@ The app already has its identity: `Example` selects `example`, and `Fleet` selec
 
 An app's own configuration is independent from the environment: `Example(config='example.yaml')` loads that YAML file as the app's own, whether or not it declares an environment. An app given no file loads its section of the environment.
 
+The command line goes over the app's own configuration, never over the environment: `Example(environment='Hosts', argv=sys.argv[1:])`. `--key value` sets the key to the string, a slash path names a nested key, `--flag` with no value after it sets it to True, and other arguments are the program's own.
+
 Env and every app load through the same code, `_config_load(source)` on `mixin_Config`: a YAML file, or a section already loaded, becomes the object's own configuration as a copy.
 
 ## Env.init

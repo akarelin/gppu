@@ -1621,11 +1621,13 @@ class mixin_Config(_mixin):
   _my: dict[str, Any] = {}
 
 
-  def _config_load(self, source: Mapping | str | Path) -> None:
+  def _config_load(self, source: Mapping | str | Path, argv: list[str] = []) -> None:
     """The one loader of Env and every app: a YAML file, or a section already loaded, becomes this object's own
     configuration, a copy of its source, with its templates applied. A Jinja value that reads only ``glob``,
     ``glob_int``, ``glob_list`` or ``glob_dict`` is filled here, each reading the environment filled; Jinja that reads
-    anything else, and ``$`` text, stay."""
+    anything else, and ``$`` text, stay. The command line goes over it: ``--key value`` sets the key, a slash path a
+    nested one, to the string, ``--flag`` with no value after it sets it to True, and other arguments are the
+    program's own."""
     self._my = deepcopy(dict(source)) if isinstance(source, Mapping) else dict_from_yml(source)
     def read(path: str) -> Any: return jinja_fill(glob(path), **readers)
     readers = {'glob': read,
@@ -1633,6 +1635,13 @@ class mixin_Config(_mixin):
                'glob_list': lambda path: _ if isinstance(_ := read(path), list) else [],
                'glob_dict': lambda path: _ if isinstance(_ := read(path), dict) else {}}
     self._my = jinja_fill(self._my, **readers)
+    i = 0
+    while i < len(argv):
+      arg, i = argv[i], i + 1
+      if not arg.startswith('--') or len(arg) == 2: continue
+      value = True
+      if i < len(argv) and not argv[i].startswith('--'): value, i = argv[i], i + 1
+      deepset(arg[2:], self._my, value)
 
 
   def my(self, path: str | y2path, default=None) -> Any: return deepget(path, self._my, default=default)
@@ -1649,14 +1658,15 @@ class _Base(mixin_Logger, mixin_Config): pass
 class App(_Base, _DC):
   """An app knows its name from its class. Its environment, Hosts or IoT, is optional: when it has one, the
   environment loads first. Its own configuration is the YAML file it is given, independent from the environment;
-  an app given none starts on its own section of the environment."""
+  an app given none starts on its own section of the environment. The command line it is given, ``argv``, goes over
+  its own configuration, never over the environment."""
   name: str
 
-  def __init__(self, environment: str | None = None, config: str | Path | None = None, **kw) -> None:
+  def __init__(self, environment: str | None = None, config: str | Path | None = None, argv: list[str] = [], **kw) -> None:
     super().__init__(**kw)
     if not self.name: self.name = type(self).__name__.lower()
     Env.init(environment=environment)
-    self._config_load(glob_dict(self.name) if config is None else config)
+    self._config_load(glob_dict(self.name) if config is None else config, argv)
 # endregion
 
 

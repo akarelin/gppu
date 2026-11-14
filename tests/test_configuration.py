@@ -67,6 +67,20 @@ def test_the_section_is_the_apps_own_copy():
     assert glob('example/names') == ['seven']
 
 
+def test_the_command_line_goes_over_the_apps_own_configuration_not_the_environment():
+    app = Example(environment='Hosts', argv=['--enabled', 'yes', 'positional', '--cells', '--step/name', 'TechHit'])
+    assert app.my('enabled') == 'yes'
+    assert app.my('cells') is True
+    assert app.my('step/name') == 'TechHit'
+    assert app.my('names') == ['seven']
+    assert glob('example/enabled') is False
+    assert glob('cells') is None
+
+
+def test_an_app_without_an_environment_takes_the_command_line():
+    assert Example(argv=['--local', '--preview', '80']).my('') == {'local': True, 'preview': '80'}
+
+
 def test_reset_lets_the_next_app_load_another_environment():
     App(environment='Hosts')
     Env.reset()
