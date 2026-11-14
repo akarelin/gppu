@@ -1,5 +1,5 @@
-"""Tests for template_populate and dict_template_populate."""
-from gppu import template_populate, dict_template_populate
+"""Tests for template_populate."""
+from gppu import template_populate
 
 
 class TestTemplatePopulate:
@@ -48,29 +48,25 @@ class TestTemplatePopulate:
         assert result["items"] == ["x", "y"]
 
 
-class TestDictTemplatePopulate:
+class TestDictTemplate:
     def test_dict_substitution(self):
         template = {"greeting": "Hello $name", "count": 5}
-        result = dict_template_populate(template, {"name": "World"})
+        result = template_populate(template, {"name": "World"})
         assert result["greeting"] == "Hello World"
         assert result["count"] == 5
 
     def test_nested_dict_substitution(self):
         template = {"outer": {"inner": "$val"}}
-        result = dict_template_populate(template, {"val": "filled"})
+        result = template_populate(template, {"val": "filled"})
         assert result["outer"]["inner"] == "filled"
 
     def test_del_removes_key_value(self):
         template = {"keep": "yes", "remove": "DEL"}
-        result = dict_template_populate(template, {})
+        result = template_populate(template, {})
         assert result["keep"] == "yes"
         assert result["remove"] is None
 
-    def test_non_dict_returns_empty_dict(self):
-        result = dict_template_populate("not a dict", {})
-        assert result == {}
-
     def test_data_key_merged(self):
         template = {"data": {"x": "1"}, "val": "$x"}
-        result = dict_template_populate(template, {})
+        result = template_populate(template, {})
         assert result["val"] == "1"

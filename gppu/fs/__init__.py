@@ -45,9 +45,9 @@ import yaml
 from fsspec import open as open_uri, register_implementation
 from fsspec.archive import AbstractArchiveFileSystem
 from fsspec.spec import AbstractFileSystem
-from jinja2 import UndefinedError
+from jinja2 import DictLoader, UndefinedError
 
-from ..gppu import TimeSpan, OSType, TemplateSet, detect_os, full_path, glob, jinja_template, y2path
+from ..gppu import TimeSpan, OSType, detect_os, full_path, glob, jinja, jinja_template, y2path
 from .uri import y2uri
 from . import handlers
 
@@ -197,10 +197,15 @@ class Container:
     parent object's kinds, date, identity and collision."""
     self.provider = provider
     self.uri = y2uri(uri)
-    self.templates = None if templates is None else TemplateSet(named={'objects': deepcopy(dict(templates))})
+    self.templates = None if templates is None else deepcopy(dict(templates))
+    self._jinja = None if templates is None else jinja.overlay(loader=DictLoader(self.templates))   # gppu's Jinja, where one naming template includes another by its name
     self._paths: dict[str, str] | None = None
     self._identities: dict[str, str] = {}
     self._rules: dict[str, frozenset[str] | None] = {}
+
+  def _render(self, name: str, **values) -> Any:
+    """The naming template name rendered with values."""
+    return self._jinja.get_template(name).render(values)
 
   def _uri(self, path: y2path | str) -> y2uri:
     return self.provider.join(self.uri, Location.relative(path))
@@ -317,14 +322,14 @@ class Container:
           pass  # the source removed an object this folder never held
       return
     binary = isinstance(obj.content, bytes) or hasattr(obj.content, 'read')
-    if not binary and self.templates is not None and 'identity' in self.templates.named:
-      identity = self.templates.render_template('identity', uri=str(obj.uri), it=obj.content, path=path)
+    if not binary and self.templates is not None and 'identity' in self.templates:
+      identity = self._render('identity', uri=str(obj.uri), it=obj.content, path=path)
       if identity is not None:
         try:
           held = self.provider.read(uri).content
         except FileNotFoundError:
           held = None
-        if held is not None and identity != self.templates.render_template('identity', uri=str(obj.uri), it=held, path=path):
+        if held is not None and identity != self._render('identity', uri=str(obj.uri), it=held, path=path):
           raise ValueError(f'{uri}: refusing to replace a different object identity')
     self.provider.write(uri, obj, replace=lambda: bool(self.rules(path) & {'update', 'upsert'}))
 
@@ -382,22 +387,22 @@ class Container:
     uri = urlsplit(str(obj.uri))
     context = dict(uri=str(obj.uri), endpoint=uri.path, tenant=uri.netloc, inside='.', it=obj.content,
                    unquote=unquote, identity=obj.identity, filename=obj.name, kind=obj.kind)
-    if 'date' in self.templates.named:
-      value = self.templates.render_template('date', it=obj.content, uri=str(obj.uri),
+    if 'date' in self.templates:
+      value = self._render('date', it=obj.content, uri=str(obj.uri),
         parent=obj.parent.content if obj.parent is not None else None)
       context['date'] = datetime.fromisoformat(value) if value else None
     if obj.parent is not None:
-      path = self.templates.render_template(obj.kind, object_path=str(self.path_of(obj.parent)),
+      path = self._render(obj.kind, object_path=str(self.path_of(obj.parent)),
                                             parent=obj.parent.content, **context)
     else:
-      path = self.templates.render_template('filename', **context)
+      path = self._render('filename', **context)
     if not isinstance(path, str) or not path.strip():
       raise ValueError('Object filename template must return a nonempty relative path')
     path = str(Location.relative(path))
-    if 'identity' not in self.templates.named:
+    if 'identity' not in self.templates:
       return y2path(path)
     context['path'] = path
-    identity = self.templates.render_template('identity', **context)
+    identity = self._render('identity', **context)
     if identity is None:
       return y2path(path)
     if not isinstance(identity, str) or not identity:
@@ -411,7 +416,7 @@ class Container:
         raise ValueError('Collision template must produce a new path')
       attempted.add(path.casefold())
       number += 1
-      path = self.templates.render_template('collision', **(context | {'path': original, 'number': number}))
+      path = self._render('collision', **(context | {'path': original, 'number': number}))
       if not isinstance(path, str) or not path.strip():
         raise ValueError('Collision template must return a nonempty relative path')
       path = str(Location.relative(path))
@@ -431,7 +436,7 @@ class Container:
             continue
           if not row['name'].endswith('.json'):
             continue
-          key = self.templates.render_template('identity', **(context | {
+          key = self._render('identity', **(context | {
             'it': self.provider.read(self._uri(row['name'])).content, 'path': row['name']}))
           if key is None:
             continue

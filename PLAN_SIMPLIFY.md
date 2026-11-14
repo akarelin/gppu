@@ -27,7 +27,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 
 ## Templates
 - [x] The two kinds of templates are gppu's: loading fills the Jinja that reads only the configuration, and leaves `$` text as written for the app, which fills it with `template_populate` (`test_loading_fills_the_jinja_that_reads_only_glob`, `test_loading_keeps_literal_strings`, `test_template`)
-- [ ] `TemplateSet` (template, generator, behavior, refs) goes; gppu's `fs` catalog, lake and objects use Jinja. Loaded through Env, a connection row is merged over its template with its row-reading Jinja left for the app; the catalog renders that Jinja with the row (`test_catalog_configuration`)
+- [x] gppu's template code is `render_template` and `apply_template`: `TemplateSet`, `jinja_document` and `dict_template_populate` are gone. A Container's naming templates render from an overlay of gppu's `jinja` over their mapping; the catalog merges a row over its template with `apply_template` and renders the template's Jinja and the row's row-reading Jinja with the row (`test_catalog_configuration`). The lake's stored configuration, which stacks templates and declares `refs`, resolves in the lake (`graph_configuration.resolve_row`), identically to TemplateSet on every stored table; the lake's sources and Dagster definitions, the LinkML Dagster runtime and admin_ui render with the overlay, which runs on 3.7.4 and later (RAN 4ef4cc8d7, CRAP 334ddfdb)
 - [x] Generators are gone, their Jinja on the templates: Creekview has none, and Y2 main, live in the house since 2026-11-13 23:40 on gppu 3.7.4, builds every object without them; the Insteon button patch landed with that deploy
 - [x] Creekview's `templates:` are named templates that the loader merges into a row whose `template:` names one; Creekview has no behavior, `base_object` or generator configuration
 - [ ] Y2's own template code goes: its template module, `load_templates`, `construct_template` and `render_config` are gone, and Y2 renders with gppu's `render_template`. Left: `base_object` and `object_from_base`, which build an entity from its row
@@ -58,7 +58,6 @@ These move in the same commit as the release. gppu 3.7.4 is released and alex-pc
 - display-control (`IoT/PCC`): `on_change` and `AppService.update_config`/`changed_paths` callers; MQTT configuration by topic prefix
 - The programs that write the command line over Env: display-control, Intune's three scripts, `setup-ld-monitors.py`, `operon_remove.py`, `sync_to_operon.py` and `openapi_query.py`
 - Every `Env.from_env` caller in RAN, CRAP, IoT and Y2, and the "Configuration without an app" line in the global CLAUDE.md that names `Env.from_env`
-- `TemplateSet`'s callers outside gppu use Jinja: lake's `graph_configuration.py`, `sources` and Dagster definitions, the LinkML Dagster runtime, admin_ui's `file_configuration.py`
 - Every reader of `Env.data`, which is `Env._my` now, reads `glob_dict('')`: lake's `graph_configuration.py` and `m365/config.py`, display-control and its Intune scripts, and the Preservator, Session Manager and FileIndexer tests
 
 ## Found outside this task

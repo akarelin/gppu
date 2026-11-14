@@ -29,13 +29,25 @@ from fsspec.core import split_protocol
 from fsspec.spec import AbstractFileSystem
 
 from ..gppu import glob
-from ..gppu import TemplateSet, TimeSpan, full_path, jinja_fill, uuid_create, y2path
+from ..gppu import TimeSpan, apply_template, full_path, jinja_fill, render_template, uuid_create, y2path
 from .uri import y2uri
 from . import FileSystem, Location, Provider, _address, _below
 from .gppufs import GppuFileSystem
 
 
 # region locations
+
+def _resolve(row: dict, templates: dict, context: dict) -> dict:
+  """row merged over the template it names, each Jinja value of the template rendered in order against context and
+  the row as it stands; the row's own values are data. template, refs and nulls drop out."""
+  if 'template' in row and row['template'] not in templates:
+    raise KeyError(f"{row.get('uid', 'row')}: no template named {row['template']!r}")
+  data = apply_template(row, templates)
+  for key, value in (templates[row['template']] if 'template' in row else {}).items():
+    if key not in row and isinstance(value, str) and ('{{' in value or '{%' in value):
+      data[key] = render_template(value, context | data)
+  return {key: value for key, value in data.items() if key not in ('template', 'refs') and value is not None}
+
 
 class GppuCatalog(AsyncFileSystem):
   """A catalog of Locations keyed by uid.
@@ -141,9 +153,8 @@ class GppuCatalog(AsyncFileSystem):
     config = self._config
     definitions = config['connections']
     connection_templates = definitions['templates'] if 'templates' in definitions else {}
-    connection_rules = TemplateSet(templates=connection_templates, context=config)
     def connection(uid: str, row: dict) -> dict:
-      resolved = connection_rules.resolve({'uid': uid, **row})
+      resolved = _resolve({'uid': uid, **row}, connection_templates, config)
       return jinja_fill(resolved, **resolved)   # Jinja reading the row, as loading leaves it, renders with the row
     self.connections = {
       uid: connection(uid, row)
@@ -176,7 +187,6 @@ class GppuCatalog(AsyncFileSystem):
     else:
       raise TypeError('locations must be a list or a mapping keyed by uid')
     context = {**config, 'connections': self.connections, 'host': self.host}
-    rules = TemplateSet(templates=templates, context=context)
     self.locations = {}
     self._parents = {}
 
@@ -202,7 +212,7 @@ class GppuCatalog(AsyncFileSystem):
         if templates and 'template' not in row:
           row['template'] = 'connected' if serving is not None else 'location'
         row['parent'] = owner
-        resolved = rules.resolve(row)
+        resolved = _resolve(row, templates, context)
         resolved['parent'] = owner
         self.locations[uid] = resolved
         self._parents[uid] = owner
