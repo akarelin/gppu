@@ -1666,7 +1666,7 @@ _SCHEDULER = _Scheduler()
 
 
 # region App
-class App(_DC, _Base):
+class App(_Base, _DC):
   """An app knows its name from its class. Its environment, Hosts or IoT, is optional: when it has one, the
   environment loads first. Its own configuration is the YAML file it is given, independent from the environment;
   an app given none starts on its own section of the environment. The command line it is given, ``argv``, goes over
@@ -1679,7 +1679,7 @@ class App(_DC, _Base):
   _timer_ids = count(1)
 
   def __init__(self, environment: str | None = None, config: str | Path | None = None, argv: list[str] = [], **kw) -> None:
-    _DC.__init__(self, **kw)   # its data; a class composed with it initializes its other bases itself, as TUIApp does Textual
+    super().__init__(**kw)
     if not self.name: self.name = type(self).__name__.lower()
     self.timers: dict[int, TimerHandle] = {}
     self.h_timeouts: dict[str, TimerHandle] = {}

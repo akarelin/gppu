@@ -63,18 +63,19 @@ def test_cancel_timers_cancels_every_timer_the_app_armed():
     assert app.timers == {} and app.h_timeouts == {}
 
 
-def test_an_app_composes_with_a_data_object_that_has_steps():
-    """Y2's State is an App and an entity, a _DC with steps: App's data comes first, and constructing the app
-    initializes only its own data, leaving the entity's initialization to the class composing them."""
-    class Entity(_DC, mixin_Stepper):
-        def __init__(self, **kw):
-            raise AssertionError('App initialized the entity')
+def test_an_app_initializes_the_class_it_is_composed_with():
+    """App's init is cooperative: a class composed after it, as Linked Data's API composes its database or Y2's State
+    its entity, is initialized with what App does not take."""
+    class Entity(mixin_Stepper, _DC):
+        def __init__(self, *, eid, **kw):
+            super().__init__(**kw)
+            self.eid = eid
 
     class State(App, Entity):
         pass
 
-    state = State(name='State')
-    assert state.name == 'State' and state.timers == {}
+    state = State(name='State', eid='app.state@system')
+    assert (state.name, state.eid, state.timers) == ('State', 'app.state@system', {})
 
 
 def test_a_failing_repeat_reports_its_failure_and_runs_the_next_time():
