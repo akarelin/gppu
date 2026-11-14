@@ -71,6 +71,6 @@ These move in the same commit as the release. gppu 3.7.2 is released and alex-pc
 - Y2: `test_insteon`, `test_kasa2mqtt`, `test_scene_light_contract` and `test_creekview_editor` fail each run on its own, on the running v6.1.7.5730 and on main alike; none is in the Release's verify step
 - Hosts: `configs.py`'s and `start-page.py`'s `load_config` read `fleet.platforms`, which Fleet has not had since 2026-09-30
 - gppu: `test_tui_logging`'s file-and-trace-rules and shared-log-screens tests fail on master as it is
-- Hosts TUI: its Fleet and Preserve items launch `configure-all/fleet-tui.py`, which is in the archive; two `test_tui.py` tests fail on it
+- Hosts TUI: Fleet, Preserve and Configs launched `configure-all`'s scripts, archived 2026-11-11, and choosing one crashed the menu; they are commented out of `tui.yaml`. PC Control launches `IoT/PCC/pcc-service.py`, which stops at `Env.from_env` until display-control is switched
 - craptui: `craptui.yaml` names `gd-video-ripper.yaml`, removed with GD Video Ripper, so craptui does not open
 - w11: with `W11_APP_DIR` unset, the launcher reads its 2026-03-16 copies in `~/.gppu/w11`, not the repository's scripts; `w11/default_config/w11.yaml`, which seeds them, still names the deleted `w11-events.yaml` and `w11-onedrive.yaml`
