@@ -43,13 +43,11 @@ import time
 from collections import Counter
 from pathlib import Path, PurePosixPath
 
-from gppu import Env, glob
+from gppu import App
 from gppu.fs.gppufs import GppuFileSystem
 from gppu.fs.handlers import SessionHandler
 from gppu.tui.progress import Marker, legend_ansi, marker_ansi
 
-Env.from_env()
-Env.from_argv(sys.argv[1:])
 SESSION = ('session', *SessionHandler.UID)   # a session is probed as one and read as its harness's
 COLOUR = sys.stdout.isatty() or bool(os.environ.get('FORCE_COLOR'))
 MARKS = {   # where a session goes, as the row shows it
@@ -105,13 +103,14 @@ async def clean(fs: GppuFileSystem, base: str, keep: float) -> list[tuple[str, s
 
 
 def main() -> None:
-    run, keep = glob('run') is True, float(glob('keep_hours'))
-    home, archive = Path(glob('home')).expanduser(), Path(glob('archive'))
+    app = App(config=__file__, argv=sys.argv[1:])   # its own configuration is its MANIFEST, the command line over it
+    run, keep = app.my('run') is True, float(app.my('keep_hours'))
+    home, archive = Path(app.my('home')).expanduser(), Path(app.my('archive'))
     # The harnesses watch their folders and a sync client holds the archive's files: no index file in either.
-    fs = GppuFileSystem(cache=[*((home / folder).as_posix() for folder in glob('sessions')), archive.as_posix()])
+    fs = GppuFileSystem(cache=[*((home / folder).as_posix() for folder in app.my('sessions')), archive.as_posix()])
     print(legend_ansi(tuple(MARKS.values())) if COLOUR else '  '.join(f'{m.symbol}={m.label}' for m in MARKS.values()))
     going = Counter()
-    for folder in glob('sessions'):
+    for folder in app.my('sessions'):
         base = (home / folder).as_posix()
         print(paint('1', base), flush=True)
         moves = asyncio.run(clean(fs, base, keep))
@@ -120,7 +119,7 @@ def main() -> None:
             for to, path in moves:
                 for entry in (path, str(PurePosixPath(path).with_suffix(''))):   # Claude Code keeps a session's other files in a folder by its uid
                     if fs.exists(f'{base}/{entry}'):
-                        there = (archive / glob(f'buckets/{to}') / folder / entry).as_posix()
+                        there = (archive / app.my(f'buckets/{to}') / folder / entry).as_posix()
                         fs.makedirs(str(PurePosixPath(there).parent), exist_ok=True)
                         fs.mv(f'{base}/{entry}', there, recursive=True)
     summary = ' '.join(f'{to}={going[to]}' for to in ('human', 'orphan', 'damaged'))
