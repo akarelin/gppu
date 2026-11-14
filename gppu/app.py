@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
 from abc import abstractmethod
 from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
@@ -286,9 +287,9 @@ class mixin_Rest:
   """Every public member of the application's own classes, over HTTP, and nothing
   declared. A field or property reads; a method is called with the JSON body as
   its keyword arguments; a synchronous method needing none answers a GET as well.
-  A name is the application's when a class born under ``Env.app_path`` defines
-  it — a base may define it too — and the private names and the lifecycle steps
-  are the only exclusion.
+  A name is the application's when a class born in the application's folder, the
+  folder of the file that defines the app, defines it — a base may define it too —
+  and the private names and the lifecycle steps are the only exclusion.
 
   The universal REST API to any object. It works only in an AsyncApp. It is not the default: no gppu app
   includes it; an application that wants it composes it before its application
@@ -307,12 +308,16 @@ class mixin_Rest:
     except TypeError: return ''
   _rest_manifest: dict | None = None
 
+  def _rest_home(self) -> str:
+    """The application's folder: where the file that defines the app lives, and its own classes with it."""
+    return os.path.dirname(self._born(type(self)))
+
   def rest_registries(self) -> dict[str, Mapping]:
     """name -> roster of live objects (key -> object); the host names its own."""
     return {'app': {getattr(self, 'name', 'app'): self}}
 
   def _rest_members(self, cls: type) -> dict[str, dict]:
-    home, rows = str(Env.app_path), {}
+    home, rows = self._rest_home(), {}
     for name in dir(cls):
       if name[0] == '_' or name in self.REST_RESERVED: continue
       if not any(self._born(c).startswith(home) for c in cls.__mro__ if name in c.__dict__): continue
@@ -329,13 +334,13 @@ class mixin_Rest:
 
   @property
   def rest_manifest(self) -> dict:
-    """The classes born under app_path and their members, walked once."""
+    """The classes born in the application's folder and their members, walked once."""
     if self._rest_manifest is None:
       seen, stack = set(), [_mixin, _Base, _DC]
       while stack:
         cls = stack.pop()
         if cls not in seen: seen.add(cls); stack.extend(cls.__subclasses__())
-      home = str(Env.app_path)
+      home = self._rest_home()
       classes = {c.__name__: {'members': self._rest_members(c)} for c in sorted(seen, key=lambda c: c.__name__) if self._born(c).startswith(home)}
       self._rest_manifest = {'registries': list(self.rest_registries()), 'classes': {n: c for n, c in classes.items() if c['members']}}
     return self._rest_manifest

@@ -74,7 +74,7 @@ The environment from MQTT: `AppService` (`gppu.iot`) replaces each path its reta
 
 [Env](docs/environment.md): the global configuration and what any app looks up — its name, host, platform, the trace rules; every object reads it from its `_my`.
 
-[The REST surface](docs/rest.md): `mixin_Rest`, for an async app — every registered object answers for its own members, walked from the classes born under `Env.app_path`; manifest, read, call.
+[The REST surface](docs/rest.md): `mixin_Rest`, for an async app — every registered object answers for its own members, walked from the classes born in the folder of the file that defines the app; manifest, read, call.
 
 YAML `!include` support, as the value of a key or on its own line, where the included file's keys merge into the document:
 ```yaml

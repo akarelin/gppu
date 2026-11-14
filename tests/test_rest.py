@@ -5,7 +5,7 @@ import asyncio
 import unittest
 from pathlib import Path
 
-from gppu import APIApp, AsyncApp, Env, mixin_Rest
+from gppu import APIApp, AsyncApp, mixin_Rest
 from gppu.gppu import _DC
 
 
@@ -44,14 +44,12 @@ class _Host(mixin_Rest):
 
 class RestSurfaceTests(unittest.IsolatedAsyncioTestCase):
   def setUp(self) -> None:
-    self._env = Env._my, Env.initialized, getattr(Env, 'app_path', None)
-    Env._my, Env.initialized, Env.app_path = {}, True, HERE
     self.lamp = _Lamp(data={'name': 'desk', 'level': 70, 'api_key': 'secret'})
     self.host = _Host(self.lamp)
     self.rows = self.host.rest_manifest['classes']['_Lamp']['members']
 
-  def tearDown(self) -> None:
-    Env._my, Env.initialized, Env.app_path = self._env
+  def test_the_application_is_the_folder_of_the_file_that_defines_it(self) -> None:
+    self.assertEqual(Path(self.host._rest_home()), HERE)
 
   def test_every_public_member_is_on_the_surface_and_nothing_else(self) -> None:
     self.assertEqual({n: r['kind'] for n, r in self.rows.items()},
