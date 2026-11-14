@@ -54,6 +54,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 - [x] App in `gppu.py`, AsyncApp in `app.py`; MqttApp and AppService in `iot.py`; `app_service.py` gone
 - [x] AppService's startup read (`from_mqtt`) and its running service are one class
 - [ ] Configuration from MQTT read in one place: one listener on a topic prefix, the last part of the topic names the section; no topic-to-path table, no `from_mqtt` startup copy
+- [x] TUI apps read inline configs through `dict_from_yml`: a `.py`'s global `MANIFEST`, a `.cmd`'s opening `::` lines, a `.ps1`'s opening `.NOTES`; each equals the YAML it replaced. The Hosts launcher lists `synology-mount.py`, `mapper.cmd` and `tray-control.ps1`, and w11's lists `w11-events.py` and `w11-onedrive.py`. Both launchers open at the release, with their `Env.from_env` switch
 
 ## Switches at the next gppu release
 These move in the same commit as the release. The Hosts tools that construct Fleet (Preservator, configs, list-sessions, list-sessions2, sessions-clean, start-page) run on neither gppu today: the installed 3.7.0 has no `App(environment=)`, and master has no `from_argv`, `from_env` or `from_dict`. The rest run on the released gppu:
@@ -69,3 +70,5 @@ These move in the same commit as the release. The Hosts tools that construct Fle
 ## Found outside this task
 - Y2: `test_insteon`, `test_kasa2mqtt`, `test_scene_light_contract` and `test_creekview_editor` fail each run on its own, on the running v6.1.7.5730 and on main alike; none is in the Release's verify step
 - Hosts: `configs.py`'s and `start-page.py`'s `load_config` read `fleet.platforms`, which Fleet has not had since 2026-09-30
+- gppu: `test_tui_logging`'s file-and-trace-rules and shared-log-screens tests fail on master as it is
+- w11: with `W11_APP_DIR` unset, the launcher reads its 2026-03-16 copies in `~/.gppu/w11`, not the repository's scripts

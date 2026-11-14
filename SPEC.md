@@ -29,6 +29,7 @@
 - App initialization takes its environment; the app already knows its name. An app loads its own configuration, which is independent from the environment.
 - App's functionality lives in one place, and configuration is read from MQTT in one place.
 - AsyncApp does its own init and does not rely on `_Base`.
+- TUI apps support inline configs: a script carries its own configuration and manifest, as `examples/sessions_clean.py` does. A Python script assigns its manifest to a global variable.
 
 ## Y2
 - Y2 only creates apps, and they share one State and one Env.

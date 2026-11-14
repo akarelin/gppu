@@ -2,7 +2,7 @@
 w11 — Windows 11 Superapp launcher.
 
 Opens w11 sub-apps (events, onedrive, etc.) from a single TUI menu.
-Each app declares a manifest in its own YAML config describing modes and launch args.
+Each app declares a manifest in its own inline config (MANIFEST) describing modes and launch args.
 
 Usage:
     python w11.py                  # interactive TUI launcher

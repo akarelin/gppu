@@ -165,6 +165,14 @@ apps:
 
 Each sub-app YAML has a `manifest:` section (name, icon, script, modes) plus app-specific config below it. The launcher loads all manifests and presents a menu.
 
+A sub-app can instead be a script that carries this config inline, listed by its own name (`events: events.py`):
+
+- **`.py`:** assigns the YAML to its global `MANIFEST`, read without running the script.
+- **`.cmd`:** opens with the YAML as `::` lines.
+- **`.ps1`:** holds the YAML in the `.NOTES` of the `<# #>` block it opens with.
+
+Its manifest launches the script itself unless it names a `script:` or `url:`. An app given the script, `App(config=__file__)`, reads the same config.
+
 ```python
 from gppu import Env
 from gppu.tui import TUILauncher, launcher_main, load_app_registry

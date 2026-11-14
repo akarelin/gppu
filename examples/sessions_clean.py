@@ -1,7 +1,7 @@
 """sessions-clean on gppufs: a finished Claude Code or Codex session in which no person typed anything moves into the archive,
 with its subagents and the folder beside it. gppufs streams each harness's folder and its handlers read each session; this
 decides where each goes as it arrives and shows it in its colour. Nothing moves without --run. The TUI launcher runs it in the
-background from the manifest in sessions_clean.yaml."""
+background from the manifest in its MANIFEST."""
 
 MANIFEST = """
   manifest:
