@@ -21,7 +21,8 @@ import json
 import getpass
 import socket
 import subprocess
-from jinja2 import DictLoader, FileSystemLoader, StrictUndefined, Undefined, meta
+from jinja2 import DictLoader, FileSystemLoader, StrictUndefined, Undefined, meta, pass_context
+from jinja2.runtime import Macro
 from jinja2.nativetypes import NativeEnvironment
 from jinja2.sandbox import SandboxedEnvironment
 
@@ -892,9 +893,46 @@ class JinjaDocument(SandboxedEnvironment):
                          ('dict', 'list', 'int', 'float', 'str', 'len', 'sorted', 'min', 'max', 'range')})
 
 
+@pass_context
+def _render_template_in(context, name: str, **values) -> Any:
+  """A named template rendered from inside another one: it sees the caller's values, and its keywords win over them."""
+  return jinja.get_template(name).render(context.get_all() | values)
+
+
+def render_template(template: str, values: Mapping = {}, /, **more) -> Any:
+  """template, the name of a template in a `*_templates` block or Jinja text, rendered with values and more."""
+  values = {**values, **more}
+  if template in jinja.loader.mapping: return jinja.get_template(template).render(values)
+  return _jinja_compile(template).render(values)
+
+
+def jinja_configuration(node: Any) -> None:
+  """Every `macros:` block and every named template (a `*_templates` or `generators` block) of a configuration,
+  wherever it sits, added to gppu's Jinja: a macro is then callable by its name from any template."""
+  if not isinstance(node, dict): return
+  for key, value in node.items():
+    if key == 'macros' and isinstance(value, str):
+      module = jinja.from_string(value).make_module()
+      jinja.globals.update({name: getattr(module, name) for name in dir(module) if not name.startswith('_')})
+    elif (key == 'generators' or str(key).endswith('_templates')) and isinstance(value, dict):
+      jinja.loader.mapping.update(value)
+      jinja.cache.clear()
+    else: jinja_configuration(value)
+
+
+def apply_template(node: Any) -> Any:
+  """A row whose `template:` names a macro, merged over what that macro returns for it: the row wins."""
+  if isinstance(node, list): return [apply_template(value) for value in node]
+  if not isinstance(node, dict): return node
+  node = {key: apply_template(value) for key, value in node.items()}
+  if isinstance(name := node.get('template'), str) and isinstance(jinja.globals.get(name), Macro):
+    return _jinja_compile('{{ macro(**row) }}').render(macro=jinja.globals[name], row=node) | node
+  return node
+
+
 @cache
 def _jinja_compile(template: str):
-  return JinjaEnvironment().from_string(template)
+  return jinja.from_string(template)
 
 
 def jinja_template(template: Any, /, **data) -> Any:
@@ -1141,6 +1179,14 @@ def format_since(when) -> str:
   if days < 30:   return f"{days // 7}w"
   if days < 365:  return f"{days // 30}mo"
   return f"{days // 365}y"
+# endregion
+
+
+# region The one Jinja environment gppu renders with. Loading a configuration adds its macros and named templates to it.
+jinja = JinjaEnvironment(loader=DictLoader({}))
+jinja.globals.update({name: getattr(builtins, name) for name in
+                      ('dict', 'list', 'int', 'float', 'str', 'bool', 'len', 'round', 'sorted', 'min', 'max', 'range')},
+                     re=re, render_template=_render_template_in)
 # endregion
 
 
@@ -1629,12 +1675,13 @@ class mixin_Config(_mixin):
     nested one, to the string, ``--flag`` with no value after it sets it to True, and other arguments are the
     program's own."""
     self._my = deepcopy(dict(source)) if isinstance(source, Mapping) else dict_from_yml(source)
+    jinja_configuration(self._my)
     def read(path: str) -> Any: return jinja_fill(glob(path), **readers)
     readers = {'glob': read,
                'glob_int': lambda path: _ if isinstance(_ := read(path), int) else 0,
                'glob_list': lambda path: _ if isinstance(_ := read(path), list) else [],
                'glob_dict': lambda path: _ if isinstance(_ := read(path), dict) else {}}
-    self._my = jinja_fill(self._my, **readers)
+    self._my = apply_template(jinja_fill(self._my, **readers))
     i = 0
     while i < len(argv):
       arg, i = argv[i], i + 1
@@ -1678,7 +1725,7 @@ class _Env(_Base):
   user: str
   os: OSType
   host: str
-  _env_root: Path
+  path: Path   # the environment's YAML file
 
   _global_log = True
 
@@ -1704,7 +1751,7 @@ class _Env(_Base):
       path /= Path(_ENV_PATHS[environment])
 
       if path.exists():
-        self._env_root = path.parent
+        self.path = path
         self._config_load(path)
         if 'log_file' in self._my: Logger.enable_file_logging(log_file=self._my['log_file'])
         if 'trace_rules' in self._my: Logger.init_logger(trace_rules=self._my['trace_rules'])

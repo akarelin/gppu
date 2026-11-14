@@ -17,7 +17,7 @@
 ## Templates
 - Configuration can be a template, and an application reads that configuration from the template.
 - Loading fills the Jinja that reads only the configuration (`glob`, `glob_int`, `glob_list`, `glob_dict`). Jinja that reads the host, the platform or a row stays as written for the app that renders it per host, and `$` text stays as written.
-- There are two kinds of templates: Jinja, and the basic template filled by `safe_substitute`.
+- There are two kinds of templates: Jinja, and the basic template filled by `safe_substitute`. Both are gppu's; an app has no template engine of its own.
 - Generators are gone; Jinja replaced them.
 - A template is a named template, and `template:` names it. Templates are simple inline functions that return lists, dicts or scalars to be merged into dicts; they return objects, not text.
 - YAML anchors are YAML, resolved by the YAML standard. They are not Jinja.
@@ -38,3 +38,4 @@
 ## Code
 - Every new method or class is justified.
 - Code uses public methods, never protected members.
+
