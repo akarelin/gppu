@@ -58,7 +58,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 
 ## Switches at the next gppu release
 These move in the same commit as the release. gppu 3.7.2 is released and alex-pc's `~/.venv` runs it, so the Hosts TUI opens there; a program below that still calls `from_argv`, `from_env` or `from_dict` stops on alex-pc until it switches. Before 3.7.2, the Hosts tools that construct Fleet (Preservator, configs, list-sessions, list-sessions2, sessions-clean, start-page) ran on neither gppu. Still to switch:
-- Preservator: `self.my('config')` and `self.my('steps')`
+- Preservator: `preservator2.py`, beside `preservator.py`, reads `self.my('config')` and `self.my('steps')` and copies each step's files from the host it runs on into that host's own mount of the Lake; on a scratch home it writes the same files as `preservator.py`. It replaces `preservator.py` at the switch. Another host runs it there over ssh, which needs current gppu on that host: the Mac, trix and five have 3.6, seven has none, five has no Lake mount
 - display-control (`IoT/PCC`): `on_change` and `AppService.update_config`/`changed_paths` callers; MQTT configuration by topic prefix
 - The programs that write the command line over Env: display-control, Intune's three scripts, `setup-ld-monitors.py`, `operon_remove.py`, `sync_to_operon.py` and `openapi_query.py`
 - Every `Env.from_env` caller in RAN, CRAP, IoT and Y2, and the "Configuration without an app" line in the global CLAUDE.md that names `Env.from_env`
@@ -72,5 +72,6 @@ These move in the same commit as the release. gppu 3.7.2 is released and alex-pc
 - Hosts: `configs.py`'s and `start-page.py`'s `load_config` read `fleet.platforms`, which Fleet has not had since 2026-09-30
 - gppu: `test_tui_logging`'s file-and-trace-rules and shared-log-screens tests fail on master as it is
 - Hosts TUI: Fleet, Preserve and Configs launched `configure-all`'s scripts, archived 2026-11-11, and choosing one crashed the menu; they are commented out of `tui.yaml`. PC Control launches `IoT/PCC/pcc-service.py`, which stops at `Env.from_env` until display-control is switched
+- Preservator: the LLM step's `logs` exclusion, meant for OpenClaw, also leaves out Agy's transcripts, which sit in `.system_generated/logs`, so no Agy transcript reaches the Lake
 - craptui: `craptui.yaml` names `gd-video-ripper.yaml`, removed with GD Video Ripper, so craptui does not open
 - w11: with `W11_APP_DIR` unset, the launcher reads its 2026-03-16 copies in `~/.gppu/w11`, not the repository's scripts; `w11/default_config/w11.yaml`, which seeds them, still names the deleted `w11-events.yaml` and `w11-onedrive.yaml`
