@@ -73,6 +73,8 @@ These move in the same commit as the release. gppu 3.7.3 is released and alex-pc
 - Hosts: `configs.py`'s and `start-page.py`'s `load_config` read `fleet.platforms`, which Fleet has not had since 2026-09-30
 - Hosts: `hosts.yaml` lost s1's, s9's and yellow's `mount` in the move to `RAN/_config`, so `server_mounts` rendered `None/Lake` and the like; the three lines are back (RAN b071600bb)
 - gppu: `test_tui_logging`'s file-and-trace-rules and shared-log-screens tests fail on master as it is
+- Hosts: the `system_updates` task reads `glob('half_configured')`, which `config.yaml` has commented out since 2026-11-13, so a Fleet run with it fails before running anything on that host
+- Hosts: all-all's Checkup and clean-sessions modes name a runbook and a task that `runbooks.yaml` no longer has
 - Hosts TUI: Fleet, Preserve and Configs are on the Fleet section again, and render-config in Fleet tools: `configure-all`, `render-config`, `harness` and the Configs files came back from the archive and read Fleet's rows, `Fleet.values` and gppu's glob and Jinja (RAN b071600bb). Start page stays archived. PC Control launches `IoT/PCC/pcc-service.py`, which stops at `Env.from_env` until display-control is switched
 - Preservator: the LLM step's `logs` exclusion, meant for OpenClaw, also leaves out Agy's transcripts, which sit in `.system_generated/logs`, so no Agy transcript reaches the Lake
 - craptui: `craptui.yaml` names `gd-video-ripper.yaml`, removed with GD Video Ripper, so craptui does not open
