@@ -18,15 +18,19 @@ from __future__ import annotations
 import sys
 
 from textual import events
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.widgets import DataTable, Label, ListItem, ListView, Static
+
+from .launcher import TUIApp
 
 
 # ── Selector ─────────────────────────────────────────────────────────────────
 
-class Selector(App):
+class Selector(TUIApp):
     """Pick one item from a list.  Returns the label string, or ``None`` on Escape."""
+
+    options: list[str]
 
     CSS = """
     App {
@@ -40,10 +44,6 @@ class Selector(App):
     }
     """
 
-    def __init__(self, options: list[str], **kw) -> None:
-        super().__init__(**kw)
-        self.options = options
-
     def compose(self) -> ComposeResult:
         yield ListView(
             *[ListItem(Label(opt)) for opt in self.options],
@@ -51,7 +51,7 @@ class Selector(App):
         )
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        self.exit(event.item.query_exactly_one(Label).renderable)
+        self.exit(self.options[event.list_view.index])
 
     async def on_key(self, event: events.Key) -> None:
         if event.key == 'escape':
@@ -85,13 +85,19 @@ class DetailScreen(Screen):
             await self.app.pop_screen()
 
 
-class DetailedSelector(App):
+class DetailedSelector(TUIApp):
     """Pick rows from a table with checkbox selection and detail expand.
 
     Returns a list of selected row dicts on Enter, or ``None`` on Escape.
-    Press Space to toggle a row, ``e`` to expand details.
-    ``initial_selected`` pre-checks rows by index.
+    Press Space to toggle a row, ``e`` to expand details, which shows ``expanded_keys`` (the summary keys when none)
+    less ``never_keys``. ``initial_selected`` pre-checks rows by index.
     """
+
+    rows: list[dict]
+    summary_keys: list[str]
+    expanded_keys: list[str]
+    never_keys: list[str]
+    initial_selected: list[int]
 
     CSS = """
     App {
@@ -105,24 +111,8 @@ class DetailedSelector(App):
     }
     """
 
-    def __init__(
-        self,
-        rows: list[dict],
-        summary_keys: list[str],
-        expanded_keys: list[str] | None = None,
-        never_keys: list[str] | None = None,
-        initial_selected: list[int] | None = None,
-        **kw,
-    ) -> None:
-        super().__init__(**kw)
-        self.rows = rows
-        self.summary_keys = summary_keys
-        self.expanded_keys = expanded_keys or list(summary_keys)
-        self.never_keys = set(never_keys or [])
-        self.initial_selected = set(initial_selected or [])
-        self.selected: dict[int, bool] = {}
-
     def compose(self) -> ComposeResult:
+        self.selected: dict[int, bool] = {}
         table = DataTable(id='data-table')
         table.add_column('Select', width=8, key='select')
         for key in self.summary_keys:
@@ -157,7 +147,7 @@ class DetailedSelector(App):
                 row = self.rows[row_index]
                 details = [
                     f'{key}: {row[key]}'
-                    for key in self.expanded_keys
+                    for key in self.expanded_keys or self.summary_keys
                     if key in row and key not in self.never_keys
                 ]
                 await self.push_screen(DetailScreen('\n'.join(details)))
@@ -170,7 +160,7 @@ def ui_select(options: list[str], *, exit_on_none: bool = True) -> str | None:
 
     If *exit_on_none* is True (default), ``sys.exit(0)`` on Escape.
     """
-    result = Selector(options).run()
+    result = Selector(options=options).run()
     if result is None and exit_on_none:
         sys.exit(0)
     return result
@@ -187,6 +177,5 @@ def ui_select_rows(
 
     ``initial_selected`` pre-checks rows by index.
     """
-    return DetailedSelector(
-        rows, summary_keys, expanded_keys, never_keys, initial_selected,
-    ).run()
+    return DetailedSelector(rows=rows, summary_keys=summary_keys, expanded_keys=expanded_keys,
+                            never_keys=never_keys, initial_selected=initial_selected).run()

@@ -17,6 +17,8 @@ pytest.importorskip('pytest_asyncio', reason='pytest-asyncio not installed — s
 from gppu.tui import (  # noqa: E402
     AppItem,
     DetailedSelector,
+    Selector,
+    TUIApp,
     TUILauncher,
     ModeItem,
     ProcessRow,
@@ -559,21 +561,21 @@ SELECTOR_ROWS = [{'name': 'a'}, {'name': 'b'}, {'name': 'c'}]
 class TestDetailedSelectorPreselect:
     @pytest.mark.asyncio
     async def test_default_all_unselected(self):
-        app = DetailedSelector(list(SELECTOR_ROWS), ['name'])
+        app = DetailedSelector(rows=list(SELECTOR_ROWS), summary_keys=['name'])
         async with app.run_test() as pilot:
             await pilot.press('enter')
         assert app.return_value == []
 
     @pytest.mark.asyncio
     async def test_initial_selected_returned_on_enter(self):
-        app = DetailedSelector(list(SELECTOR_ROWS), ['name'], initial_selected=[0, 2])
+        app = DetailedSelector(rows=list(SELECTOR_ROWS), summary_keys=['name'], initial_selected=[0, 2])
         async with app.run_test() as pilot:
             await pilot.press('enter')
         assert app.return_value == [SELECTOR_ROWS[0], SELECTOR_ROWS[2]]
 
     @pytest.mark.asyncio
     async def test_space_toggles_preselected_off(self):
-        app = DetailedSelector(list(SELECTOR_ROWS), ['name'], initial_selected=[0, 2])
+        app = DetailedSelector(rows=list(SELECTOR_ROWS), summary_keys=['name'], initial_selected=[0, 2])
         async with app.run_test() as pilot:
             await pilot.press('space')  # cursor starts on row 0
             await pilot.press('enter')
@@ -581,7 +583,24 @@ class TestDetailedSelectorPreselect:
 
     @pytest.mark.asyncio
     async def test_escape_returns_none(self):
-        app = DetailedSelector(list(SELECTOR_ROWS), ['name'], initial_selected=[1])
+        app = DetailedSelector(rows=list(SELECTOR_ROWS), summary_keys=['name'], initial_selected=[1])
         async with app.run_test() as pilot:
             await pilot.press('escape')
         assert app.return_value is None
+
+
+class TestSelectorsAreTUIApps:
+    def test_arguments_are_the_apps_data(self):
+        """A picker is a TUI app like any other, so what it is given is its data."""
+        app = DetailedSelector(rows=list(SELECTOR_ROWS), summary_keys=['name'], initial_selected=[1])
+        assert isinstance(app, TUIApp)
+        assert app.data['rows'] == SELECTOR_ROWS and app.summary_keys == ['name'] and app.initial_selected == [1]
+        assert app.expanded_keys == [] and app.never_keys == []
+        assert isinstance(Selector(options=['a']), TUIApp)
+
+    @pytest.mark.asyncio
+    async def test_selector_returns_the_chosen_label(self):
+        app = Selector(options=['alpha', 'beta'])
+        async with app.run_test() as pilot:
+            await pilot.press('down', 'enter')
+        assert app.return_value == 'beta'
