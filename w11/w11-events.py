@@ -12,6 +12,8 @@ Usage:
     python w11-events.py --stats            # recalculate stats and exit
 """
 
+from __future__ import annotations
+
 MANIFEST = """
   manifest:
     name: Event Viewer
@@ -64,7 +66,6 @@ MANIFEST = """
 
 """
 
-from __future__ import annotations
 
 import argparse
 import ctypes

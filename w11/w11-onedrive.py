@@ -16,6 +16,8 @@ Usage:
     python w11-onedrive.py dbexplore --output . # save report to current dir
 """
 
+from __future__ import annotations
+
 MANIFEST = """
   manifest:
     name: OneDrive Diagnostics
@@ -64,7 +66,6 @@ MANIFEST = """
 
 """
 
-from __future__ import annotations
 
 import os
 import re
