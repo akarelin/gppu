@@ -71,9 +71,9 @@ These move in the same commit as the release. gppu 3.7.3 is released and alex-pc
 ## Found outside this task
 - Y2: `test_insteon`, `test_kasa2mqtt`, `test_scene_light_contract` and `test_creekview_editor` fail each run on its own, on the running v6.1.7.5730 and on main alike; none is in the Release's verify step
 - Hosts: `configs.py`'s and `start-page.py`'s `load_config` read `fleet.platforms`, which Fleet has not had since 2026-09-30
-- Hosts: `hosts.yaml` gives s1 no `mount` since the move to `RAN/_config`, so `server_mounts` renders its mount points as `None/Lake` and the like
+- Hosts: `hosts.yaml` lost s1's, s9's and yellow's `mount` in the move to `RAN/_config`, so `server_mounts` rendered `None/Lake` and the like; the three lines are back (RAN b071600bb)
 - gppu: `test_tui_logging`'s file-and-trace-rules and shared-log-screens tests fail on master as it is
-- Hosts TUI: Fleet, Preserve and Configs launched `configure-all`'s scripts, archived 2026-11-11, and choosing one crashed the menu; they are commented out of `tui.yaml`. PC Control launches `IoT/PCC/pcc-service.py`, which stops at `Env.from_env` until display-control is switched
+- Hosts TUI: Fleet, Preserve and Configs are on the Fleet section again, and render-config in Fleet tools: `configure-all`, `render-config`, `harness` and the Configs files came back from the archive and read Fleet's rows, `Fleet.values` and gppu's glob and Jinja (RAN b071600bb). Start page stays archived. PC Control launches `IoT/PCC/pcc-service.py`, which stops at `Env.from_env` until display-control is switched
 - Preservator: the LLM step's `logs` exclusion, meant for OpenClaw, also leaves out Agy's transcripts, which sit in `.system_generated/logs`, so no Agy transcript reaches the Lake
 - craptui: `craptui.yaml` names `gd-video-ripper.yaml`, removed with GD Video Ripper, so craptui does not open
 - w11: with `W11_APP_DIR` unset, the launcher reads its 2026-03-16 copies in `~/.gppu/w11`, not the repository's scripts; `w11/default_config/w11.yaml`, which seeds them, still names the deleted `w11-events.yaml` and `w11-onedrive.yaml`
