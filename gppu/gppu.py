@@ -1689,7 +1689,7 @@ class _Env(_Base):
 
 
   def init(self, **kw):
-    _ENV_PATHS = {"Hosts": "RAN/Hosts/_config/config.yaml", "IoT": "IoT/_Creekview/_creekview.yaml"}
+    _ENV_PATHS = {"RAN": "RAN/_config/config.yaml", "IoT": "IoT/_Creekview/_creekview.yaml"}
 
     if self.initialized: return
 
