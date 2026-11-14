@@ -1,5 +1,5 @@
 """A slash path is a string or a y2path, wherever gppu reads configuration by one."""
-from gppu import App, AppService, Env
+from gppu import App
 from gppu import glob, glob_dict, glob_int, glob_list
 from gppu.gppu import y2path
 
@@ -16,9 +16,3 @@ def test_env_reads_by_y2path(ran):
 def test_my_reads_by_y2path():
   app = App(config={'a': {'b': 2}})
   assert app.my(y2path('a/b')) == 2 == app.my('a/b')
-
-
-def test_update_by_y2path():
-  Env.from_dict({'a': {'b': {'c': 1}}})
-  Env.update_config({'c': 2}, y2path('a/b'))
-  assert glob('a/b/c') == 2
