@@ -27,7 +27,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 
 ## Templates
 - [ ] Env reads a templated configuration with the two kinds of templates, Jinja and the basic `$` one, so `glob` and `self.my` return it filled in. (Env's `$` pass gets no values today; it once filled `$code_path`, `$shared_data_path` and `$shared_data`.)
-- [ ] `TemplateSet` (template, generator, behavior, refs) goes; gppu's `fs` catalog, lake and objects use Jinja. `test_catalog_configuration` shows the clash: loaded through Env, a connection row is merged over its template with its row-reading `uri` Jinja left for the app, so the catalog builds `null://{{ scheme ~ ... }}`; RAN's configuration has no `template:` rows
+- [ ] `TemplateSet` (template, generator, behavior, refs) goes; gppu's `fs` catalog, lake and objects use Jinja. Loaded through Env, a connection row is merged over its template with its row-reading Jinja left for the app; the catalog renders that Jinja with the row (`test_catalog_configuration`)
 - [ ] Generators go; their Jinja moves onto the templates (in progress)
   - [x] Groups, AV and the z2 ring: macros the templates call; the construction dump shows no difference
   - [x] Insteon templates and motion sensors: Jinja values on the templates, the sensors' posts a topic template; no difference
@@ -45,7 +45,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 - [x] State is a plain object: `State.get(path)`, `State.set(path, value)`
   - gppu's `State` and `Runtime` are commented out in `gppu/gppu.py` and no longer exported (2026-11-13)
 - [x] `paths_meet` and State's listeners removed
-- [ ] Y2's State and Runtime are gppu's
+- [ ] Y2's State and Runtime are gppu's. gppu has neither now; their tests are in `archive/tests/test_state.py`
 
 ## Y2 entity
 - [ ] Y2's entity (`y2entity.py`) is part of gppu
