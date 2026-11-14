@@ -22,7 +22,6 @@ import getpass
 import socket
 import subprocess
 from jinja2 import DictLoader, FileSystemLoader, StrictUndefined, Undefined, meta, pass_context
-from jinja2.runtime import Macro
 from jinja2.nativetypes import NativeEnvironment
 from jinja2.sandbox import SandboxedEnvironment
 
@@ -920,13 +919,30 @@ def jinja_configuration(node: Any) -> None:
     else: jinja_configuration(value)
 
 
-def apply_template(node: Any) -> Any:
-  """A row whose `template:` names a macro, merged over what that macro returns for it: the row wins."""
-  if isinstance(node, list): return [apply_template(value) for value in node]
+def templates_of(node: Any, found: dict | None = None) -> dict:
+  """Every template of a configuration by its name: a mapping in a `templates:` block. A name is declared once."""
+  found = {} if found is None else found
+  if isinstance(node, list):
+    for value in node: templates_of(value, found)
+  if not isinstance(node, dict): return found
+  for key, value in node.items():
+    if key == 'templates' and isinstance(value, dict):
+      for name, template in value.items():
+        if not isinstance(template, dict): continue
+        if name in found: raise ValueError(f'template {name!r} is declared twice')
+        found[name] = template
+    templates_of(value, found)
+  return found
+
+
+def apply_template(node: Any, templates: dict) -> Any:
+  """Every row of node whose `template:` names one of templates, merged over that template: the row wins. The
+  template's Jinja that reads the row stays as written, for the app that renders it."""
+  if isinstance(node, list): return [apply_template(value, templates) for value in node]
   if not isinstance(node, dict): return node
-  node = {key: apply_template(value) for key, value in node.items()}
-  if isinstance(name := node.get('template'), str) and isinstance(jinja.globals.get(name), Macro):
-    return _jinja_compile('{{ macro(**row) }}').render(macro=jinja.globals[name], row=node) | node
+  node = {key: apply_template(value, templates) for key, value in node.items()}
+  if isinstance(name := node.get('template'), str) and name in templates:
+    return apply_template(templates[name], templates) | node
   return node
 
 
@@ -1681,7 +1697,8 @@ class mixin_Config(_mixin):
                'glob_int': lambda path: _ if isinstance(_ := read(path), int) else 0,
                'glob_list': lambda path: _ if isinstance(_ := read(path), list) else [],
                'glob_dict': lambda path: _ if isinstance(_ := read(path), dict) else {}}
-    self._my = apply_template(jinja_fill(self._my, **readers))
+    self._my = jinja_fill(self._my, **readers)
+    self._my = apply_template(self._my, templates_of(self._my))
     i = 0
     while i < len(argv):
       arg, i = argv[i], i + 1
