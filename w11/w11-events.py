@@ -1,6 +1,6 @@
 """
 Watch Windows Event Viewer logs with a TUI — history + common errors + live tail.
-Uses gppu Env for configuration.
+Its configuration is its MANIFEST, read as a gppu App's own.
 
 Usage:
     python w11-events.py                    # configured logs
@@ -81,9 +81,10 @@ from datetime import datetime
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from gppu import Env, dict_from_yml, dict_to_yml
-from gppu import glob, glob_dict, glob_int, glob_list
+from gppu import App, dict_from_yml, dict_to_yml
 from gppu.tui import TUIApp, StatusHeader
+from w11 import resolve_app_dir
+APP_DIR: Path   # the w11 folder, which main resolves
 from textual import work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -596,7 +597,7 @@ def build_stats(events: list[dict]) -> dict:
 
 def stats_path_for_host(hostname: str) -> Path:
     """Stats file is always {hostname}.yaml next to the config."""
-    return Env.app_path / f'{hostname}.yaml'
+    return APP_DIR / f'{hostname}.yaml'
 
 
 def save_stats(stats: dict, stats_file: Path, hostname: str,
@@ -944,7 +945,7 @@ class EventLogApp(TUIApp):
             return
 
         evt = self._display_events[idx]
-        rules_file = Env.app_path / 'error_rules.yaml'
+        rules_file = APP_DIR / 'error_rules.yaml'
         rules_data = dict_from_yml(rules_file)
         detail_log.clear()
 
@@ -1169,7 +1170,7 @@ class EventLogApp(TUIApp):
 
     def action_export_history(self) -> None:
         ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-        path = Env.app_path / f'history_{self.hostname}_{ts}.txt'
+        path = APP_DIR / f'history_{self.hostname}_{ts}.txt'
         lines = []
         for evt in self._display_events:
             src = self.error_tracker.event_source_slug(evt)
@@ -1190,7 +1191,7 @@ class EventLogApp(TUIApp):
 
     def action_export_errors(self) -> None:
         ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-        path = Env.app_path / f'errors_{self.hostname}_{ts}.txt'
+        path = APP_DIR / f'errors_{self.hostname}_{ts}.txt'
         # Strip Rich markup for plain text
         table = self.error_tracker.format_table()
         clean = re.sub(r'\[/?[^\]]*\]', '', table)
@@ -1369,13 +1370,11 @@ def _escape(text: str) -> str:
 
 # ── CLI stats mode ───────────────────────────────────────────────────────────
 
-def run_stats_cli(log_names, level, days, max_msg_len, hostname):
+def run_stats_cli(log_names, level, days, max_msg_len, hostname, error_tracker):
     stats_file = stats_path_for_host(hostname)
     print(f'Recalculating stats for {hostname} -> {stats_file}')
     def progress(msg):
         print(f'  {msg}')
-    error_tracker = CommonErrorTracker(glob_dict('error_rules'),
-                                       categories=glob_dict('event_categories'))
     path = recalculate_stats(log_names, level, days, max_msg_len, stats_file, hostname,
                              error_tracker=error_tracker, progress_cb=progress)
     print(f'\nSaved: {path}')
@@ -1400,27 +1399,27 @@ def main():
     parser.add_argument('--clear-logs', action='store_true', help='Clear all configured event logs (needs admin)')
     args = parser.parse_args()
 
-    from w11 import resolve_app_dir
-    app_dir = resolve_app_dir()
-    Env.from_env(name='w11-events', app_path=app_dir)
+    global APP_DIR
+    APP_DIR = resolve_app_dir()   # the w11 folder: stats, error rules and exports
+    config = App(config=__file__)
 
     if args.all_logs:
         log_names = get_all_log_names()
     elif args.logs:
         log_names = args.logs
     else:
-        log_names = glob_list('logs', default=['Application', 'System', 'Security'])
+        log_names = config.my_list('logs')
 
-    level = args.level or glob('level', default='Warning')
-    days = args.days or glob_int('days', default=10)
-    do_dedup = not args.no_dedup and glob('dedup', default=True)
-    max_msg_len = glob_int('max_message_length', default=300)
+    level = args.level or config.my('level')
+    days = args.days or config.my_int('days')
+    do_dedup = not args.no_dedup and config.my('dedup')
+    max_msg_len = config.my_int('max_message_length')
     export_path = args.export
     hostname = socket.gethostname()
 
     # Common errors patterns (resolved via !include in YAML)
-    error_tracker = CommonErrorTracker(glob_dict('error_rules'),
-                                       categories=glob_dict('event_categories'))
+    error_tracker = CommonErrorTracker(config.my_dict('error_rules'),
+                                       categories=config.my_dict('event_categories'))
 
     if args.clear_logs:
         print(f'Clearing {len(log_names)} logs (requires admin)...')
@@ -1429,7 +1428,7 @@ def main():
         return
 
     if args.stats:
-        run_stats_cli(log_names, level, days, max_msg_len, hostname)
+        run_stats_cli(log_names, level, days, max_msg_len, hostname, error_tracker)
         return
 
     app = EventLogApp(log_names, level, days, do_dedup, max_msg_len, export_path,

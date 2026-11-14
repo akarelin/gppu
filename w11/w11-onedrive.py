@@ -4,7 +4,7 @@ OneDrive for Business Sync Diagnostics TUI.
 Reads SyncDiagnostics.log, the sync engine database, and download queue
 to surface stuck files, postponed changes, and overall sync health.
 Supports multiple accounts/tenants with tabbed view.
-Uses gppu Env for configuration.
+Its configuration is its MANIFEST, read as a gppu App's own.
 
 Usage:
     python w11-onedrive.py                     # interactive mode selector
@@ -79,8 +79,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from gppu import Env, format_size, format_duration
-from gppu import glob, glob_dict, glob_int, glob_list
+import gppu
+from gppu import format_size, format_duration
 from gppu.tui import TUIApp, StatusHeader
 from textual import work
 from textual.app import App, ComposeResult
@@ -1882,9 +1882,7 @@ def db_explore(accounts: list[str], output_dir: str | None = None) -> str | None
 def main():
     import argparse
 
-    from w11 import resolve_app_dir
-    app_dir = resolve_app_dir()
-    Env.from_env(name='w11-onedrive', app_path=app_dir)
+    config = gppu.App(config=__file__)   # gppu's App: textual's App is this module's App
 
     parser = argparse.ArgumentParser(description='OneDrive Sync Diagnostics TUI')
     parser.add_argument('mode', nargs='?',
@@ -1901,17 +1899,17 @@ def main():
     args = parser.parse_args()
 
     # Config values
-    cfg_accounts = glob_list('accounts', default=[])
-    cfg_hostnames = glob_list('hostnames', default=[])
-    cfg_stopwords = glob_list('hostname_stopwords', default=[])
-    cfg_exclude = glob_list('conflict_scan_exclude', default=['.git', 'node_modules', '__pycache__'])
-    cfg_watch_interval = glob_int('watch_interval', default=10)
+    cfg_accounts = config.my_list('accounts')
+    cfg_hostnames = config.my_list('hostnames')
+    cfg_stopwords = config.my_list('hostname_stopwords')
+    cfg_exclude = config.my_list('conflict_scan_exclude')
+    cfg_watch_interval = config.my_int('watch_interval')
 
     # Read manifest modes from config for interactive menu
-    manifest = glob_dict('manifest') or {}
+    manifest = config.my_dict('manifest')
     modes = manifest.get('modes') or {}
 
-    mode = args.mode or glob('mode', default=None)
+    mode = args.mode or config.my('mode')
     if not mode:
         app_name = manifest.get('name', 'OneDrive Diagnostics')
         icon = manifest.get('icon', '')

@@ -91,9 +91,8 @@ jobs:
       - name: Build binary (Linux)
         if: matrix.os == 'linux'
         run: |
-          python3.14 -m venv "$HOME/.venv"
-          "$HOME/.venv/bin/pip" install pyinstaller jinja2
-          "$HOME/.venv/bin/pip" install -e .
+          "$HOME/.local/bin/uv" pip install --python "$HOME/.venv/bin/python" pyinstaller jinja2
+          "$HOME/.local/bin/uv" pip install --python "$HOME/.venv/bin/python" -e .
           "$HOME/.venv/bin/pyinstaller" --onefile --name statusline --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=jinja2 --hidden-import=yaml --collect-all jinja2 --copy-metadata gppu statusline/__main__.py
 
       - name: Build binary

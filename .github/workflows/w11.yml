@@ -64,7 +64,7 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.13'
+          python-version: '3.14'
 
       - name: Test w11 launch
         run: |
@@ -76,15 +76,14 @@ jobs:
         run: |
           pip install pyinstaller
           pyinstaller --onefile --name w11 --add-data "w11/default_config;default_config" --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=textual --hidden-import=yaml --collect-all textual --copy-metadata gppu w11/__main__.py
-          pyinstaller --onefile --name w11-events --add-data "w11/default_config;default_config" --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=textual --hidden-import=yaml --collect-all textual --copy-metadata gppu w11/w11-events.py
-          pyinstaller --onefile --name w11-onedrive --add-data "w11/default_config;default_config" --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=textual --hidden-import=yaml --collect-all textual --copy-metadata gppu w11/w11-onedrive.py
+          pyinstaller --onefile --name w11-events --add-data "w11/default_config;default_config" --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=textual --hidden-import=yaml --collect-all textual --copy-metadata gppu --add-data "w11/w11-events.py;." --add-data "w11/error_rules.yaml;." w11/w11-events.py
+          pyinstaller --onefile --name w11-onedrive --add-data "w11/default_config;default_config" --hidden-import=gppu --hidden-import=gppu.gppu --hidden-import=gppu.ad --hidden-import=textual --hidden-import=yaml --collect-all textual --copy-metadata gppu --add-data "w11/w11-onedrive.py;." w11/w11-onedrive.py
 
       - name: Stage release files
         run: |
           New-Item -ItemType Directory -Force -Path release | Out-Null
           Copy-Item dist/w11.exe, dist/w11-events.exe, dist/w11-onedrive.exe -Destination release/
-          Copy-Item w11/w11.yaml, w11/w11-events.yaml, w11/w11-onedrive.yaml -Destination release/
-          Copy-Item w11/error_rules.yaml, w11/event_categories.yaml -Destination release/
+          Copy-Item w11/w11.yaml, w11/error_rules.yaml -Destination release/
           Compress-Archive -Path release/* -DestinationPath dist/w11-windows-amd64.zip
 
       - uses: actions/upload-artifact@v7
