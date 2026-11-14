@@ -21,13 +21,13 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 - [x] `APP`, `_app` and `init` removed
 - [x] Nothing outside `mixin_Config` reads `_my`
 - [x] `_config_file`, `_program_name`, `_main`, `_resolve_app_path` removed with `from_env`
-- [ ] gppu's tests that set the environment with `Env.from_dict` or `Env.from_env` have no public way to set one now that Env takes only Hosts or IoT
+- [x] gppu's tests give Env its configuration as a program does: the `ran` fixture writes RAN's `config.yaml` in a temporary home and an app declaring RAN loads it; a test of an app's own reading gives the app `config=`. gppu's examples read their own YAML through `App(config=...)`. Still on removed calls: `test_update_by_y2path` (`Env.update_config`, with AppService's MQTT configuration) and conftest's `ld` fixture (`Env._load_dict`, skipped without `LD_TEST_DSN`)
 - [x] The command line overrides the app, not Env: `Env.from_argv` removed, and `App(argv=...)` puts the command line over the app's own configuration; Preservator and `list-sessions.py` take it (RAN)
 - [x] The environment is RAN, `RAN/_config/config.yaml`, where Alex moved Hosts' configuration: the Hosts TUI, Fleet, craptui, gppu's tests, `examples/basic.py` and the launcher example declare `environment='RAN'`; `topology/locations.yaml` and `topology/connections.yaml` sit where `config.yaml` includes them
 
 ## Templates
 - [ ] Env reads a templated configuration with the two kinds of templates, Jinja and the basic `$` one, so `glob` and `self.my` return it filled in. (Env's `$` pass gets no values today; it once filled `$code_path`, `$shared_data_path` and `$shared_data`.)
-- [ ] `TemplateSet` (template, generator, behavior, refs) goes; gppu's `fs` catalog, lake and objects use Jinja
+- [ ] `TemplateSet` (template, generator, behavior, refs) goes; gppu's `fs` catalog, lake and objects use Jinja. `test_catalog_configuration` shows the clash: loaded through Env, a connection row is merged over its template with its row-reading `uri` Jinja left for the app, so the catalog builds `null://{{ scheme ~ ... }}`; RAN's configuration has no `template:` rows
 - [ ] Generators go; their Jinja moves onto the templates (in progress)
   - [x] Groups, AV and the z2 ring: macros the templates call; the construction dump shows no difference
   - [x] Insteon templates and motion sensors: Jinja values on the templates, the sensors' posts a topic template; no difference
@@ -55,7 +55,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 - [x] App in `gppu.py`, AsyncApp in `app.py`; MqttApp and AppService in `iot.py`; `app_service.py` gone
 - [x] AppService's startup read (`from_mqtt`) and its running service are one class
 - [x] AsyncApp launches a process and runs work in parallel: `launch` hands each line of a process's output to the caller, and `run_parallel` starts every unit at once, holding back one that clashes with a running one. They are the Fleet grid's, moved out of the TUI: on 3.7.4 the grid calls them on itself and RAN `Hosts/fleet.py` has no copy. The timers (`run_later`, `run_every`) are still Y2's App's
-- [x] TUIApp is an AsyncApp: an app's data through `_DC`, AsyncApp's methods, and its TaskGroup open while Textual runs it. Textual keeps `run`, its repr, identity and the names it annotates (`_DC` had made a property of Textual's `TOOLTIP_DELAY`). It runs AsyncApp's load and start as AsyncApp's, so a TUI's own `load` or `start` (the handler browser's, the Fleet grid's) stays its own
+- [x] TUIApp is an AsyncApp: an app's data through `_DC`, AsyncApp's methods, and its TaskGroup open while Textual runs it. Textual keeps `run`, its repr, identity and the names it annotates (`_DC` had made a property of Textual's `TOOLTIP_DELAY`). It runs AsyncApp's load and start as AsyncApp's, so a TUI's own `load` or `start` (the handler browser's, the Fleet grid's) stays its own. A launcher's `SECTIONS` is a class setting (`ClassVar`), so `_DC` leaves it alone; gppu's pickers, `Selector` and `DetailedSelector`, are TUI apps whose arguments are their data
 - [ ] Configuration from MQTT read in one place: one listener on a topic prefix, the last part of the topic names the section; no topic-to-path table, no `from_mqtt` startup copy
 - [x] TUI apps read inline configs through `dict_from_yml`: a `.py`'s global `MANIFEST`, a `.cmd`'s opening `::` lines, a `.ps1`'s opening `.NOTES`; each equals the YAML it replaced. The Hosts launcher lists `synology-mount.py`, `mapper.cmd` and `tray-control.ps1`, and w11's lists `w11-events.py` and `w11-onedrive.py`. A launcher's `apps:` and `utilities:` are its own configuration, an App given to `load_registry`, and Edit Config opens its `CONFIG`; the Hosts TUI, craptui and w11 construct it. `examples/sessions_clean.py` runs on master as an app whose own configuration is its `MANIFEST`, with the command line over it
 
@@ -80,4 +80,5 @@ These move in the same commit as the release. gppu 3.7.4 is released and alex-pc
 - Hosts TUI: Fleet, Preserve and Configs are on the Fleet section again, and render-config in Fleet tools: `configure-all`, `render-config`, `harness` and the Configs files came back from the archive and read Fleet's rows, `Fleet.values` and gppu's glob and Jinja (RAN b071600bb). Start page stays archived. PC Control launches `IoT/PCC/pcc-service.py`, which stops at `Env.from_env` until display-control is switched
 - Fixed: Preservator: the LLM step's `logs` exclusion, meant for OpenClaw, also left out Agy's transcripts, which sit in `.system_generated/logs`; a session folder is now copied whole whatever the step excludes
 - craptui: `craptui.yaml` names `gd-video-ripper.yaml`, removed with GD Video Ripper, so craptui does not open
+- gppu examples: `handlers.yaml` names `D:\TextLake\.catalog`, which has no host folder, so `handler_ls` and the handler browser stop there
 - w11: with `W11_APP_DIR` unset, the launcher reads its 2026-03-16 copies in `~/.gppu/w11`, not the repository's scripts; `w11/default_config/w11.yaml`, which seeds them, still names the deleted `w11-events.yaml` and `w11-onedrive.yaml`
