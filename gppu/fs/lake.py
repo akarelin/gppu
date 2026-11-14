@@ -7,13 +7,13 @@ Lake folder is listed from there, and a UI lists it through the Lake's API, neve
 bytes of a file saved, copied or opened.
 
 The Lake is configured in two places. Its locations are Linked Data's, a catalog made by gppu.fs.catalog.catalog(), which reach
-every uri outside the Lake. What the Lake itself is configured with is the app's, in Env: the uri of the Lake saved objects are
-stored in, a folder this host reaches through gppu.fs's FileSystem, and the templates of its layout
-(CRAP Systems/lake/docs/layout.md), one per type of record gppu's handlers read, `source` for any other.
+every uri outside the Lake. Where each type of file is stored in the Lake is the Lake's own configuration, its Location's
+folders in the environment (`locations/lake/folders`): one line per type, the file's whole path below the Lake. A file of a type
+with no line there is refused.
 
-  file_path(templates, type, name, **values)  a file's path below the Lake, by the Lake's template of its type or kind
-  copy_to_lake(source, lake, templates, type, **values)   a file copied into the Lake on this host at its file_path
-  Lake(catalog, store, templates, contents)   the Lake over catalog's locations, saving below store by templates, its catalog contents
+  file_path(type, name, **values)   a file's path below the Lake, by the Lake's line for its type
+  copy_to_lake(source, lake, type, **values)   a file copied into the Lake on this host at its file_path
+  Lake(catalog, store, contents)    the Lake over catalog's locations, saving below store, its catalog contents
   api(lake)                         the Lake as a FastAPI app, which an APIApp serves at /lake among its apis()
   LakeFileSystem(url, root)         the Lake through its API as an fsspec filesystem, what a desktop or a UI browses it with"""
 import io
@@ -24,7 +24,7 @@ import tempfile
 import threading
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, BinaryIO, Mapping
+from typing import Any, BinaryIO
 from urllib.parse import unquote, urlsplit
 
 from fsspec import AbstractFileSystem
@@ -33,20 +33,25 @@ from jinja2 import UndefinedError
 from . import handlers
 from . import CACHE, Container, DataObject, FileSystem, Location, _address, _below
 from .catalog import Catalog, GppuCatalog
-from ..gppu import TimeSpan, jinja_template
+from ..gppu import TimeSpan, glob, jinja_template
 from .uri import y2uri
 
 PIECE = 1 << 20   # a download is sent a mebibyte at a time
 INDEX = '.gppufs.sqlite'   # how a gppufs index's name ends
 
 
-def file_path(templates: Mapping[str, str], type: str, name: str, **values: Any) -> str:
-    """The path of a file below the Lake, where it goes and its name there: the Lake's template of its type or kind, rendered
-    with its name, stem and ext and what its writer knows of it, values, such as start, the moment it is of. The Lake writes
-    the file there, and its record in Postgres carries the same path. A template that renders nothing, or asks for what it is
-    not given, gives no path."""
+def file_path(type: str, name: str, **values: Any) -> str:
+    """The path of a file below the Lake, where it goes and its name there: the Lake's line for its type, from the environment
+    (`locations/lake/folders`), filled in with its name, stem and ext and what its writer knows of it, values, such as start,
+    the moment it is of. The Lake writes the file there, and its record in Postgres carries the same path. A type with no line,
+    or a line that comes out empty or asks for what it is not given, gives no path."""
+    places = glob('locations/lake/folders')
+    if not places:
+        raise ValueError('the environment has no Lake folders, locations/lake/folders')
+    if type not in places:
+        raise ValueError(f'{name}: the Lake has no path for a {type}')
     try:
-        path = jinja_template(templates[type], name=name, stem=Path(name).stem, ext=Path(name).suffix, re=re, **values)
+        path = jinja_template(places[type], name=name, stem=Path(name).stem, ext=Path(name).suffix, re=re, **values)
     except UndefinedError as error:   # the template asks for what the file does not say, such as the date of a session with no time
         raise ValueError(f'{name}: no path for a {type}: {error}') from error
     path = str(path or '').strip()
@@ -55,10 +60,10 @@ def file_path(templates: Mapping[str, str], type: str, name: str, **values: Any)
     return str(Location.relative(path))
 
 
-def copy_to_lake(source: Path, lake: Path | str, templates: Mapping[str, str], type: str, **values: Any) -> Path:
-    """source copied into the Lake, the folder lake on this host, at its file_path by the Lake's templates: a plain file-system
-    copy, its times kept, over a file already there. The path it is copied to."""
-    target = Path(lake) / file_path(templates, type, source.name, **values)
+def copy_to_lake(source: Path, lake: Path | str, type: str, **values: Any) -> Path:
+    """source copied into the Lake, the folder lake on this host, at its file_path: a plain file-system copy, its times kept,
+    over a file already there. The path it is copied to."""
+    target = Path(lake) / file_path(type, source.name, **values)
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
     return target
@@ -69,11 +74,10 @@ class Lake:
     what the Lake holds: every file the Lake saves is recorded there, every index it receives is loaded there, and a Lake folder is
     listed from there, so nothing reads the store but the bytes of a file saved, copied or opened."""
 
-    def __init__(self, catalog: GppuCatalog, store: y2uri | str, templates: Mapping[str, str], contents: Catalog) -> None:
+    def __init__(self, catalog: GppuCatalog, store: y2uri | str, contents: Catalog) -> None:
         self.catalog = catalog
         provider = FileSystem()   # the Lake's store is its own configuration, a folder this host reaches, not one of Linked Data's locations
         self.store = Container(provider, y2uri(store))
-        self.templates = dict(templates)   # file_path's, by type
         self.contents = contents
         self.root = provider.local(self.store.uri)   # the Lake on this host
 
@@ -126,14 +130,13 @@ class Lake:
                     file.write(obj.content if isinstance(obj.content, bytes) else obj.content.encode('utf-8')
                                if isinstance(obj.content, str) else json.dumps(obj.content, ensure_ascii=False).encode('utf-8'))
             record = self.read(scratch)
-            type = handlers.probe(scratch).type
-            type = type if type in self.templates else 'source'
+            type = 'index' if obj.name.endswith(INDEX) else handlers.probe(scratch).type
             span = getattr(record, 'span', None) or handlers.Handler.named(obj.name)   # the date it is of: its span's, else its name's
             source = urlsplit(str(obj.uri))
             try:
-                path = file_path(self.templates, type, obj.name, record=record, kind=obj.kind, start=span.start if span else None,
-                                 system=source.scheme, account=source.netloc, path=unquote(source.path).strip('/'))
-            except ValueError as error:   # its template asks for the date of what gives none, such as a session with no time
+                path = file_path(type, obj.name, record=record, kind=obj.kind, start=span.start if span else None,
+                                 account=source.netloc, path=unquote(source.path).strip('/'))
+            except ValueError as error:   # its line asks for the date of what gives none, such as a session with no time
                 if span is None and isinstance(error.__cause__, UndefinedError):
                     raise ValueError(f'{obj.name}: no path for a {type}: what was sent of it gives no time, so it has no date') from error
                 raise

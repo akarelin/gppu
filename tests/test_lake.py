@@ -13,6 +13,7 @@ pytest.importorskip('fastapi')   # gppu's ld extra; the build's tests install gp
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from gppu import Env
 from gppu.fs import DataObject
 from gppu.fs.catalog import Catalog, GppuCatalog
 from gppu.fs.gppufs import GppuFileSystem
@@ -25,10 +26,22 @@ SESSION = '\n'.join(json.dumps(line) for line in (
     {'type': 'assistant', 'sessionId': UID, 'uuid': 'a2', 'parentUuid': 'a1', 'timestamp': '2026-07-01T10:01:00Z',
      'message': {'role': 'assistant', 'model': 'claude', 'content': [{'type': 'text', 'text': 'hi'}]}},
 )) + '\n'
-LAYOUT = {   # the Lake's layout: a session under timeseries, by its own start; an original under its system and account
+LAYOUT = {   # the Lake's lines: a session under timeseries, by its own start; an index under its host and folder
     'session': "timeseries/{{ start.year }}/Sessions/{{ '%02d' % start.month }}/{{ record.type }}/{{ record.uid }}/{{ name }}",
-    'source': "{{ 'sources/' ~ system ~ '-' ~ account ~ '/' ~ path if system and account and path else '' }}",
+    'index': "indexes/{{ account }}/{{ path.rpartition('/')[0] | replace(':', '') }}/{{ name }}",
+    'screenshot': "timeseries/{{ start.year }}/Screenshots/{{ '%02d' % start.month }}/{{ name }}",
+    'shell': "timeseries/{{ start.year }}/Activity/Shell/{{ '%02d' % start.month }}/"
+             "{{ start.strftime('%y%m%d.%H%M') }}_{{ stem.lstrip('.') }}_{{ host }}.txt",
 }
+
+
+@pytest.fixture(autouse=True)
+def environment():
+    """The Lake's lines where the Lake reads them, the environment's locations/lake/folders."""
+    previous = Env._my
+    Env._my = {'locations': {'lake': {'folders': LAYOUT}}}
+    yield
+    Env._my = previous
 
 
 def lake_of(tmp_path, ld):
@@ -39,7 +52,7 @@ def lake_of(tmp_path, ld):
     (outer / 'inner' / 'b.md').write_text('---\ntitle: B\n---\nText')
     catalog = GppuCatalog({'connections': {'file': {'provider': 'file'}},
                            'locations': {'outer': {'path': '', 'connection': 'file', 'canonical': outer.as_uri()}}})
-    return Lake(catalog, outer.as_uri(), LAYOUT, Catalog(lambda: [], ld)), outer
+    return Lake(catalog, outer.as_uri(), Catalog(lambda: [], ld)), outer
 
 
 def test_a_session_is_placed_by_what_its_handler_reads_and_recorded_in_the_catalog(tmp_path, ld):
@@ -55,40 +68,31 @@ def test_a_session_is_placed_by_what_its_handler_reads_and_recorded_in_the_catal
     assert not list(outer.rglob('*.gppufs.sqlite'))   # nothing but the file is written to the store
 
 
-def test_an_original_is_placed_under_its_system_and_account(tmp_path, ld):
-    lake, outer = lake_of(tmp_path, ld)
-    uri = lake.save(DataObject('m365://karelin/users/alex/contacts/Ann%20Lee.json', b'{"a": 1}', None, 'file', 'Ann Lee.json'))
-    assert str(uri) == (outer / 'sources' / 'm365-karelin' / 'users' / 'alex' / 'contacts' / 'Ann Lee.json').as_uri()
-
-
-def test_a_file_path_is_the_template_of_its_type_rendered_with_what_its_writer_knows(tmp_path):
+def test_a_file_path_is_the_lakes_line_for_its_type_filled_in_with_what_its_writer_knows(tmp_path):
     """No Lake and no catalog: the same path the Lake writes a file at and its Postgres record carries."""
     session = tmp_path / f'{UID}.jsonl'
     session.write_text(SESSION)
     record = Lake.read(session)
-    assert file_path(LAYOUT, 'session', session.name, record=record, start=record.span.start) == \
+    assert file_path('session', session.name, record=record, start=record.span.start) == \
         f'timeseries/2026/Sessions/07/cc/{UID}/{UID}.jsonl'
-    assert file_path(LAYOUT, 'source', 'Ann Lee.json', system='m365', account='karelin', path='users/alex/contacts/Ann Lee.json') \
-        == 'sources/m365-karelin/users/alex/contacts/Ann Lee.json'
-    with pytest.raises(ValueError, match='no path'):
-        file_path(LAYOUT, 'source', 'note.txt', system='', account='', path='')
-    with pytest.raises(ValueError, match='no path'):   # a template asking for what it is not given
-        file_path(LAYOUT, 'session', session.name, record=record)
+    assert file_path('index', '.Dev.gppufs.sqlite', account='alex-pc', path='D:/Dev/.Dev.gppufs.sqlite') == \
+        'indexes/alex-pc/D/Dev/.Dev.gppufs.sqlite'
+    with pytest.raises(ValueError, match='no path for a file'):   # a type the Lake has no line for
+        file_path('file', 'Ann Lee.json', account='karelin', path='users/alex/contacts/Ann Lee.json')
+    with pytest.raises(ValueError, match='no path'):   # a line asking for what it is not given
+        file_path('session', session.name, record=record)
 
 
 def test_a_file_is_copied_to_the_lake_at_its_file_path(tmp_path):
     """A writer such as Preservator names the kind and what it knows; the copy is a plain one, its times kept."""
     shot = tmp_path / 'Screenshot 2026-11-10 101010.png'
     shot.write_bytes(b'png')
-    templates = {'screenshot': "timeseries/{{ start.year }}/Screenshots/{{ '%02d' % start.month }}/{{ name }}",
-                 'shell': "timeseries/{{ start.year }}/Activity/Shell/{{ '%02d' % start.month }}/"
-                          "{{ start.strftime('%y%m%d.%H%M') }}_{{ stem.lstrip('.') }}_{{ host }}.txt"}
-    target = copy_to_lake(shot, tmp_path / 'lake', templates, 'screenshot', start=date(2026, 11, 10))
+    target = copy_to_lake(shot, tmp_path / 'lake', 'screenshot', start=date(2026, 11, 10))
     assert target == tmp_path / 'lake' / 'timeseries' / '2026' / 'Screenshots' / '11' / shot.name
     assert target.read_bytes() == b'png' and target.stat().st_mtime_ns == shot.stat().st_mtime_ns
     history = tmp_path / '.bash_history'
     history.write_text('ls\n')
-    assert copy_to_lake(history, tmp_path / 'lake', templates, 'shell', start=datetime(2026, 11, 12, 9, 5), host='alex-pc') == \
+    assert copy_to_lake(history, tmp_path / 'lake', 'shell', start=datetime(2026, 11, 12, 9, 5), host='alex-pc') == \
         tmp_path / 'lake' / 'timeseries' / '2026' / 'Activity' / 'Shell' / '11' / '261112.0905_bash_history_alex-pc.txt'
 
 
@@ -114,7 +118,7 @@ def test_an_index_the_lake_receives_is_loaded_into_the_catalog_and_kept_with_the
     client = TestClient(served, raise_server_exceptions=False)
     sent = client.post('/lake/', params={'name': index.name, 'source': 'file://alex-pc/Dev/.Dev.gppufs.sqlite'}, content=index.read_bytes())
     assert sent.status_code == 202   # the load ran after the answer, as the test client runs a background task
-    assert (outer / 'sources' / 'file-alex-pc' / 'Dev' / '.Dev.gppufs.sqlite').read_bytes() == index.read_bytes()
+    assert (outer / 'indexes' / 'alex-pc' / 'Dev' / '.Dev.gppufs.sqlite').read_bytes() == index.read_bytes()
     assert [row['name'] for row in lake.contents.entries(uri='file://alex-pc/Dev')] == ['note.md', 'sub']
     assert lake.info(sent.json()['uri'])['type'] == 'sqlite'
     state = lake.contents.loaded('file://alex-pc/Dev')
@@ -217,8 +221,8 @@ def test_the_lake_reaches_its_store_without_a_location_holding_it(tmp_path, ld):
     """The Lake's store is its own configuration: a Lake whose store no location of the catalog holds saves and retrieves there."""
     store = tmp_path / 'store'
     store.mkdir()
-    lake = Lake(GppuCatalog({'connections': {}, 'locations': {}}), store.as_uri(), LAYOUT, Catalog(lambda: [], ld))
-    uri = lake.save(DataObject('file://alex-pc/notes/a.txt', b'a', None, 'file', 'a.txt'))
-    assert (store / 'sources' / 'file-alex-pc' / 'notes' / 'a.txt').read_bytes() == b'a'
+    lake = Lake(GppuCatalog({'connections': {}, 'locations': {}}), store.as_uri(), Catalog(lambda: [], ld))
+    uri = lake.save(DataObject('', SESSION.encode(), None, 'file', f'{UID}.jsonl'))
+    assert (store / 'timeseries' / '2026' / 'Sessions' / '07' / 'cc' / UID / f'{UID}.jsonl').read_text() == SESSION
     with lake.retrieve(uri).content as content, lake.open(uri) as opened:
-        assert content.read() == opened.read() == b'a'
+        assert content.read() == opened.read() == SESSION.encode()
