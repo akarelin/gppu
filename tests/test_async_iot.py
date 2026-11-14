@@ -13,6 +13,7 @@ from typing import Any
 
 from gppu import AsyncApp, Env, mixin_EventLoopBridge, HTTPControl, JSONHTTPControl, SerializedControl, mixin_Mqtt
 from gppu.iot import aiohttp
+from gppu.tui import TUIApp
 
 
 Env._my = {}
@@ -52,6 +53,10 @@ class AsyncAppTests(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(coroutine.cr_frame, None)
 
 
+class _Grid(TUIApp):
+  def __start(self) -> None: self.steps = ['start']
+
+
 class RunParallelTests(unittest.IsolatedAsyncioTestCase):
   async def test_launch_hands_each_line_and_reports_the_exit(self) -> None:
     app, lines = AsyncApp(name='parallel'), []
@@ -76,15 +81,12 @@ class RunParallelTests(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(failures, [('b', 'b')])
 
   async def test_a_tui_app_is_an_async_app_and_launches_on_itself(self) -> None:
-    from gppu.tui import TUIApp
-
-    class Grid(TUIApp): pass
-
-    app, lines = Grid(), []
+    app, lines = _Grid(), []
     self.assertIsInstance(app, AsyncApp)
-    self.assertEqual(app.name, 'grid')
+    self.assertEqual(app.name, '_grid')
     async with app.run_test():
       self.assertIsNotNone(app._task_group)
+      self.assertEqual(app.steps, ['start'])
       self.assertIsNone(await app.launch([sys.executable, '-c', "print('one')"], lines.append, '.', dict(os.environ)))
     self.assertEqual(lines, ['one'])
     self.assertIsNone(app._task_group)

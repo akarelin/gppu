@@ -569,8 +569,8 @@ class _TUIAppMeta(type(TextualApp), type(AsyncApp)):
 
 
 class TUIApp(AsyncApp, TextualApp, metaclass=_TUIAppMeta):
-  """Textual application base, imported from ``gppu.tui``. A TUIApp is an AsyncApp: it has an app's data and its
-  methods, and its TaskGroup is open while Textual runs it.
+  """Textual application base, imported from ``gppu.tui``. A TUIApp is an AsyncApp: it has an app's data, its steps
+  and its methods, and its TaskGroup is open while Textual runs it.
 
   Subclass and define ``compose()`` for widgets and ``on_mount()`` for startup
   work; Textual owns the event loop. The environment is the one an App declares
@@ -622,15 +622,17 @@ class TUIApp(AsyncApp, TextualApp, metaclass=_TUIAppMeta):
 
   async def _process_messages(self, *args, **kwargs):
     # The debug panel is the console while Textual owns the terminal.
-    # Every way Textual runs an app passes here, so the app's TaskGroup is open while it runs, and stopping the app
-    # cancels what it spawned. A TUI starts its own work on mount.
+    # Every way Textual runs an app passes here, so the app's TaskGroup opens here, its load and start steps run in it,
+    # and stopping the app cancels what it spawned. The steps are AsyncApp's, whatever a TUI calls its own.
     console_attached = Logger._console in Logger._root.handlers
     if console_attached: Logger._root.removeHandler(Logger._console)
     try:
       async with asyncio.TaskGroup() as tasks:
         self._task_group = tasks
+        for step in (AsyncApp.load, AsyncApp.start):
+          if result := step(self): await result
         try: return await super()._process_messages(*args, **kwargs)
-        finally: self.stop()
+        finally: AsyncApp.stop(self)
     finally:
       self._task_group = None
       self._background_tasks.clear()
