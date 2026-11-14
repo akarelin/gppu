@@ -23,6 +23,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 - [x] `_config_file`, `_program_name`, `_main`, `_resolve_app_path` removed with `from_env`
 - [ ] gppu's tests that set the environment with `Env.from_dict` or `Env.from_env` have no public way to set one now that Env takes only Hosts or IoT
 - [x] The command line overrides the app, not Env: `Env.from_argv` removed, and `App(argv=...)` puts the command line over the app's own configuration; Preservator and `list-sessions.py` take it (RAN)
+- [x] The environment is RAN, `RAN/_config/config.yaml`, where Alex moved Hosts' configuration: the Hosts TUI, Fleet, craptui, gppu's tests, `examples/basic.py` and the launcher example declare `environment='RAN'`; `topology/locations.yaml` and `topology/connections.yaml` sit where `config.yaml` includes them
 
 ## Templates
 - [ ] Env reads a templated configuration with the two kinds of templates, Jinja and the basic `$` one, so `glob` and `self.my` return it filled in. (Env's `$` pass gets no values today; it once filled `$code_path`, `$shared_data_path` and `$shared_data`.)
@@ -69,6 +70,7 @@ These move in the same commit as the release. gppu 3.7.2 is released and alex-pc
 ## Found outside this task
 - Y2: `test_insteon`, `test_kasa2mqtt`, `test_scene_light_contract` and `test_creekview_editor` fail each run on its own, on the running v6.1.7.5730 and on main alike; none is in the Release's verify step
 - Hosts: `configs.py`'s and `start-page.py`'s `load_config` read `fleet.platforms`, which Fleet has not had since 2026-09-30
+- Hosts: `hosts.yaml` gives s1 no `mount` since the move to `RAN/_config`, so `server_mounts` renders its mount points as `None/Lake` and the like
 - gppu: `test_tui_logging`'s file-and-trace-rules and shared-log-screens tests fail on master as it is
 - Hosts TUI: Fleet, Preserve and Configs launched `configure-all`'s scripts, archived 2026-11-11, and choosing one crashed the menu; they are commented out of `tui.yaml`. PC Control launches `IoT/PCC/pcc-service.py`, which stops at `Env.from_env` until display-control is switched
 - Preservator: the LLM step's `logs` exclusion, meant for OpenClaw, also leaves out Agy's transcripts, which sit in `.system_generated/logs`, so no Agy transcript reaches the Lake

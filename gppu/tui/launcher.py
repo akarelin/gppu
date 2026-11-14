@@ -14,7 +14,7 @@ Usage::
         MENU_TITLE = 'My Tools'
 
     def main():
-        launcher = App(environment='Hosts', config=APP_DIR / 'myapp.yaml')
+        launcher = App(environment='RAN', config=APP_DIR / 'myapp.yaml')
         launcher_main(load_registry(APP_DIR, launcher), MyApp, APP_DIR, 'My Tools — launcher')
 
     # Serve as a web app:  python myapp.py --serve [--port 8566] [--host localhost]

@@ -134,7 +134,7 @@ def test_the_api_at_lake_answers_what_the_lake_answers(tmp_path, ld):
         {'type': 'permission-mode', 'sessionId': UID, 'permissionMode': 'default'}, {'type': 'file-history-snapshot', 'messageId': 'm'}))
     unplaced = client.post('/lake/', params={'name': f'{UID}.jsonl', 'copy': ''}, content=named)
     assert unplaced.status_code == 400 and unplaced.json()['error'] == (
-        f'{UID}.jsonl: the Lake has no place for a session: what was sent of it gives no time, so it has no date to be placed by')
+        f'{UID}.jsonl: no path for a session: what was sent of it gives no time, so it has no date')
     assert client.post('/lake/', params={'name': 'note.txt'}, content=b'text').status_code == 400
 
 

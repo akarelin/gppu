@@ -4,15 +4,15 @@
 - Env is a global singleton app. It loads like any app and does not initialize from itself.
 - `glob`, `glob_int`, `glob_list` and `glob_dict` are global variables, not properties of a class.
 - New configuration is the same event as reload, restart or reset. Configuration is never compared, and nothing listens for its changes.
-- The location of the configuration is invisible to an app. There are two environments: Hosts, configured in `RAN/Hosts/_config/config.yaml`, and Creekview, configured in `IoT/_Creekview/_creekview.yaml`. Each comes from its repository.
-- Apps share the Hosts environment. The only other apps are Y2's, and they share Creekview.
+- The location of the configuration is invisible to an app. There are two environments: RAN, configured in `RAN/_config/config.yaml`, and Creekview, configured in `IoT/_Creekview/_creekview.yaml`. Each comes from its repository.
+- Apps share the RAN environment. The only other apps are Y2's, and they share Creekview.
 - Configuration is not found by hard-coding or by walking up and down folders.
 - An environment is a single YAML file. Its path is constructed from the location of the repository.
-- An app declares Hosts or IoT; the rest is determined from that declaration.
+- An app declares RAN or IoT; the rest is determined from that declaration.
 - There is no topology file.
 - The command line overrides an application's behaviour, not the environment.
 - Configuration folders hold no Python code.
-- An app does not require an environment. The basic.py example uses Hosts and its debug logging.
+- An app does not require an environment. The basic.py example uses RAN and its debug logging.
 
 ## Templates
 - Configuration can be a template, and an application reads that configuration from the template.
