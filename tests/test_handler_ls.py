@@ -13,6 +13,17 @@ from examples import handler_ls
 from examples.handler_ls import listing, main
 from gppu.fs.catalog import GppuCatalog
 
+EXAMPLES = Path(__file__).resolve().parents[1] / 'examples'
+
+
+def script_for(tmp_path: Path, catalog: Path) -> Path:
+  """A copy of handler_ls.py whose MANIFEST names the test's catalog."""
+  script = tmp_path / 'run' / 'handler_ls.py'
+  script.parent.mkdir(exist_ok=True)
+  text = (EXAMPLES / 'handler_ls.py').read_text(encoding='utf-8')
+  script.write_text(text.replace('catalog: D:/TextLake/.catalog', f'catalog: {catalog.as_posix()}'), encoding='utf-8')
+  return script
+
 
 def catalog_for(tmp_path: Path, *locations: Path) -> Path:
   catalog = tmp_path / '.catalog'
@@ -39,8 +50,7 @@ def test_main_lists_the_catalog_and_one_location_with_an_argument(tmp_path, monk
   location.mkdir()
   (location / 'plain.txt').write_text('plain', encoding='utf-8')
   catalog = catalog_for(tmp_path, location)
-  (tmp_path / 'handlers.yaml').write_text(f'catalog: {catalog.as_posix()}\n', encoding='utf-8')
-  monkeypatch.setattr(handler_ls, '__file__', str(tmp_path / 'handler_ls.py'))   # its handlers.yaml is the test's
+  monkeypatch.setattr(handler_ls, '__file__', str(script_for(tmp_path, catalog)))   # its MANIFEST names the test's catalog
   monkeypatch.setattr(sys, 'argv', ['handler_ls.py'])
   main()
   rows = json.loads(capsys.readouterr().out)
@@ -61,13 +71,9 @@ def test_cli_redirected_output_preserves_unicode_on_windows(tmp_path):
   location.mkdir()
   (location / name).write_text('---\ntitle: Test\n---\nText', encoding='utf-8')
   catalog = catalog_for(tmp_path, location)
-  examples = Path(__file__).resolve().parents[1] / 'examples'
-  script = tmp_path / 'run' / 'handler_ls.py'
-  script.parent.mkdir()
-  script.write_text((examples / 'handler_ls.py').read_text(encoding='utf-8'), encoding='utf-8')
-  (script.parent / 'handlers.yaml').write_text(f'catalog: {catalog.as_posix()}\n', encoding='utf-8')
+  script = script_for(tmp_path, catalog)
   result = subprocess.run([sys.executable, str(script), str(location)], cwd=tmp_path, capture_output=True,
-    env={**os.environ, 'PYTHONIOENCODING': 'cp1252', 'PYTHONPATH': str(examples.parent)})   # the gppu under test, not the one installed
+    env={**os.environ, 'PYTHONIOENCODING': 'cp1252', 'PYTHONPATH': str(EXAMPLES.parent)})   # the gppu under test, not the one installed
   assert result.returncode == 0, result.stderr
   rows = json.loads(result.stdout.decode('utf-8'))
   assert name in [row['gppu']['name'] for row in rows]

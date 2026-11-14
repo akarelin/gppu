@@ -4,7 +4,7 @@ The Lake is browsable at `G:\Lake` through a read-only gppufs mount. Directory O
 
 `G:\Lake` provides physical navigation with gppufs containers. `G:\Indexed` provides a separate view of the existing gppufs indexes. Within each indexed location, stored files appear directly, including files recorded many folders below its root. Directory Opus is open at `G:\Indexed\Lake` for Alex's acceptance; verification of the implementation does not substitute for that acceptance.
 
-Requirements: [SPEC_desktop.md](../SPEC_desktop.md). Configuration: [examples/desktop.yaml](../examples/desktop.yaml). The mount point is explicitly `G:`; the Lake source is `\\s1\Lake`. Each configured source appears as a named folder under the mount. Additional sources use that same mapping and are read by `GppuFileSystem`.
+Requirements: [SPEC_desktop.md](../SPEC_desktop.md). Configuration: the `MANIFEST` of [examples/desktop_mount.py](../examples/desktop_mount.py). The mount point is explicitly `G:`; the Lake source is `\\s1\Lake`. Each configured source appears as a named folder under the mount. Additional sources use that same mapping and are read by `GppuFileSystem`.
 
 ## Implementation
 

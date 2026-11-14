@@ -21,7 +21,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 - [x] `APP`, `_app` and `init` removed
 - [x] Nothing outside `mixin_Config` reads `_my`
 - [x] `_config_file`, `_program_name`, `_main`, `_resolve_app_path` removed with `from_env`
-- [x] gppu's tests give Env its configuration as a program does: the `ran` fixture writes RAN's `config.yaml` in a temporary home and an app declaring RAN loads it; a test of an app's own reading gives the app `config=`. gppu's examples read their own YAML through `App(config=...)`. Still on removed calls: `test_update_by_y2path` (`Env.update_config`, with AppService's MQTT configuration) and conftest's `ld` fixture (`Env._load_dict`, skipped without `LD_TEST_DSN`)
+- [x] gppu's tests give Env its configuration as a program does: the `ran` fixture writes RAN's `config.yaml` in a temporary home and an app declaring RAN loads it; a test of an app's own reading gives the app `config=`. gppu's examples carry their configuration inline in `MANIFEST` and load it with `App(config=__file__)`; `handlers.yaml` and `desktop.yaml` are gone. Still on removed calls: `test_update_by_y2path` (`Env.update_config`, with AppService's MQTT configuration) and conftest's `ld` fixture (`Env._load_dict`, skipped without `LD_TEST_DSN`)
 - [x] The command line overrides the app, not Env: `Env.from_argv` removed, and `App(argv=...)` puts the command line over the app's own configuration; Preservator and `list-sessions.py` take it (RAN)
 - [x] The environment is RAN, `RAN/_config/config.yaml`, where Alex moved Hosts' configuration: the Hosts TUI, Fleet, craptui, gppu's tests, `examples/basic.py` and the launcher example declare `environment='RAN'`; `topology/locations.yaml` and `topology/connections.yaml` sit where `config.yaml` includes them
 
@@ -80,5 +80,5 @@ These move in the same commit as the release. gppu 3.7.4 is released and alex-pc
 - Hosts TUI: Fleet, Preserve and Configs are on the Fleet section again, and render-config in Fleet tools: `configure-all`, `render-config`, `harness` and the Configs files came back from the archive and read Fleet's rows, `Fleet.values` and gppu's glob and Jinja (RAN b071600bb). Start page stays archived. PC Control launches `IoT/PCC/pcc-service.py`, which stops at `Env.from_env` until display-control is switched
 - Fixed: Preservator: the LLM step's `logs` exclusion, meant for OpenClaw, also left out Agy's transcripts, which sit in `.system_generated/logs`; a session folder is now copied whole whatever the step excludes
 - craptui: `craptui.yaml` names `gd-video-ripper.yaml`, removed with GD Video Ripper, so craptui does not open
-- gppu examples: `handlers.yaml` names `D:\TextLake\.catalog`, which has no host folder, so `handler_ls` and the handler browser stop there
+- gppu examples: their `MANIFEST` names `D:/TextLake/.catalog`, which has no host folder, so `handler_ls` and the handler browser stop there
 - w11: with `W11_APP_DIR` unset, the launcher reads its 2026-03-16 copies in `~/.gppu/w11`, not the repository's scripts; `w11/default_config/w11.yaml`, which seeds them, still names the deleted `w11-events.yaml` and `w11-onedrive.yaml`

@@ -3,9 +3,13 @@
 
 from __future__ import annotations
 
+MANIFEST = """
+  # The catalog it starts at. Its locations.yaml lists the Locations and where each keeps its index.
+  catalog: D:/TextLake/.catalog
+"""
+
 import json
 from collections.abc import Callable
-from pathlib import Path
 
 from gppu import App, Error, format_size
 from gppu.fs.catalog import GppuCatalog
@@ -202,8 +206,8 @@ class HandlerBrowser(TUIApp):
 
 
 def main() -> None:
-  handlers = App(config=Path(__file__).with_name('handlers.yaml'))
-  HandlerBrowser(GppuCatalog(handlers.my('catalog'))).run()
+  app = App(config=__file__)   # its own configuration is its MANIFEST
+  HandlerBrowser(GppuCatalog(app.my('catalog'))).run()
 
 
 if __name__ == '__main__':

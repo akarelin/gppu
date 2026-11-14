@@ -43,7 +43,7 @@ Documentation from the code's docstrings, with this README and the documents bes
 
 ## Handler listing
 
-[`examples/handler_ls.py`](examples/handler_ls.py) prints complete metadata from `GppuFileSystem.info()` and `ls(recurse=True)`. [`examples/handler_browser.py`](examples/handler_browser.py) browses the same listings and displays all metadata. Both use `location: .` in [`examples/handlers.yaml`](examples/handlers.yaml); gppufs owns the colocated SQLite indexes. See [browsing and index behavior](docs/handler-browser.md).
+[`examples/handler_ls.py`](examples/handler_ls.py) prints complete metadata from `GppuFileSystem.info()` and `ls(recurse=True)`. [`examples/handler_browser.py`](examples/handler_browser.py) browses the same listings and displays all metadata. Both start at the catalog their `MANIFEST` names; gppufs owns the colocated SQLite indexes. See [browsing and index behavior](docs/handler-browser.md).
 
 ```powershell
 python examples/handler_ls.py

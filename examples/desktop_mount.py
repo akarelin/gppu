@@ -1,6 +1,16 @@
 """Mount the configured gppufs sources for desktop browsing, with no arguments: each location Linked Data knows that this host
-reaches, with its index beside it, the sources desktop.yaml names, and the catalog through its API, as the Catalog folder."""
-from pathlib import Path
+reaches, with its index beside it, the sources its MANIFEST names, and the catalog through its API, as the Catalog folder."""
+
+MANIFEST = r"""
+  # Windows desktop browsing through gppufs. Source paths are read by gppufs.
+  mount_point: 'G:'
+  # Linked Data's API: every location it knows that this host reaches is a source too, named as Linked Data names it.
+  ld: 'https://api.karel.in/ld/v1'
+  # Where the catalog's API is, at /lake/catalog (gppu.fs.catalog), shown as the Catalog folder: Linked Data's locations, and in each what the catalog holds there.
+  catalog: 'https://api.karel.in'
+  sources:
+    Lake: '\\s1\Lake'
+"""
 
 import httpx
 
@@ -22,4 +32,4 @@ class Desktop(App):
 
 
 if __name__ == '__main__':
-    Desktop(config=Path(__file__).with_name('desktop.yaml')).run()
+    Desktop(config=__file__).run()   # its own configuration is its MANIFEST

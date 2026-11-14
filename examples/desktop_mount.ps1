@@ -1,4 +1,4 @@
-# Desktop launcher. Python reads desktop.yaml and owns the mount in the foreground.
+# Desktop launcher. Python reads the MANIFEST in desktop_mount.py and owns the mount in the foreground.
 $ErrorActionPreference = 'Stop'
 $desktopPython = Join-Path $HOME '.venv/Scripts/python.exe'
 $desktopLog = 'C:/.cache/gppufs-desktop'
