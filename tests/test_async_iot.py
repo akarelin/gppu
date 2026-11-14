@@ -75,6 +75,20 @@ class RunParallelTests(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(ended, ['a', 'c'])
     self.assertEqual(failures, [('b', 'b')])
 
+  async def test_a_tui_app_is_an_async_app_and_launches_on_itself(self) -> None:
+    from gppu.tui import TUIApp
+
+    class Grid(TUIApp): pass
+
+    app, lines = Grid(), []
+    self.assertIsInstance(app, AsyncApp)
+    self.assertEqual(app.name, 'grid')
+    async with app.run_test():
+      self.assertIsNotNone(app._task_group)
+      self.assertIsNone(await app.launch([sys.executable, '-c', "print('one')"], lines.append, '.', dict(os.environ)))
+    self.assertEqual(lines, ['one'])
+    self.assertIsNone(app._task_group)
+
 
 class EventLoopBridgeTests(unittest.IsolatedAsyncioTestCase):
   async def test_submit_call_and_reentrancy_guard(self) -> None:
