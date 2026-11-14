@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import pytest
 
-from gppu import Env, FileSystem, Location, Provider
+from gppu import FileSystem, Location, Provider
 from gppu import glob_dict
 from gppu.fs.catalog import GppuCatalog
 from gppu.fs.gppufs import GppuFileSystem
@@ -40,12 +40,13 @@ def refuse_filesystem(monkeypatch):
   monkeypatch.setattr(GppuFileSystem, '__init__', opened)
 
 
-def test_a_catalog_of_env_rows_preserves_input_and_resolves_nested_templates():
+def test_a_catalog_of_env_rows_preserves_input_and_resolves_nested_templates(ran):
   before = deepcopy(CONFIG)
-  Env.from_dict(CONFIG)
+  ran(CONFIG)
+  loaded = deepcopy(glob_dict(''))   # loading merges each row's template; the catalog changes nothing after it
   catalog = GppuCatalog(glob_dict(''), location_types={'m365': Provider, 'lake': Provider})
   assert CONFIG == before
-  assert glob_dict('') == before
+  assert glob_dict('') == loaded
   assert catalog.ls(detail=False) == ['m365', 'lake']
   assert catalog.ls('m365', detail=False, recurse=True) == [
     'm365-karelin-graph', 'm365-karelin-graph/alex/contacts']

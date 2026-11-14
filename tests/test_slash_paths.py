@@ -4,8 +4,8 @@ from gppu import glob, glob_dict, glob_int, glob_list
 from gppu.gppu import y2path
 
 
-def test_env_reads_by_y2path():
-  Env.from_dict({'a': {'b': 1, 'off': False, 'l': [1], 'd': {'x': 1}}})
+def test_env_reads_by_y2path(ran):
+  ran({'a': {'b': 1, 'off': False, 'l': [1], 'd': {'x': 1}}})
   assert glob(y2path('a/b')) == 1 == glob('a/b')
   assert glob(y2path('a/off')) is False
   assert glob_int(y2path('a/b')) == 1
@@ -14,8 +14,7 @@ def test_env_reads_by_y2path():
 
 
 def test_my_reads_by_y2path():
-  Env.from_dict({'a': {'b': 2}})
-  app = App()
+  app = App(config={'a': {'b': 2}})
   assert app.my(y2path('a/b')) == 2 == app.my('a/b')
 
 

@@ -11,13 +11,9 @@ from contextlib import asynccontextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from gppu import AsyncApp, Env, mixin_EventLoopBridge, HTTPControl, JSONHTTPControl, SerializedControl, mixin_Mqtt
+from gppu import AsyncApp, mixin_EventLoopBridge, HTTPControl, JSONHTTPControl, SerializedControl, mixin_Mqtt
 from gppu.iot import aiohttp
 from gppu.tui import TUIApp
-
-
-Env._my = {}
-Env.initialized = True
 
 
 class _FiniteApp(AsyncApp):
@@ -39,15 +35,13 @@ class _ExternalLoop(mixin_EventLoopBridge):
 
 class AsyncAppTests(unittest.IsolatedAsyncioTestCase):
   async def test_init_on_construction_then_load_and_start_in_run(self) -> None:
-    Env.from_dict({'finite': {'values': [1, 2]}})
-    app = _FiniteApp(name='finite')
+    app = _FiniteApp(config={'values': [1, 2]})
     self.assertEqual(app.seen, [1, 2])
     await app.run()
     self.assertEqual(app.seen, [1, 2, 3])
 
   async def test_spawn_requires_active_run(self) -> None:
-    Env.from_dict({'finite': {'values': []}})
-    app = _FiniteApp(name='finite')
+    app = _FiniteApp(config={'values': []})
     coroutine = asyncio.sleep(0)
     with self.assertRaises(RuntimeError): app._spawn(coroutine)
     self.assertEqual(coroutine.cr_frame, None)

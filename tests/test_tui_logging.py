@@ -8,17 +8,16 @@ import pytest
 pytest.importorskip('textual')
 pytest.importorskip('pytest_asyncio')
 
-from gppu import Env, TRACE_RULES
+from gppu import TRACE_RULES
 from gppu.tui import TUIApp
 
 
 @pytest.mark.asyncio
-async def test_tui_preserves_file_and_trace_rules_without_writing_to_terminal(tmp_path):
+async def test_tui_preserves_file_and_trace_rules_without_writing_to_terminal(tmp_path, ran):
   core = importlib.import_module('gppu.gppu')
   previous_rules = dict(TRACE_RULES)
-  Env.reset()
   path = tmp_path / 'tui.log'
-  Env.from_dict({'log_file': str(path), 'trace_rules': {'all': False}})
+  ran({'log_file': str(path), 'trace_rules': {'all': False}})
   console = io.StringIO()
   original = core.Logger._console.setStream(console)
   app = TUIApp()
@@ -40,7 +39,10 @@ async def test_tui_preserves_file_and_trace_rules_without_writing_to_terminal(tm
     assert app._log_handler not in logging.getLogger().handlers
   finally:
     core.Logger._console.setStream(original)
-    Env.reset()
+    for handler in core.Logger._file_handlers.values():   # the file the test's environment opened
+      core.Logger._root.removeHandler(handler)
+      handler.close()
+    core.Logger._file_handlers.clear()
     TRACE_RULES.clear()
     TRACE_RULES.update(previous_rules)
 
@@ -65,9 +67,8 @@ async def test_console_retains_severity_and_class_method():
 
 
 @pytest.mark.asyncio
-async def test_shared_log_and_config_screens_update_while_app_runs():
-  Env.reset()
-  Env.from_dict({'screen_test': 'configured'})
+async def test_shared_log_and_config_screens_update_while_app_runs(ran):
+  ran({'screen_test': 'configured'})
   app = TUIApp()
   async with app.run_test() as pilot:
     await pilot.press('ctrl+o')
@@ -79,4 +80,3 @@ async def test_shared_log_and_config_screens_update_while_app_runs():
     await pilot.press('escape', 'ctrl+g')
     assert app.screen.query_one('#info-panel').display
     await pilot.press('escape')
-  Env.reset()

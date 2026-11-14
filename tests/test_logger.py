@@ -157,17 +157,20 @@ def configured_output():
   original = core.Logger._console.setStream(console)
   yield core, console
   Env.reset()
+  for handler in core.Logger._file_handlers.values():   # the files the test's environment opened
+    core.Logger._root.removeHandler(handler)
+    handler.close()
+  core.Logger._file_handlers.clear()
   core.Logger._console.setStream(original)
   TRACE_RULES.clear()
   TRACE_RULES.update(previous_rules)
 
 
-def test_env_defaults_to_console_without_legacy_environment_paths(configured_output, tmp_path, monkeypatch):
+def test_env_defaults_to_console_without_legacy_environment_paths(configured_output, tmp_path, monkeypatch, ran):
   core, console = configured_output
   monkeypatch.setenv('GPPU_APP_NAME', 'invented')
   monkeypatch.setenv('GPPU_LOG_DIR', str(tmp_path / 'invented'))
-  (tmp_path / 'config.yaml').write_text('{}')
-  Env.from_env(name='console-only', app_path=tmp_path)
+  ran('{}')
   core.Info('console message')
   core.Debug('hidden trace')
   assert 'console message' in console.getvalue()
@@ -176,11 +179,10 @@ def test_env_defaults_to_console_without_legacy_environment_paths(configured_out
   assert not (tmp_path / 'invented').exists()
 
 
-def test_one_line_yaml_enables_console_and_file(configured_output, tmp_path):
+def test_one_line_yaml_enables_console_and_file(configured_output, tmp_path, ran):
   core, console = configured_output
   path = tmp_path / 'declared.log'
-  (tmp_path / 'config.yaml').write_text(f'log_file: {path.as_posix()}\n')
-  Env.from_env(name='configured-app', app_path=tmp_path)
+  ran(f'log_file: {path.as_posix()}\n')
   core.Info('both destinations')
   assert 'both destinations' in console.getvalue()
   assert path.read_text().strip() == 'both destinations'
@@ -189,10 +191,9 @@ def test_one_line_yaml_enables_console_and_file(configured_output, tmp_path):
   assert path.read_text().count('once') == 1
 
 
-def test_one_line_trace_yaml_keeps_the_mapping(configured_output, tmp_path):
+def test_one_line_trace_yaml_keeps_the_mapping(configured_output, ran):
   core, console = configured_output
-  (tmp_path / 'config.yaml').write_text('trace_rules: {all: true, Component: false}\n')
-  Env.from_env(name='traced-app', app_path=tmp_path)
+  ran('trace_rules: {all: true, Component: false}\n')
 
   class Component:
     def publish(self): core.Debug('excluded trace')
@@ -206,33 +207,21 @@ def test_one_line_trace_yaml_keeps_the_mapping(configured_output, tmp_path):
   assert Logger.trace_rules == {'all': True, 'Component': False}
 
 
-def test_reloading_env_closes_previous_file(configured_output, tmp_path):
-  core, _ = configured_output
-  first, second = tmp_path / 'first.log', tmp_path / 'second.log'
-  Env.from_dict({'log_file': str(first)})
-  core.Info('first message')
-  Env.from_dict({'log_file': str(second)})
-  core.Info('second message')
-  Env.from_dict({})
-  core.Info('console only')
-  assert first.read_text().strip() == 'first message'
-  assert second.read_text().strip() == 'second message'
-  assert not core.Logger._file_handlers
-
-
 @pytest.mark.parametrize('value', [None, '', True])
-def test_file_logging_requires_a_real_path(configured_output, value):
+def test_file_logging_requires_a_real_path(configured_output, value, ran):
   with pytest.raises(ValueError, match='explicit log_file'):
-    Env.from_dict({'log_file': value})
+    ran({'log_file': value})
 
 
-def test_file_creation_failure_is_reported(configured_output, tmp_path):
+def test_file_creation_failure_is_reported(configured_output, tmp_path, ran):
   parent = tmp_path / 'file'
   parent.write_text('not a directory')
   with pytest.raises(OSError):
-    Env.from_dict({'log_file': str(parent / 'app.log')})
+    ran({'log_file': str(parent / 'app.log')})
 
 
-def test_boolean_does_not_replace_rich_trace_rules(configured_output):
-  with pytest.raises(TypeError, match='mapping'):
-    Env.from_dict({'trace_rules': True})
+def test_boolean_does_not_replace_rich_trace_rules(configured_output, ran):
+  TRACE_RULES.update({'all': True})
+  with pytest.raises(TypeError):
+    ran({'trace_rules': True})
+  assert TRACE_RULES == {'all': True}

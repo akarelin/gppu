@@ -4,7 +4,7 @@ from pathlib import Path
 
 import httpx
 
-from gppu import App, Env, Info
+from gppu import App, Info
 from gppu.fs import catalog as locations
 from gppu.fs.gppufs import GppuFileSystem
 from gppu.fs.vfs import mount
@@ -22,5 +22,4 @@ class Desktop(App):
 
 
 if __name__ == '__main__':
-    Env.from_env(name='desktop', app_path=Path(__file__).parent)
-    Desktop().run()
+    Desktop(config=Path(__file__).with_name('desktop.yaml')).run()

@@ -20,6 +20,26 @@ def one_gppufs_per_test():
     yield
 
 
+@pytest.fixture
+def ran(tmp_path, monkeypatch):
+    """The RAN environment a test gives: its configuration, a mapping or YAML text, is RAN's config.yaml in a temporary
+    home, read as on a host that is not Windows, and an app declaring RAN loads it."""
+    import yaml
+    from gppu import App, Env, OSType
+    monkeypatch.setattr('gppu.gppu.detect_os', lambda: OSType.LINUX)
+    monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.setenv('USERPROFILE', str(tmp_path))
+    def load(configuration: dict | str) -> None:
+        folder = tmp_path / 'RAN' / '_config'
+        folder.mkdir(parents=True, exist_ok=True)
+        text = configuration if isinstance(configuration, str) else yaml.safe_dump(configuration)
+        (folder / 'config.yaml').write_text(text, encoding='utf-8')
+        Env.reset()
+        App(environment='RAN')
+    yield load
+    Env.reset()
+
+
 @pytest.fixture(scope='module')
 def ld():
     """Linked Data's fs API, the catalog's database, on a database made for a module's tests from gppu.ld's SQL (ld.sql) on the

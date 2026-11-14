@@ -11,7 +11,6 @@ import yaml
 
 from examples import handler_ls
 from examples.handler_ls import listing, main
-from gppu import Env
 from gppu.fs.catalog import GppuCatalog
 
 
@@ -40,8 +39,8 @@ def test_main_lists_the_catalog_and_one_location_with_an_argument(tmp_path, monk
   location.mkdir()
   (location / 'plain.txt').write_text('plain', encoding='utf-8')
   catalog = catalog_for(tmp_path, location)
-  monkeypatch.setattr(Env, 'from_env', staticmethod(lambda **kwargs: None))
-  monkeypatch.setattr(handler_ls, 'glob', lambda key: {'catalog': str(catalog)}[key])
+  (tmp_path / 'handlers.yaml').write_text(f'catalog: {catalog.as_posix()}\n', encoding='utf-8')
+  monkeypatch.setattr(handler_ls, '__file__', str(tmp_path / 'handler_ls.py'))   # its handlers.yaml is the test's
   monkeypatch.setattr(sys, 'argv', ['handler_ls.py'])
   main()
   rows = json.loads(capsys.readouterr().out)

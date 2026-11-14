@@ -26,11 +26,9 @@ def test_catalog_uses_location_uid_separately_from_uri():
     catalog.location(str(location.uri))
 
 
-def test_file_provider_is_available_from_env_without_registration(tmp_path):
-  from gppu import Env
-
+def test_file_provider_is_available_from_env_without_registration(tmp_path, ran):
   (tmp_path / 'item.txt').write_text('configured file')
-  Env.from_dict({'connections': {'disk': {'provider': 'file'}}, 'locations': {
+  ran({'connections': {'disk': {'provider': 'file'}}, 'locations': {
     'files': {'canonical': tmp_path.as_uri(), 'connection': 'disk'},
   }})
   catalog = GppuCatalog(glob_dict(''))
@@ -40,10 +38,9 @@ def test_file_provider_is_available_from_env_without_registration(tmp_path):
     assert stream.read() == b'configured file'
 
 
-def test_configured_provider_loads_without_application_registration(monkeypatch):
+def test_configured_provider_loads_without_application_registration(monkeypatch, ran):
   import sys
   from types import ModuleType
-  from gppu import Env
 
   class External(Provider):
     scheme = 'external'
@@ -51,7 +48,7 @@ def test_configured_provider_loads_without_application_registration(monkeypatch)
   module = ModuleType('test_external_provider')
   module.External = External
   monkeypatch.setitem(sys.modules, module.__name__, module)
-  Env.from_dict({'connections': {
+  ran({'connections': {
     'remote': {'provider': 'test_external_provider.External'},
   }, 'locations': {'remote': {'canonical': 'external://tenant', 'connection': 'remote'},
                    'other': {'canonical': 'external://tenant/other', 'connection': 'remote'}}})
