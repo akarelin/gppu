@@ -26,7 +26,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
 - [x] The environment is RAN, `RAN/_config/config.yaml`, where Alex moved Hosts' configuration: the Hosts TUI, Fleet, craptui, gppu's tests, `examples/basic.py` and the launcher example declare `environment='RAN'`; `topology/locations.yaml` and `topology/connections.yaml` sit where `config.yaml` includes them
 
 ## Templates
-- [ ] Env reads a templated configuration with the two kinds of templates, Jinja and the basic `$` one, so `glob` and `self.my` return it filled in. (Env's `$` pass gets no values today; it once filled `$code_path`, `$shared_data_path` and `$shared_data`.)
+- [x] The two kinds of templates are gppu's: loading fills the Jinja that reads only the configuration, and leaves `$` text as written for the app, which fills it with `template_populate` (`test_loading_fills_the_jinja_that_reads_only_glob`, `test_loading_keeps_literal_strings`, `test_template`)
 - [ ] `TemplateSet` (template, generator, behavior, refs) goes; gppu's `fs` catalog, lake and objects use Jinja. Loaded through Env, a connection row is merged over its template with its row-reading Jinja left for the app; the catalog renders that Jinja with the row (`test_catalog_configuration`)
 - [x] Generators are gone, their Jinja on the templates: Creekview has none, and Y2 main, live in the house since 2026-11-13 23:40 on gppu 3.7.4, builds every object without them; the Insteon button patch landed with that deploy
 - [x] Creekview's `templates:` are named templates that the loader merges into a row whose `template:` names one; Creekview has no behavior, `base_object` or generator configuration
@@ -37,6 +37,8 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
   - gppu's `State` and `Runtime` are commented out in `gppu/gppu.py` and no longer exported (2026-11-13)
 - [x] `paths_meet` and State's listeners removed
 - [ ] Y2's State and Runtime are gppu's. gppu has neither now; their tests are in `archive/tests/test_state.py`
+  - In progress: Y2's App is a gppu App. gppu's App takes Y2's timers as they are: `run_later` (re-armed by key), `run_every`, `cancel_timer`, their handles and the one thread that holds them; the apps' armed timers are public, for Y2's Supervisor, the UI's occupancy timers and the validator. Y2's App keeps its row in `y2/apps`, its State, Runtime and MQTT calls, and its sequences
+  - Proof: a copy of y2 whose App is gppu's passes every test y2 main passes, and its runtime dump (`D:\Work\11\13\y2-fewer-hacks\dump_runtime.py`) is identical to y2 main's. Y2 switches at its next release, which restarts y2
 
 ## Y2 entity
 - [ ] Y2's entity (`y2entity.py`) is part of gppu
