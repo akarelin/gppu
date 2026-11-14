@@ -37,7 +37,7 @@ except ImportError:
 from .app import AsyncApp, AsyncSubmission, mixin_EventLoopBridge
 import yaml
 
-from .gppu import _DC, _DC_BASE_TYPE_MAP, deepset, y2list, y2path, y2topic, y2uri
+from .gppu import Env, _DC, _DC_BASE_TYPE_MAP, deepset, y2list, y2path, y2topic, y2uri
 
 
 
@@ -308,10 +308,11 @@ class MqttApp(mixin_Mqtt, AsyncApp):
 
 
 class AppService(MqttApp):
-  """An MqttApp whose configuration arrives over MQTT: ``config_mqtt/topics`` in its own configuration maps each
-  retained topic to the path in its own configuration that its payload replaces, the same as loading it again.
-  An app that acts on new configuration listens to the same topic: its listener runs after the configuration is loaded.
-  ``await app.from_mqtt()`` reads every topic once, then disconnects."""
+  """An MqttApp whose part of Env arrives over MQTT: ``config_mqtt/topics`` in its own configuration maps each
+  retained topic to the path in Env that its payload replaces, the same as loading it again, so ``glob`` reads it as
+  it reads the rest of Env. The app's own configuration stays its own. An app that acts on new configuration listens
+  to the same topic: its listener runs after the section is loaded. ``await app.from_mqtt()`` reads every topic once,
+  then disconnects."""
 
   def __init(self) -> None:
     self.topics = self.my_dict('config_mqtt/topics')
@@ -330,9 +331,9 @@ class AppService(MqttApp):
   async def _receive_config(self, topic: y2topic, payload: object) -> None:
     data = yaml.safe_load(payload) if isinstance(payload, str) else payload
     if not isinstance(data, dict): raise TypeError(f'MQTT configuration must be a mapping: {topic}')
-    configuration = deepcopy(self.my_dict(''))
+    configuration = deepcopy(Env.my_dict(''))
     deepset(self.topics[str(topic)], configuration, data)
-    self._config_load(configuration)
+    Env._config_load(configuration)
     if self.until_loaded is not None:
       self.until_loaded.discard(str(topic))
       if not self.until_loaded: self.stop()

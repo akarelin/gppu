@@ -5,6 +5,7 @@
 - `glob`, `glob_int`, `glob_list` and `glob_dict` are global variables, not properties of a class.
 - New configuration is the same event as reload, restart or reset. Configuration is never compared, and nothing listens for its changes.
 - The location of the configuration is invisible to an app. There are two environments: RAN, configured in `RAN/_config/config.yaml`, and Creekview, configured in `IoT/_Creekview/_creekview.yaml`. Each comes from its repository.
+- The environment, or the part of it an app needs, is read from MQTT on a host that does not have its repository.
 - Apps share the RAN environment. The only other apps are Y2's, and they share Creekview.
 - Configuration is not found by hard-coding or by walking up and down folders.
 - An environment is a single YAML file. Its path is constructed from the location of the repository.
