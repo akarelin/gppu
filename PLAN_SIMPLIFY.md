@@ -37,7 +37,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
   - gppu's `State` and `Runtime` are commented out in `gppu/gppu.py` and no longer exported (2026-11-13)
 - [x] `paths_meet` and State's listeners removed
 - [ ] Y2's State and Runtime are gppu's. gppu has neither now; their tests are in `archive/tests/test_state.py`
-  - [x] Y2's timers are gppu App's: `run_later` (re-armed by key), `run_every`, `cancel_timer`, `cancel_timers`, their handles and the one thread that holds them, and an app's armed timers are public (`timers`, `h_timeouts`). App lists `_DC` first and initializes only its own data, so Y2's State, an App and an entity, composes. A copy of y2 whose App is gppu's passes every test y2 main passes, its two `run_every` failure tests now gppu's, and builds the runtime y2 main builds (`D:\Work\11\14\gppu-timers`)
+  - [x] Y2's timers are gppu App's: `run_later` (re-armed by key), `run_every`, `cancel_timer`, `cancel_timers`, their handles and the one thread that holds them, and an app's armed timers are public (`timers`, `h_timeouts`). App's init stays cooperative, as Linked Data's API needs for its database: Y2's State and Environment, each an App and an entity, initialize their entity through it, and Y2's entity lists its steps before its data. A copy of y2 whose App is gppu's passes every test y2 main passes, its two `run_every` failure tests now gppu's, and builds the runtime y2 main builds (`D:\Work\11\14\gppu-timers`)
   - [ ] Y2's App is a gppu App: `D:\Work\11\14\gppu-timers\y2-on-gppu-timers.patch` lands on y2 main once a gppu release carries the timers, and y2 switches at its next release, which restarts y2
 
 ## Y2 entity
