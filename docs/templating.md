@@ -32,4 +32,4 @@ A configuration document is a different matter. `JinjaDocument` renders text rat
 
 Alex, 2026-09-16: "Templates are generating dicts that are used to create objects. Startup/restart only. Templates are used to override class property behavior. Mostly by returning a value using jinja for calculations (regex matching of filenames in handlers). Templates can be stacked and applied in order. Templates have all needed to understand what they do in the same file."
 
-Loading merges a row over the one template it names (`apply_template`). The lake's stored configuration also stacks templates, a row naming a list applied in order, and declares what its rows reference with `refs`; the lake resolves those tables itself (`graph_configuration.resolve_row`), with gppu's Jinja.
+Loading merges a row over the one template it names (`apply_template`). The file catalog stacks templates, a row naming a list applied in order, each with `apply_template`, and renders their Jinja with the row. The lake's stored configuration stacks them too and declares what its rows reference with `refs`; the lake resolves those tables itself (`graph_configuration.resolve_row`), with gppu's Jinja.

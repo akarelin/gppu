@@ -126,3 +126,14 @@ def test_nested_paths_are_not_appended_twice():
   config['locations'][0]['locations'][0]['path'] = 'alex'
   catalog = GppuCatalog(config, location_types={'m365': Provider, 'lake': Provider})
   assert catalog.info('m365-karelin-graph/alex/contacts')['gppu']['path'] == 'alex/contacts'
+
+
+def test_a_row_stacks_the_templates_it_lists_in_order():
+  catalog = GppuCatalog({
+    'connections': {'file': {'provider': 'file'}},
+    'location_templates': {'a': {'kind': 'A', 'tags': ['a']}, 'b': {'tags': ['b'], 'label': "{{ uid ~ '!' }}"}},
+    'locations': [{'uid': 'x', 'path': '', 'connection': 'file', 'canonical': 'file:///x', 'template': ['a', 'b']}],
+  })
+  row = catalog.info('x')['gppu']
+  assert (row['kind'], row['tags'], row['label']) == ('A', ['b'], 'x!')
+  assert 'template' not in row

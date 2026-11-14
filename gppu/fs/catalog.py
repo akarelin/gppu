@@ -38,12 +38,16 @@ from .gppufs import GppuFileSystem
 # region locations
 
 def _resolve(row: dict, templates: dict, context: dict) -> dict:
-  """row merged over the template it names, each Jinja value of the template rendered in order against context and
-  the row as it stands; the row's own values are data. template, refs and nulls drop out."""
-  if 'template' in row and row['template'] not in templates:
-    raise KeyError(f"{row.get('uid', 'row')}: no template named {row['template']!r}")
-  data = apply_template(row, templates)
-  for key, value in (templates[row['template']] if 'template' in row else {}).items():
+  """row over the templates it names, one or a list stacked in order (each with apply_template), the row winning; each
+  Jinja value of the templates rendered in order against context and the row as it stands, the row's own values
+  being data. template, refs and nulls drop out."""
+  names = [row['template']] if isinstance(row.get('template'), str) else list(row.get('template') or [])
+  template = {}
+  for name in names:
+    if name not in templates: raise KeyError(f"{row.get('uid', 'row')}: no template named {name!r}")
+    template |= apply_template(templates[name], templates)
+  data = template | row
+  for key, value in template.items():
     if key not in row and isinstance(value, str) and ('{{' in value or '{%' in value):
       data[key] = render_template(value, context | data)
   return {key: value for key, value in data.items() if key not in ('template', 'refs') and value is not None}
