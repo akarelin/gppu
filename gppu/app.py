@@ -248,6 +248,36 @@ class AsyncApp(App, mixin_Stepper, mixin_EventLoopBridge):
     self._background_tasks.add(task)
     task.add_done_callback(self._background_tasks.discard)
     return task
+
+  async def launch(self, command: list[str], line: Callable[[str], Any], cwd: str, env: dict) -> str | None:
+    """Start a process and hand `line` each line of its output; the error, or None when it exits with 0."""
+    try:
+      process = await asyncio.create_subprocess_exec(
+        *command, cwd=cwd, env=env,
+        stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+      )
+      async for raw in process.stdout:
+        line(raw.decode('utf-8', errors='replace').rstrip())
+      if code := await process.wait():
+        return f'process exited with {code}'
+    except OSError as failure:
+      return str(failure)
+    return None
+
+  async def run_parallel(self, units: list, run: Callable[[Any], Coroutine], conflicts: Callable[[Any, list], bool],
+                         failed: Callable[[Any, BaseException], Any]) -> None:
+    """Run every unit at once with `run`. A unit waits while `conflicts(unit, running)` says it clashes with one that
+    is running, and starts when that one ends; `failed` hears of a unit whose run raised, as it ends."""
+    pending, running = list(units), {}
+    while pending or running:
+      for unit in pending[:]:
+        if conflicts(unit, list(running.values())): continue
+        running[asyncio.create_task(run(unit))] = unit
+        pending.remove(unit)
+      finished, _ = await asyncio.wait(running, return_when=asyncio.FIRST_COMPLETED)
+      for task in finished:
+        unit = running.pop(task)
+        if task.exception(): failed(unit, task.exception())
 # endregion
 
 

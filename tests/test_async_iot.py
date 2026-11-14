@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import json
+import os
+import sys
 import threading
 import unittest
 from contextlib import asynccontextmanager
@@ -48,6 +50,30 @@ class AsyncAppTests(unittest.IsolatedAsyncioTestCase):
     coroutine = asyncio.sleep(0)
     with self.assertRaises(RuntimeError): app._spawn(coroutine)
     self.assertEqual(coroutine.cr_frame, None)
+
+
+class RunParallelTests(unittest.IsolatedAsyncioTestCase):
+  async def test_launch_hands_each_line_and_reports_the_exit(self) -> None:
+    app, lines = AsyncApp(name='parallel'), []
+    self.assertIsNone(await app.launch([sys.executable, '-c', "print('one'); print('two')"], lines.append, '.', dict(os.environ)))
+    self.assertEqual(lines, ['one', 'two'])
+    self.assertEqual(await app.launch([sys.executable, '-c', 'raise SystemExit(3)'], lines.append, '.', dict(os.environ)),
+                     'process exited with 3')
+
+  async def test_run_parallel_starts_every_unit_and_holds_back_a_clash(self) -> None:
+    app, started, ended, failures = AsyncApp(name='parallel'), [], [], []
+
+    async def run(unit: str) -> None:
+      started.append(unit)
+      if unit == 'b': raise ValueError(unit)
+      for _ in range(3): await asyncio.sleep(0)
+      ended.append(unit)
+
+    await app.run_parallel(['a', 'b', 'c'], run, lambda unit, running: unit == 'c' and 'a' in running,
+                           lambda unit, error: failures.append((unit, str(error))))
+    self.assertEqual(started, ['a', 'b', 'c'])
+    self.assertEqual(ended, ['a', 'c'])
+    self.assertEqual(failures, [('b', 'b')])
 
 
 class EventLoopBridgeTests(unittest.IsolatedAsyncioTestCase):
