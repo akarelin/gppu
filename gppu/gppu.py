@@ -418,6 +418,10 @@ class Path(y2path, pathlib.Path):
   # _drv, _root, _tail_cached, _str, _parts_normcase_cached, _hash, _info = (_cached() for _ in range(7))
   _raw_paths = property(lambda self: [str(self)])
   _str_normcase = property(lambda self: pathlib.PurePath(self)._str_normcase)
+  # pathlib keeps what it parsed; a Path's segments change, so it parses them each time and keeps nothing
+  _drv = property(lambda self: pathlib.PurePath(self).drive, lambda self, value: None)
+  _root = property(lambda self: pathlib.PurePath(self).root, lambda self, value: None)
+  _tail_cached = property(lambda self: pathlib.PurePath(self)._tail, lambda self, value: None)
 
   def __truediv__(self, other: str | y2path) -> Path: return type(self)(self, other)
   def __eq__(self, other): return str(self) == str(type(self)(other)) if isinstance(other, PurePath) else y2path.__eq__(self, other)

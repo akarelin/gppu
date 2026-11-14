@@ -29,7 +29,7 @@ from fsspec.core import split_protocol
 from fsspec.spec import AbstractFileSystem
 
 from ..gppu import glob
-from ..gppu import TemplateSet, TimeSpan, full_path, uuid_create, y2path
+from ..gppu import TemplateSet, TimeSpan, full_path, jinja_fill, uuid_create, y2path
 from .uri import y2uri
 from . import FileSystem, Location, Provider, _address, _below
 from .gppufs import GppuFileSystem
@@ -142,8 +142,11 @@ class GppuCatalog(AsyncFileSystem):
     definitions = config['connections']
     connection_templates = definitions['templates'] if 'templates' in definitions else {}
     connection_rules = TemplateSet(templates=connection_templates, context=config)
+    def connection(uid: str, row: dict) -> dict:
+      resolved = connection_rules.resolve({'uid': uid, **row})
+      return jinja_fill(resolved, **resolved)   # Jinja reading the row, as loading leaves it, renders with the row
     self.connections = {
-      uid: connection_rules.resolve({'uid': uid, **row})
+      uid: connection(uid, row)
       for uid, row in definitions.items()
       if uid not in ('templates', 'macros') and not uid.endswith('_templates')
     }
