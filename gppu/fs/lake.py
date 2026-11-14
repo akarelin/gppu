@@ -11,6 +11,8 @@ every uri outside the Lake. What the Lake itself is configured with is the app's
 stored in, a folder this host reaches through gppu.fs's FileSystem, and the templates of its layout
 (CRAP Systems/lake/docs/layout.md), one per type of record gppu's handlers read, `source` for any other.
 
+  file_path(templates, type, name, **values)  a file's path below the Lake, by the Lake's template of its type or kind
+  copy_to_lake(source, lake, templates, type, **values)   a file copied into the Lake on this host at its file_path
   Lake(catalog, store, templates, contents)   the Lake over catalog's locations, saving below store by templates, its catalog contents
   api(lake)                         the Lake as a FastAPI app, which an APIApp serves at /lake among its apis()
   LakeFileSystem(url, root)         the Lake through its API as an fsspec filesystem, what a desktop or a UI browses it with"""
@@ -38,25 +40,28 @@ PIECE = 1 << 20   # a download is sent a mebibyte at a time
 INDEX = '.gppufs.sqlite'   # how a gppufs index's name ends
 
 
-def file_path(templates: Mapping[str, str], obj: DataObject, record: handlers.Record, type: str) -> str:
-    """The path of a file below the Lake: the Lake writes the file there, and its record in Postgres carries the same path. It
-    is the template of the file's type, `source` for a type that has none, rendered with what gppu's handlers read of the file,
-    its name, its kind, the date it is of (its span's start, else the date its name says) and the system, account and path of
-    the uri it came from. A template that renders nothing, or asks for what the file does not say, gives no path."""
-    span = getattr(record, 'span', None) or handlers.Handler.named(obj.name)
-    source = urlsplit(str(obj.uri))
-    came = f' from {obj.uri}' if source.netloc or source.path else ''   # a file with no source has no uri to name
+def file_path(templates: Mapping[str, str], type: str, name: str, **values: Any) -> str:
+    """The path of a file below the Lake, where it goes and its name there: the Lake's template of its type or kind, rendered
+    with its name, stem and ext and what its writer knows of it, values, such as start, the moment it is of. The Lake writes
+    the file there, and its record in Postgres carries the same path. A template that renders nothing, or asks for what it is
+    not given, gives no path."""
     try:
-        path = jinja_template(templates[type if type in templates else 'source'], record=record, name=obj.name, kind=obj.kind,
-                              start=span.start if span else None, system=source.scheme, account=source.netloc,
-                              path=unquote(source.path).strip('/'), re=re)
+        path = jinja_template(templates[type], name=name, stem=Path(name).stem, ext=Path(name).suffix, re=re, **values)
     except UndefinedError as error:   # the template asks for what the file does not say, such as the date of a session with no time
-        missing = 'what was sent of it gives no time, so it has no date' if span is None else str(error)
-        raise ValueError(f'{obj.name}: no path for a {type}{came}: {missing}') from error
+        raise ValueError(f'{name}: no path for a {type}: {error}') from error
     path = str(path or '').strip()
     if not path:
-        raise ValueError(f'{obj.name}: no path for a {type}{came}')
+        raise ValueError(f'{name}: no path for a {type}')
     return str(Location.relative(path))
+
+
+def copy_to_lake(source: Path, lake: Path | str, templates: Mapping[str, str], type: str, **values: Any) -> Path:
+    """source copied into the Lake, the folder lake on this host, at its file_path by the Lake's templates: a plain file-system
+    copy, its times kept, over a file already there. The path it is copied to."""
+    target = Path(lake) / file_path(templates, type, source.name, **values)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+    return target
 
 
 class Lake:
@@ -121,7 +126,17 @@ class Lake:
                     file.write(obj.content if isinstance(obj.content, bytes) else obj.content.encode('utf-8')
                                if isinstance(obj.content, str) else json.dumps(obj.content, ensure_ascii=False).encode('utf-8'))
             record = self.read(scratch)
-            path = file_path(self.templates, obj, record, handlers.probe(scratch).type)
+            type = handlers.probe(scratch).type
+            type = type if type in self.templates else 'source'
+            span = getattr(record, 'span', None) or handlers.Handler.named(obj.name)   # the date it is of: its span's, else its name's
+            source = urlsplit(str(obj.uri))
+            try:
+                path = file_path(self.templates, type, obj.name, record=record, kind=obj.kind, start=span.start if span else None,
+                                 system=source.scheme, account=source.netloc, path=unquote(source.path).strip('/'))
+            except ValueError as error:   # its template asks for the date of what gives none, such as a session with no time
+                if span is None and isinstance(error.__cause__, UndefinedError):
+                    raise ValueError(f'{obj.name}: no path for a {type}: what was sent of it gives no time, so it has no date') from error
+                raise
             uri = self.store.provider.join(self.store.uri, Location.relative(path))
             if copy:
                 return uri

@@ -4,6 +4,7 @@ the Lake's API at /lake answers what the Lake answers itself. The catalog's data
 import json
 import sqlite3
 from contextlib import closing
+from datetime import date, datetime
 
 import pytest
 
@@ -15,8 +16,7 @@ from fastapi.testclient import TestClient
 from gppu.fs import DataObject
 from gppu.fs.catalog import Catalog, GppuCatalog
 from gppu.fs.gppufs import GppuFileSystem
-from gppu.fs.handlers import Record
-from gppu.fs.lake import Lake, LakeFileSystem, api, file_path
+from gppu.fs.lake import Lake, LakeFileSystem, api, copy_to_lake, file_path
 
 UID = '01c098c1-c196-49d4-b7e2-d2f544809574'
 SESSION = '\n'.join(json.dumps(line) for line in (
@@ -61,16 +61,35 @@ def test_an_original_is_placed_under_its_system_and_account(tmp_path, ld):
     assert str(uri) == (outer / 'sources' / 'm365-karelin' / 'users' / 'alex' / 'contacts' / 'Ann Lee.json').as_uri()
 
 
-def test_a_file_path_is_the_template_of_its_type_rendered_with_what_its_handler_reads(tmp_path):
+def test_a_file_path_is_the_template_of_its_type_rendered_with_what_its_writer_knows(tmp_path):
     """No Lake and no catalog: the same path the Lake writes a file at and its Postgres record carries."""
     session = tmp_path / f'{UID}.jsonl'
     session.write_text(SESSION)
-    assert file_path(LAYOUT, DataObject('', b'', None, 'file', session.name), Lake.read(session), 'session') == \
+    record = Lake.read(session)
+    assert file_path(LAYOUT, 'session', session.name, record=record, start=record.span.start) == \
         f'timeseries/2026/Sessions/07/cc/{UID}/{UID}.jsonl'
-    original = DataObject('m365://karelin/users/alex/contacts/Ann%20Lee.json', b'', None, 'file', 'Ann Lee.json')
-    assert file_path(LAYOUT, original, Record(name='Ann Lee.json'), 'file') == 'sources/m365-karelin/users/alex/contacts/Ann Lee.json'
+    assert file_path(LAYOUT, 'source', 'Ann Lee.json', system='m365', account='karelin', path='users/alex/contacts/Ann Lee.json') \
+        == 'sources/m365-karelin/users/alex/contacts/Ann Lee.json'
     with pytest.raises(ValueError, match='no path'):
-        file_path(LAYOUT, DataObject('', b'', None, 'file', 'note.txt'), Record(name='note.txt'), 'file')
+        file_path(LAYOUT, 'source', 'note.txt', system='', account='', path='')
+    with pytest.raises(ValueError, match='no path'):   # a template asking for what it is not given
+        file_path(LAYOUT, 'session', session.name, record=record)
+
+
+def test_a_file_is_copied_to_the_lake_at_its_file_path(tmp_path):
+    """A writer such as Preservator names the kind and what it knows; the copy is a plain one, its times kept."""
+    shot = tmp_path / 'Screenshot 2026-11-10 101010.png'
+    shot.write_bytes(b'png')
+    templates = {'screenshot': "timeseries/{{ start.year }}/Screenshots/{{ '%02d' % start.month }}/{{ name }}",
+                 'shell': "timeseries/{{ start.year }}/Activity/Shell/{{ '%02d' % start.month }}/"
+                          "{{ start.strftime('%y%m%d.%H%M') }}_{{ stem.lstrip('.') }}_{{ host }}.txt"}
+    target = copy_to_lake(shot, tmp_path / 'lake', templates, 'screenshot', start=date(2026, 11, 10))
+    assert target == tmp_path / 'lake' / 'timeseries' / '2026' / 'Screenshots' / '11' / shot.name
+    assert target.read_bytes() == b'png' and target.stat().st_mtime_ns == shot.stat().st_mtime_ns
+    history = tmp_path / '.bash_history'
+    history.write_text('ls\n')
+    assert copy_to_lake(history, tmp_path / 'lake', templates, 'shell', start=datetime(2026, 11, 12, 9, 5), host='alex-pc') == \
+        tmp_path / 'lake' / 'timeseries' / '2026' / 'Activity' / 'Shell' / '11' / '261112.0905_bash_history_alex-pc.txt'
 
 
 def test_an_object_the_layout_has_no_place_for_is_refused(tmp_path, ld):
