@@ -1,21 +1,21 @@
 """Reusable TUI superapp launcher framework.
 
 Provides a Textual-based menu for launching sub-apps defined via YAML manifests.
-Each consumer creates a thin wrapper with its own Env initialization and branding.
+Each consumer creates a thin wrapper with its own configuration and branding: an App whose own configuration is the
+launcher's YAML, naming its ``apps:`` and ``utilities:``.
 
 Usage::
 
-    from gppu import Env, glob, glob_dict, glob_list
-    from gppu.tui import TUILauncher, launcher_main, load_app_registry
+    from gppu import App
+    from gppu.tui import TUILauncher, launcher_main, load_registry
 
     class MyApp(TUILauncher):
         TITLE = 'My Tools'
         MENU_TITLE = 'My Tools'
 
     def main():
-        Env.from_env(name='myapp', app_path=APP_DIR)
-        apps = load_app_registry(APP_DIR)
-        launcher_main(apps, MyApp, APP_DIR, 'My Tools — launcher')
+        launcher = App(environment='Hosts', config=APP_DIR / 'myapp.yaml')
+        launcher_main(load_registry(APP_DIR, launcher), MyApp, APP_DIR, 'My Tools — launcher')
 
     # Serve as a web app:  python myapp.py --serve [--port 8566] [--host localhost]
 """
@@ -288,14 +288,14 @@ def read_manifest(app_dir: Path, config_file: str, nav: str | None = None) -> di
     return manifest
 
 
-def load_app_registry(app_dir: Path) -> dict[str, dict]:
-    """Load app manifests from the YAML configs named in ``glob_dict('apps')``.
+def load_app_registry(app_dir: Path, launcher: App) -> dict[str, dict]:
+    """Load app manifests from the configs named in the launcher's own ``apps:``.
 
     A value is either one manifest path, or a mapping of manifest paths whose key is the nav the launcher files them
     under: which submenu an item appears in is the launcher's business, so a manifest never has to know.
     """
     apps: dict[str, dict] = {}
-    for key, entry in glob_dict('apps').items():
+    for key, entry in launcher.my_dict('apps').items():
         group = entry if isinstance(entry, dict) else {key: entry}
         for item_key, config_file in group.items():
             if manifest := read_manifest(app_dir, config_file, key if isinstance(entry, dict) else None):
@@ -303,12 +303,12 @@ def load_app_registry(app_dir: Path) -> dict[str, dict]:
     return apps
 
 
-def load_registry(app_dir: Path) -> dict[str, dict]:
-    """Everything one launcher offers: the manifests named in ``apps:``, then the sidecars in every directory named
-    in ``utilities:``. Both are read relative to app_dir. This is what a launcher calls."""
+def load_registry(app_dir: Path, launcher: App) -> dict[str, dict]:
+    """Everything one launcher offers: the manifests named in the launcher's own ``apps:``, then the sidecars in every
+    directory named in its ``utilities:``. Both are read relative to app_dir. This is what a launcher calls."""
     from .sidecar import load_sidecar_registry
-    directories = [(app_dir / directory).resolve() for directory in glob_list('utilities')]
-    return load_app_registry(app_dir) | (load_sidecar_registry(*directories) if directories else {})
+    directories = [(app_dir / directory).resolve() for directory in launcher.my_list('utilities')]
+    return load_app_registry(app_dir, launcher) | (load_sidecar_registry(*directories) if directories else {})
 
 
 # ── Widgets ──────────────────────────────────────────────────────────────────
@@ -567,9 +567,8 @@ class TUIApp(mixin_Config, TextualApp):
   """Textual application base, imported from ``gppu.tui``.
 
   Subclass and define ``compose()`` for widgets and ``on_mount()`` for startup
-  work; Textual owns the event loop. Load configuration with ``Env.from_env()``
-  before ``MyApp.main()`` when needed.
-  Read it through ``glob(...)``. To use ``self.my(...)``, first give the app its own
+  work; Textual owns the event loop. The environment is the one an App declares
+  before ``MyApp.main()``, read through ``glob(...)``. To use ``self.my(...)``, first give the app its own
   configuration with ``self._config_load(glob_dict(key))`` or ``self._config_load(yaml_file)``.
 
   Works standalone (``app.run()``) or embedded in a TUILauncher via AppScreen.
@@ -754,6 +753,8 @@ class TUILauncher(TUIApp):
     # Headings of the start screen, each naming its top-level rows (an app key or a nav) in order. Rows no section
     # names follow the last one.
     SECTIONS: dict[str, list[str]] = {}
+    # The launcher's own configuration file, which Edit Config opens.
+    CONFIG: Path | None = None
 
     CSS = """
     Screen {
@@ -1156,7 +1157,7 @@ class TUILauncher(TUIApp):
             self.push_screen(self._running_apps[name])
             return
         editor = ConfigEditorApp(
-            root_config=Env.config_file,
+            root_config=self.CONFIG,
             project_root=self._app_dir,
         )
         screen = AppScreen(editor)

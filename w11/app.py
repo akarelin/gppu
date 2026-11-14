@@ -13,7 +13,7 @@ Usage:
 
 from __future__ import annotations
 
-from gppu import Env
+from gppu import App
 from gppu.tui import TUILauncher, launcher_main, load_app_registry
 from w11 import resolve_app_dir
 
@@ -23,11 +23,11 @@ APP_DIR = resolve_app_dir()
 class W11App(TUILauncher):
     TITLE = 'w11'
     MENU_TITLE = 'Windows 11 Tools'
+    CONFIG = APP_DIR / 'w11.yaml'
 
 
 def main() -> None:
-    Env.from_env(name='w11', app_path=APP_DIR)
-    apps = load_app_registry(APP_DIR)
+    apps = load_app_registry(APP_DIR, App(config=W11App.CONFIG))   # w11 reads only its own w11.yaml, no environment
     launcher_main(apps, W11App, APP_DIR, 'w11 — Windows 11 Superapp')
 
 

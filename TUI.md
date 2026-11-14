@@ -246,7 +246,7 @@ Injection needs its own process, so a mode cannot be both `inline: true` and inj
 ### Container
 
 ```python
-from gppu import Env
+from gppu import App
 from gppu.tui import TUILauncher, load_sidecar_registry, sidecar_main
 
 class ContainerApp(TUILauncher):
@@ -254,7 +254,7 @@ class ContainerApp(TUILauncher):
     MENU_TITLE = 'tui'
 
 def main() -> int:
-    Env.from_env(name='tui', app_path=APP_DIR)
+    App(environment='Hosts')
     return sidecar_main(load_sidecar_registry(*UTILITY_DIRS), ContainerApp, APP_DIR, 'TUI')
 ```
 
