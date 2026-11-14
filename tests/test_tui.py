@@ -92,6 +92,10 @@ class _TestApp(TUILauncher):
     MENU_TITLE = 'Test Menu'
 
 
+class _SectionedApp(_TestApp):
+    SECTIONS = {'First': ['echo_app']}
+
+
 # ── Widget unit tests ────────────────────────────────────────────────────────
 
 class TestSpinnerIndicator:
@@ -193,6 +197,12 @@ class TestLauncherCompose:
             assert app.query_one('#menu-title', Static)
             lv = app.query_one('#app-list', ListView)
             assert len(lv.children) == len(apps)
+
+    def test_sections_declared_on_the_class(self, tmp_path):
+        """A launcher's SECTIONS is a class setting, not the app's data, so a launcher that declares it keeps it."""
+        app = _SectionedApp(_make_apps(tmp_path), tmp_path)
+        assert app.SECTIONS == {'First': ['echo_app']}
+        assert 'SECTIONS' not in app.data
 
     @pytest.mark.asyncio
     async def test_initial_phase(self, tmp_path):

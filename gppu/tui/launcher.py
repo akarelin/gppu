@@ -31,6 +31,7 @@ import subprocess
 import sys
 import webbrowser
 from pathlib import Path
+from typing import ClassVar
 
 from gppu import Env, App, AsyncApp, mixin_Config, dict_from_yml, glob, glob_dict, glob_list
 from gppu.gppu import INLINE_CONFIG
@@ -775,8 +776,8 @@ class TUILauncher(TUIApp):
     TITLE = 'Launcher'
     MENU_TITLE = 'Apps'
     # Headings of the start screen, each naming its top-level rows (an app key or a nav) in order. Rows no section
-    # names follow the last one.
-    SECTIONS: dict[str, list[str]] = {}
+    # names follow the last one. A class setting, not the app's data.
+    SECTIONS: ClassVar[dict[str, list[str]]] = {}
     # The launcher's own configuration file, which Edit Config opens.
     CONFIG: Path | None = None
 
