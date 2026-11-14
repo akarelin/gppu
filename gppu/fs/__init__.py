@@ -7,6 +7,9 @@ with its uri.
 
 The public methods are the API. The Lake, which saves objects and retrieves them by uri, is gppu.fs.lake.
 
+``file_path(type, name, **values)`` generates a file's path from the line for its type in the configuration and returns it; it
+touches no file, and the writer stores the file there.
+
 Files:
 ``GppuFileSystem(location)`` is the fsspec file system of a location, with a SQLite index beside each folder it lists. ``ls`` and
 ``info`` identify an entry from its listing, by :func:`gppu.fs.handlers.probe` on this host, and read nothing; ``refresh=True`` parses
@@ -42,8 +45,9 @@ import yaml
 from fsspec import open as open_uri, register_implementation
 from fsspec.archive import AbstractArchiveFileSystem
 from fsspec.spec import AbstractFileSystem
+from jinja2 import UndefinedError
 
-from ..gppu import TimeSpan, OSType, TemplateSet, detect_os, full_path, y2path
+from ..gppu import TimeSpan, OSType, TemplateSet, detect_os, full_path, glob, jinja_template, y2path
 from .uri import y2uri
 from . import handlers
 
@@ -576,6 +580,26 @@ class Location:
     if path and any(part in ('', '.', '..') for part in path.split('/')):
       raise ValueError('Location path cannot contain empty or traversal segments')
     return y2path(path)
+
+
+def file_path(type: str, name: str, **values: Any) -> str:
+    """A file's path, generated and returned, nothing else: the line for its type in the environment's `locations/lake/folders`,
+    filled in with its name, stem and ext and what its writer knows of it, values, such as start, the moment it is of. It reads,
+    writes and copies no file; the writer stores the file at the path. A type with no line, or a line that comes out empty or
+    asks for what it is not given, gives no path."""
+    places = glob('locations/lake/folders')
+    if not places:
+        raise ValueError('the environment has no lines for file paths, locations/lake/folders')
+    if type not in places:
+        raise ValueError(f'{name}: no path for a {type}')
+    try:
+        path = jinja_template(places[type], name=name, stem=Path(name).stem, ext=Path(name).suffix, re=re, **values)
+    except UndefinedError as error:   # the line asks for what the writer did not give, such as the date of a session with no time
+        raise ValueError(f'{name}: no path for a {type}: {error}') from error
+    path = str(path or '').strip()
+    if not path:
+        raise ValueError(f'{name}: no path for a {type}')
+    return str(Location.relative(path))
 
 
 class FileSystem(Provider):

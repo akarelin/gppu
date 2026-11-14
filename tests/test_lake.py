@@ -14,10 +14,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from gppu import Env
-from gppu.fs import DataObject
+from gppu.fs import DataObject, file_path
 from gppu.fs.catalog import Catalog, GppuCatalog
 from gppu.fs.gppufs import GppuFileSystem
-from gppu.fs.lake import Lake, LakeFileSystem, api, copy_to_lake, file_path
+from gppu.fs.lake import Lake, LakeFileSystem, api
 
 UID = '01c098c1-c196-49d4-b7e2-d2f544809574'
 SESSION = '\n'.join(json.dumps(line) for line in (
@@ -68,8 +68,8 @@ def test_a_session_is_placed_by_what_its_handler_reads_and_recorded_in_the_catal
     assert not list(outer.rglob('*.gppufs.sqlite'))   # nothing but the file is written to the store
 
 
-def test_a_file_path_is_the_lakes_line_for_its_type_filled_in_with_what_its_writer_knows(tmp_path):
-    """No Lake and no catalog: the same path the Lake writes a file at and its Postgres record carries."""
+def test_a_file_path_is_the_line_for_its_type_filled_in_with_what_its_writer_knows(tmp_path):
+    """No Lake and no catalog: a path generated and returned, no file touched."""
     session = tmp_path / f'{UID}.jsonl'
     session.write_text(SESSION)
     record = Lake.read(session)
@@ -77,23 +77,15 @@ def test_a_file_path_is_the_lakes_line_for_its_type_filled_in_with_what_its_writ
         f'timeseries/2026/Sessions/07/cc/{UID}/{UID}.jsonl'
     assert file_path('index', '.Dev.gppufs.sqlite', account='alex-pc', path='D:/Dev/.Dev.gppufs.sqlite') == \
         'indexes/alex-pc/D/Dev/.Dev.gppufs.sqlite'
-    with pytest.raises(ValueError, match='no path for a file'):   # a type the Lake has no line for
+    assert file_path('screenshot', 'Screenshot 2026-11-10 101010.png', start=date(2026, 11, 10)) == \
+        'timeseries/2026/Screenshots/11/Screenshot 2026-11-10 101010.png'
+    assert file_path('shell', '.bash_history', start=datetime(2026, 11, 12, 9, 5), host='alex-pc') == \
+        'timeseries/2026/Activity/Shell/11/261112.0905_bash_history_alex-pc.txt'
+    assert not list(tmp_path.rglob('timeseries'))   # nothing written
+    with pytest.raises(ValueError, match='no path for a file'):   # a type with no line
         file_path('file', 'Ann Lee.json', account='karelin', path='users/alex/contacts/Ann Lee.json')
     with pytest.raises(ValueError, match='no path'):   # a line asking for what it is not given
         file_path('session', session.name, record=record)
-
-
-def test_a_file_is_copied_to_the_lake_at_its_file_path(tmp_path):
-    """A writer such as Preservator names the kind and what it knows; the copy is a plain one, its times kept."""
-    shot = tmp_path / 'Screenshot 2026-11-10 101010.png'
-    shot.write_bytes(b'png')
-    target = copy_to_lake(shot, tmp_path / 'lake', 'screenshot', start=date(2026, 11, 10))
-    assert target == tmp_path / 'lake' / 'timeseries' / '2026' / 'Screenshots' / '11' / shot.name
-    assert target.read_bytes() == b'png' and target.stat().st_mtime_ns == shot.stat().st_mtime_ns
-    history = tmp_path / '.bash_history'
-    history.write_text('ls\n')
-    assert copy_to_lake(history, tmp_path / 'lake', 'shell', start=datetime(2026, 11, 12, 9, 5), host='alex-pc') == \
-        tmp_path / 'lake' / 'timeseries' / '2026' / 'Activity' / 'Shell' / '11' / '261112.0905_bash_history_alex-pc.txt'
 
 
 def test_an_object_the_layout_has_no_place_for_is_refused(tmp_path, ld):
