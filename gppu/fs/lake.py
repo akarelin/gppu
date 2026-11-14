@@ -16,6 +16,7 @@ stored in, a folder this host reaches through gppu.fs's FileSystem, and the temp
   LakeFileSystem(url, root)         the Lake through its API as an fsspec filesystem, what a desktop or a UI browses it with"""
 import io
 import json
+import re
 import shutil
 import tempfile
 import threading
@@ -30,11 +31,33 @@ from jinja2 import UndefinedError
 from . import handlers
 from . import CACHE, Container, DataObject, FileSystem, Location, _address, _below
 from .catalog import Catalog, GppuCatalog
-from ..gppu import TemplateSet, TimeSpan
+from ..gppu import TimeSpan, jinja_template
 from .uri import y2uri
 
 PIECE = 1 << 20   # a download is sent a mebibyte at a time
 INDEX = '.gppufs.sqlite'   # how a gppufs index's name ends
+
+
+def file_path(templates: Mapping[str, str], obj: DataObject, record: handlers.Record, type: str) -> str:
+    """The path of a file below the Lake: the Lake writes the file there, and its record in Postgres carries the same path. It
+    is the template of the file's type, `source` for a type that has none, rendered with what gppu's handlers read of the file,
+    its name, its kind, the date it is of (its span's start, else the date its name says) and the system, account and path of
+    the uri it came from. A template that renders nothing, or asks for what the file does not say, gives no path."""
+    span = getattr(record, 'span', None) or handlers.Handler.named(obj.name)
+    source = urlsplit(str(obj.uri))
+    came = f' from {obj.uri}' if source.netloc or source.path else ''   # a file with no source has no uri to name
+    try:
+        path = jinja_template(templates[type if type in templates else 'source'], record=record, name=obj.name, kind=obj.kind,
+                              start=span.start if span else None, system=source.scheme, account=source.netloc,
+                              path=unquote(source.path).strip('/'), re=re)
+    except UndefinedError as error:   # the template asks for what the file does not say, such as the date of a session with no time
+        missing = 'what was sent of it gives no time, so it has no date' if span is None else str(error)
+        raise ValueError(f'{obj.name}: no path for a {type}{came}: {missing}') from error
+    path = str(path or '').strip()
+    if not path:
+        raise ValueError(f'{obj.name}: no path for a {type}{came}')
+    return str(Location.relative(path))
+
 
 class Lake:
     """Every location in the catalog, read by uri, one folder, store, where saved objects go, and the catalog, contents, which holds
@@ -45,7 +68,7 @@ class Lake:
         self.catalog = catalog
         provider = FileSystem()   # the Lake's store is its own configuration, a folder this host reaches, not one of Linked Data's locations
         self.store = Container(provider, y2uri(store))
-        self.templates = TemplateSet(named={'lake': dict(templates)})
+        self.templates = dict(templates)   # file_path's, by type
         self.contents = contents
         self.root = provider.local(self.store.uri)   # the Lake on this host
 
@@ -74,25 +97,7 @@ class Lake:
         except Exception as error:   # what a handler cannot read has no place in the Lake: the save is refused with its reason
             raise ValueError(f'{path.name}: {handler.__name__} cannot read it: {type(error).__name__}: {error}') from error
 
-    def place(self, obj: DataObject, record: handlers.Record, type: str) -> str:
-        """Where obj goes in the Lake, by the template of its file's type, `source` for a type the Lake has none for: rendered
-        with the record, the object's name, the date it is of (its span's start, else the date its name says) and the system,
-        account and path of the uri it came from."""
-        span = getattr(record, 'span', None) or handlers.Handler.named(obj.name)
-        source = urlsplit(str(obj.uri))
-        came = f' from {obj.uri}' if source.netloc or source.path else ''   # a save with no source has no uri to name
-        try:
-            path = self.templates.render_template(type if type in self.templates.named else 'source',
-                record=record, name=obj.name, start=span.start if span else None, system=source.scheme, account=source.netloc,
-                path=unquote(source.path).strip('/'))
-        except UndefinedError as error:   # the template asks for what obj does not say, such as the date of a session with no time
-            missing = 'what was sent of it gives no time, so it has no date to be placed by' if span is None else str(error)
-            raise ValueError(f'{obj.name}: the Lake has no place for a {type}{came}: {missing}') from error
-        path = str(path or '').strip()
-        if not path:
-            raise ValueError(f'{obj.name}: the Lake has no place for a {type}{came}')
-        return str(Location.relative(path))
-
+ 
     def _recorded(self, uri: y2uri | str, path: Path, record: handlers.Record) -> dict[str, Any]:
         """The file the Lake holds at uri recorded in its catalog as its handler read it, from path, its copy on this host."""
         stat = path.stat()
@@ -116,7 +121,7 @@ class Lake:
                     file.write(obj.content if isinstance(obj.content, bytes) else obj.content.encode('utf-8')
                                if isinstance(obj.content, str) else json.dumps(obj.content, ensure_ascii=False).encode('utf-8'))
             record = self.read(scratch)
-            path = self.place(obj, record, handlers.probe(scratch).type)
+            path = file_path(self.templates, obj, record, handlers.probe(scratch).type)
             uri = self.store.provider.join(self.store.uri, Location.relative(path))
             if copy:
                 return uri

@@ -15,7 +15,8 @@ from fastapi.testclient import TestClient
 from gppu.fs import DataObject
 from gppu.fs.catalog import Catalog, GppuCatalog
 from gppu.fs.gppufs import GppuFileSystem
-from gppu.fs.lake import Lake, LakeFileSystem, api
+from gppu.fs.handlers import Record
+from gppu.fs.lake import Lake, LakeFileSystem, api, file_path
 
 UID = '01c098c1-c196-49d4-b7e2-d2f544809574'
 SESSION = '\n'.join(json.dumps(line) for line in (
@@ -60,9 +61,21 @@ def test_an_original_is_placed_under_its_system_and_account(tmp_path, ld):
     assert str(uri) == (outer / 'sources' / 'm365-karelin' / 'users' / 'alex' / 'contacts' / 'Ann Lee.json').as_uri()
 
 
+def test_a_file_path_is_the_template_of_its_type_rendered_with_what_its_handler_reads(tmp_path):
+    """No Lake and no catalog: the same path the Lake writes a file at and its Postgres record carries."""
+    session = tmp_path / f'{UID}.jsonl'
+    session.write_text(SESSION)
+    assert file_path(LAYOUT, DataObject('', b'', None, 'file', session.name), Lake.read(session), 'session') == \
+        f'timeseries/2026/Sessions/07/cc/{UID}/{UID}.jsonl'
+    original = DataObject('m365://karelin/users/alex/contacts/Ann%20Lee.json', b'', None, 'file', 'Ann Lee.json')
+    assert file_path(LAYOUT, original, Record(name='Ann Lee.json'), 'file') == 'sources/m365-karelin/users/alex/contacts/Ann Lee.json'
+    with pytest.raises(ValueError, match='no path'):
+        file_path(LAYOUT, DataObject('', b'', None, 'file', 'note.txt'), Record(name='note.txt'), 'file')
+
+
 def test_an_object_the_layout_has_no_place_for_is_refused(tmp_path, ld):
     lake, _ = lake_of(tmp_path, ld)
-    with pytest.raises(ValueError, match='no place'):
+    with pytest.raises(ValueError, match='no path'):
         lake.save(DataObject('', b'text', None, 'file', 'note.txt'))
 
 
