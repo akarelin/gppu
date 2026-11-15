@@ -40,7 +40,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
   - [x] Y2's timers are gppu AsyncApp's, and only AsyncApp's: `run_later` (re-armed by key), `run_every`, `cancel_timer`, `cancel_timers`, their handles and the one thread that holds them, and an app's armed timers are public (`timers`, `h_timeouts`)
   - [x] App has no init of its own: it loads, its environment then its own configuration, as a step of `_DC`'s init. Linked Data's API still runs its database's init before it
   - [x] Y2's App is a gppu AsyncApp, and Y2's program an AsyncApp again; y2 main keeps no timer code or callback wrapper of its own, builds the runtime it built before and fails only the tests it failed before. The house switches at y2's next release, which restarts y2
-  - [ ] Y2 uses Env and has no Environment of its own: Y2 loads IoT through Env, reads `y2/dry_run` with glob, and its API sets `Env.app_path`; State is no entity. y2 builds the runtime it built before
+  - [x] Y2 uses Env and has no Environment of its own: Y2 loads IoT through Env, reads `y2/dry_run` with glob, and its API sets `Env.app_path`; State is no entity. y2 builds the runtime it built before
   - [ ] Y2's App steps through AsyncApp's `init`, `load`, `start` and `stop`, not its own
   - [ ] Y2's admin UI spawns through AsyncApp's `_spawn`, not its own
 
@@ -75,5 +75,7 @@ These move in the same commit as the release. gppu 3.7.7 is released and alex-pc
 - Hosts TUI: Fleet, Preserve and Configs are on the Fleet section again, and render-config in Fleet tools: `configure-all`, `render-config`, `harness` and the Configs files came back from the archive and read Fleet's rows, `Fleet.values` and gppu's glob and Jinja (RAN b071600bb). Start page stays archived. PC Control launches `IoT/PCC/pcc-service.py`, which stops at `Env.from_env` until display-control is switched
 - Fixed: Preservator: the LLM step's `logs` exclusion, meant for OpenClaw, also left out Agy's transcripts, which sit in `.system_generated/logs`; a session folder is now copied whole whatever the step excludes
 - craptui: `craptui.yaml` names `gd-video-ripper.yaml`, removed with GD Video Ripper, so craptui does not open
+- IoT: `tests/test_tod_actions.py` fails the same eight tests on y2 main as committed and on y2 without its Environment
+- RAN: `Skills/devops/scripts/y2-compare.py` reads `Runtime.services`, which Y2's Runtime does not have
 - gppu examples: their `MANIFEST` names `D:/TextLake/.catalog`, which has no host folder, so `handler_ls` and the handler browser stop there
 - w11: with `W11_APP_DIR` unset, the launcher reads its 2026-03-16 copies in `~/.gppu/w11`, not the repository's scripts; `w11/default_config/w11.yaml`, which seeds them, still names the deleted `w11-events.yaml` and `w11-onedrive.yaml`
