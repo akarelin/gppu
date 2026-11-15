@@ -1,10 +1,10 @@
-"""An app's timers, Y2's: one thread holds them, a callback fires once or at an interval, a key re-arms."""
+"""An async app's timers: one thread holds them, a callback fires once or at an interval, a key re-arms."""
 import threading
 from unittest.mock import Mock, patch
 
 import pytest
 
-from gppu import App, TimerHandle
+from gppu import App, AsyncApp, TimerHandle
 from gppu.app import mixin_Stepper
 from gppu.gppu import _DC
 
@@ -14,7 +14,7 @@ def wait(event: threading.Event) -> bool:
 
 
 def test_a_timer_fires_once_with_the_keywords_its_callback_takes():
-    app, heard, fired = App(name='timers'), [], threading.Event()
+    app, heard, fired = AsyncApp(name='timers'), [], threading.Event()
 
     def callback(level):
         heard.append(level)
@@ -30,7 +30,7 @@ def test_a_timer_fires_once_with_the_keywords_its_callback_takes():
 
 
 def test_arming_a_key_again_replaces_the_timer_armed_under_it():
-    app, heard, fired = App(name='timers'), [], threading.Event()
+    app, heard, fired = AsyncApp(name='timers'), [], threading.Event()
     first = app.run_later(lambda: heard.append('first'), delay=0.05, key='occupancy/hall')
     second = app.run_later(lambda: (heard.append('second'), fired.set()), delay=0.01, key='occupancy/hall')
     assert not first.running and second.running
@@ -41,7 +41,7 @@ def test_arming_a_key_again_replaces_the_timer_armed_under_it():
 
 
 def test_a_timer_repeats_at_its_interval_until_cancelled():
-    app, ticks, enough = App(name='timers'), [], threading.Event()
+    app, ticks, enough = AsyncApp(name='timers'), [], threading.Event()
 
     def tick():
         ticks.append(1)
@@ -55,7 +55,7 @@ def test_a_timer_repeats_at_its_interval_until_cancelled():
 
 
 def test_cancel_timers_cancels_every_timer_the_app_armed():
-    app = App(name='timers')
+    app = AsyncApp(name='timers')
     handles = [app.run_later(lambda: None, delay=60, key='a'), app.run_later(lambda: None, delay=60),
                app.run_every(lambda: None, start=60, interval=60)]
     app.cancel_timers()
@@ -75,12 +75,12 @@ def test_an_app_initializes_the_class_it_is_composed_with():
         pass
 
     state = State(name='State', eid='app.state@system')
-    assert (state.name, state.eid, state.timers) == ('State', 'app.state@system', {})
+    assert (state.name, state.eid) == ('State', 'app.state@system')
 
 
 def test_a_failing_repeat_reports_its_failure_and_runs_the_next_time():
-    app, callback = App(name='failed-poll'), Mock(side_effect=[ValueError('invalid device response'), None])
-    with patch('gppu.gppu._SCHEDULER.arm') as arm:
+    app, callback = AsyncApp(name='failed-poll'), Mock(side_effect=[ValueError('invalid device response'), None])
+    with patch('gppu.app._SCHEDULER.arm') as arm:
         handle = app.run_every(callback, start=30, interval=60)
         fire = arm.call_args.args[1]
         arm.reset_mock()
@@ -93,13 +93,13 @@ def test_a_failing_repeat_reports_its_failure_and_runs_the_next_time():
 
 
 def test_a_repeat_cancelled_while_failing_does_not_arm_again():
-    app = App(name='cancelled-poll')
+    app = AsyncApp(name='cancelled-poll')
 
     def callback():
         app.cancel_timer(handle)
         raise ValueError('invalid device response')
 
-    with patch('gppu.gppu._SCHEDULER.arm') as arm:
+    with patch('gppu.app._SCHEDULER.arm') as arm:
         handle = app.run_every(callback, start=30, interval=60)
         fire = arm.call_args.args[1]
         arm.reset_mock()

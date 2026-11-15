@@ -122,12 +122,12 @@ class TestAzureGet:
             raise self.error
 
     def test_a_secret_the_vault_does_not_hold_is_none(self):
-        from azure.core.exceptions import ResourceNotFoundError
+        ResourceNotFoundError = pytest.importorskip("azure.core.exceptions").ResourceNotFoundError
         with patch.object(VaultProviderAzure, "_ensure_client", return_value=self.Client(ResourceNotFoundError("absent"))):
             assert VaultProviderAzure("myvault").get("absent") is None
 
     def test_a_vault_that_refuses_raises(self):
-        from azure.core.exceptions import ClientAuthenticationError
+        ClientAuthenticationError = pytest.importorskip("azure.core.exceptions").ClientAuthenticationError
         with patch.object(VaultProviderAzure, "_ensure_client", return_value=self.Client(ClientAuthenticationError("refused"))):
             with pytest.raises(ClientAuthenticationError):
                 VaultProviderAzure("myvault").get("any")

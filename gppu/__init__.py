@@ -17,7 +17,6 @@ from .gppu import (
     mixin_Config,
     _Base,
     App,
-    TimerHandle,
 
     # caching, from the standard library
     cache,
@@ -28,6 +27,7 @@ from .gppu import (
 from .app import (
     # apps with steps
     AsyncApp,
+    TimerHandle,
     APIApp,
     mixin_Rest,
 

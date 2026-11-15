@@ -30,12 +30,15 @@
 - App initialization takes its environment; the app already knows its name. An app loads its own configuration, which is independent from the environment.
 - App's functionality lives in one place, and configuration is read from MQTT in one place.
 - AsyncApp does its own init and does not rely on `_Base`.
+- App has no init of its own: it loads through `_DC`'s init.
+- Timers exist only in AsyncApp.
 - TUI apps support inline configs: a script carries its own configuration and manifest, as `examples/sessions_clean.py` does. A Python script assigns its manifest to a global variable.
 - Running processes in parallel is not part of a TUI, since a command-line app runs them too. It is an app's method, like its timers (run after, run in, run at).
 - Every TUI app is an async app. Every app is a `_DC`, whose data holds everything the app is given, so no app sets its own attributes from it again.
 
 ## Y2
 - Y2 only creates apps, and they share one State and one Env.
+- Y2's app is an async app.
 - Y2's entity is part of gppu.
 
 ## Code
