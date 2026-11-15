@@ -24,7 +24,8 @@
 - YAML anchors are YAML, resolved by the YAML standard. They are not Jinja.
 
 ## State
-- State is state: not a `_Base`, with no configuration and no logger.
+- gppu offers a simple way for an app to keep its own state, as it offers Env.
+- State keeps the MQTT broker. MQTT is not Y2's alone: other code in gppu uses it.
 
 ## Apps
 - App initialization takes its environment; the app already knows its name. An app loads its own configuration, which is independent from the environment.
