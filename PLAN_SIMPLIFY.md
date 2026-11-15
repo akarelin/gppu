@@ -44,6 +44,17 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
   - [x] Y2's Runtime is gppu's (`gppu.iot`): moved whole, its apps, registries and listeners; the `immediate` state listener nobody called is gone, and Y2's program registers State with it. y2 keeps no copy
   - [x] Y2's App steps through AsyncApp's `init`, `load`, `start` and `stop`, not its own: its `initialize` is its part of `init`, at construction as before, and its teardown its part of `stop`
   - [x] Y2's admin UI and its per-app status clients have no `_spawn` of their own: they spawn on State's, which holds Y2's tasks on its loop and is the spawn gppu's MQTT mixin asks its host for. A failed admin bind stays the UI's, as in the house today
+  - [ ] Y2's State is gppu's
+
+## Y2's tests, passing before y2 is deployed
+- [x] The footer, admin collection, Home Assistant compiler, Z-Wave, AV, pool-light, cloud occupancy and app-shape tests read what Y2 reads now; the AV test expects the AV objects the running Y2 serves
+- [ ] Kasa's readings: the test expects 69, Creekview builds 67
+- [ ] Insteon's construction: the test expects 241, Y2 builds 248
+- [ ] The Creekview validator, on Windows, checks `D:\Dev`'s Creekview instead of its candidate copy, because `Env.init` places IoT under `D:\Dev` there
+- [ ] Homebridge, Hue and Sensibo tests read the generated files at `y2/trace_folder`, a POSIX path, on Windows
+- [ ] Insteon's scene links against the output before the refactor; a homebridge entity with only one of its two commands
+- [ ] The admin UI's Kasa positions, and the scene light contract
+- [ ] IoT's `tests/test_tod_actions.py`: eight tests
 
 ## Y2 entity
 - [ ] Y2's entity (`y2entity.py`) is part of gppu
@@ -66,7 +77,6 @@ These move in the same commit as the release. gppu 3.7.7 is released and alex-pc
 - Every reader of `Env.data`, which is `Env._my` now, reads `glob_dict('')`: lake's `graph_configuration.py` and `m365/config.py`, display-control and its Intune scripts, and the Preservator, Session Manager and FileIndexer tests
 
 ## Found outside this task
-- Y2: `test_insteon`, `test_kasa2mqtt`, `test_scene_light_contract` and `test_creekview_editor` fail each run on its own, on the running v6.1.7.5730 and on main alike; none is in the Release's verify step
 - Hosts: `configs.py`'s and `start-page.py`'s `load_config` read `fleet.platforms`, which Fleet has not had since 2026-09-30
 - Hosts: `hosts.yaml` lost s1's, s9's and yellow's `mount` in the move to `RAN/_config`, so `server_mounts` rendered `None/Lake` and the like; the three lines are back (RAN b071600bb)
 - Fixed: gppu: `test_tui_logging`'s file-and-trace-rules and shared-log-screens tests pass, and gppu's whole suite passes on master
@@ -76,7 +86,6 @@ These move in the same commit as the release. gppu 3.7.7 is released and alex-pc
 - Hosts TUI: Fleet, Preserve and Configs are on the Fleet section again, and render-config in Fleet tools: `configure-all`, `render-config`, `harness` and the Configs files came back from the archive and read Fleet's rows, `Fleet.values` and gppu's glob and Jinja (RAN b071600bb). Start page stays archived. PC Control launches `IoT/PCC/pcc-service.py`, which stops at `Env.from_env` until display-control is switched
 - Fixed: Preservator: the LLM step's `logs` exclusion, meant for OpenClaw, also left out Agy's transcripts, which sit in `.system_generated/logs`; a session folder is now copied whole whatever the step excludes
 - craptui: `craptui.yaml` names `gd-video-ripper.yaml`, removed with GD Video Ripper, so craptui does not open
-- IoT: `tests/test_tod_actions.py` fails the same eight tests on y2 main as committed and on y2 without its Environment
 - RAN: `Skills/devops/scripts/y2-compare.py` reads `Runtime.services`, which Y2's Runtime does not have
 - gppu examples: their `MANIFEST` names `D:/TextLake/.catalog`, which has no host folder, so `handler_ls` and the handler browser stop there
 - w11: with `W11_APP_DIR` unset, the launcher reads its 2026-03-16 copies in `~/.gppu/w11`, not the repository's scripts; `w11/default_config/w11.yaml`, which seeds them, still names the deleted `w11-events.yaml` and `w11-onedrive.yaml`
