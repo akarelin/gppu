@@ -133,6 +133,10 @@ from .iot import (
     y2slug,
     y2eid,
 
+    # the program's apps and their listeners
+    Runtime,
+    ListenerHandle,
+
     # mqtt library (aiomqtt optional — gppu[mqtt])
     mixin_Mqtt,
     MqttApp,
@@ -211,7 +215,7 @@ __all__ = [
     'cache', 'lru_cache', 'cached_property',
 
     # y2xxx classes
-    'y2list', 'y2path', 'y2uri', 'y2topic', 'y2slug', 'y2eid',
+    'y2list', 'y2path', 'y2uri', 'y2topic', 'y2slug', 'y2eid', 'Runtime', 'ListenerHandle',
 
     # mqtt library
     'mixin_Mqtt', 'MqttApp', 'AppService',

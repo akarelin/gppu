@@ -17,7 +17,7 @@ from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
 from dataclasses import dataclass
 from itertools import count
-from typing import Any, final
+from typing import Any, ClassVar, final
 
 from .gppu import App, Debug, Env, _Base, _DC, _mixin, now_ts
 
@@ -299,6 +299,7 @@ class AsyncApp(App, mixin_Stepper, mixin_EventLoopBridge):
   _background_tasks: set[asyncio.Task[Any]]
   _loop: asyncio.AbstractEventLoop | None
   _timer_ids = count(1)
+  restartable: ClassVar[bool] = True   # whether Runtime.restart_app may stop, reconstruct and start it
 
   def __init__(self, **kw) -> None:
     super().__init__(**kw)

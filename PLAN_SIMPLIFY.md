@@ -41,6 +41,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
   - [x] App has no init of its own: it loads, its environment then its own configuration, as a step of `_DC`'s init. Linked Data's API still runs its database's init before it
   - [x] Y2's App is a gppu AsyncApp, and Y2's program an AsyncApp again; y2 main keeps no timer code or callback wrapper of its own, builds the runtime it built before and fails only the tests it failed before. The house switches at y2's next release, which restarts y2
   - [x] Y2 uses Env and has no Environment of its own: Y2 loads IoT through Env, reads `y2/dry_run` with glob, and its API sets `Env.app_path`; State is no entity. y2 builds the runtime it built before
+  - [ ] Y2's Runtime is gppu's (`gppu.iot`): moved whole, its apps, registries and listeners; the `immediate` state listener nobody called is gone, and Y2's program registers State with it. y2 keeps no copy
   - [x] Y2's App steps through AsyncApp's `init`, `load`, `start` and `stop`, not its own: its `initialize` is its part of `init`, at construction as before, and its teardown its part of `stop`
   - [x] Y2's admin UI and its per-app status clients have no `_spawn` of their own: they spawn on State's, which holds Y2's tasks on its loop and is the spawn gppu's MQTT mixin asks its host for. A failed admin bind stays the UI's, as in the house today
 
