@@ -45,16 +45,19 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
   - [x] Y2's App steps through AsyncApp's `init`, `load`, `start` and `stop`, not its own: its `initialize` is its part of `init`, at construction as before, and its teardown its part of `stop`
   - [x] Y2's admin UI and its per-app status clients have no `_spawn` of their own: they spawn on State's, which holds Y2's tasks on its loop and is the spawn gppu's MQTT mixin asks its host for. A failed admin bind stays the UI's, as in the house today
   - [ ] Y2's State is gppu's
+    - Y2's State names Y2's `Entity`, `YEntity` and `YGroup` in four places (a stand-in for an unknown eid, an unknown eid's state, an entity's indicator, the group check), and its base is Y2's App; gppu cannot import Y2
+    - No entity in Y2's dry runtime has State as its `api`; every one has its own app's
 
 ## Y2's tests, passing before y2 is deployed
 - [x] The footer, admin collection, Home Assistant compiler, Z-Wave, AV, pool-light, cloud occupancy and app-shape tests read what Y2 reads now; the AV test expects the AV objects the running Y2 serves
-- [x] Kasa's readings and Insteon's buttons and indicators: the tests expect what the running Y2 serves; Creekview dropped two headphone readings on 2026-11-06
-- [x] Hue, Sensibo and the scene light contract write the compilers' output to their own folder through `y2/trace_folder`, which Y2 reads (they patched a top-level key, so the compilers wrote into Creekview's `generated`); the AO lamps button is ao1's 2, as Creekview has it since 2026-11-01
-- [x] The admin UI's Kasa positions: the test starts Kasa as Y2 does, then cancels its timers
-- [ ] The Creekview validator, on Windows, checks `D:\Dev`'s Creekview instead of its candidate copy, because `Env.init` places IoT under `D:\Dev` there
-- [ ] Insteon's scene links against the output recorded before the refactor, which has the AO lamps on ao1's 3
-- [ ] Homebridge's bridges per area against the recorded output (a camera differs), and the entity with only one of its two commands
-- [ ] IoT's `tests/test_tod_actions.py`: eight tests
+- [x] Kasa's readings and Insteon's buttons and indicators: Creekview dropped two headphone readings on 2026-11-06 and filled seven keypad slots, four with new paths, on 2026-11-01; the running Y2 serves the same
+- [x] Hue, Sensibo and the scene light contract write the compilers' output to their own folder through `y2/trace_folder`, which Y2 reads (they patched a top-level key, so on a host with Creekview's `generated` folder the compilers would write into it); the AO lamps button is ao1's 2, as Creekview has it since 2026-11-01
+- [x] The admin UI's Kasa positions: the test starts Kasa as Y2 does, then cancels every timer its start armed
+- [x] Insteon's scene links: the fixture follows Creekview's 2026-11-01 AO change (IoT 1eb5d007), and Y2 main reproduces every other recorded file
+- [x] Homebridge's both-ways check: rows list the commands they accept
+- [ ] The Creekview validator, on Windows, checks `D:\Dev`'s Creekview instead of its candidate copy, because `Env.init` places IoT under `D:\Dev` there; on the house it reads the candidate
+- [ ] Homebridge's front camera bridge: Y2 main adds the two Garage Shelf cameras Creekview declares since 2026-10-31, which `IoT/homebridge/front/config.json` lacks; otherwise identical
+- [ ] IoT's `tests/test_tod_actions.py`: Creekview has Y2's TOD reactions commented out, as `i-tod.sh` runs the time of day; two tests drive those reactions, and Y2's TOD actions miss some of the script's targets in all four modes
 
 ## Y2 entity
 - [ ] Y2's entity (`y2entity.py`) is part of gppu
@@ -88,5 +91,6 @@ These move in the same commit as the release. gppu 3.7.7 is released and alex-pc
 - craptui: `craptui.yaml` names `gd-video-ripper.yaml`, removed with GD Video Ripper, so craptui does not open
 - RAN: `Skills/devops/scripts/y2-compare.py` reads `Runtime.services`, which Y2's Runtime does not have
 - Y2: State keeps every message it publishes in `State.published`, which only tests read, so the list grows for the life of the process
+- IoT: Creekview's `generated/i1-scenes.yaml` still links the AO lamps to AO Pendant, which Creekview's scenes dropped on 2026-11-01; that day's commit edited the file by hand rather than compiling it
 - gppu examples: their `MANIFEST` names `D:/TextLake/.catalog`, which has no host folder, so `handler_ls` and the handler browser stop there
 - w11: with `W11_APP_DIR` unset, the launcher reads its 2026-03-16 copies in `~/.gppu/w11`, not the repository's scripts; `w11/default_config/w11.yaml`, which seeds them, still names the deleted `w11-events.yaml` and `w11-onedrive.yaml`
