@@ -28,6 +28,7 @@ from .app import (
     # apps with steps
     AsyncApp,
     TimerHandle,
+    _callback_wrapper,
     APIApp,
     mixin_Rest,
 
@@ -204,7 +205,7 @@ __all__ = [
     'glob', 'glob_int', 'glob_list', 'glob_dict',
 
     # Foundation classes
-    '_Base', 'App', 'TimerHandle', 'AsyncApp', 'APIApp', 'mixin_Rest',
+    '_Base', 'App', 'TimerHandle', '_callback_wrapper', 'AsyncApp', 'APIApp', 'mixin_Rest',
 
     # caching, from the standard library
     'cache', 'lru_cache', 'cached_property',
