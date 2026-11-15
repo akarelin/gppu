@@ -39,6 +39,7 @@
 ## Y2
 - Y2 only creates apps, and they share one State and one Env.
 - Y2's app is an async app.
+- Y2 uses Env; it has no environment of its own.
 - Y2's entity is part of gppu.
 
 ## Code

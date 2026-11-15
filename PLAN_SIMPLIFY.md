@@ -40,6 +40,7 @@ Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share o
   - [x] Y2's timers are gppu AsyncApp's, and only AsyncApp's: `run_later` (re-armed by key), `run_every`, `cancel_timer`, `cancel_timers`, their handles and the one thread that holds them, and an app's armed timers are public (`timers`, `h_timeouts`)
   - [x] App has no init of its own: it loads, its environment then its own configuration, as a step of `_DC`'s init. Linked Data's API still runs its database's init before it
   - [x] Y2's App is a gppu AsyncApp, and Y2's program an AsyncApp again; y2 main keeps no timer code or callback wrapper of its own, builds the runtime it built before and fails only the tests it failed before. The house switches at y2's next release, which restarts y2
+  - [ ] Y2 uses Env and has no Environment of its own: Y2 loads IoT through Env, reads `y2/dry_run` with glob, and its API sets `Env.app_path`; State is no entity. y2 builds the runtime it built before
   - [ ] Y2's App steps through AsyncApp's `init`, `load`, `start` and `stop`, not its own
   - [ ] Y2's admin UI spawns through AsyncApp's `_spawn`, not its own
 
