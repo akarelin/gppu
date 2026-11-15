@@ -25,7 +25,7 @@
 
 ## State
 - gppu offers a simple way for an app to keep its own state, as it offers Env.
-- State keeps the MQTT broker. MQTT is not Y2's alone: other code in gppu uses it.
+- The MQTT broker stays where it is. MQTT is not specific to Y2: other code uses it.
 
 ## Apps
 - App initialization takes its environment; the app already knows its name. An app loads its own configuration, which is independent from the environment.
