@@ -366,6 +366,13 @@ class AsyncApp(App, mixin_Stepper, mixin_EventLoopBridge):
     self.h_timeouts.clear()
 
   def __stop(self) -> None:
+    loop = self._loop
+    if loop is None: return                    # not running: nothing it spawned is left to cancel
+    try: on_loop = asyncio.get_running_loop() is loop
+    except RuntimeError: on_loop = False
+    if not on_loop:                            # stopped from another thread: the loop cancels its own tasks
+      loop.call_soon_threadsafe(lambda: [task.cancel() for task in list(self._background_tasks) if not task.done()])
+      return
     current = asyncio.current_task()
     for task in self._background_tasks:
       if task is not current and not task.done(): task.cancel()

@@ -1604,6 +1604,7 @@ class _Env(_Base):
   os: OSType
   host: str
   path: Path   # the environment's YAML file
+  environment: str   # the environment loaded: RAN or IoT
 
   _global_log = True
 
@@ -1616,20 +1617,24 @@ class _Env(_Base):
   def init(self, **kw):
     _ENV_PATHS = {"RAN": "RAN/_config/config.yaml", "IoT": "IoT/_Creekview/_creekview.yaml"}
 
-    if self.initialized: return
+    environment = kw.get('environment') or ''
+    if self.initialized:
+      if environment and environment != self.environment: raise ValueError(f'Environment {self.environment!r} is loaded; {environment!r} cannot load as well')
+      return
 
     self.os = detect_os()
     self.host = socket.gethostname().split('.')[0].lower()
     self.user = getpass.getuser()
     self.home = Path.home()
 
-    if (environment := kw.get('environment', '')) in _ENV_PATHS:
+    if environment in _ENV_PATHS:
       if self.os == OSType.W11: path = Path("D:\\Dev")
       else: path = Path("~").expanduser()
       path /= Path(_ENV_PATHS[environment])
 
       if path.exists():
         self.path = path
+        self.environment = environment
         self._config_load(path)
         if 'log_file' in self._my: Logger.enable_file_logging(log_file=self._my['log_file'])
         if 'trace_rules' in self._my: Logger.init_logger(trace_rules=self._my['trace_rules'])

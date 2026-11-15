@@ -106,3 +106,28 @@ def test_a_repeat_cancelled_while_failing_does_not_arm_again():
         with pytest.raises(ValueError, match='invalid device response'):
             fire()
         arm.assert_not_called()
+
+
+def test_an_app_that_is_not_running_stops_from_any_thread():
+    app, stopped = AsyncApp(name='idle'), threading.Event()
+    threading.Thread(target=lambda: (app.stop(), stopped.set())).start()
+    assert wait(stopped) and app.stopped
+
+
+def test_a_running_app_stopped_from_another_thread_cancels_what_it_spawned():
+    """Y2's Supervisor restarts an app from a timer's thread, where no loop runs."""
+    import asyncio
+
+    class Serving(AsyncApp):
+        def start(self):
+            super().start()
+            self._spawn(asyncio.Event().wait())
+
+    app = Serving(name='serving')
+
+    async def run():
+        asyncio.get_running_loop().call_later(0.05, lambda: threading.Thread(target=app.stop).start())
+        await asyncio.wait_for(app.run(), 5)
+
+    asyncio.run(run())
+    assert app.stopped

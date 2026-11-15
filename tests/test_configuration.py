@@ -56,7 +56,13 @@ def test_later_apps_share_the_loaded_environment():
 
     Example(environment='RAN')
     assert Second().my('value') == 2
-    App(environment='IoT')
+    assert Second(environment='RAN').my('value') == 2     # naming the loaded environment again is the same one
+
+
+def test_an_app_naming_another_environment_raises():
+    App(environment='RAN')
+    with pytest.raises(ValueError, match="'RAN' is loaded; 'IoT' cannot load as well"):
+        App(environment='IoT')
     assert glob('fixture_creekview') is None
 
 
