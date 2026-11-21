@@ -492,7 +492,7 @@ class y2topic(y2path):
 
 
 class Path(y2path, pathlib.Path):
-  # .. A file system path: y2path's segments and operators, everything else from pathlib.Path.
+  """A file system path: y2path's segments and operators, everything else from pathlib.Path."""
   # _drv, _root, _tail_cached, _str, _parts_normcase_cached, _hash, _info = (_cached() for _ in range(7))
   _raw_paths = property(lambda self: [str(self)])
   _str_normcase = property(lambda self: pathlib.PurePath(self)._str_normcase)
@@ -507,8 +507,9 @@ class Path(y2path, pathlib.Path):
 
   def copy(self, *args, **kwargs): return y2path.copy(self) if not args and not kwargs else pathlib.Path.copy(self, *args, **kwargs)
 
-  # .. Filesystem attributes and content handler without reading contents.
-  def probe(self) -> dict: return probe_path(self)
+  def probe(self) -> dict:
+    """Filesystem attributes and content handler without reading contents."""
+    return probe_path(self)
 
 
 class y2uri:
@@ -1368,6 +1369,7 @@ class Logger:
   @staticmethod
   def enable_file_logging(name: str | None = None, log_dir: str | Path | None = None,
                           level: int = logging.DEBUG, log_file: str | None = None) -> Path:
+    """ Need justification for this to exist """
     """Mirror logs to an explicit `log_file`, or an explicit name + log_dir.
 
     Env passes its `log_file` when YAML declares one. No directory
