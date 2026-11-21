@@ -49,5 +49,6 @@
 - Code stays simple and clearly different from configuration.
 - Static code analysis works without observing a running app.
 - Exceptions are not swallowed.
+- gppu is a class hierarchy of objects with all functionality in methods; it rarely exports standalone functions. A new standalone function needs significant justification.
 - Every new method or class is justified.
 - Code uses public methods, never protected members.
