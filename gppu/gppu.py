@@ -250,10 +250,86 @@ def pretty_timedelta(ts) -> str:
   elif hours > 0: return '%dh %dm %ds' % (hours, minutes, seconds)
   elif minutes > 0: return '%dm %ds' % (minutes, seconds)
   else: return '%ds' % (seconds,)
+
+
+def format_size(size: int | float) -> str:
+  """Format byte count as '0 B', '1.5 KB', '2.3 MB', '4.5 GB', '7.8 TB'.
+
+  Powers-of-1024 (binary). One decimal for KB+, two for TB.
+  """
+  size = float(size)
+  if size < 1024:                  return f"{int(size)} B"
+  if size < 1024 ** 2:             return f"{size / 1024:.1f} KB"
+  if size < 1024 ** 3:             return f"{size / 1024 ** 2:.1f} MB"
+  if size < 1024 ** 4:             return f"{size / 1024 ** 3:.1f} GB"
+  return f"{size / 1024 ** 4:.2f} TB"
+
+
+def format_duration(seconds: int | float) -> str:
+  """Format a duration as '0s' / '5s' / '12m 30s' / '2h 5m'.
+
+  Input is seconds (use ``ms / 1000`` for millisecond inputs).  Returns
+  ``'-'`` for negative values; ``0`` formats as ``'0s'`` so callers using
+  this for uptime get a legitimate zero rather than a placeholder.
+  """
+  seconds = float(seconds)
+  if seconds < 0: return "-"
+  if seconds < 60: return f"{seconds:.0f}s"
+  if seconds < 3600:
+    m, s = divmod(seconds, 60)
+    return f"{int(m)}m {int(s)}s"
+  h, rem = divmod(seconds, 3600)
+  m, _ = divmod(rem, 60)
+  return f"{int(h)}h {int(m)}m"
+
+
+def format_since(when) -> str:
+  """Compact "time since" — '5s', '5m', '2h', '3d', '4w', '6mo', '2y'.
+
+  Accepts ISO-8601 string, ``datetime``, or epoch seconds (int/float).
+  Returns empty string on parse failure.  Negative deltas (future timestamps)
+  return ``'0s'``.
+  """
+
+  moment = None
+  if isinstance(when, dt):
+    moment = when
+  elif isinstance(when, (int, float)):
+    moment = dt.fromtimestamp(float(when), tz=timezone.utc)
+  elif isinstance(when, str):
+    s = when.strip()
+    if not s: return ""
+    if s.endswith('Z'): s = s[:-1] + '+00:00'
+    try: moment = dt.fromisoformat(s)
+    except ValueError: return ""
+  else:
+    return ""
+
+  if moment.tzinfo is None:
+    moment = moment.replace(tzinfo=dt.now().astimezone().tzinfo)
+
+  secs = int((dt.now(timezone.utc) - moment).total_seconds())
+  if secs < 0:    return "0s"
+  if secs < 60:   return f"{secs}s"
+  mins = secs // 60
+  if mins < 60:   return f"{mins}m"
+  hrs = mins // 60
+  if hrs < 24:    return f"{hrs}h"
+  days = hrs // 24
+  if days < 7:    return f"{days}d"
+  if days < 30:   return f"{days // 7}w"
+  if days < 365:  return f"{days // 30}mo"
+  return f"{days // 365}y"
 # endregion
 
 
-# region Linked Data ids
+
+# region special formatters
+def pfy(object) -> str: return "\n"+pprint.pformat(object, indent=4, width=40, compact=True)
+def slugify(o) -> str:
+  """Converts any object to string, then slugifies it"""
+  return re.sub(r'[^a-zA-Z0-9_]', '_', str(o).lower())
+
 def uuid_create(shard: int) -> UUID:
   """A new Linked Data id in a table, made offline as Linked Data's SQL uuid_create makes it: the table's shard in two bytes, shard1 its schema and shard2 the table, then version 1, five zero bytes, then UUIDv7's 6 bytes of time and 2 random bytes. A file's is uuid_create(0x1002), fs.files.
   The time in an id is when the id was made, never the time of what it names: to a reader it is a random number."""
@@ -266,6 +342,7 @@ def uuid_create(shard: int) -> UUID:
 class Span:
   def __contains__(self, value: Span) -> bool:
     ...
+
 
 class TimeSpan(Span):
   """[start, end], its end None while it goes on; a date and a duration, [date, date + duration]; a date alone,
@@ -651,7 +728,7 @@ KEYS_DROP = ['api', 'context', 'hide_attributes']
 KEYS_FIRST = ['name', 'seid', 'path']
 
 
-def dict_sanitize(data: dict | list, sort_keys=False) -> dict | list:
+def dict_sanitize(data: dict | list, sort_keys: bool = False) -> dict | list:
   """Convert nested complex data types for json.dumps or yaml.dumps"""
   def _sanitize_list(o) -> list:
     result = []
@@ -670,12 +747,14 @@ def dict_sanitize(data: dict | list, sort_keys=False) -> dict | list:
     elif hasattr(o, 'data') and isinstance(o.data, dict): d = o.data
     else: d = dict(o)
 
-    first_keys = [k for k in KEYS_FIRST if k in d]
-    rest_keys = sorted(
-      (k for k in d.keys() if k not in KEYS_FIRST and k not in KEYS_DROP),
-      key=lambda k: str(k) if k else '?',
-    )
-    for k in first_keys + rest_keys:
+    if sort_keys: 
+      key_sequence = [k for k in KEYS_FIRST if k in d]
+      key_sequence += sorted((k for k in d.keys() if k not in KEYS_FIRST and k not in KEYS_DROP), key=lambda k: str(k) if k else '?')
+    else:
+      key_sequence = [k for k in d.keys()]
+
+      
+    for k in key_sequence:
       if k in KEYS_DROP: continue
       v = d.get(k)
       display_k = str(k) if k else '?'
@@ -721,7 +800,7 @@ def dict_to_yml(filename: str | Path, data=None, sort_keys=False):
   yaml.add_representer(tuple, _tuple_representer)
 
   with open(filename,'w+', encoding='utf-8') as f:
-    try: yaml.dump(redata, f, indent=2, Dumper=IndentedListDumper, sort_keys=False, width=2147483647)
+    try: yaml.dump(redata, f, indent=2, Dumper=IndentedListDumper, sort_keys=sort_keys, width=2147483647)
     except Exception as err:
       error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(redata)}\n\n"
       with open(str(filename) + '_error.txt', 'w+', encoding='utf-8') as ferr: ferr.write(error)
@@ -731,10 +810,8 @@ class YmlLoader(FullLoader):
   """dict_from_yml's loader; a module adds its tags here, as gppu.vault adds ``!secret``."""
 
 
-INLINE_CONFIG = ('.py', '.cmd', '.ps1')   # the scripts that carry their configuration inline
-
-
 def inline_config(filename: str | Path) -> str:
+  """ Not human reviewed. This method was found in the middle of yaml code that it has not business be a part of  """
   """The YAML a script carries inline: in a .py the string its global MANIFEST is assigned, read without running
   the script; in a .cmd the :: lines it opens with; in a .ps1 the .NOTES of the <# #> block it opens with, nothing
   below either block read. A script with none raises."""
@@ -764,12 +841,11 @@ def inline_config(filename: str | Path) -> str:
 
 
 def dict_from_yml(filename: str | Path) -> dict:
-  """A YAML file, or the configuration a script carries inline (inline_config), with its includes."""
+  """ yaml file to dictionary, resolving includes, but no0t templates"""
   filename = full_path(filename)
   dir_stack: list[Path] = [filename.parent]
 
   class Loader(YmlLoader): pass
-
 
   def yml_include(loader: FullLoader, node: Node) -> Any:
     fn = full_path(loader.construct_scalar(node), dir_stack[-1])
@@ -778,15 +854,14 @@ def dict_from_yml(filename: str | Path) -> dict:
 
     try:
       with open(fn, "r", encoding='utf-8') as f:
-        if fn.suffix.lower().endswith('.json'): return json.load(f)                        # JSON (tabs/escapes YAML rejects)
+        if fn.suffix.lower().endswith('.json'): return json.load(f)                        
         return yaml.load(f, Loader=Loader)
     finally: dir_stack.pop()
 
+
   Loader.add_constructor("!include", yml_include)
 
-  if filename.suffix.lower() in INLINE_CONFIG: data = yaml.load(inline_config(filename), Loader=Loader)
-  else:
-    with open(filename, encoding='utf-8') as f: data = yaml.load(f, Loader=Loader)
+  with open(filename, encoding='utf-8') as f: data = yaml.load(f, Loader=Loader)
 
   return dict(data or {})
 
@@ -806,6 +881,7 @@ def dict_to_json(filename: str | Path, data=None, indent=2):
 
 def dict_from_json(filename: str | Path):
   with open(filename, encoding='utf-8') as f: return json.load(f)
+
 
 ## _________Code below has deviated from the golden rule                                                  
 ## !! templates are simple inline functtions that return lists, dicts or scalars to be merged into dicts.
@@ -978,87 +1054,8 @@ def jinja_fill(node: Any, /, **data) -> Any:
   if isinstance(node, str) and ('{{' in node or '{%' in node) and (inputs := _jinja_inputs(node)) and inputs <= data.keys():
     return jinja_template(node, **data)
   return node
-# endregion
 
 
-# region Human-readable formatters
-def pfy(object) -> str: return "\n"+pprint.pformat(object, indent=4, width=40, compact=True)
-def slugify(o) -> str:
-  """Converts any object to string, then slugifies it"""
-  return re.sub(r'[^a-zA-Z0-9_]', '_', str(o).lower())
-
-def format_size(size: int | float) -> str:
-  """Format byte count as '0 B', '1.5 KB', '2.3 MB', '4.5 GB', '7.8 TB'.
-
-  Powers-of-1024 (binary). One decimal for KB+, two for TB.
-  """
-  size = float(size)
-  if size < 1024:                  return f"{int(size)} B"
-  if size < 1024 ** 2:             return f"{size / 1024:.1f} KB"
-  if size < 1024 ** 3:             return f"{size / 1024 ** 2:.1f} MB"
-  if size < 1024 ** 4:             return f"{size / 1024 ** 3:.1f} GB"
-  return f"{size / 1024 ** 4:.2f} TB"
-
-
-def format_duration(seconds: int | float) -> str:
-  """Format a duration as '0s' / '5s' / '12m 30s' / '2h 5m'.
-
-  Input is seconds (use ``ms / 1000`` for millisecond inputs).  Returns
-  ``'-'`` for negative values; ``0`` formats as ``'0s'`` so callers using
-  this for uptime get a legitimate zero rather than a placeholder.
-  """
-  seconds = float(seconds)
-  if seconds < 0: return "-"
-  if seconds < 60: return f"{seconds:.0f}s"
-  if seconds < 3600:
-    m, s = divmod(seconds, 60)
-    return f"{int(m)}m {int(s)}s"
-  h, rem = divmod(seconds, 3600)
-  m, _ = divmod(rem, 60)
-  return f"{int(h)}h {int(m)}m"
-
-
-def format_since(when) -> str:
-  """Compact "time since" — '5s', '5m', '2h', '3d', '4w', '6mo', '2y'.
-
-  Accepts ISO-8601 string, ``datetime``, or epoch seconds (int/float).
-  Returns empty string on parse failure.  Negative deltas (future timestamps)
-  return ``'0s'``.
-  """
-
-  moment = None
-  if isinstance(when, dt):
-    moment = when
-  elif isinstance(when, (int, float)):
-    moment = dt.fromtimestamp(float(when), tz=timezone.utc)
-  elif isinstance(when, str):
-    s = when.strip()
-    if not s: return ""
-    if s.endswith('Z'): s = s[:-1] + '+00:00'
-    try: moment = dt.fromisoformat(s)
-    except ValueError: return ""
-  else:
-    return ""
-
-  if moment.tzinfo is None:
-    moment = moment.replace(tzinfo=dt.now().astimezone().tzinfo)
-
-  secs = int((dt.now(timezone.utc) - moment).total_seconds())
-  if secs < 0:    return "0s"
-  if secs < 60:   return f"{secs}s"
-  mins = secs // 60
-  if mins < 60:   return f"{mins}m"
-  hrs = mins // 60
-  if hrs < 24:    return f"{hrs}h"
-  days = hrs // 24
-  if days < 7:    return f"{days}d"
-  if days < 30:   return f"{days // 7}w"
-  if days < 365:  return f"{days // 30}mo"
-  return f"{days // 365}y"
-# endregion
-
-
-# region The one Jinja environment gppu renders with. Loading a configuration adds its macros and named templates to it.
 jinja = JinjaEnvironment(loader=DictLoader({}))
 jinja.globals.update({name: getattr(builtins, name) for name in
                       ('dict', 'list', 'int', 'float', 'str', 'bool', 'len', 'round', 'sorted', 'min', 'max', 'range')},
@@ -1442,7 +1439,7 @@ class Logger:
   def Error(*a, logger=None, **kw): Logger._log(logging.ERROR, a, logger, kw)
   @staticmethod
   @sync
-  async def Dump(filename: str, data={}, **kw) -> None:
+  async def Dump(filename: str, data: dict = {}, **kw) -> None:
     """ Saves data object to yml file in trace folder """
     if '.' not in filename or not filename.endswith('.yml'): filename += '.yml'
     if Logger.trace_folder:
@@ -1536,9 +1533,6 @@ class _DC(UserDict):
 
 
 # region Configuration mixins
-
-
-
 class mixin_Config(_mixin):
   _my: dict[str, Any] = {}
 
@@ -1576,16 +1570,11 @@ class mixin_Config(_mixin):
 
 
 class _Base(mixin_Logger, mixin_Config): pass
-
+# endregion
 
 # region App
 class App(_Base, _DC):
-  """An app knows its name from its class. Its environment, Hosts or IoT, is optional: when it has one, the
-  environment loads first. Its own configuration is the YAML file it is given, independent from the environment;
-  an app given none starts on its own section of the environment. The command line it is given, ``argv``, goes over
-  its own configuration, never over the environment. Loading is a step of ``_DC``'s init, after the data."""
-  name: str
-
+  """ Not human reviewed """
   def _init_config(self, environment: str | None = None, config: str | Path | None = None, argv: list[str] = [], **kw) -> None:
     if not self.name: self.name = type(self).__name__.lower()
     Env.init(environment=environment)
