@@ -780,107 +780,8 @@ def dict_sanitize(data: dict | list, sort_keys: bool = False) -> dict | list:
   else: raise ValueError(f"Unable to sanitize {data}")
 
 
-# def _tuple_representer(dumper: yaml.Dumper, data: tuple) -> yaml.nodes.Node:
-#   return dumper.represent_dict(dict(enumerate(data)))
-def _tuple_representer(dumper: Dumper, data: tuple) -> Node:
-  return dumper.represent_dict(dict(enumerate(data)))
-
-
-def dict_to_yml(filename: str | Path, data=None, sort_keys=False):
-  class IndentedListDumper(yaml.Dumper):
-    def increase_indent(self, flow=False, indentless=False):
-      return super(IndentedListDumper, self).increase_indent(flow, False)
-
-  assert filename
-  if not data: return
-  redata = dict_sanitize(data, sort_keys=sort_keys)
-
-  yaml.add_representer(defaultdict, SafeRepresenter.represent_dict)
-  yaml.add_representer(UserDict, SafeRepresenter.represent_dict)
-  yaml.add_representer(set, SafeRepresenter.represent_list)
-  yaml.add_representer(tuple, _tuple_representer)
-
-  with open(filename,'w+', encoding='utf-8') as f:
-    try: yaml.dump(redata, f, indent=2, Dumper=IndentedListDumper, sort_keys=sort_keys, width=2147483647)
-    except Exception as err:
-      error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(redata)}\n\n"
-      with open(str(filename) + '_error.txt', 'w+', encoding='utf-8') as ferr: ferr.write(error)
-
-
-class YmlLoader(FullLoader):
-  """dict_from_yml's loader; a module adds its tags here, as gppu.vault adds ``!secret``."""
-
-
-def inline_config(filename: str | Path) -> str:
-  """ Not human reviewed. This method was found in the middle of yaml code that it has not business be a part of  """
-  """The YAML a script carries inline: in a .py the string its global MANIFEST is assigned, read without running
-  the script; in a .cmd the :: lines it opens with; in a .ps1 the .NOTES of the <# #> block it opens with, nothing
-  below either block read. A script with none raises."""
-  filename = full_path(filename)
-  suffix = filename.suffix.lower()
-  with open(filename, encoding='utf-8-sig') as f:
-    if suffix == '.py':
-      for node in ast.parse(f.read(), str(filename)).body:
-        if (isinstance(node, ast.Assign) and [getattr(target, 'id', None) for target in node.targets] == ['MANIFEST']
-            and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)): return node.value.value
-    elif suffix == '.cmd':
-      lines = []
-      for line in f:
-        if not line.startswith('::'): break
-        lines.append(line[2:])
-      if lines: return ''.join(lines)
-    elif suffix == '.ps1':
-      lines = iter(f)
-      if next((line for line in lines if line.strip()), '').strip() == '<#':
-        notes, keyword = [], None
-        for line in lines:
-          if line.strip() == '#>': break
-          if re.fullmatch(r'\.[A-Za-z]+', line.strip()): keyword = line.strip().upper()
-          elif keyword == '.NOTES': notes.append(line)
-        if notes: return ''.join(notes)
-  raise ValueError(f'{filename}: no inline configuration')
-
-
-def dict_from_yml(filename: str | Path) -> dict:
-  """ yaml file to dictionary, resolving includes, but no0t templates"""
-  filename = full_path(filename)
-  dir_stack: list[Path] = [filename.parent]
-
-  class Loader(YmlLoader): pass
-
-  def yml_include(loader: FullLoader, node: Node) -> Any:
-    fn = full_path(loader.construct_scalar(node), dir_stack[-1])
-
-    dir_stack.append(fn.parent)
-
-    try:
-      with open(fn, "r", encoding='utf-8') as f:
-        if fn.suffix.lower().endswith('.json'): return json.load(f)                        
-        return yaml.load(f, Loader=Loader)
-    finally: dir_stack.pop()
-
-  Loader.add_constructor("!include", yml_include)
-
-  with open(filename, encoding='utf-8') as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
-
-
-def dict_to_json(filename: str | Path, data=None, indent=2):
-  assert filename
-  if not data: return
-  with open(filename, 'w', encoding='utf-8') as f:
-    try: json.dump(data, f, indent=indent, ensure_ascii=False, default=str)
-    except Exception as err:
-      error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(data)}\n\n"
-      with open(str(filename)+'_error.txt', 'w', encoding='utf-8') as ferr: ferr.write(error)
-
-
-def dict_from_json(filename: str | Path):
-  with open(filename, encoding='utf-8') as f: return json.load(f)
-
-
-## _________Code below has deviated from the golden rule                                                  
-## !! templates are simple inline functtions that return lists, dicts or scalars to be merged into dicts.
 def template_populate(o, data: dict = {}, excludes:list = []) -> Any:
+  """ templates are simple inline functtions that return lists, dicts or scalars to be merged into dicts."""
   def __tp(o: dict | str, data: dict) -> Any:
     result: Any = None
     if not data: data = {}
@@ -918,6 +819,106 @@ def template_populate(o, data: dict = {}, excludes:list = []) -> Any:
   if isinstance(o, dict): _ = o.get('data', {}) | o
   else: _ = str(o)
   return __tp(_, data)
+
+
+def dict_to_yml(filename: str | Path, data=None, sort_keys=False):
+  class IndentedListDumper(yaml.Dumper):
+    def increase_indent(self, flow=False, indentless=False):
+      return super(IndentedListDumper, self).increase_indent(flow, False)
+
+  assert filename
+  if not data: return
+  redata = dict_sanitize(data, sort_keys=sort_keys)
+
+  yaml.add_representer(defaultdict, SafeRepresenter.represent_dict)
+  yaml.add_representer(UserDict, SafeRepresenter.represent_dict)
+  yaml.add_representer(set, SafeRepresenter.represent_list)
+  yaml.add_representer(tuple, _tuple_representer)
+
+  with open(filename,'w+', encoding='utf-8') as f:
+    try: yaml.dump(redata, f, indent=2, Dumper=IndentedListDumper, sort_keys=sort_keys, width=2147483647)
+    except Exception as err:
+      error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(redata)}\n\n"
+      with open(str(filename) + '_error.txt', 'w+', encoding='utf-8') as ferr: ferr.write(error)
+
+
+class YmlLoader(FullLoader):
+  """dict_from_yml's loader; a module adds its tags here, as gppu.vault adds ``!secret``."""
+
+
+def _tuple_representer(dumper: Dumper, data: tuple) -> Node:
+  return dumper.represent_dict(dict(enumerate(data)))
+
+
+def dict_from_yml(filename: str | Path) -> dict:
+  """ yaml file to dictionary, resolving includes, but not templates"""
+  filename = full_path(filename)
+  dir_stack: list[Path] = [filename.parent]
+
+  class Loader(YmlLoader): pass
+
+  def yml_include(loader: FullLoader, node: Node) -> Any:
+    fn = full_path(loader.construct_scalar(node), dir_stack[-1])
+
+    dir_stack.append(fn.parent)
+
+    try:
+      with open(fn, "r", encoding='utf-8') as f:
+        if fn.suffix.lower().endswith('.json'): return json.load(f)                        
+        return yaml.load(f, Loader=Loader)
+    finally: dir_stack.pop()
+
+  Loader.add_constructor("!include", yml_include)
+
+  with open(filename, encoding='utf-8') as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
+
+
+def dict_to_json(filename: str | Path, data=None, indent=2):
+  assert filename
+  if not data: return
+  with open(filename, 'w', encoding='utf-8') as f:
+    try: json.dump(data, f, indent=indent, ensure_ascii=False, default=str)
+    except Exception as err:
+      error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(data)}\n\n"
+      with open(str(filename)+'_error.txt', 'w', encoding='utf-8') as ferr: ferr.write(error)
+
+
+def dict_from_json(filename: str | Path):
+  with open(filename, encoding='utf-8') as f: return json.load(f)
+# endregion
+
+
+# region Jinja (AI, not human reviewed)
+def inline_config(filename: str | Path) -> str:
+  """ Not human reviewed. This method was found in the middle of yaml code that it has not business be a part of  """
+  """The YAML a script carries inline: in a .py the string its global MANIFEST is assigned, read without running
+  the script; in a .cmd the :: lines it opens with; in a .ps1 the .NOTES of the <# #> block it opens with, nothing
+  below either block read. A script with none raises."""
+  filename = full_path(filename)
+  suffix = filename.suffix.lower()
+  with open(filename, encoding='utf-8-sig') as f:
+    if suffix == '.py':
+      for node in ast.parse(f.read(), str(filename)).body:
+        if (isinstance(node, ast.Assign) and [getattr(target, 'id', None) for target in node.targets] == ['MANIFEST']
+            and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)): return node.value.value
+    elif suffix == '.cmd':
+      lines = []
+      for line in f:
+        if not line.startswith('::'): break
+        lines.append(line[2:])
+      if lines: return ''.join(lines)
+    elif suffix == '.ps1':
+      lines = iter(f)
+      if next((line for line in lines if line.strip()), '').strip() == '<#':
+        notes, keyword = [], None
+        for line in lines:
+          if line.strip() == '#>': break
+          if re.fullmatch(r'\.[A-Za-z]+', line.strip()): keyword = line.strip().upper()
+          elif keyword == '.NOTES': notes.append(line)
+        if notes: return ''.join(notes)
+  raise ValueError(f'{filename}: no inline configuration')
+
+
 
 
 
@@ -1529,6 +1530,7 @@ class _DC(UserDict):
 
 # region Configuration mixins
 class mixin_Config(_mixin):
+  """ Very sus. Looks like slop """
   _my: dict[str, Any] = {}
 
 
@@ -1567,6 +1569,7 @@ class mixin_Config(_mixin):
 class _Base(mixin_Logger, mixin_Config): pass
 # endregion
 
+
 # region App
 class App(_Base, _DC):
   """ Not human reviewed """
@@ -1580,7 +1583,6 @@ class App(_Base, _DC):
 
 
 # region Env: the configuration
-
 class _Env(_Base):
   """The program's environment: singleton app object. It's my is glob"""
   home: Path
