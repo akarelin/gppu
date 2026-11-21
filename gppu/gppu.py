@@ -4,6 +4,8 @@ import pprint
 
 import re
 import os
+import ast
+import pathlib
 
 import inspect
 import logging
@@ -868,7 +870,7 @@ def dict_from_yml(filename: str | Path) -> dict:
 
   Loader.add_constructor("!include", yml_include)
 
-  with open(filename, encoding='utf-8') as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
+  with open(filename, encoding='utf-8') as f: return dict(yaml.load(f, Loader=Loader) or {})
 
 
 def dict_to_json(filename: str | Path, data=None, indent=2):
@@ -1573,6 +1575,7 @@ class _Base(mixin_Logger, mixin_Config): pass
 # region App
 class App(_Base, _DC):
   """ Not human reviewed """
+  name: str
   def _init_config(self, environment: str | None = None, config: str | Path | None = None, argv: list[str] = [], **kw) -> None:
     if not self.name: self.name = type(self).__name__.lower()
     Env.init(environment=environment)

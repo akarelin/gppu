@@ -22,6 +22,8 @@
 - Generators are gone; Jinja replaced them.
 - A template is a named template, and `template:` names it. Templates are simple inline functions that return lists, dicts or scalars to be merged into dicts; they return objects, not text.
 - YAML anchors are YAML, resolved by the YAML standard. They are not Jinja.
+- Configuration has no repeats where a for loop can produce them.
+- The YAML reader reads YAML. Reading a script's inline configuration is not a feature of its own and has no export.
 
 ## State
 - gppu offers a simple way for an app to keep its own state, as it offers Env.
@@ -43,5 +45,9 @@
 - Y2's entity is part of gppu.
 
 ## Code
+- Simplify. Legacy approaches are not kept for backwards compatibility.
+- Code stays simple and clearly different from configuration.
+- Static code analysis works without observing a running app.
+- Exceptions are not swallowed.
 - Every new method or class is justified.
 - Code uses public methods, never protected members.

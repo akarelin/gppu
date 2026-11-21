@@ -18,10 +18,6 @@ from .gppu import (
     _Base,
     App,
 
-    # caching, from the standard library
-    cache,
-    lru_cache,
-    cached_property,
 )
 
 from .app import (
@@ -210,9 +206,6 @@ __all__ = [
 
     # Foundation classes
     '_Base', 'App', 'TimerHandle', '_callback_wrapper', 'AsyncApp', 'APIApp', 'mixin_Rest',
-
-    # caching, from the standard library
-    'cache', 'lru_cache', 'cached_property',
 
     # y2xxx classes
     'y2list', 'y2path', 'y2uri', 'y2topic', 'y2slug', 'y2eid', 'Runtime', 'ListenerHandle',
