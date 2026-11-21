@@ -1,8 +1,9 @@
-"""gppu/fs's y2uri: gppu's y2uri as the URI convention (_Standards/Conventions/URI.md) has it, each form fsspec reads.
-
-A uri is RFC 3986's `scheme:[//authority]path[?query][#fragment]`, so `uuid:...`, which has no authority, is a uri; fsspec's
-chained urls are a uri with its `target`, the uri it is read through: `gppu::file:///D:/TextLake`, `zip://member.txt::file:///D:/bundle.zip`.
-str() gives the uri as it was written, which is what fsspec opens. A fragment's selection is read by `selection`."""
+# region - gppu/fs's y2uri
+# .. gppu's y2uri as the URI convention (_Standards/Conventions/URI.md) has it, each form fsspec reads.
+# .. A uri is RFC 3986's `scheme:[//authority]path[?query][#fragment]`, so `uuid:...`, which has no authority, is a uri; fsspec's
+# .. chained urls are a uri with its `target`, the uri it is read through: `gppu::file:///D:/TextLake`, `zip://member.txt::file:///D:/bundle.zip`.
+# .. str() gives the uri as it was written, which is what fsspec opens. A fragment's selection is read by `selection`.
+# endregion
 from __future__ import annotations
 
 import re
@@ -11,13 +12,15 @@ from urllib.parse import unquote
 
 from ..gppu import y2path, y2uri as _y2uri
 
-SCHEME = re.compile(r'([A-Za-z][A-Za-z0-9+.-]+):(.*)', re.S)   # two characters at least, so a drive, D:, is a path
+SCHEME = re.compile(r'([A-Za-z][A-Za-z0-9+.-]+):(.*)', re.S)   # .. two characters at least, so a drive, D:, is a path
 RANGE = re.compile(r'(line|char|t)=(?:npt:)?([0-9.]*),?([0-9.]*)')
 
 
 class y2uri(_y2uri):
-    """A uri, its chain and its fragment, as the URI convention has them. A path joined with / goes below this uri's path;
-    a chained uri's target is where fsspec reads it from."""
+    # region - y2uri
+    # .. A uri, its chain and its fragment, as the URI convention has them. A path joined with / goes below this uri's path;
+    # .. a chained uri's target is where fsspec reads it from.
+    # endregion
     authority: str | None
     target: y2uri | None
 
@@ -36,9 +39,9 @@ class y2uri(_y2uri):
             if s.startswith('//'):
                 self.authority, slash, s = s[2:].partition('/')
                 s = slash + s
-        elif chained and s and '/' not in s:   # fsspec's bare protocol in a chain: gppu::file:///D:/TextLake
+        elif chained and s and '/' not in s:   # .. fsspec's bare protocol in a chain: gppu::file:///D:/TextLake
             self.scheme, self.authority, s = s, None, ''
-        else:   # no scheme: the whole of it is a path, as gppu's y2uri reads it
+        else:   # .. no scheme: the whole of it is a path, as gppu's y2uri reads it
             self.scheme, self.authority = scheme or 'null', ''
         self.path = y2path(s.split('/'))
         self._path_absolute = s.startswith('/')
@@ -64,9 +67,9 @@ class y2uri(_y2uri):
     def __hash__(self) -> int: return hash(str(self))
     def __eq__(self, other): return str(self) == str(other)
 
+    # .. What the fragment selects: `anchor`, `text` (each prefix, start, end, suffix), `line`, `char` or `t` as (start, end).
     @property
     def selection(self) -> dict[str, Any]:
-        """What the fragment selects: `anchor`, `text` (each prefix, start, end, suffix), `line`, `char` or `t` as (start, end)."""
         if not self._fragment:
             return {}
         anchor, _, directives = self._fragment.partition(':~:')

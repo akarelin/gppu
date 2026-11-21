@@ -492,13 +492,11 @@ class y2topic(y2path):
 
 
 class Path(y2path, pathlib.Path):
-  """A file system path: y2path's segments and operators, everything else from pathlib.Path."""
+  # .. A file system path: y2path's segments and operators, everything else from pathlib.Path.
   # _drv, _root, _tail_cached, _str, _parts_normcase_cached, _hash, _info = (_cached() for _ in range(7))
   _raw_paths = property(lambda self: [str(self)])
   _str_normcase = property(lambda self: pathlib.PurePath(self)._str_normcase)
-  # region ^^ Claude: Path parsing
-  # pathlib keeps what it parsed; a Path's segments change, so it parses them each time and keeps nothing
-  # endregion
+  # .. pathlib keeps what it parsed; a Path's segments change, so it parses them each time and keeps nothing
   _drv = property(lambda self: pathlib.PurePath(self).drive, lambda self, value: None)
   _root = property(lambda self: pathlib.PurePath(self).root, lambda self, value: None)
   _tail_cached = property(lambda self: pathlib.PurePath(self)._tail, lambda self, value: None)
@@ -509,9 +507,8 @@ class Path(y2path, pathlib.Path):
 
   def copy(self, *args, **kwargs): return y2path.copy(self) if not args and not kwargs else pathlib.Path.copy(self, *args, **kwargs)
 
-  def probe(self) -> dict:
-    """Filesystem attributes and content handler without reading contents."""
-    return probe_path(self)
+  # .. Filesystem attributes and content handler without reading contents.
+  def probe(self) -> dict: return probe_path(self)
 
 
 class y2uri:
@@ -582,67 +579,69 @@ class y2uri:
   
   @fragment.setter
   def fragment(self, value: str) -> None: self._fragment = value
-    # elif ':~:' in value:
-    #   anchor, _, directives = value.partition(':~:')
-    #   fields = {}
-    #   if anchor: fields['anchor'] = unquote(anchor)
-    #   fields['text'] = []
-    #   for directive in directives.split('&'):
-    #     name, separator, selector = directive.partition('=')
-    #     if name != 'text' or not separator:
-    #       raise ValueError('Unsupported text fragment directive')
-    #     parts, text = selector.split(','), {}
-    #     if parts[0].endswith('-'): text['prefix'] = unquote(parts.pop(0)[:-1])
-    #     if parts and parts[-1].startswith('-'): text['suffix'] = unquote(parts.pop()[1:])
-    #     if not 1 <= len(parts) <= 2 or not all(parts):
-    #       raise ValueError('Text fragment requires textStart and optional textEnd')
-    #     text['textStart'] = unquote(parts[0])
-    #     if len(parts) == 2: text['textEnd'] = unquote(parts[1])
-    #     fields['text'].append(text)
-    #   self._fragment = fields
-    # elif '=' in value:
-    #   self._fragment = {key: values[0] if len(values) == 1 else values
-    #     for key, values in parse_qs(value.replace('+', '%2B'), keep_blank_values=True).items()}
-    # else:
-      # self._fragment = {'anchor': unquote(value)} if value else {}
-    # fields = self.fragment
-    # if not fields: return ''
-    # if set(fields) == {'anchor'}: return quote(fields['anchor'], safe='')
-    # if 'text' not in fields:
-    #   return urlencode(fields, doseq=True, quote_via=quote, safe=',:')
-    # def escaped(value): return quote(value, safe='').replace('-', '%2D')
-    # directives = []
-    # for text in fields['text']:
-    #   parts = []
-    #   if 'prefix' in text: parts.append(escaped(text['prefix']) + '-')
-    #   parts.append(escaped(text['textStart']))
-    #   if 'textEnd' in text: parts.append(escaped(text['textEnd']))
-    #   if 'suffix' in text: parts.append('-' + escaped(text['suffix']))
-    #   directives.append('text=' + ','.join(parts))
-    # anchor = quote(fields['anchor'], safe='') if 'anchor' in fields else ''
-    # return anchor + ':~:' + '&'.join(directives)
+  # region - // y2uri: fragment fields, endswith, join
+    # // elif ':~:' in value:
+    # //   anchor, _, directives = value.partition(':~:')
+    # //   fields = {}
+    # //   if anchor: fields['anchor'] = unquote(anchor)
+    # //   fields['text'] = []
+    # //   for directive in directives.split('&'):
+    # //     name, separator, selector = directive.partition('=')
+    # //     if name != 'text' or not separator:
+    # //       raise ValueError('Unsupported text fragment directive')
+    # //     parts, text = selector.split(','), {}
+    # //     if parts[0].endswith('-'): text['prefix'] = unquote(parts.pop(0)[:-1])
+    # //     if parts and parts[-1].startswith('-'): text['suffix'] = unquote(parts.pop()[1:])
+    # //     if not 1 <= len(parts) <= 2 or not all(parts):
+    # //       raise ValueError('Text fragment requires textStart and optional textEnd')
+    # //     text['textStart'] = unquote(parts[0])
+    # //     if len(parts) == 2: text['textEnd'] = unquote(parts[1])
+    # //     fields['text'].append(text)
+    # //   self._fragment = fields
+    # // elif '=' in value:
+    # //   self._fragment = {key: values[0] if len(values) == 1 else values
+    # //     for key, values in parse_qs(value.replace('+', '%2B'), keep_blank_values=True).items()}
+    # // else:
+      # // self._fragment = {'anchor': unquote(value)} if value else {}
+    # // fields = self.fragment
+    # // if not fields: return ''
+    # // if set(fields) == {'anchor'}: return quote(fields['anchor'], safe='')
+    # // if 'text' not in fields:
+    # //   return urlencode(fields, doseq=True, quote_via=quote, safe=',:')
+    # // def escaped(value): return quote(value, safe='').replace('-', '%2D')
+    # // directives = []
+    # // for text in fields['text']:
+    # //   parts = []
+    # //   if 'prefix' in text: parts.append(escaped(text['prefix']) + '-')
+    # //   parts.append(escaped(text['textStart']))
+    # //   if 'textEnd' in text: parts.append(escaped(text['textEnd']))
+    # //   if 'suffix' in text: parts.append('-' + escaped(text['suffix']))
+    # //   directives.append('text=' + ','.join(parts))
+    # // anchor = quote(fields['anchor'], safe='') if 'anchor' in fields else ''
+    # // return anchor + ':~:' + '&'.join(directives)
 
-  # def endswith(self, suffix) -> bool: return self.path.endswith(suffix)
+  # // def endswith(self, suffix) -> bool: return self.path.endswith(suffix)
 
-  # def __truediv__(self, path: y2path | str) -> 'y2uri':
-  #   if not isinstance(path, (str, y2path)):
-  #     return NotImplemented
-  #   value = str(path)
-  #   if '://' in value:
-  #     raise ValueError('Join a path, not another URI')
-  #   if '?' in value or '#' in value:
-  #     raise ValueError('Join an escaped path; set params and fragment separately')
-  #   if not value:
-  #     return y2uri(self)
-  #   tail = str(self.path)
-  #   base = self.scheme + '://' + (tail.rstrip('/') + '/' if tail else '')
-  #   result = y2uri(base + value.lstrip('/'))
-  #   result.query = self.query
-  #   result.fragment = self.fragment
-  #   return result
+  # // def __truediv__(self, path: y2path | str) -> 'y2uri':
+  # //   if not isinstance(path, (str, y2path)):
+  # //     return NotImplemented
+  # //   value = str(path)
+  # //   if '://' in value:
+  # //     raise ValueError('Join a path, not another URI')
+  # //   if '?' in value or '#' in value:
+  # //     raise ValueError('Join an escaped path; set params and fragment separately')
+  # //   if not value:
+  # //     return y2uri(self)
+  # //   tail = str(self.path)
+  # //   base = self.scheme + '://' + (tail.rstrip('/') + '/' if tail else '')
+  # //   result = y2uri(base + value.lstrip('/'))
+  # //   result.query = self.query
+  # //   result.fragment = self.fragment
+  # //   return result
 
-  # def __add__(self, path: y2path | str) -> 'y2uri':
-  #   return self / path
+  # // def __add__(self, path: y2path | str) -> 'y2uri':
+  # //   return self / path
+  # endregion
 
 # endregion
 
