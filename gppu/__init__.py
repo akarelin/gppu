@@ -129,7 +129,7 @@ from .iot import (
     y2slug,
     y2eid,
 
-    # the program's apps and their listeners
+    # .. the program's apps and their listeners
     Runtime,
     ListenerHandle,
 
