@@ -858,15 +858,9 @@ def dict_from_yml(filename: str | Path) -> dict:
         return yaml.load(f, Loader=Loader)
     finally: dir_stack.pop()
 
-
   Loader.add_constructor("!include", yml_include)
 
-  with open(filename, encoding='utf-8') as f: data = yaml.load(f, Loader=Loader)
-
-  return dict(data or {})
-
-
-  # with open(filename, encoding='utf-8') as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
+  with open(filename, encoding='utf-8') as f: return dict(yaml.load(f, Loader=yaml.FullLoader))
 
 
 def dict_to_json(filename: str | Path, data=None, indent=2):
