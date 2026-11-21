@@ -34,7 +34,6 @@ from pathlib import Path
 from typing import ClassVar
 
 from gppu import Env, App, AsyncApp, mixin_Config, dict_from_yml, glob, glob_dict, glob_list
-from gppu.gppu import INLINE_CONFIG
 from gppu.gppu import Logger, _EmptyMessageFilter, _LogColorizer
 from gppu.gppu import OSType
 from rich.text import Text
@@ -53,6 +52,8 @@ from textual.widgets import (
 from textual.widgets._header import HeaderIcon, HeaderTitle
 
 _log = logging.getLogger(__name__)
+
+INLINE_CONFIG = ('.py', '.cmd', '.ps1')   # the scripts that carry their configuration inline
 
 
 # ── StatusHeader ──────────────────────────────────────────────────────────────
