@@ -13,6 +13,7 @@ log.txt
 *.pid
 *.pyc
 **/.venv
+**/.mypy_cache
 **/venv
 *.yml
 !*docker*.yml
