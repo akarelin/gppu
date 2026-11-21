@@ -4,9 +4,7 @@ reaches, with its index beside it, the sources its MANIFEST names, and the catal
 MANIFEST = r"""
   # Windows desktop browsing through gppufs. Source paths are read by gppufs.
   mount_point: 'G:'
-  # region ^^ Claude: ld
-  # ^^ Linked Data's API: every location it knows that this host reaches is a source too, named as Linked Data names it.
-  # endregion
+  # .. Linked Data's API: every location it knows that this host reaches is a source too, named as Linked Data names it.
   ld: 'https://api.karel.in/ld/v1'
   # Where the catalog's API is, at /lake/catalog (gppu.fs.catalog), shown as the Catalog folder: Linked Data's locations, and in each what the catalog holds there.
   catalog: 'https://api.karel.in'

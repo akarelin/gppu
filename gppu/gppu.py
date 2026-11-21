@@ -497,7 +497,7 @@ class Path(y2path, pathlib.Path):
   _raw_paths = property(lambda self: [str(self)])
   _str_normcase = property(lambda self: pathlib.PurePath(self)._str_normcase)
   # region ^^ Claude: Path parsing
-  # ^^ pathlib keeps what it parsed; a Path's segments change, so it parses them each time and keeps nothing
+  # pathlib keeps what it parsed; a Path's segments change, so it parses them each time and keeps nothing
   # endregion
   _drv = property(lambda self: pathlib.PurePath(self).drive, lambda self, value: None)
   _root = property(lambda self: pathlib.PurePath(self).root, lambda self, value: None)

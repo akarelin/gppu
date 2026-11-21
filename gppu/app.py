@@ -343,9 +343,7 @@ class AsyncApp(App, mixin_Stepper, mixin_EventLoopBridge):
       try:
         callback(**data)
       finally:
-        # region ^^ Claude: interval re-arm
-        # ^^ Space completions without overlap; a failed poll must not stop the timer.
-        # endregion
+        # .. Space completions without overlap; a failed poll must not stop the timer.
         if not handle._cancelled:
           handle.next_run = now_ts() + float(interval)
           _SCHEDULER.arm(handle, wrapped, float(interval))
