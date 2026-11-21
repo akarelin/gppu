@@ -870,7 +870,7 @@ def dict_from_yml(filename: str | Path) -> dict:
 
   Loader.add_constructor("!include", yml_include)
 
-  with open(filename, encoding='utf-8') as f: return dict(yaml.load(f, Loader=Loader) or {})
+  with open(filename, encoding='utf-8') as f: return dict(yaml.load(f, Loader=Loader))
 
 
 def dict_to_json(filename: str | Path, data=None, indent=2):

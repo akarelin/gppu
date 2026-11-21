@@ -2,6 +2,18 @@
 
 Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share one State and one Env. Env is the global singleton app; it loads like any app and never initializes from itself. Alex's instructions are in [SPEC.md](SPEC.md).
 
+## Construction and configuration (2026-11-21, in progress)
+Principles: no new verb or noun; gppu.py core shrinks; downstreams that never used gppu right shrink most; every feature rests on SPEC, not on a caller.
+- [ ] gppu master imports and its suite collects; baselines recorded for gppu, y2 and RAN/Hosts against this checkout
+- [ ] One YAML parsing process: every gppu parse goes through `YmlLoader`; `dict_from_yml` reads YAML only
+- [ ] A script's inline configuration: the app passes its `MANIFEST`; reading other scripts' manifests is the launcher's, unexported
+- [ ] App holds Env's and every app's loading; `mixin_Config` and `_Base` fold into it; Env is an App
+- [ ] Jinja region functions become methods of gppu's Jinja environment, under their present names
+- [ ] Swallowed exceptions in AI code removed
+- [ ] Y2: construction reads configuration through App and gppu templates; its own copies and base-object code shrink
+- [ ] Fleet and the Hosts tools read configuration through App
+- [ ] Creekview and RAN: repeats a loop or a named template produces; the loaded configuration is identical before and after
+
 ## Env
 - [x] App declares `environment='Hosts'` or `environment='IoT'`; `Env.init` selects the corresponding YAML file under `D:\Dev` on Windows and the home folder elsewhere. Basic runs with Hosts
 - [x] App construction calls `Env.init(environment=...)`: it sets `host`, `os`, `user` and `home`, loads the declared environment once and applies its `log_file` and `trace_rules`; later apps share it until `Env.reset()`. An unknown name or a missing file raises. `Env.load` and `Env.resolve_path` are commented out
