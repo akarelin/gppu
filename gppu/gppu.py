@@ -579,7 +579,7 @@ class y2uri:
   
   @fragment.setter
   def fragment(self, value: str) -> None: self._fragment = value
-  # region Fragments
+  # region - Fragments
     # elif ':~:' in value:
     #   anchor, _, directives = value.partition(':~:')
     #   fields = {}
