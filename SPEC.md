@@ -24,6 +24,7 @@
 - YAML anchors are YAML, resolved by the YAML standard. They are not Jinja.
 - Configuration has no repeats where a for loop can produce them.
 - The YAML reader reads YAML. Reading a script's inline configuration is not a feature of its own and has no export.
+- Every use of YAML goes through the same parsing process, whatever the text comes from: a file, an include, a script's inline configuration, MQTT.
 
 ## State
 - gppu offers a simple way for an app to keep its own state, as it offers Env.
@@ -34,6 +35,7 @@
 - AsyncApp does its own init and does not rely on `_Base`.
 - App has no init of its own: it loads through `_DC`'s init.
 - Timers exist only in AsyncApp.
+- Apps initialize in steps with the tools gppu already has (init, load, start, stop). Construction decides where data is parsed from and in which step.
 - TUI apps support inline configs: a script carries its own configuration and manifest, as `examples/sessions_clean.py` does. A Python script assigns its manifest to a global variable.
 - Running processes in parallel is not part of a TUI, since a command-line app runs them too. It is an app's method, like its timers (run after, run in, run at).
 - Every TUI app is an async app. Every app is a `_DC`, whose data holds everything the app is given, so no app sets its own attributes from it again.
