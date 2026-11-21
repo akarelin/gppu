@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from abc import abstractmethod
 import pprint
 import yaml
 from yaml.dumper import Dumper
@@ -340,8 +341,8 @@ def uuid_create(shard: int) -> UUID:
 
 # region Native Types
 class Span:
-  def __contains__(self, value: Span) -> bool:
-    ...
+  @abstractmethod
+  def __contains__(self, value: Span) -> bool: ...
 
 
 class TimeSpan(Span):
