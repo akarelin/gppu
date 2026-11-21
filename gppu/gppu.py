@@ -27,7 +27,7 @@ from jinja2.nativetypes import NativeEnvironment
 from jinja2.sandbox import SandboxedEnvironment
 
 from typing import Union, Any, Literal, List, Optional, Tuple, Dict, DefaultDict
-from typing import TypeAlias, ClassVar, Callable, Protocol
+from typing import TypeAlias, ClassVar, Callable, Concatenate, Protocol
 from collections import defaultdict, UserDict, UserList
 from collections.abc import Mapping
 from enum import Enum
@@ -326,7 +326,7 @@ def format_since(when) -> str:
 
 
 # region special formatters
-def pfy(object) -> str: return "\n"+pprint.pformat(object, indent=4, width=40, compact=True)
+def pfy(o) -> str: return "\n"+pprint.pformat(o, indent=4, width=40, compact=True)
 def slugify(o) -> str:
   """Converts any object to string, then slugifies it"""
   return re.sub(r'[^a-zA-Z0-9_]', '_', str(o).lower())
@@ -920,8 +920,6 @@ def inline_config(filename: str | Path) -> str:
 
 
 
-
-
 def jinja_helpers() -> dict:
   """gppu's own filters, offered to every Jinja environment it builds."""
   return {
@@ -1470,6 +1468,7 @@ Dump = Logger.Dump
 
 # region DC - pseudo DataClass
 _DC_BASE_TYPE_MAP = {'str': str, 'list': list, 'dict': dict, 'set': set, 'int': int, 'float': float, 'bool': bool, 'None': type(None)}
+# from typing import Callable, Concatenate
 # Custom types register themselves here (e.g. iot.py adds y2eid/y2topic)
 
 
@@ -1490,7 +1489,10 @@ class _DC(UserDict):
     self.data = kw | data
 
 
-  _INIT_STEPS: list[Callable] = [_init_from_kw]
+  # _INIT_STEPS: list[Callable] = [_init_from_kw]
+  # _INIT_STEPS: list[Callable[Concatenate["_DC", ...], None]] = [_init_from_kw]
+  # _INIT_STEPS: ClassVar[tuple[InitStep, ...]] = (_init_from_kw,)
+  _INIT_STEPS: list[Callable[Concatenate[Any, ...], None]] = [_init_from_kw]
 
 
   def __init_subclass__(cls, **kw) -> None:
@@ -1501,7 +1503,7 @@ class _DC(UserDict):
 
     super().__init_subclass__(**kw)
 
-    annotations_raw = [(n, t if type(t) == str else str(t.__name__)) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items() if n[0] != '_' and n not in cls._DC_EXCLUDE_NAMES]
+    annotations_raw = [(n, t if isinstance(t, str) else str(t.__name__)) for c in cls.mro() if hasattr(c, '__annotations__') for n, t in c.__annotations__.items() if n[0] != '_' and n not in cls._DC_EXCLUDE_NAMES]
     annotations = {n: _simple_type(t) for n, t in annotations_raw}
 
     mro = [(n, t) for n, t in annotations.items() if n[0] != '_' and t in cls._DC_TYPE_MAP]
