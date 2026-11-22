@@ -612,8 +612,8 @@ class TUIApp(AsyncApp, TextualApp, metaclass=_TUIAppMeta):
   __hash__ = object.__hash__
   __eq__ = object.__eq__
 
-  def __init__(self, **kw):
-    AsyncApp.__init__(self, **kw)
+  def __init(self) -> None:
+    # .. a TUIApp has no constructor: it is made from its data as every app is, and Textual's own construction is the last part of its init step
     TextualApp.__init__(self)
     self._debug_lines: list[str] = []
     self._log_handler = _DebugLogHandler(self._debug_lines)
