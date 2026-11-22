@@ -28,6 +28,8 @@ Independent and unscoped:
 - The StateManager loader (key, rows, `cls(data=row, parent=self)`, started in `__start`) in `gppu.app` beside Runtime, under its name; Y2's a thin subclass; hosts created by it. gppu master has no loader today: only Y2's StateManager creates objects from a list at a configuration path
 - Fleet in gppu under its own name, RAN's reduced to `expand` and `values`; a row's platform read from the environment
 - Objects read `self.name`, their annotated accessors, never `my('name')`
+- Y2's apps are the rows of `y2/apps` that Y2's loader creates, `cls(data=row)`; Y2's App stops passing `config=`. gppu's App would then load the section named as the app, and Creekview's `hue`, `av` and other sections carry the apps' names and a `name` key of their own
+- Creekview's `ui/ui.yaml` loses its inner `ui:` level, so `y2/ui/data.py` reads its own data: with y2's next release, because the y2 running in the house reads `ui/ui` from the IoT checkout it syncs
 - Creekview and RAN repeats, by named templates and the loader's key and parameters, not loops
 - Error handling around logging goes: `dict_to_yml`'s and `dict_to_json`'s error files, which `Logger.Dump` reaches
 - One MQTT connection: MqttApp's own `connection` key, and Creekview's seven repeated `connection:` blocks
@@ -109,7 +111,7 @@ These move in the same commit as the release. gppu 3.7.7 is released and alex-pc
 - Every `Env.from_env` caller in RAN, CRAP, IoT and Y2, and the "Configuration without an app" line in the global CLAUDE.md that names `Env.from_env`
 - Every reader of `Env.data`, which is `Env._my` now, reads `glob_dict('')`: lake's `graph_configuration.py` and `m365/config.py`, display-control and its Intune scripts, and the Preservator, Session Manager and FileIndexer tests
 
-- The Hosts launcher: `mapper.cmd` and `tray-control.ps1` carry their manifest as `::` lines and as `.NOTES`, which gppu master does not read, so on the next release the Hosts TUI stops at `mapper.cmd: no MANIFEST in its first 4 KB` and RAN's `test_tui` fails as it does on master today. They need a manifest the regex reads, or a sidecar, before that release; which one is Alex's to decide
+- RAN `Hosts/mapper.cmd` and `Hosts/tray-control.ps1` carry `MANIFEST` and, beside it, the `::` lines and `.NOTES` the released gppu reads; the older lines go at the release (RAN aa2f5939d: the Hosts launcher lists every item identically on 3.7.9 and on master)
 - y2 main needs the gppu after 3.7.9 (`y2/NOTE_gppu-rebuild-261121.md`)
 - Preservator (RAN `Hosts/preservator/preservator.py`), with the Fleet grid (`Hosts/configure-all/fleet-tui.py` calls `Preservator().configuration()[0]`, `record_start`, `record_result`) and its tests: switched in the same window as the release by the Preservator session, which is told before the release is cut
 - A script's MANIFEST no longer takes `!include`: it is text, and an include reads beside a file. w11-events reads its `error_rules.yaml` in code
