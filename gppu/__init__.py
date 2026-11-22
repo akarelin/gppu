@@ -24,7 +24,6 @@ from .app import (
     # .. apps with steps
     AsyncApp,
     _callback_wrapper,
-    APIApp,
     mixin_Rest,
     mixin_Mqtt,
     AppService,
@@ -125,7 +124,7 @@ from .iot import (
     y2slug,
     y2eid,
 
-    # .. event-loop and device-control bridges
+    # .. device-control bridges
     mixin_EventLoopBridge,
     SerializedControl,
     HTTPControl,
@@ -185,7 +184,7 @@ __all__ = [
     'glob', 'glob_int', 'glob_list', 'glob_dict',
 
     # .. Foundation classes
-    '_Base', 'App', '_callback_wrapper', 'AsyncApp', 'APIApp', 'mixin_Rest',
+    '_Base', 'App', '_callback_wrapper', 'AsyncApp', 'mixin_Rest',
 
     # .. y2xxx classes
     'y2list', 'y2path', 'Path', 'y2uri', 'y2topic', 'y2slug', 'y2eid',

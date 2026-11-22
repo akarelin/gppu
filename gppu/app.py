@@ -1,8 +1,8 @@
 """gppu.app — the apps with steps. See docs/app.md.
 
-Env, ``_Base`` and ``App``, the regular app with no steps, are in gppu.gppu. Here is ``AsyncApp``, which composes # pyright: ignore[C0301:line-too-long]
-``App`` with ``YStart``, the YMRO (Y2 Method Resolution Order) init, load and start steps; ``APIApp`` serves HTTP # type: ignore
-on it. For Textual, use ``gppu.tui.TUIApp``; an async app with MQTT mixes in ``mixin_Mqtt``.
+Env, ``_Base`` and ``App``, the regular app with no steps, are in gppu.gppu. Here is ``AsyncApp``, which composes
+``App`` with ``YStart``, the YMRO (Y2 Method Resolution Order) init, load and start steps. For Textual, use
+``gppu.tui.TUIApp``; an async app with MQTT mixes in ``mixin_Mqtt``; ``gppu.api.APIApp`` serves HTTP.
 """
 from __future__ import annotations
 
@@ -29,42 +29,19 @@ from .gppu import _YMRO, YStart
 
 
 # region event-loop bridge
-type AsyncSubmission[T] = Future[T] | asyncio.Task[T]
-
-
 class mixin_EventLoopBridge(_mixin):
-  """Schedules coroutines on an externally owned loop; ``call`` blocks off-loop."""
+  """Another thread's way onto the loop: ``schedule(coroutine)`` runs a coroutine there and returns its future, and
+  ``call(function, *args)`` runs one there and waits for its result, which a thread other than the loop's does."""
 
-  def schedule[T](self, coroutine: Coroutine[Any, Any, T], /) -> AsyncSubmission[T]:
-    return self._schedule(self._get_loop(), coroutine)
-
-  def submit[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> AsyncSubmission[T]:
-    return self.schedule(function(*args, **kwargs))
+  def schedule[T](self, coroutine: Coroutine[Any, Any, T], /) -> Future[T]:
+    return asyncio.run_coroutine_threadsafe(coroutine, self._get_loop())
 
   def call[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> T:
     loop = self._get_loop()
-    if self._on_loop(loop): raise RuntimeError('cannot block the target event-loop thread')
-    future = self._schedule(loop, function(*args, **kwargs))
-    try: return future.result()
-    except BaseException:
-      if not future.done(): future.cancel()
-      raise
-
-  def on_loop(self) -> bool: return self._on_loop(self._get_loop())
-
-  @staticmethod
-  def _schedule[T](loop: asyncio.AbstractEventLoop, coroutine: Coroutine[Any, Any, T], /) -> AsyncSubmission[T]:
-    try:
-      if mixin_EventLoopBridge._on_loop(loop): return loop.create_task(coroutine)
-      return asyncio.run_coroutine_threadsafe(coroutine, loop)
-    except BaseException:
-      coroutine.close()
-      raise
-
-  @staticmethod
-  def _on_loop(loop: asyncio.AbstractEventLoop) -> bool:
-    try: return asyncio.get_running_loop() is loop
-    except RuntimeError: return False
+    try: on_loop = asyncio.get_running_loop() is loop
+    except RuntimeError: on_loop = False   # .. no loop runs on this thread
+    if on_loop: raise RuntimeError('cannot block the target event-loop thread')
+    return asyncio.run_coroutine_threadsafe(function(*args, **kwargs), loop).result()
 
   def _get_loop(self) -> asyncio.AbstractEventLoop:
     raise NotImplementedError
@@ -104,7 +81,7 @@ class AsyncApp(App, YStart, mixin_EventLoopBridge):
   A part adds concurrent work with ``self._spawn(coro)``; ``run()`` returns when all of it
   has finished, and ``app.stop()`` cancels it.
   The app is a ``mixin_EventLoopBridge`` onto its own running loop, so off-loop threads
-  ``schedule``/``submit``/``call`` work onto it.
+  ``schedule`` or ``call`` work onto it.
 
   Its timers: ``run_later`` fires a callback once after a delay, and arming it again under the same key replaces it;
   ``run_every`` fires it at an interval. ``timers`` holds every armed timer's row by its id (its callback's name, its
@@ -223,47 +200,11 @@ class AsyncApp(App, YStart, mixin_EventLoopBridge):
       self._background_tasks.clear()
 
   def _spawn[T](self, coroutine: Coroutine[Any, Any, T], /) -> asyncio.Task[T]:
-    tasks = self._task_group
-    if tasks is None:
-      coroutine.close()
-      raise RuntimeError(f'{self!r} is not running')
-    try: task = tasks.create_task(coroutine)
-    except BaseException:
-      coroutine.close()
-      raise
+    if self._task_group is None: raise RuntimeError(f'{self!r} is not running')
+    task = self._task_group.create_task(coroutine)
     self._background_tasks.add(task)
     task.add_done_callback(self._background_tasks.discard)
     return task
-
-  async def launch(self, command: list[str], line: Callable[[str], Any], cwd: str, env: dict) -> str | None:
-    """Start a process and hand `line` each line of its output; the error, or None when it exits with 0."""
-    try:
-      process = await asyncio.create_subprocess_exec(
-        *command, cwd=cwd, env=env,
-        stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-      )
-      async for raw in process.stdout:
-        line(raw.decode('utf-8', errors='replace').rstrip())
-      if code := await process.wait():
-        return f'process exited with {code}'
-    except OSError as failure:
-      return str(failure)
-    return None
-
-  async def run_parallel(self, units: list, run: Callable[[Any], Coroutine], conflicts: Callable[[Any, list], bool],
-                         failed: Callable[[Any, BaseException], Any]) -> None:
-    """Run every unit at once with `run`. A unit waits while `conflicts(unit, running)` says it clashes with one that
-    is running, and starts when that one ends; `failed` hears of a unit whose run raised, as it ends."""
-    pending, running = list(units), {}
-    while pending or running:
-      for unit in pending[:]:
-        if conflicts(unit, list(running.values())): continue
-        running[asyncio.create_task(run(unit))] = unit
-        pending.remove(unit)
-      finished, _ = await asyncio.wait(running, return_when=asyncio.FIRST_COMPLETED)
-      for task in finished:
-        unit = running.pop(task)
-        if task.exception(): failed(unit, task.exception())
 # endregion
 
 
@@ -463,32 +404,4 @@ class mixin_Rest:
     if row['async']: result = await method(**args)
     else: result = await asyncio.get_running_loop().run_in_executor(None, lambda: method(**args))
     return {'success': True, 'result': result}, 200
-# endregion
-
-
-# region API application
-class APIApp(AsyncApp):
-    """An AsyncApp that serves HTTP: on uvicorn, at the ``host`` and ``port`` of its configuration, each ASGI app
-    ``apis()`` gives at its path, from the end of ``start``. Override ``apis()``; work needed before serving is done
-    in ``load``. FastAPI and uvicorn come with the ``ld`` extra::
-
-        class LDAPI(APIApp, _SQABase):   # its store: the configuration's `db`, the engine and each request's session
-            def apis(self): return {'/ld/v1': ld.serve({'/work': work.app}, self)}
-    """
-
-    def apis(self) -> dict[str, Any]:
-        """path -> the FastAPI (or any ASGI) app served there."""
-        return {}
-
-    def asgi(self):
-        """The app uvicorn serves: the apps of ``apis()`` at their paths."""
-        from fastapi import FastAPI
-
-        root = FastAPI(title=self.name)
-        for path, app in self.apis().items(): root.mount(path, app)
-        return root
-
-    def __start(self) -> None:
-        import uvicorn
-        self._spawn(uvicorn.Server(uvicorn.Config(self.asgi(), host=self.my('host'), port=self.my('port'))).serve())
 # endregion

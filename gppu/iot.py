@@ -17,7 +17,7 @@ try:
   import aiohttp
 except ImportError:
   aiohttp = None  # type: ignore[assignment]
-from .app import AsyncSubmission, mixin_EventLoopBridge
+from .app import mixin_EventLoopBridge
 
 from .gppu import _DC, _DC_BASE_TYPE_MAP, y2list, y2path, y2topic, y2uri
 
@@ -123,8 +123,8 @@ class SerializedControl(mixin_EventLoopBridge):
   def _control_call[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> T:
     return self.call(self._control_run, function, *args, **kwargs)
 
-  def _control_submit[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> AsyncSubmission[T]:
-    return self.submit(self._control_run, function, *args, **kwargs)
+  def _control_submit[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> Future[T]:
+    return self.schedule(self._control_run(function, *args, **kwargs))
 
   async def _control_run[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> T:
     lock = self._control_lock

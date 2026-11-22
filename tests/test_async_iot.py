@@ -3,8 +3,6 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import json
-import os
-import sys
 import threading
 import unittest
 from contextlib import asynccontextmanager
@@ -13,7 +11,6 @@ from typing import Any
 
 from gppu import AsyncApp, mixin_EventLoopBridge, HTTPControl, JSONHTTPControl, SerializedControl
 from gppu.iot import aiohttp
-from gppu.tui import TUIApp
 
 
 class _FiniteApp(AsyncApp):
@@ -47,56 +44,15 @@ class AsyncAppTests(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(coroutine.cr_frame, None)
 
 
-class _Grid(TUIApp):
-  def __start(self) -> None: self.steps = ['start']
-
-
-class RunParallelTests(unittest.IsolatedAsyncioTestCase):
-  async def test_launch_hands_each_line_and_reports_the_exit(self) -> None:
-    app, lines = AsyncApp(name='parallel'), []
-    self.assertIsNone(await app.launch([sys.executable, '-c', "print('one'); print('two')"], lines.append, '.', dict(os.environ)))
-    self.assertEqual(lines, ['one', 'two'])
-    self.assertEqual(await app.launch([sys.executable, '-c', 'raise SystemExit(3)'], lines.append, '.', dict(os.environ)),
-                     'process exited with 3')
-
-  async def test_run_parallel_starts_every_unit_and_holds_back_a_clash(self) -> None:
-    app, started, ended, failures = AsyncApp(name='parallel'), [], [], []
-
-    async def run(unit: str) -> None:
-      started.append(unit)
-      if unit == 'b': raise ValueError(unit)
-      for _ in range(3): await asyncio.sleep(0)
-      ended.append(unit)
-
-    await app.run_parallel(['a', 'b', 'c'], run, lambda unit, running: unit == 'c' and 'a' in running,
-                           lambda unit, error: failures.append((unit, str(error))))
-    self.assertEqual(started, ['a', 'b', 'c'])
-    self.assertEqual(ended, ['a', 'c'])
-    self.assertEqual(failures, [('b', 'b')])
-
-  async def test_a_tui_app_is_an_async_app_and_launches_on_itself(self) -> None:
-    app, lines = _Grid(), []
-    self.assertIsInstance(app, AsyncApp)
-    self.assertEqual(app.name, '_grid')
-    async with app.run_test():
-      self.assertIsNotNone(app._task_group)
-      self.assertEqual(app.steps, ['start'])
-      self.assertIsNone(await app.launch([sys.executable, '-c', "print('one')"], lines.append, '.', dict(os.environ)))
-    self.assertEqual(lines, ['one'])
-    self.assertIsNone(app._task_group)
-
-
 class EventLoopBridgeTests(unittest.IsolatedAsyncioTestCase):
-  async def test_submit_call_and_reentrancy_guard(self) -> None:
+  async def test_schedule_call_and_reentrancy_guard(self) -> None:
     bridge = _ExternalLoop(asyncio.get_running_loop())
 
     async def add(left: int, right: int) -> int:
       await asyncio.sleep(0)
       return left + right
 
-    task = bridge.submit(add, 2, 3)
-    self.assertIsInstance(task, asyncio.Task)
-    self.assertEqual(await task, 5)
+    self.assertEqual(await asyncio.wrap_future(bridge.schedule(add(2, 3))), 5)
     self.assertEqual(await asyncio.to_thread(bridge.call, add, 4, 5), 9)
     with self.assertRaisesRegex(RuntimeError, 'cannot block'): bridge.call(add, 1, 1)
 
