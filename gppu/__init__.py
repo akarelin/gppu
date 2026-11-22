@@ -28,7 +28,9 @@ from .app import (
     mixin_Mqtt,
     AppService,
     mixin_EventLoopBridge,
+)
 
+from .gppu import (
     # .. sync lifecycle (AppDaemon / Y2)
     _YMRO,
     YInit,
