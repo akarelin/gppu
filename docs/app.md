@@ -45,7 +45,7 @@ An app gives its part of a step by overriding the regular `init`, `load` or `sta
 
 ## Built on AsyncApp
 
-- `MqttApp` (`gppu.iot`): its broker is the configuration's `connection`; it subscribes and starts MQTT at `start`.
-- `AppService` (`gppu.iot`, beside `MqttApp`): an `MqttApp` whose part of the environment arrives over MQTT: each retained topic of `config_mqtt/topics`, in the app's own configuration, replaces the path it names in Env, where `glob` reads it. The app's own configuration stays its own. An app acts on new configuration by listening to the same topic; its listener runs after the section is loaded. `await app.from_mqtt()` reads every topic once, then disconnects, and Env keeps what was read.
+- `mixin_Mqtt`: an async app's MQTT, two methods: `await app.mqtt_listen(callback, topic)` calls `callback(topic, payload)` on each message at the topic, and `await app.mqtt_publish(topic, payload)` publishes. Its broker is the `mqtt` of the app's configuration, which the client takes as it is, all but `status_topic`: the app's will is `offline` there, and it says `online` there as it connects. It connects in its start step, on MQTT 5, and connects again 5 s after it loses the broker.
+- `AppService`: an async app with MQTT whose part of the environment arrives over MQTT: each retained topic of `config_mqtt/topics`, in the app's own configuration, replaces the path it names in Env, where `glob` reads it. The app's own configuration stays its own. An app acts on new configuration by listening to the same topic; its listener runs after the section is loaded. `await app.from_mqtt()` reads every topic once, then disconnects, and Env keeps what was read.
 - `APIApp`: serves its `apis()` on uvicorn at the configuration's `host` and `port`.
 - `mixin_Rest`: the universal REST API to any object. It works only in an async app, and no gppu app includes it. See [rest.md](rest.md).

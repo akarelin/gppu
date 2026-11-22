@@ -1,16 +1,4 @@
-"""Tests for gppu.iot mqtt plumbing (offline — no broker)."""
-from gppu.iot import mixin_Mqtt
-
-
-class TestTopicMatches:
-    def test_exact(self):
-        assert mixin_Mqtt._topic_matches('a/b/c', 'a/b/c')
-        assert not mixin_Mqtt._topic_matches('a/b/c', 'a/b')
-
-    def test_hash_wildcard_prefix(self):
-        assert mixin_Mqtt._topic_matches('a/b/c', 'a/#')
-        assert mixin_Mqtt._topic_matches('a/b', 'a/b/#')  # .. prefix match
-        assert not mixin_Mqtt._topic_matches('x/b/c', 'a/#')
+"""Tests for gppu.iot's value types."""
 
 
 class TestDCRegistration:

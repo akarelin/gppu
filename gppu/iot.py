@@ -1,46 +1,25 @@
-"""IoT value types, MQTT transport, and serialized async controls.
-
-``MqttApp`` serves standalone asyncio services. ``mixin_Mqtt`` is the same
-transport without lifecycle ownership, used by Y2. Controls bridge synchronous
-callers to one dedicated event-loop thread and serialize each device instance.
+"""IoT value types and serialized async controls: controls bridge synchronous callers to one dedicated event-loop
+thread and serialize each device instance. MQTT is an async app's, in gppu.app.
 """
 from __future__ import annotations
 
 import asyncio
-import inspect
-from functools import total_ordering
 import json
 import re
 import ssl
 import threading
 
-from collections import UserList
-from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
-from dataclasses import dataclass
-from itertools import count
-from typing import Any, ClassVar, List, Optional
-from datetime import datetime
-from urllib.parse import parse_qs, quote, unquote, urlencode
+from typing import Any, ClassVar, Optional
 
-try:
-  import aiomqtt
-  from paho.mqtt.packettypes import PacketTypes
-  from paho.mqtt.properties import Properties
-except ImportError:
-  aiomqtt = None  # type: ignore[assignment]
-  PacketTypes = None  # type: ignore[assignment]
-  Properties = None  # type: ignore[assignment]
 try:
   import aiohttp
 except ImportError:
   aiohttp = None  # type: ignore[assignment]
-from .app import AsyncApp, AsyncSubmission, _callback_wrapper, mixin_EventLoopBridge
-import yaml
+from .app import AsyncSubmission, mixin_EventLoopBridge
 
-from .gppu import Env, YmlLoader, _DC, _DC_BASE_TYPE_MAP, deepset, y2list, y2path, y2topic, y2uri
-
-
+from .gppu import _DC, _DC_BASE_TYPE_MAP, y2list, y2path, y2topic, y2uri
 
 
 # region y2eid
@@ -104,236 +83,8 @@ class y2eid:
 _DC_BASE_TYPE_MAP |= {'y2eid': y2eid, 'y2topic': y2topic, 'y2path': y2path, 'y2uri': y2uri}
 _DC._DC_TYPE_MAP |= {'y2eid': y2eid, 'y2topic': y2topic, 'y2path': y2path, 'y2uri': y2uri}
 
-# region mqtt
+
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
-type MqttPayload = JsonValue | bytes
-type MqttCallback = Callable[[y2topic, object], object | Awaitable[object]]
-
-
-if aiomqtt is None:
-  class _MqttError(Exception): pass
-else:
-  _MqttError = aiomqtt.MqttError
-
-
-class mixin_Mqtt:
-  """MQTT for a host that owns its lifecycle and loop, as Y2 does.
-
-  Supply ``connection``, ``Info``/``Warn`` and ``_spawn(coro)`` to schedule and
-  track work on that loop. Call ``_start_mqtt()`` there at startup, then cancel
-  and await the host's tasks at shutdown. Use the same subscription, publishing
-  and connected-work hooks described on ``MqttApp``.
-  """
-
-  _CLIENT_KEYS = ('hostname', 'port', 'username', 'password', 'identifier')
-  MQTT_RECONNECT_DELAY = 5
-
-  connection: dict[str, Any]
-  MQTT_PROTOCOL: Any = None
-  _client: Any = None
-  _mqtt_task: Any = None
-  _callbacks: dict[y2topic, list[tuple[MqttCallback, object, bool, bool]]]
-  _subscriptions: dict[y2topic, int]
-  _mqtt_lock: asyncio.Lock
-  _callback_lock: asyncio.Lock
-
-  def _start_mqtt(self):
-    task = self._mqtt_task
-    if task is not None and not task.done(): return task
-
-    coroutine = self._mqtt_loop()
-    try: task = self._spawn(coroutine)
-    except BaseException:
-      coroutine.close()
-      raise
-    self._mqtt_task = task
-    return task
-
-  def _ensure_mqtt_state(self) -> None:
-    if getattr(self, '_mqtt_lock', None) is not None: return
-    self._callbacks = {}
-    self._subscriptions = {}
-    self._mqtt_lock = asyncio.Lock()
-    self._callback_lock = asyncio.Lock()
-
-  async def mqtt_listen(self, callback: MqttCallback, topic: y2topic | str, payload: object = None, *, ignore_retained: bool = False, raise_errors: bool = False, **data: Any) -> None:
-    self._ensure_mqtt_state()
-    topic = y2topic(topic)
-    qos = int(data.get('qos', 0))
-
-    async with self._mqtt_lock:
-      callbacks = self._callbacks.setdefault(topic, [])
-      entry = (callback, payload, ignore_retained, raise_errors)
-      if entry not in callbacks: callbacks.append(entry)
-
-      old_qos = self._subscriptions.get(topic, -1)
-      qos = max(old_qos, qos)
-      self._subscriptions[topic] = qos
-      client = self._client if qos != old_qos else None
-
-    if client is not None: await client.subscribe(str(topic), qos=qos)
-
-  async def mqtt_publish(self, topic: y2topic | str, payload: MqttPayload = '', **data: Any) -> None:
-    client = self._client
-    if client is None: return
-
-    if isinstance(payload, (dict, list)): wire_payload = json.dumps(payload)
-    elif isinstance(payload, bytes): wire_payload = payload
-    else: wire_payload = str(payload)
-    retain = bool(data.pop('retain', False))
-    qos = int(data.pop('qos', 0))
-    expiry = data.pop('expiry', None)
-    properties = None
-
-    if expiry is not None or data:
-      properties = Properties(PacketTypes.PUBLISH)
-      if expiry is not None: properties.MessageExpiryInterval = int(expiry)
-      if data: properties.UserProperty = [(key, str(value)) for key, value in data.items()]
-
-    await client.publish(str(topic), wire_payload, qos=qos, retain=retain, properties=properties)
-
-  @property
-  def _status_topic(self) -> y2topic:
-    return y2topic(self.connection.get('status_topic', ''))
-
-  def _mqtt_client(self):
-    if aiomqtt is None: raise RuntimeError('aiomqtt is required for mixin_Mqtt')
-    options = {key: self.connection[key] for key in self._CLIENT_KEYS if key in self.connection}
-    if self.MQTT_PROTOCOL is not None: options['protocol'] = self.MQTT_PROTOCOL
-    if self._status_topic: options['will'] = aiomqtt.Will(topic=str(self._status_topic), payload=b'offline', qos=1, retain=True)
-    return aiomqtt.Client(**options)
-
-  def _mqtt_tasks(self) -> Iterable[Coroutine[Any, Any, object]]: return ()
-
-  async def _mqtt_loop(self) -> None:
-    self._ensure_mqtt_state()
-    while True:
-      try:
-        async with self._mqtt_client() as client:
-          self._client = client
-          try:
-            self.Info('connected:', self.connection.get('hostname'), self.connection.get('port'))
-            await self._mqtt_replay(client)
-            if self._status_topic: await client.publish(str(self._status_topic), 'online', qos=1, retain=True)
-
-            async with asyncio.TaskGroup() as tasks:
-              dispatch = tasks.create_task(self._mqtt_dispatch(client))
-              extras = [tasks.create_task(coroutine) for coroutine in self._mqtt_tasks()]
-              await dispatch
-              for task in extras: task.cancel()
-          finally:
-            self._client = None
-            if self._status_topic:
-              try: await client.publish(str(self._status_topic), 'offline', qos=1, retain=True)
-              except _MqttError: pass
-      except _MqttError as error:
-        self.Warn(f'mqtt error, reconnect in {self.MQTT_RECONNECT_DELAY}s:', error)
-      except BaseExceptionGroup as group:
-        # ^^ TaskGroup wraps task failures in a group; peel off MqttError, re-raise the rest. (Avoid `except*` syntax: debugpy's source scanner crashes on TryStar nodes.)
-        mqtt_errors, other = group.split(_MqttError)
-        if mqtt_errors is not None:
-          self.Warn(f'mqtt error, reconnect in {self.MQTT_RECONNECT_DELAY}s:', *mqtt_errors.exceptions)
-        if other is not None: raise other
-      finally:
-        self._client = None
-
-      await asyncio.sleep(self.MQTT_RECONNECT_DELAY)
-
-  async def _mqtt_replay(self, client: Any) -> None:
-    async with self._mqtt_lock: subscriptions = tuple(self._subscriptions.items())
-    for topic, qos in subscriptions: await client.subscribe(str(topic), qos=qos)
-
-  async def _mqtt_dispatch(self, client: Any) -> None:
-    async for message in client.messages:
-      topic = str(message.topic)
-      raw = message.payload.decode(errors='replace') if isinstance(message.payload, bytes) else str(message.payload)
-      payload: object = raw
-      structured = raw.lstrip()
-      if structured[:1] in '[{':
-        try: payload = json.loads(structured)
-        except json.JSONDecodeError: pass
-
-      async with self._mqtt_lock:
-        callbacks = [(callback, raise_errors) for pattern, entries in self._callbacks.items()
-                     if self._topic_matches(topic, str(pattern))
-                     for callback, expected, ignore_retained, raise_errors in entries
-                     if not (ignore_retained and message.retain) and (expected is None or expected == payload)]
-
-      for callback, raise_errors in callbacks:
-        self._spawn(self._mqtt_callback(callback, y2topic(topic), payload, raise_errors=raise_errors))
-
-  async def _mqtt_callback(self, callback: MqttCallback, topic: y2topic, payload: object, *, raise_errors: bool = False) -> None:
-    async with self._callback_lock:
-      try:
-        result = callback(topic, payload)
-        if inspect.isawaitable(result): await result
-      except Exception as error:
-        if raise_errors: raise
-        self.Warn('callback error:', topic, error)
-
-  @staticmethod
-  def _topic_matches(topic: str, pattern: str) -> bool:
-    if topic.startswith('$') and not pattern.startswith('$'): return False
-    topic_parts = topic.split('/')
-    pattern_parts = pattern.split('/')
-    for index, expected in enumerate(pattern_parts):
-      if expected == '#': return index == len(pattern_parts) - 1
-      if index == len(topic_parts) or expected not in ('+', topic_parts[index]): return False
-    return len(topic_parts) == len(pattern_parts)
-
-
-class MqttApp(mixin_Mqtt, AsyncApp):
-  """AsyncApp with one reconnecting MQTT client; import from ``gppu``.
-
-  Its broker mapping is the configuration's ``connection``, which its data holds.
-  Override async ``subscribe()`` to ``await self.mqtt_listen(callback,
-  topic)``; callbacks take ``(topic, payload)`` and may be sync or async.
-
-  Run with ``asyncio.run(MyApp().run())`` and stop as for ``AsyncApp``; its
-  ``__start`` subscribes and connects. Subscriptions register
-  before connection; for work needing a connection, have ``_mqtt_tasks()``
-  return fresh coroutines for each connection. Publish with
-  ``await self.mqtt_publish(topic, payload)``; disconnected publishes are discarded.
-  """
-
-  async def subscribe(self) -> None: pass
-
-  async def __start(self) -> None:
-    await self.subscribe()
-    self._start_mqtt()
-
-
-class AppService(MqttApp):
-  """An MqttApp whose part of Env arrives over MQTT: ``config_mqtt/topics`` in its own configuration maps each
-  retained topic to the path in Env that its payload replaces, the same as loading it again, so ``glob`` reads it as
-  it reads the rest of Env. The app's own configuration stays its own. An app that acts on new configuration listens
-  to the same topic: its listener runs after the section is loaded. ``await app.from_mqtt()`` reads every topic once,
-  then disconnects."""
-
-  def __init(self) -> None:
-    self.until_loaded: set[str] | None = None   # .. from_mqtt: the topics still to arrive
-
-  async def from_mqtt(self) -> None:
-    """Each of its topics read once, then the connection closed."""
-    self.until_loaded = set(self.my_dict('config_mqtt/topics'))
-    await self.run()
-
-  async def __load(self) -> None:
-    topics = self.my_dict('config_mqtt/topics')
-    if not topics or any('+' in topic or '#' in topic for topic in topics):
-      raise ValueError('MQTT configuration topics must be exact topic names')
-    for topic in topics: await self.mqtt_listen(self._receive_config, topic, qos=1, raise_errors=True)
-
-  async def _receive_config(self, topic: y2topic, payload: object) -> None:
-    data = yaml.load(payload, Loader=YmlLoader) if isinstance(payload, str) else payload
-    if not isinstance(data, dict): raise TypeError(f'MQTT configuration must be a mapping: {topic}')
-    deepset(self.my('config_mqtt/topics')[str(topic)], Env.data, data)
-    Env.loaded = False   # .. new configuration is the same event as a load: Env loads again, from what it holds with the section that arrived
-    Env.load()
-    if self.until_loaded is not None:
-      self.until_loaded.discard(str(topic))
-      if not self.until_loaded: self.stop()
-# endregion
 
 
 # $$

@@ -2,13 +2,14 @@
 
 Env, ``_Base`` and ``App``, the regular app with no steps, are in gppu.gppu. Here is ``AsyncApp``, which composes # pyright: ignore[C0301:line-too-long]
 ``App`` with ``YStart``, the YMRO (Y2 Method Resolution Order) init, load and start steps; ``APIApp`` serves HTTP # type: ignore
-on it. For Textual, use ``gppu.tui.TUIApp``; for MQTT, ``gppu.iot.MqttApp``.
+on it. For Textual, use ``gppu.tui.TUIApp``; an async app with MQTT mixes in ``mixin_Mqtt``.
 """
 from __future__ import annotations
 
 import asyncio
 import heapq
 import inspect
+import json
 import os
 import random
 import threading
@@ -20,7 +21,12 @@ from dataclasses import dataclass
 from itertools import count
 from typing import Any, ClassVar, final
 
-from .gppu import App, Debug, Env, _Base, _DC, _mixin, glob, glob_list, now_ts, y2path
+import aiomqtt
+import yaml
+from paho.mqtt.packettypes import PacketTypes
+from paho.mqtt.properties import Properties
+
+from .gppu import App, Debug, Env, YmlLoader, _Base, _DC, _mixin, deepset, glob, glob_list, now_ts, y2path, y2topic
 from .gppu import _YMRO, YInit, YLoad, YStart
 
 
@@ -90,6 +96,7 @@ def _callback_wrapper(callback: Callable[..., Any]) -> Callable[..., Any]:
 
 
 @dataclass
+# !!! Unjustified class
 class TimerHandle:
   """An armed timer: the callback's name, whether it fires once or repeats, its interval, and when it next fires
   (epoch seconds)."""
@@ -110,6 +117,7 @@ class TimerHandle:
 
 
 class _Scheduler:
+# !!! Antipatterns
   """One thread holds every armed timer, instead of one thread per arm.
 
   `threading.Timer` parks an OS thread for the whole delay, and `run_every`
@@ -150,7 +158,6 @@ class _Scheduler:
       threading.Thread(target=fire, daemon=True).start()
 
 
-_SCHEDULER = _Scheduler()
 # endregion
 
 
@@ -343,6 +350,95 @@ class AsyncApp(App, YStart, mixin_EventLoopBridge):
 # endregion
 
 
+# region MQTT: an async app's broker, the `mqtt` of its configuration
+class mixin_Mqtt(YStart):
+    """An async app's MQTT, two methods: ``mqtt_listen`` and ``mqtt_publish``. Its broker is the ``mqtt`` of its
+    configuration, which the client takes as it is, all but ``status_topic``: the app's will is ``offline`` there, and it
+    says ``online`` there as it connects. Its start step connects, on MQTT 5, and the client connects again 5 s after it
+    loses the broker."""
+
+    def __init(self) -> None:
+        self._client: aiomqtt.Client | None = None
+        self._callbacks: dict[y2topic, list[tuple[Callable[..., Any], Any, bool]]] = {}   # .. a topic's listeners: callback, payload, ignore_retained
+        self._subscriptions: dict[y2topic, int] = {}                                    # .. a topic's QoS
+
+    def __start(self) -> None: self._spawn(self._mqtt_loop())
+
+    async def mqtt_listen(self, callback: Callable[..., Any], topic: y2topic | str, payload: Any = None, *, ignore_retained: bool = False, qos: int = 0) -> None:
+        """``callback(topic, payload)``, sync or async, on each message at ``topic`` (MQTT's wildcards match), or only on
+        those whose payload is ``payload``; with ``ignore_retained``, not on a message the broker kept."""
+        topic = y2topic(topic)
+        listeners = self._callbacks.setdefault(topic, [])
+        if (callback, payload, ignore_retained) not in listeners: listeners.append((callback, payload, ignore_retained))
+        if self._subscriptions.get(topic, -1) >= qos: return
+        self._subscriptions[topic] = qos
+        if self._client is not None: await self._client.subscribe(str(topic), qos=qos)
+
+    async def mqtt_publish(self, topic: y2topic | str, payload: Any = '', *, retain: bool = False, qos: int = 0, expiry: int | None = None, **data: Any) -> None:
+        """``payload`` at ``topic``, a dict or a list as JSON; ``expiry`` is MQTT 5's message expiry in seconds, and the
+        other keywords its user properties. While the broker is lost, nothing is sent."""
+        if self._client is None: return
+        properties = Properties(PacketTypes.PUBLISH) if expiry is not None or data else None
+        if expiry is not None: properties.MessageExpiryInterval = int(expiry)
+        if data: properties.UserProperty = [(key, str(value)) for key, value in data.items()]
+        payload = json.dumps(payload) if isinstance(payload, (dict, list)) else payload if isinstance(payload, bytes) else str(payload)
+        await self._client.publish(str(topic), payload, qos=qos, retain=retain, properties=properties)
+
+    async def _mqtt_loop(self) -> None:
+        options = dict(self.my_dict('mqtt'))
+        status = options.pop('status_topic')
+        while True:
+            try:
+                async with aiomqtt.Client(**options, protocol=aiomqtt.ProtocolVersion.V5, will=aiomqtt.Will(status, b'offline', qos=1, retain=True)) as self._client:
+                    self.Info('connected to the broker')
+                    for topic, qos in list(self._subscriptions.items()): await self._client.subscribe(str(topic), qos=qos)
+                    await self._client.publish(status, 'online', qos=1, retain=True)
+                    async for message in self._client.messages: await self._mqtt_message(message)
+            except aiomqtt.MqttError as error: self.Warn('lost the broker, connecting again in 5 s:', error)
+            self._client = None
+            await asyncio.sleep(5)
+
+    async def _mqtt_message(self, message: aiomqtt.Message) -> None:
+        payload = message.payload.decode(errors='replace') if isinstance(message.payload, bytes) else message.payload
+        if isinstance(payload, str) and payload[:1] in ('{', '['):
+            try: payload = json.loads(payload)
+            except json.JSONDecodeError: pass   # .. not JSON after all: the text is the payload
+        for topic, listeners in list(self._callbacks.items()):
+            if not message.topic.matches(str(topic)): continue
+            for callback, expected, ignore_retained in list(listeners):
+                if (ignore_retained and message.retain) or expected not in (None, payload): continue
+                try:
+                    if inspect.isawaitable(result := callback(y2topic(str(message.topic)), payload)): await result
+                except Exception as error: self.Error('listener failed:', message.topic, error)   # .. one listener's failure stops neither the others nor the app
+
+
+class AppService(mixin_Mqtt, AsyncApp):
+    """An app whose part of Env arrives over MQTT: ``config_mqtt/topics`` in its own configuration maps each retained topic
+    to the path in Env that its payload replaces, the same as loading it again, so ``glob`` reads it as it reads the rest of
+    Env. An app that acts on new configuration listens to the same topic: its listener runs after the section is loaded.
+    ``await app.from_mqtt()`` reads every topic once, then stops."""
+
+    def __init(self) -> None:
+        self.until_loaded: set[str] | None = None   # .. from_mqtt: the topics still to arrive
+
+    async def from_mqtt(self) -> None:
+        """Each of its topics read once, then the app stopped."""
+        self.until_loaded = set(self.my_dict('config_mqtt/topics'))
+        await self.run()
+
+    async def __load(self) -> None:
+        for topic in self.my_dict('config_mqtt/topics'): await self.mqtt_listen(self._receive_config, topic, qos=1)
+
+    def _receive_config(self, topic: y2topic, payload: Any) -> None:
+        deepset(self.my('config_mqtt/topics')[str(topic)], Env.data, yaml.load(payload, Loader=YmlLoader) if isinstance(payload, str) else payload)
+        Env.loaded = False   # .. new configuration is the same event as a load: Env loads again, from what it holds with the section that arrived
+        Env.load()
+        if self.until_loaded is not None:
+            self.until_loaded.discard(str(topic))
+            if not self.until_loaded: self.stop()
+# endregion
+
+
 # region - Runtime: Y2's, the program's apps and who listens to what
 @dataclass(frozen=True)
 class ListenerHandle:
@@ -352,12 +448,17 @@ class ListenerHandle:
 
 
 class _Runtime:
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# !!! This is not runtime. It is bad code from y2. 
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
   """The program's apps, which all share it: ``apps`` by name, the registries they fill (``actions``, ``buttons``,
   ``indicators``), and the listeners to events, to entity states and to topics. ``Runtime`` is its one instance. A
   callback is called with only the keywords it takes."""
 
   def __init__(self) -> None:
     self._init_runtime()
+
 
   def _init_runtime(self) -> None:
     self.apps: dict[str, Any] = {}
@@ -426,7 +527,11 @@ class _Runtime:
 
     return ListenerHandle(id=key, cancel=cancel)
 
+
   def state_changed(self, entity: Any, *, old_state: Any, old_attrs: Mapping[str, Any]) -> None:
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# !!! This is state, not runtime. And its not gppu as I explai ed
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     changes: list[tuple[str | None, Any, Any]] = []
     if old_state != entity.state:
       changes.append((None, old_state, entity.state))
@@ -441,7 +546,12 @@ class _Runtime:
         if expected_attr != '*' and expected_attr != attribute: continue
         callback(entity=entity, attribute=attribute, old=old, new=new, **data)
 
+  
   def listen_topic_state(self, callback: Callable[..., Any], *, path: str | y2path | None = None, **data: Any) -> ListenerHandle:
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# !!! Topics do not have states    
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
     parsed = y2path(path) if path else None
     callback = _callback_wrapper(callback)
     key = next(self._listener_ids)

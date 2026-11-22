@@ -27,6 +27,8 @@ from .app import (
     _callback_wrapper,
     APIApp,
     mixin_Rest,
+    mixin_Mqtt,
+    AppService,
 
     # .. the program's apps and their listeners
     Runtime,
@@ -125,11 +127,6 @@ from .iot import (
     y2slug,
     y2eid,
 
-    # .. mqtt library (aiomqtt optional — gppu[mqtt])
-    mixin_Mqtt,
-    MqttApp,
-    AppService,
-
     # .. event-loop and device-control bridges
     mixin_EventLoopBridge,
     SerializedControl,
@@ -193,7 +190,7 @@ __all__ = [
     'y2list', 'y2path', 'Path', 'y2uri', 'y2topic', 'y2slug', 'y2eid', 'Runtime', 'ListenerHandle',
 
     # .. mqtt library
-    'mixin_Mqtt', 'MqttApp', 'AppService',
+    'mixin_Mqtt', 'AppService',
 
     # .. event-loop and device-control bridges
     'mixin_EventLoopBridge', 'SerializedControl', 'HTTPControl', 'JSONHTTPControl',
