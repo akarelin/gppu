@@ -109,8 +109,8 @@ The release and the y2 deploy are one window. In order:
 1. gppu is released from master by its GitHub Action; alex-pc's `~/.venv` takes it, and the Hosts TUI is opened on it.
 2. y2's image is rebuilt on `gppu/latest`, its suite run, and y2 deployed, which restarts it in the house.
 3. In the same window, with that y2: Creekview's `ui/ui.yaml` loses its inner `ui:` level, the old block kept commented out, and `y2/ui/data.py` drops `self.data |= self.my('ui')`. Neither is written yet.
-4. RAN: the `::` lines of `Hosts/mapper.cmd` and the `.NOTES` of `Hosts/tray-control.ps1` and `Hosts/tui/all-all.ps1` go, their `MANIFEST` staying; the Hosts TUI's `tui.py` calls `launcher_main` and `load_app_registry` in place of `sidecar_main` and `load_registry`, and its `tests/test_tui.py` stops importing `sidecar_command` and `load_registry`; Preservator and the Fleet grid switch, by the Preservator session.
-5. Every other host that runs a gppu tool takes the release before it runs one: the Mac, trix and five have 3.6, seven has none.
+4. RAN: the `::` lines of `Hosts/mapper.cmd` and the `.NOTES` of `Hosts/tray-control.ps1` and `Hosts/tui/all-all.ps1` go, their `MANIFEST` staying; the Hosts TUI's `tui.py` calls `launcher_main` and `load_app_registry` in place of `sidecar_main` and `load_registry`, and its `tests/test_tui.py` stops importing `sidecar_command` and `load_registry`; Preservator and the Fleet grid switch by applying `D:\Work\11\21\preservator-switch\switch.claude.patch`, written and proven on master (RAN `Hosts/preservator/PLAN_PRESERVATOR.md`).
+5. Every other host that runs a gppu tool takes the release before it runs one. On 2026-11-21: alex-laptop has 3.6.22 and trix 3.6.23, neither with `gppu.fs`; seven has none; alex-mac has 3.7.9, five 3.7.9.dev2 and iot 3.7.10.dev69; alex-laptop's WSL does not answer ssh.
 What stops at the release until it is switched is listed below.
 
 These move in the same commit as the release. gppu 3.7.7 is released and alex-pc's `~/.venv` runs it, so the Hosts TUI opens there on the RAN environment; a program below that still calls `from_argv`, `from_env` or `from_dict` stops on alex-pc until it switches. Before 3.7.2, the Hosts tools that construct Fleet (Preservator, configs, list-sessions, list-sessions2, sessions-clean, start-page) ran on neither gppu. Still to switch:
@@ -122,7 +122,7 @@ These move in the same commit as the release. gppu 3.7.7 is released and alex-pc
 
 - RAN `Hosts/mapper.cmd` and `Hosts/tray-control.ps1` carry `MANIFEST` and, beside it, the `::` lines and `.NOTES` the released gppu reads; the older lines go at the release (RAN aa2f5939d: the Hosts launcher lists every item identically on 3.7.9 and on master)
 - y2 main needs the gppu after 3.7.9 (`y2/NOTE_gppu-rebuild-261121.md`)
-- Preservator (RAN `Hosts/preservator/preservator.py`), with the Fleet grid (`Hosts/configure-all/fleet-tui.py` calls `Preservator().configuration()[0]`, `record_start`, `record_result`) and its tests: switched in the same window as the release by the Preservator session, which is told before the release is cut
+- Preservator (RAN `Hosts/preservator/preservator.py`), with the Fleet grid (`Hosts/configure-all/fleet-tui.py` calls `Preservator().configuration()[0]`, `record_start`, `record_result`) and its tests: switched in the same window as the release by the Preservator session, which is told before the release is cut. The switch is the patch in step 4; on 3.7.9 its fields read empty
 - A script's MANIFEST no longer takes `!include`: it is text, and an include reads beside a file. w11-events reads its `error_rules.yaml` in code
 - A caller of `Logger.enable_file_logging(name, log_dir=...)`, of `mixin_Config._config_load` or of `Env._my`: none is left in gppu, y2 or RAN/Hosts
 
