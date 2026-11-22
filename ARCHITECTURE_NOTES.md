@@ -1,62 +1,143 @@
 # gppu: environment, state, runtime
 
-Working notes of an agent session, 2026-11-21. Findings from code, each with where it was seen. Not a specification and not rules.
+Notes of an agent session, 2026-11-21. The first part is what Alex said in that session, as plain statements in his terms. The second part is what the agent found in the running code, each with its location. Nothing here comes from commit messages, `SPEC.md`, plans, docs or tests.
 
-Alex's frame: there are three things, environment, state and runtime; everything else is access to them.
+# What Alex said
 
-## What the history records as settled (commit messages, gppu repository)
-Environment
-- Two environments, RAN and Creekview; gppu hard-codes the two files' paths, the only two use cases (`c8e14e1`). A third, ETL, is foreseen (`45b4e29`).
-- They differ only by init provider (`e73d7a0`).
-- Env loads one of the two as gppu is imported, and no app names it (`1fe3fee`, `70b53ed`). An app that declares another environment raises (`7416b31`).
-- On a host without the repository the environment, or the part an app needs, is read from MQTT (`21cfcfc`).
-Runtime
-- The runtime, not State's managers, loads a bunch of objects from a YAML list or a folder (`18d9cd8`).
-- Refreshing belongs to the runtime and is configured, each object in the one way known for it; there is no state manager, only the runtime (`dcac586`).
-State
-- State is a lookup from identity to entity (Alex, 2026-11-21: there is a lot more to Y2's State than that); identity comes from configuration; input and output templates are an object's representation (`dcac586`).
-- State keeps the MQTT broker, and gppu offers a simple way for an app to keep its own state (`4f3e67d`).
-- Environment and State are single instances, as in Y2 (`2a86568`).
+## The three objects
+- There are only three things to think of: environment, state and runtime. Everything is defined in those three. Nothing else is needed. Everything else is access.
+- They are three objects, and they are to be understood exactly, before anything else about gppu, Y2 or an app is explained. Conclusions drawn without them do not stand.
+- Runtime and configuration are sufficient for the majority of functionality.
+- gppu was small and worked: objects brought up by a correct sequence of lifecycle steps, a shared environment, apps that are almost no code. Agents buried it under restored old code and new layers.
+- The new version of gppu is good because of the way it works with the runtime and state. It needs no custom classes for things like state managers or groups: all of that is handled natively by runtime or by state. That is how apps work without code.
 
 ## Environment
-- One shared object per program, read with `glob`. Earlier gppu: class `Env`, `IoT/archive/ads/gppu-storm/gppu_users/gppu/gppu.py:1014`. Checkout: `Env`, `gppu/gppu.py:1611`.
-- An object's own part was held apart from its data, in `_my`, read with `my` (`...gppu_users/gppu/gppu.py:1277-1289`).
-- Checkout: `my` reads the object's data, and `App` loads the environment and the command line into its data (`gppu/gppu.py:1532`, `1554-1572`).
+- How many environments exist, and why they are initialized the way they are, is settled and has been explained several times.
+- `environment=` on an app is invented and is the worst way to initialize the code. An app dealing with its environment violates the principle.
 
 ## Runtime
-- Runtime exists under other names. The classes named `AsyncApp` (objects from configuration, loop, timers), Y2's `App` (listeners), `Y2.start` (apps from `y2/apps`), `_Runtime` (registries, restart), `State` (loop, broker client) and each state manager are pieces of it, not apps that contain it.
-- Standalone apps: the script makes the app and calls its work itself (`IoT/any2mqtt/lastfile2mqtt.py:122-125`, `RAN/Skills/devops/scripts/kea.py:50`).
-- Y2 added two steps of its own, refresh and publish (`.../Y2/y2util.py:223-236`). In the checkout they are ordinary methods.
+- The lifecycle of an object is a feature of runtime.
+- There are exactly two relations between an app, or an object, and its runtime. It is impossible to come up with another one, and both use cases are handled.
+- The initialization steps are the way they are for reasons that are described.
+- Applications do have a runtime. It has been scattered over various classes: in one place it is called app, in another async app or MQTT app, or a state manager. All of those are effectively the runtime, but it is Y2's runtime, as opposed to a generic and better working one.
+- Runtime does not work at all at present, so nothing executes the lifecycle.
+- There are events in runtime.
+- `kind` is a long gone notion that is not needed. Runtime does not need to know about the kind.
+- Loading objects from a list is not inside the async app.
+- When the runtime builds an object, it builds everything the object needs to have its actions.
 
 ## State
-- Y2: `State` in `y2/y2entity.py:1717`, not kept across restarts; entities start as `newborn`.
-- gppu has a DC that stores and loads its data by class name and key, `_PersistentDC` (`gppu/data.py:144`). Its only users found are an archived experiment (`IoT/archive/Y2excess3/excess/y2pdc`) and gppu's tests.
-- Apps that keep something across runs do it themselves: `RAN/Hosts/rewrite-commits/rewrite_commits.py:98-113`; Ecobee's token and Nest's session in Y2.
+- State is the state. It is what the application preserves, and restores on restart. With a state, init and load do not have to be done all over again every time.
+- It is done through persistence.
+- State is a DC, not a dict. That was lost on the way to simplifying App.
+- Every app has a state. A state that is not persisted, or is bypassed, is still a state. Users of gppu have state: Y2, rewrite-commits, the utilities, Preservator, which knows when it last ran.
+- The previous version of Y2 had an object called state that contained the state. Y2 may now be loaded from scratch every time and keep none.
+- There are no events in state.
+- What the state object does is give quick lookups: all the lookups around the state.
+- There is a lot more to Y2's state than identity to entity.
+- State plus runtime is a much better state machine than a separate one. All of the code is still there; it is not packaged correctly.
 
-## Resolving objects (Alex, 2026-11-21)
-- State and runtime, and the importance of resolving objects, go together.
+## Resolving objects
+- State, runtime and the importance of resolving objects go together.
 - Objects have given names: a path, a slug, or kebab case.
 - An action is the example of an object with a globally unique name: knowing its path, an action can always be looked up.
-- Entities are one use case in Y2, with the eid notation. Actions, paths, hosts (kebab case) and anything else with a globally unique name can be referenced in configuration by that name.
-- A name is resolved automatically into whatever it needs to resolve into when the code is run. That is why the code that runs a sequence is so short.
+- Entities are one use case in Y2, with the eid notation. Actions, paths, hosts in kebab case, and anything else with a globally unique name can be referenced in configuration by that name. All of it is resolved automatically into whatever it needs to resolve into when the code is run. That is why the code that runs a sequence is so short.
 - One object talking to another is the less common use case. The more common one is something like an admin UI built on top of the objects in runtime.
-- The point is not that configuration refers to objects by name. It is that every notable object has a stable, globally unique ID, so it can always be found: to get the state of a sensor, you know how to find it.
-- The globally unique ID is what enables state: state is possible because the ID exists.
-- It also makes complex configurations simple: anything can be referred to by its globally unique, human-readable ID. That is why configurations are so simple, especially for actions.
+- Every notable object has a stable, globally unique ID, so it can always be found: to get the state of a sensor, you know how to find it.
+- The globally unique ID is what enabled state. State is possible because there is a globally unique ID.
+- Complex configurations can be made very simple, because anything can be referred to by its globally unique, human-readable ID. That is why configs are so simple, especially for actions.
 
-## DC and REST (Alex, 2026-11-21)
-- The REST mixin does not work and gets in the way: comment it out or mark it deprecated.
-- Objects are derived from DC, and so they do not need constructors.
-
-## The basic example (Alex, 2026-11-21)
-- A Tuya light entity and an Insteon light entity: two lights, different approach, same code. The difference between them, seen from environment, runtime and state, in code and in configuration, is the example of the two relations between an object and its runtime.
+## Objects
+- All objects are derived from DC, and so they do not need constructors.
+- The REST mixin does not work and gets in the way: comment it out or declare it deprecated.
+- A Tuya light entity and an Insteon light entity are the most basic example: two lights, different approach, same code. What differs between them, from the point of view of environment, runtime and state, in code and in configuration, shows the two relations between an object and its runtime.
+- The difference between them is not templates and is not runtime. Hue against Insteon, Tuya or Kasa shows that.
+- There are no pushed and no pulled objects. Pushing or pulling objects is a blatant violation.
+- There is no such thing as a row.
+- Insteon's device and Y2's device are the same. The difference between a device and an entity is superficial: name, members and entities. The AV device and time of day are to be looked at as well, not one device.
+- A group has two lists that declare membership: members and entities.
+- `members` contains references. `members` is not state. `entities` is not runtime and not environment.
 - Deprecated, poorly implemented code is not evidence about the architecture.
-- There is no such thing as a row; it is not an object of this architecture.
-- The difference between the Tuya and the Insteon light is neither templates nor runtime. Hue against Insteon, Tuya or Kasa shows it.
-- There are no pushed or pulled objects in this approach; pushing or pulling objects is a violation of it.
-- Insteon's device and Y2's device are the same thing. The difference between a device and an entity is superficial: name, members and entities.
 
-## Runtime and state (Alex, 2026-11-21)
-- There are events in runtime, and there are no events in state.
-- `members` contains references. `members` is not state, and `entities` is not runtime and not environment.
-- Understanding is to come from analysing the working code, not from markdown files of unknown origin; `SPEC.md` is not to be read.
+## Topics
+- A topic is MQTT. It can be subscribed to, not set. Code that sets a topic is to be eliminated; what breaks because it relied on that should be broken.
+
+## Actions
+- Action is the formal name. An action is globally unique.
+- Actions are what give a UI: a UI cannot be built without actions, and no TUI would know what to do without them. Classes interact through actions.
+- Code that avoids actions and hard-codes instead is not correct. Actions are the only way.
+- Understanding how entity state works is not understanding actions.
+- Layouts, scenes and events are all actions.
+- Actions can be in a sequence, and a sequence of actions has a name.
+- Actions are poorly defined today: actions and action paths are built in many places. Topics have the same problem: the topics power is published to are declared in many places, with no good way to centralize them.
+- Objects are to register their actions, the paths that are uniquely theirs. That they do not register them is why it does not work.
+- An object knows from its configuration the places it publishes its state to: a simple topic for just the value, and a full topic with the state of the object. None of those paths is registered anywhere, so two objects can post their state to the same topic, or two adjacent objects can build their state topics differently.
+- Wanted: a check at run time that there is no collision, and a reverse lookup from a topic to the object that publishes it and whether that object is alive.
+
+## Every way an app is launched
+- A tool is not to have a separate CLI, a separate GUI and a separate UI, each repeating what it can do, nor a sidecar text file beside it repeating it again. All of them rely on actions and need no functionality of their own.
+- PC Control's layouts and scenes are actions. PC Control should use actions and register them, not declare its own listener to a topic.
+- Preservator's steps and its preset are a sequence of actions: not executed on an entity, but still a named sequence of actions. Preservator needs to know what can be preserved and what can run in parallel.
+- Preservator is not a service, so it does not listen to MQTT; if it were, triggering the action there would run it. The TUI discovers which sequences are available and runs them. The same named sequence runs from the CLI, from an import as a library, from the TUI, and from a GUI, a web UI or a web service built for it. All of that comes from actions.
+- Fleet management is a task of its own: nice and clean, with individual steps that are not polluted and are reusable. Each step is executable individually and is a very simple script. `mapper.cmd` is the example, five lines, and the Docker update another. A step stays that small and can still be launched in many scenarios: synchronously, asynchronously, by name.
+- A utility that parses its own command line and arguments, separately uses gppu, and separately does something with YAML files is an error, and that file is flagged for a rewrite. The list of such files holds only code that is actually used.
+
+## Configuration
+- Defaults are in the template; a particular case overrides them. Some AV buttons on keypads are the example.
+- The convention notes what is always implied and specifies the cases that need a special case. The number of special cases is tiny and is to stay tiny.
+- In configuration done correctly there is not a single line that does not directly affect behavior, and not a single line repeated. The Insteon scenes are the example.
+- Lists of objects that each repeat the same ten properties are the opposite, as is having to modify five configuration files to get one sensor to work, and still not knowing which topics it publishes to and what reacts to it.
+- Configs stay light because the defaults are so powerful. Saying an object is `ao-desklamp` is enough: the name gives its path, what it is, what it does and how to talk to it.
+- Slug and path used to be simple built-in properties of a data class and may no longer be well defined. The cases where a path and a slug cannot be used interchangeably are tiny in number, but they exist.
+- There are enum-like objects in `_creekview.yaml`: a topology that gives the nesting and the synonyms, and a dictionary of tails and heads. They are needed to build paths correctly; with them the vocabulary is constrained and building a path is deterministic.
+- `infer_area` is the old method that identifies an area from just the name of an entity.
+- A conversion from domain to prefix is not used and not needed: it is declared differently. It is not a missing piece and is not to be required.
+- Care is needed with the words name, path and system.
+- A measure is attribute-only. It is the first use case not handled by the model: it works, but on the side. It is the first non-entity object, and it requires no decision.
+
+## UI
+- All objects are data classes with the same `self.data`, and state is lists and dicts of them, so any object can be displayed in a list by a UI that knows nothing about it.
+- A UI adds a layer: how to lay the elements out nicely for a given type of data class.
+- A basic UI with full function needs no code. Default templates display objects in a list and in a grid, so any DC object is displayed, with its actions.
+- UI hacks to work through: UI not using templates, using different templates, not looking at objects, or presentation completely separate from the object's state, so the object cannot be displayed.
+- Well-designed objects have HTML that remains. The defect is the model being in many places at once.
+- UI templates do not move into `gppu.py`; they play nicely together with it.
+
+## How the work is done
+- The job of the supervising session: look at gppu, understand the changes that need to be made, then dispatch agents to make those changes.
+- The base class structure and the module structure are the basic architectural work, done before any code is written. No session changes code without knowing the base classes and what is in which submodule.
+- It is a refactoring job: use classes and mixins correctly, as the examples around show, and that way arrive at the base classes. Alex looks at the base classes and says go ahead.
+- What goes in which module is trivial and does not need asking.
+- All the changes are planned statically, by static analysis: write down the requirements, distill them to what is needed. Not by patching something and waiting for it to deploy.
+- The process: look at the code, remove all unnecessary things, line it up, look at the code again. gppu is very simple functionality and is rewritten in one shot.
+- The architecture is explained end to end; there is nothing left to design.
+- No change to gppu requires SQLAlchemy.
+- The one way to change gppu is one shot: look at code and configuration statically and reduce it to the absolute minimum, removing all functionality that is not needed or not used. Where the model breaks during the reduction, Alex is consulted. With classes and methods pruned, the architecture is obvious: what goes into which module and which class has only one answer. Then the code is moved into its submodule. gppu ends at a third of its size, with no tests: a designed system works when launched, it is not trial and error.
+- One shot means it can be written with pen and paper, offline: it fits in one hand and a human writes it out in one go.
+- The task cannot be executed by grepping code and reading documentation: that only adds complexity and never reaches the simplicity asked for.
+- One session follows these instructions and writes code it understands, not patches and hacks to old code. It is a few classes. Most custom code leaves the peripheral programs.
+- Every public method and every public function of every class is looked at and has to justify itself. Methods that should not be public stop being public; methods that should not exist are removed. Most of the code should not exist.
+- The only messy code that remains in gppu is TColor, the colour printer: old and messy, and fine to stay.
+- gppu's `Path` is the way to access files and work with paths, used everywhere uniformly. Reading from files has regressed to the version before `Path` handled path resolution.
+- Understanding comes from analysing the running production code, not from markdown files of unknown origin. `SPEC.md` is not read.
+- The conventions on topics and action paths are assembled in the vault, then simplified, then applied to all the users.
+
+# What the agent found in the code
+
+## Where the three objects are today
+- Environment: `Env` in `gppu/gppu.py`, read with `glob`.
+- Runtime, in pieces: `AsyncApp` in `gppu/app.py` (objects from configuration, loop, timers), Y2's `App` and `Runtime` in `y2/y2app.py` (listeners, registries of actions, buttons and indicators), `Y2.start` in `y2/__main__.py` (apps from `y2/apps`), `State` in `y2/y2entity.py` (loop, broker client), and each state manager.
+- State: `State` in `y2/y2entity.py`, with entities starting as `newborn`. gppu's `_PersistentDC` (`gppu/data.py`) stores and loads a DC's data by class name and key; no app uses it. Apps that keep something across runs do it themselves: `RAN/Hosts/rewrite-commits/rewrite_commits.py:98-113`, Ecobee's token and Nest's session in Y2.
+
+## Actions and topics
+- Action paths are built in nine places; only Y2's action manager checks for a duplicate.
+- Topics are registered nowhere.
+- PC Control listens on its own topics (`devices/dc/set/scene`, `…/set/sleep`, `devices/dc/<host>/set/<command>`) and registers no action (`IoT/PCC/src/pc-control.py:152-154`, `246-257`, `301-337`). Y2 already has the layouts as actions over a PC entity's commands (`_Creekview/_devices/av.yaml:537-546`, `y2/av.py:334`).
+- Preservator's steps are named in configuration, and `--cells` prints each host and step with its locks (`RAN/Hosts/preservator/preservator.py:12`, `317-336`). Its preset is held by the fleet grid (`RAN/Hosts/configure-all/fleet-tui.py:145-158`).
+- 20 current tools carry a launcher `MANIFEST` in the file and 25 `manifest:` YAML files sit beside tools. `CRAP/Systems/craptui/preservator.yaml` lists six modes, each a list of flags of a script since archived. `RAN/Hosts/mapper.cmd` carries a `MANIFEST` after its five lines.
+- A fleet step is declared in `RAN/_config/hosts/runbooks.yaml`: `tasks`, and `runbooks` as a name over a list of task names. Three programs run steps, each its own way: `configure-all.py`, `preservator.py`, and `fleet-tui.py`, which learns what the other two offer by running them and reading what they print. PC Control runs `mapper` a fourth way, as one of its own operations.
+
+## Configuration
+- A measure exists as the second segment of a value topic (`comfort/<measure>/…`, `sensor/<measure>/…`), as a key in `State.sensors`, and as an attribute of the entity that names it under `attributes:`. Which measures exist, their units and how they combine are each written in a different place.
+- `areas`, `subareas`, `floors`, `floors_deep` and `infer_area` are in use. `indicator_tails`, `indicators`, `superareas`, `floors_simple` and the tag meanings were removed from `_creekview.yaml` on 2026-09-12.
+- The conventions, what a name implies, the special cases and the places configuration repeats what is implied are in the vault at `_Standards/drafts/Conventions/Topics.md`.
