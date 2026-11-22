@@ -51,6 +51,7 @@
 - An app is an assembly of mixins: `_Base` puts the basic two together, and an app picks async, TUI or whatever else it needs.
 - A simple CLI app has no code to find where it was started or where its configuration is, and invents no command line of its own; it is aware of the topology. Nothing passes paths to construct something, and nothing needs the user's home.
 - Every object is a `_DC`, and everything happens in its initialization lifecycle. Lifecycles interlock through a correct sequence of small, one-line initialization steps, and that sequence creates the whole functionality of the system; neither code nor configuration spells it out. The object hierarchy is shallow, from simplest to most complex, and each initialization sequence is short.
+- An object's `__init__` is final and no class overrides it: it takes the object's data and runs its lifecycle. A class adds its own private steps (`__init`, `__load`, `__start`, `__refresh`, `__publish`), a line or two each, and each step runs for every class from base to most specific, once. This is Y2's `YData` and `_YMRO` (`y2core.py` at `bd717a3`).
 - An object reads its configuration as `self.name`, never as `self.my('name')`. No app parses YAML text or reads a configuration it declared for itself, and no YAML file beside the code duplicates or contradicts it.
 - A list of objects, such as the hosts, is created by a loader from the environment, where it already is.
 - Configuration is done natively by `_DC`. `_my`, an alternative dictionary on every object, is never used.
