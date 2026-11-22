@@ -28,6 +28,8 @@ Notes of an agent session, 2026-11-21. The first part is what Alex said in that 
 - `kind` is a long gone notion that is not needed. Runtime does not need to know about the kind.
 - Loading objects from a list is not inside the async app.
 - When the runtime builds an object, it builds everything the object needs to have its actions.
+- A restart never performs an action that nothing triggered. An action performed on restart means a problem in configuration or code.
+- Time of day is triggered by cron, not by Y2's TOD, where it is disabled.
 
 ## State
 - State is the state. It is what the application preserves, and restores on restart. With a state, init and load do not have to be done all over again every time.
