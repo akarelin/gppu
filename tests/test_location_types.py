@@ -2,7 +2,8 @@ import json
 
 import pytest
 
-from gppu import Container, DataObject, FileSystem, Location, y2path, y2uri
+from gppu import y2path, y2uri
+from gppu.fs import Container, DataObject, FileSystem, Location
 
 
 @pytest.mark.parametrize('value', [

@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import pytest
 
-from gppu import FileSystem, Location, Provider
+from gppu.fs import FileSystem, Location, Provider
 from gppu import glob_dict
 from gppu.fs.catalog import GppuCatalog
 from gppu.fs.gppufs import GppuFileSystem

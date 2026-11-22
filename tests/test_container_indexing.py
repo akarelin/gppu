@@ -5,7 +5,7 @@ import zipfile
 
 import pytest
 
-from gppu import Container, DataObject, FileSystem, Location, Provider
+from gppu.fs import Container, DataObject, FileSystem, Location, Provider
 from gppu.fs.catalog import GppuCatalog
 
 

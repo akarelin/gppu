@@ -1,7 +1,8 @@
 """Catalog gives each Location its Provider; Locations select Containers."""
 import pytest
 
-from gppu import Container, DataObject, FileSystem, Location, Provider, y2uri
+from gppu import y2uri
+from gppu.fs import Container, DataObject, FileSystem, Location, Provider
 from gppu import glob_dict
 from gppu.fs.catalog import GppuCatalog
 
