@@ -11,14 +11,18 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 ## Step 1: gppu reduced statically (in progress)
 - [x] Logging is one `Logger`: the console, its colours and filter, and the trace rules; the file logging and `init_logger` are gone
 - [x] `mixin_Config` is the four readers over the object's data, `my`, `my_int`, `my_list` and `my_dict`, each read by programs
-- [ ] `App`: an app is not made by passing it its own name; how a program's app finds its section without one is open
+- [x] `App`: an app's name is its class's; given no configuration it reads the section of the environment named as it is (Preservator), and an app with its own configuration is given its file or MANIFEST
 - [x] The Jinja region: each public method has a user (`render_template`, `apply_template` and `jinja_template` in programs, `configuration` in Env and App, `jinja_fill` in the catalog)
 - [x] The old tracing block and `gppu/app.py`'s `TimerHandle`, `_Scheduler`, `_Runtime`, `state_changed` and `listen_topic_state` are gone
 - [x] `gppu` and `gppu.tui` export only what programs import from them; the rest stays in its module, unexported
-- [x] The cache fetchers and the heatmap, which no program imported, are gone; helpers only their own module calls are private
+- [x] The cache fetchers and the heatmap, which no program imported, are archived; helpers only their own module calls are private
+- [x] gppu.tui's tree browser and its adapters, the input dialog, the classified progress strip and the spinner and ANSI glyph sets, which no program used, are archived
+- [x] The file-system probe is in gppu.fs.handlers, its one user
+- [x] What the reduction removed since 3.7.9 is in `archive/`, beside the module it came from
 - [x] A `TUIApp` has no constructor: Textual's construction is the last part of its init step (architecture notes, item 6)
 - [ ] The database bases made from their data, with an init step and a connection on first use (architecture notes, item 7)
-- [ ] Whether gppufs (`gppu.fs` with `gppu.ld`) stays inside gppu: the decision that sets gppu's size
+- [x] gppufs (`gppu.fs` with `gppu.ld`) is a submodule of gppu, reduced as the rest
+- [ ] gppu's tests that load an environment through `Env.reset` (configuration, inline configuration, the Lake, Linked Data, providers): Env has no reset
 
 ## Independent, unscoped
 - Objects read their configuration as `self.name`
@@ -36,6 +40,8 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
   - [ ] Transcriber, Plaud, md-indexer, iot-monitor: their files move into RAN's `_config` once Alex approves the move table
   - [ ] CCTV-detective and crop_possum2: their environment, and their table of moves
   - [ ] Transcriber's recordings tool and lake's m365 read a `lake.yaml` that exists only in archives
+- RAN's gppu skill names `MarkerProgress` and `spinner_frames`, which gppu.tui no longer has
+- Y2's tests and the Hosts tests set up with `Env.reset()` and `Env.init(environment=...)`, which Env no longer has
 - The Hosts TUI's Configs browser reads `configs_config`, which RAN's configuration no longer has
 - The start page reads a `start_page` configuration that was archived and its include commented out on 2026-09-29, and imports the sidecar loader gppu no longer has
 - IoT: `_creekview.yaml` and `ui/editor.yaml` include `zwjs.yaml` and `z2.yaml` from `Insteon/`, which Alex moved back to `_devices/`; Creekview does not load from the checkout
