@@ -70,7 +70,9 @@ def detect_os() -> OSType:
 
 def full_path(path: str | Path, base_dir: str | Path | None = None, *, strict: bool = False) -> Path:
   """gppu.fs's and the Lake's, out of scope for now: the path against base_dir or the current folder, resolved."""
-  return ((Path(base_dir) if base_dir is not None else Path.cwd()) / path).resolve(strict=strict)
+  result = Path(path)   # .. Path expands a text path's variables, its ~ and a WSL drive; an absolute path stays as it is
+  if not result.is_absolute(): result = (Path.cwd() if base_dir is None else full_path(base_dir)) / result
+  return result.resolve(strict=strict)
 
 
 def probe_path(path: str | Path) -> dict:
@@ -728,18 +730,19 @@ def _tuple_representer(dumper: Dumper, data: tuple) -> Node:
 
 def dict_from_yml(filename: str | Path) -> dict:
   """ yaml file to dictionary, resolving includes, but not templates"""
-  filename = Path(filename)
-  root = filename.parent   # .. an include's path is relative to the folder of the file loaded, the environment's configuration
+  filename = full_path(filename)
+  dir_stack: list[Path] = [filename.parent]   # .. an include is relative to the folder of the file that holds it
 
   class Loader(YmlLoader): pass
 
   def yml_include(loader: FullLoader, node: Node) -> Any:
-    fn = root / loader.construct_scalar(node)
-
-
-    with fn.open() as f:
-      if fn.suffix.lower().endswith('.json'): return json.load(f)
-      return yaml.load(f, Loader=Loader)
+    fn = full_path(loader.construct_scalar(node), dir_stack[-1])
+    dir_stack.append(fn.parent)
+    try:
+      with fn.open() as f:
+        if fn.suffix.lower().endswith('.json'): return json.load(f)
+        return yaml.load(f, Loader=Loader)
+    finally: dir_stack.pop()
 
   Loader.add_constructor("!include", yml_include)
 
