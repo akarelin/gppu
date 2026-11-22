@@ -29,6 +29,9 @@ Notes of an agent session, 2026-11-21. The first part is what Alex said in that 
 - Loading objects from a list is not inside the async app.
 - When the runtime builds an object, it builds everything the object needs to have its actions.
 - A restart never performs an action that nothing triggered. An action performed on restart means a problem in configuration or code.
+- No action happens on a restart because nothing triggers one, not because actions are suppressed. Nothing is suppressed.
+- A restart loses no state: there is no time after it when everything is unknown and no state appears. Everything works from the first second.
+- An action or a loss of state on start or restart comes from incorrect initialization of objects. It is found by reading configuration and code, never by experimenting.
 - Time of day is triggered by cron, not by Y2's TOD, where it is disabled.
 
 ## State
