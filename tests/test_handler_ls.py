@@ -50,7 +50,7 @@ def test_main_lists_the_catalog_and_one_location_with_an_argument(tmp_path, monk
   location.mkdir()
   (location / 'plain.txt').write_text('plain', encoding='utf-8')
   catalog = catalog_for(tmp_path, location)
-  monkeypatch.setattr(handler_ls, '__file__', str(script_for(tmp_path, catalog)))   # its MANIFEST names the test's catalog
+  monkeypatch.setattr(handler_ls, '__file__', str(script_for(tmp_path, catalog)))   # .. its MANIFEST names the test's catalog
   monkeypatch.setattr(sys, 'argv', ['handler_ls.py'])
   main()
   rows = json.loads(capsys.readouterr().out)
@@ -73,7 +73,7 @@ def test_cli_redirected_output_preserves_unicode_on_windows(tmp_path):
   catalog = catalog_for(tmp_path, location)
   script = script_for(tmp_path, catalog)
   result = subprocess.run([sys.executable, str(script), str(location)], cwd=tmp_path, capture_output=True,
-    env={**os.environ, 'PYTHONIOENCODING': 'cp1252', 'PYTHONPATH': str(EXAMPLES.parent)})   # the gppu under test, not the one installed
+    env={**os.environ, 'PYTHONIOENCODING': 'cp1252', 'PYTHONPATH': str(EXAMPLES.parent)})   # .. the gppu under test, not the one installed
   assert result.returncode == 0, result.stderr
   rows = json.loads(result.stdout.decode('utf-8'))
   assert name in [row['gppu']['name'] for row in rows]

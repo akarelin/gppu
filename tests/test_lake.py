@@ -8,7 +8,7 @@ from datetime import date, datetime
 
 import pytest
 
-pytest.importorskip('fastapi')   # gppu's ld extra; the build's tests install gppu without it
+pytest.importorskip('fastapi')   # .. gppu's ld extra; the build's tests install gppu without it
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -26,7 +26,7 @@ SESSION = '\n'.join(json.dumps(line) for line in (
     {'type': 'assistant', 'sessionId': UID, 'uuid': 'a2', 'parentUuid': 'a1', 'timestamp': '2026-07-01T10:01:00Z',
      'message': {'role': 'assistant', 'model': 'claude', 'content': [{'type': 'text', 'text': 'hi'}]}},
 )) + '\n'
-LAYOUT = {   # the Lake's lines: a session under timeseries, by its own start; an index under its host and folder
+LAYOUT = {   # .. the Lake's lines: a session under timeseries, by its own start; an index under its host and folder
     'session': "timeseries/{{ start.year }}/Sessions/{{ '%02d' % start.month }}/{{ record.type }}/{{ record.uid }}/{{ name }}",
     'index': "indexes/{{ account }}/{{ path.rpartition('/')[0] | replace(':', '') }}/{{ name }}",
     'screenshot': "timeseries/{{ start.year }}/Screenshots/{{ '%02d' % start.month }}/{{ name }}",
@@ -62,12 +62,12 @@ def test_a_session_is_placed_by_what_its_handler_reads_and_recorded_in_the_catal
     uri = lake.save(DataObject('', SESSION.encode(), None, 'file', f'{UID}.jsonl'))
     placed = outer / 'timeseries' / '2026' / 'Sessions' / '07' / 'cc' / UID / f'{UID}.jsonl'
     assert str(uri) == placed.as_uri() and placed.read_text() == SESSION
-    listed = lake.ls(placed.parent.as_uri())   # from the Lake's catalog
+    listed = lake.ls(placed.parent.as_uri())   # .. from the Lake's catalog
     assert [(row['name'], row['kind'], row['size']) for row in listed] == [(f'{UID}.jsonl', 'file', len(SESSION))]
     assert lake.info(uri)['type'] == 'cc'
     with lake.open(uri) as stream:
         assert stream.read() == SESSION.encode()
-    assert not list(outer.rglob('*.gppufs.sqlite'))   # nothing but the file is written to the store
+    assert not list(outer.rglob('*.gppufs.sqlite'))   # .. nothing but the file is written to the store
 
 
 def test_a_file_path_is_the_line_for_its_type_filled_in_with_what_its_writer_knows(tmp_path):
@@ -83,10 +83,10 @@ def test_a_file_path_is_the_line_for_its_type_filled_in_with_what_its_writer_kno
         'timeseries/2026/Screenshots/11/Screenshot 2026-11-10 101010.png'
     assert file_path('shell', '.bash_history', start=datetime(2026, 11, 12, 9, 5), host='alex-pc') == \
         'timeseries/2026/Activity/Shell/11/261112.0905_bash_history_alex-pc.txt'
-    assert not list(tmp_path.rglob('timeseries'))   # nothing written
-    with pytest.raises(ValueError, match='no path for a file'):   # a type with no line
+    assert not list(tmp_path.rglob('timeseries'))   # .. nothing written
+    with pytest.raises(ValueError, match='no path for a file'):   # .. a type with no line
         file_path('file', 'Ann Lee.json', account='karelin', path='users/alex/contacts/Ann Lee.json')
-    with pytest.raises(ValueError, match='no path'):   # a line asking for what it is not given
+    with pytest.raises(ValueError, match='no path'):   # .. a line asking for what it is not given
         file_path('session', session.name, record=record)
 
 
@@ -111,21 +111,21 @@ def test_an_index_the_lake_receives_is_loaded_into_the_catalog_and_kept_with_the
     served.mount('/lake', api(lake))
     client = TestClient(served, raise_server_exceptions=False)
     sent = client.post('/lake/', params={'name': index.name, 'source': 'file://alex-pc/Dev/.Dev.gppufs.sqlite'}, content=index.read_bytes())
-    assert sent.status_code == 202   # the load ran after the answer, as the test client runs a background task
+    assert sent.status_code == 202   # .. the load ran after the answer, as the test client runs a background task
     assert (outer / 'indexes' / 'alex-pc' / 'Dev' / '.Dev.gppufs.sqlite').read_bytes() == index.read_bytes()
     assert [row['name'] for row in lake.contents.entries(uri='file://alex-pc/Dev')] == ['note.md', 'sub']
     assert lake.info(sent.json()['uri'])['type'] == 'sqlite'
     state = lake.contents.loaded('file://alex-pc/Dev')
     assert state['loaded'] and state['received'] and not state['loading'] and state['error'] is None
 
-    old = tmp_path / '.Old.gppufs.sqlite'   # an index written before gppufs gave its rows ids
+    old = tmp_path / '.Old.gppufs.sqlite'   # .. an index written before gppufs gave its rows ids
     with closing(sqlite3.connect(old)) as db:
         db.execute('CREATE TABLE gppufs_entries (path TEXT PRIMARY KEY, metadata TEXT NOT NULL, children TEXT)')
         db.execute('INSERT INTO gppufs_entries (path, metadata) VALUES (?, ?)', ('.', json.dumps({'gppu': {'type': 'folder', 'handlers': ['folder']}})))
         db.commit()
     refused = client.post('/lake/', params={'name': old.name, 'source': 'file://alex-pc/Old/.Old.gppufs.sqlite'}, content=old.read_bytes())
     assert refused.status_code == 202 and refused.json()['uri'] in client.get('/lake/', params={'failed': ''}).json()
-    state = lake.contents.loaded('file://alex-pc/Old')   # received, its load failed, nothing loaded
+    state = lake.contents.loaded('file://alex-pc/Old')   # .. received, its load failed, nothing loaded
     assert state['loaded'] is None and not state['loading'] and state['error']
 
 
@@ -139,14 +139,14 @@ def test_the_api_at_lake_answers_what_the_lake_answers(tmp_path, ld):
     top = outer.as_uri()
     listed = client.get(f'/lake/{top}', params={'ls': ''})
     assert listed.status_code == 200 and [row['name'] for row in listed.json()] == ['timeseries'] == [row['name'] for row in lake.ls(top)]
-    assert client.get(f'/lake/{top}/a.txt', params={'content': ''}).content == b'a'   # the bytes of a file, from the store
+    assert client.get(f'/lake/{top}/a.txt', params={'content': ''}).content == b'a'   # .. the bytes of a file, from the store
     assert client.get('/lake/file://nowhere/x').status_code == 404
-    assert client.get(f'/lake/{top}', params={'walk': ''}).status_code == 400   # the Lake is listed from its catalog, never walked
+    assert client.get(f'/lake/{top}', params={'walk': ''}).status_code == 400   # .. the Lake is listed from its catalog, never walked
     taken = client.post('/lake/', params={'name': f'{UID}.jsonl'}, content=SESSION.replace('hello', 'other').encode())
     assert taken.status_code == 409 and 'error' in taken.json()
     unread = client.post('/lake/', params={'name': f'{UID}.jsonl'}, content=b'{"type": "user", "sessionId": "' + UID.encode() + b'"}\n')
-    assert unread.status_code == 400 and 'gives no time' in unread.json()['error']   # a session with no time has no date to be placed by
-    named = b''.join(json.dumps(line).encode() + b'\n' for line in (   # a session's first lines naming it, as preservator sent them
+    assert unread.status_code == 400 and 'gives no time' in unread.json()['error']   # .. a session with no time has no date to be placed by
+    named = b''.join(json.dumps(line).encode() + b'\n' for line in (   # .. a session's first lines naming it, as preservator sent them
         {'type': 'custom-title', 'sessionId': UID, 'customTitle': 'x'}, {'type': 'ai-title', 'sessionId': UID, 'aiTitle': 'x'},
         {'type': 'permission-mode', 'sessionId': UID, 'permissionMode': 'default'}, {'type': 'file-history-snapshot', 'messageId': 'm'}))
     unplaced = client.post('/lake/', params={'name': f'{UID}.jsonl', 'copy': ''}, content=named)
@@ -160,19 +160,19 @@ def test_a_client_copies_a_session_where_the_lake_answers_then_has_it_indexed(tm
     served = FastAPI()
     served.mount('/lake', api(lake))
     client = TestClient(served)
-    first = SESSION.splitlines(keepends=True)[0]   # as much of the session as its handler needs to place it
+    first = SESSION.splitlines(keepends=True)[0]   # .. as much of the session as its handler needs to place it
     placed = client.post('/lake/', params={'name': f'{UID}.jsonl', 'copy': ''}, content=first.encode())
     path = f'timeseries/2026/Sessions/07/cc/{UID}/{UID}.jsonl'
     assert placed.status_code == 200 and placed.json()['path'] == path and not (outer / path).exists()
     assert placed.json()['uri'] == (outer / path).as_uri()
-    assert client.post(f"/lake/{placed.json()['uri']}").status_code == 404   # nothing copied there yet
+    assert client.post(f"/lake/{placed.json()['uri']}").status_code == 404   # .. nothing copied there yet
     (outer / path).parent.mkdir(parents=True)
     (outer / path).write_text(SESSION)
     indexed = client.post(f"/lake/{placed.json()['uri']}")
     assert indexed.status_code == 202 and indexed.json()['uri'] == placed.json()['uri']
-    row = lake.info(placed.json()['uri'])   # from the Lake's catalog, recorded after the answer
+    row = lake.info(placed.json()['uri'])   # .. from the Lake's catalog, recorded after the answer
     assert (row['type'], row['name'], row['size']) == ('cc', f'{UID}.jsonl', (outer / path).stat().st_size)
-    (outer / path).write_text(SESSION + SESSION.splitlines(keepends=True)[1])   # the session's copy grows, and is indexed again
+    (outer / path).write_text(SESSION + SESSION.splitlines(keepends=True)[1])   # .. the session's copy grows, and is indexed again
     assert client.post(f"/lake/{placed.json()['uri']}").status_code == 202
     again = lake.info(placed.json()['uri'])
     assert again['id'] == row['id'] and again['size'] > row['size']
@@ -182,7 +182,7 @@ def test_the_lake_answers_for_itself_and_keeps_a_failed_index(tmp_path, ld, monk
     lake, outer = lake_of(tmp_path, ld)
     served = FastAPI()
     served.mount('/lake', api(lake))
-    client = TestClient(served, raise_server_exceptions=False)   # an index fails after its 202, in the server's log
+    client = TestClient(served, raise_server_exceptions=False)   # .. an index fails after its 202, in the server's log
     copied = (outer / 'a.txt').as_uri()
     assert client.post(f'/lake/{copied}').status_code == 202
     assert client.get('/lake/').json() == json.loads(json.dumps(lake.info(outer.as_uri()), default=str))

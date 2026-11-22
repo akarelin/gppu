@@ -43,7 +43,7 @@ def refuse_filesystem(monkeypatch):
 def test_a_catalog_of_env_rows_preserves_input_and_resolves_nested_templates(ran):
   before = deepcopy(CONFIG)
   ran(CONFIG)
-  loaded = deepcopy(glob_dict(''))   # loading merges each row's template; the catalog changes nothing after it
+  loaded = deepcopy(glob_dict(''))   # .. loading merges each row's template; the catalog changes nothing after it
   catalog = GppuCatalog(glob_dict(''), location_types={'m365': Provider, 'lake': Provider})
   assert CONFIG == before
   assert glob_dict('') == loaded

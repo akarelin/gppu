@@ -5,7 +5,7 @@ import zipfile
 import fsspec
 import pytest
 
-import gppu.fs.gppufs  # registers gppu
+import gppu.fs.gppufs  # .. registers gppu
 from gppu.fs import y2uri
 
 FORMS = ['file:///D:/TextLake', 'local:///D:/TextLake', 'm365://karelin/sites/x/doc.docx', 'git://github.com/akarelin/gppu',
@@ -19,7 +19,7 @@ FORMS = ['file:///D:/TextLake', 'local:///D:/TextLake', 'm365://karelin/sites/x/
 
 @pytest.mark.parametrize('form', FORMS)
 def test_every_form_comes_back_as_written(form):
-    expected = 'null://D:/TextLake' if form == 'D:/TextLake' else form   # no scheme reads as gppu's y2uri reads it
+    expected = 'null://D:/TextLake' if form == 'D:/TextLake' else form   # .. no scheme reads as gppu's y2uri reads it
     assert str(y2uri(form)) == expected
 
 

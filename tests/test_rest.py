@@ -9,7 +9,7 @@ from gppu import APIApp, AsyncApp, mixin_Rest
 from gppu.gppu import _DC
 
 
-HERE = Path(__file__).resolve().parent               # the classes below are "born here"
+HERE = Path(__file__).resolve().parent               # .. the classes below are "born here"
 
 
 class _Lamp(_DC):
@@ -32,7 +32,7 @@ class _Lamp(_DC):
 
   def refresh(self) -> str: return 'refreshed'
   def wipe(self, target: str) -> None: pass
-  def get(self, *a): return 'shadowed'                # a UserDict name the application redefines
+  def get(self, *a): return 'shadowed'                # .. a UserDict name the application redefines
 
 
 class _Host(mixin_Rest):
@@ -57,10 +57,10 @@ class RestSurfaceTests(unittest.IsolatedAsyncioTestCase):
                       'stats': 'method', 'dim': 'method', 'blink': 'method', 'refresh': 'method',
                       'wipe': 'method', 'get': 'method'})
     for name in ('pop', 'keys', 'items', 'update', 'copy', *mixin_Rest.REST_RESERVED):
-      self.assertNotIn(name, self.rows, name)                        # a base's name, never the application's
-    self.assertNotIn('_Host', self.host.rest_manifest['classes'])   # no members of its own
+      self.assertNotIn(name, self.rows, name)                        # .. a base's name, never the application's
+    self.assertNotIn('_Host', self.host.rest_manifest['classes'])   # .. no members of its own
     self.assertEqual(self.rows['dim']['args'], {'level': {'required': True}, 'fade': {'required': False}})
-    self.assertEqual(sorted(n for n, r in self.rows.items() if r.get('read')), ['get', 'refresh', 'stats'])   # blink is a coroutine
+    self.assertEqual(sorted(n for n, r in self.rows.items() if r.get('read')), ['get', 'refresh', 'stats'])   # .. blink is a coroutine
 
   def test_a_payload_reads_values_and_names_methods_without_running_them(self) -> None:
     body, status = self.host.rest_read('lamp', 'desk')
@@ -68,19 +68,19 @@ class RestSurfaceTests(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(body['members'], {'name': 'desk', 'level': 70, 'api_key': 'secret', 'bright': True})
     self.assertEqual(set(body['methods']), {'stats', 'dim', 'blink', 'refresh', 'wipe', 'get'})
     self.assertEqual(self.host.rest_read('lamp', 'nope'), ({'success': False, 'error': 'no such object'}, 404))
-    self.assertEqual(self.host.rest_read('lamp', 'desk', 'stats'), ({'stats': {'level': 70}}, 200))   # no argument: GET calls it
-    self.assertEqual(self.host.rest_read('lamp', 'desk', 'dim')[1], 405)                             # takes one: POST only
+    self.assertEqual(self.host.rest_read('lamp', 'desk', 'stats'), ({'stats': {'level': 70}}, 200))   # .. no argument: GET calls it
+    self.assertEqual(self.host.rest_read('lamp', 'desk', 'dim')[1], 405)                             # .. takes one: POST only
     self.assertEqual(self.host.rest_read('lamp', 'desk', 'nope')[1], 404)
 
   async def test_a_call_is_the_method_with_the_body_as_its_arguments(self) -> None:
     body, status = await self.host.rest_call('lamp', 'desk', 'dim', {'level': 30})
     self.assertEqual((status, body['result'], self.lamp.level), (200, 'desk -> 30', 30))
     body, status = await self.host.rest_call('lamp', 'desk', 'blink', {'times': 3})
-    self.assertEqual((status, body['result']), (200, 3))                                    # a coroutine is awaited
+    self.assertEqual((status, body['result']), (200, 3))                                    # .. a coroutine is awaited
     body, status = await self.host.rest_call('lamp', 'desk', 'refresh', {})
     self.assertEqual((status, body['result']), (200, 'refreshed'))
-    self.assertEqual((await self.host.rest_call('lamp', 'desk', 'level', {}))[1], 405)       # a value is not called
-    with self.assertRaises(TypeError): await self.host.rest_call('lamp', 'desk', 'dim', {})   # the method's own refusal
+    self.assertEqual((await self.host.rest_call('lamp', 'desk', 'level', {}))[1], 405)       # .. a value is not called
+    with self.assertRaises(TypeError): await self.host.rest_call('lamp', 'desk', 'dim', {})   # .. the method's own refusal
 
   def test_objects_lists_every_roster(self) -> None:
     body, _ = self.host.rest_objects()

@@ -15,7 +15,7 @@ from gppu.tui.tree import (
 )
 from gppu.tui.tree_table import TreeTable, TreeTableColumn
 
-# ── TreeEntry ────────────────────────────────────────────────────────────
+# .. ── TreeEntry ────────────────────────────────────────────────────────────
 
 class TestTreeEntry:
     def test_defaults(self):
@@ -27,10 +27,10 @@ class TestTreeEntry:
         a = TreeEntry(id='a', label='a')
         b = TreeEntry(id='b', label='b')
         a.meta['x'] = 1
-        assert 'x' not in b.meta  # no shared default
+        assert 'x' not in b.meta  # .. no shared default
 
 
-# ── FilesystemAdapter ────────────────────────────────────────────────────
+# .. ── FilesystemAdapter ────────────────────────────────────────────────────
 
 class TestFilesystemAdapter:
     def test_root_expanded_and_normalized(self, tmp_path):
@@ -47,10 +47,10 @@ class TestFilesystemAdapter:
         (tmp_path / 'adir').mkdir()
         fs = FilesystemAdapter(str(tmp_path))
         kids = list(fs.children(fs.root()))
-        # Directory order: adir, bdir; then files: a_file.txt, z_file.txt
+        # .. Directory order: adir, bdir; then files: a_file.txt, z_file.txt
         labels = [k.label for k in kids]
         assert labels == ['adir/', 'bdir/', 'a_file.txt', 'z_file.txt']
-        # Container flag matches
+        # .. Container flag matches
         assert kids[0].is_container and kids[1].is_container
         assert not kids[2].is_container and not kids[3].is_container
 
@@ -90,7 +90,7 @@ class TestFilesystemAdapter:
         root = fs.root()
         a_kids = list(fs.children(root))
         assert len(a_kids) == 1
-        # depth=1 node's children should be empty (cap reached)
+        # .. depth=1 node's children should be empty (cap reached)
         a_entry = a_kids[0]
         b_kids = list(fs.children(a_entry))
         assert b_kids == []
@@ -100,13 +100,13 @@ class TestFilesystemAdapter:
         assert isinstance(fs, TreeAdapter)
 
 
-# ── GDriveAdapter (stubbed service) ──────────────────────────────────────
+# .. ── GDriveAdapter (stubbed service) ──────────────────────────────────────
 
 class _StubDriveService:
     """Mimics ``googleapiclient.discovery.build('drive', 'v3')`` minimally."""
 
     def __init__(self, folder_map: dict[str, list[dict]]):
-        self._folders = folder_map          # parent_id → list of file dicts
+        self._folders = folder_map          # .. parent_id → list of file dicts
 
     def files(self):
         return self
@@ -147,7 +147,7 @@ class TestGDriveAdapter:
         kids = list(a.children(a.root()))
         labels = sorted(k.label for k in kids)
         assert labels == ['Alpha', 'Beta']
-        # recurse
+        # .. recurse
         alpha = next(k for k in kids if k.label == 'Alpha')
         sub = list(a.children(alpha))
         assert [s.label for s in sub] == ['Gamma']
@@ -162,7 +162,7 @@ class TestGDriveAdapter:
         assert isinstance(a, TreeAdapter)
 
 
-# ── TreeTable ────────────────────────────────────────────────────────────
+# .. ── TreeTable ────────────────────────────────────────────────────────────
 
 class _TableAdapter:
     def __init__(self):

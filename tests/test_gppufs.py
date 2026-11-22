@@ -112,16 +112,16 @@ def test_the_index_files_at_and_below_a_folder_are_found_whoever_wrote_them(tmp_
     (tmp_path / name / 'deep').mkdir(parents=True)
     for i in range(count):
       (tmp_path / name / 'deep' / f'note{i}.md').write_text(f'Text {i}', encoding='utf-8')
-  monkeypatch.setattr(gppu.fs.gppufs, 'INDEX_LIMIT', 32 * 1024)   # big and big/deep split off, as in the test below
+  monkeypatch.setattr(gppu.fs.gppufs, 'INDEX_LIMIT', 32 * 1024)   # .. big and big/deep split off, as in the test below
   GppuFileSystem().ls(tmp_path, recurse=True)
-  GppuFileSystem.clear_instance_cache()   # a new process: another gppufs, which knows nothing of which folders hold an index
+  GppuFileSystem.clear_instance_cache()   # .. a new process: another gppufs, which knows nothing of which folders hold an index
   gppu.fs.gppufs._INDEXES.clear()
   fresh = GppuFileSystem()
   as_found = lambda paths: sorted(Path(p).resolve() for p in paths)
   assert as_found(fresh.indexes(tmp_path)) == as_found([index(tmp_path), index(tmp_path / 'big'), index(tmp_path / 'big' / 'deep')])
   assert as_found(fresh.indexes(tmp_path / 'big')) == as_found([index(tmp_path / 'big'), index(tmp_path / 'big' / 'deep')])
-  assert as_found(fresh.indexes(tmp_path / 'small')) == as_found([index(tmp_path)])   # the index holding it, the root's
-  assert fresh.written(tmp_path) == []   # it wrote none of them
+  assert as_found(fresh.indexes(tmp_path / 'small')) == as_found([index(tmp_path)])   # .. the index holding it, the root's
+  assert fresh.written(tmp_path) == []   # .. it wrote none of them
 
 
 def test_an_index_past_the_limit_splits_off_the_folder_holding_most_of_it(tmp_path, monkeypatch):
@@ -132,7 +132,7 @@ def test_an_index_past_the_limit_splits_off_the_folder_holding_most_of_it(tmp_pa
     (tmp_path / name / 'deep').mkdir(parents=True)
     for i in range(count):
       (tmp_path / name / 'deep' / f'note{i}.md').write_text(f'Text {i}', encoding='utf-8')
-  monkeypatch.setattr(gppu.fs.gppufs, 'INDEX_LIMIT', 32 * 1024)   # above what an index holding small's notes takes after big moves out (6 pages), below big/deep's (13)
+  monkeypatch.setattr(gppu.fs.gppufs, 'INDEX_LIMIT', 32 * 1024)   # .. above what an index holding small's notes takes after big moves out (6 pages), below big/deep's (13)
   fs = GppuFileSystem()
   listed = fs.ls(tmp_path, recurse=True)
   assert index(tmp_path / 'big').is_file() and index(tmp_path / 'big' / 'deep').is_file()
@@ -145,13 +145,13 @@ def test_an_index_past_the_limit_splits_off_the_folder_holding_most_of_it(tmp_pa
   assert GppuFileSystem().ls(tmp_path, recurse=True) == listed
   assert GppuFileSystem().stats(tmp_path) == stats
   monkeypatch.undo()
-  with closing(sqlite3.connect(index(tmp_path))) as database, database:   # rows of big left in the root's index, as an index made before rule one has
+  with closing(sqlite3.connect(index(tmp_path))) as database, database:   # .. rows of big left in the root's index, as an index made before rule one has
     assert database.execute("SELECT count(*) FROM gppufs_entries WHERE path LIKE 'big%'").fetchone()[0] == 0
     database.execute('INSERT INTO gppufs_entries VALUES (?, ?, ?)', ('big/stale.md', json.dumps(listed[0]), None))
   (tmp_path / 'small' / 'added.md').write_text('More', encoding='utf-8')
   monkeypatch.setattr(gppu.fs.gppufs, 'INDEX_LIMIT', 1024)
   GppuFileSystem().ls(tmp_path / 'small')
-  with closing(sqlite3.connect(index(tmp_path))) as database:   # big owns its rows in its own index: the copy is dropped, not moved
+  with closing(sqlite3.connect(index(tmp_path))) as database:   # .. big owns its rows in its own index: the copy is dropped, not moved
     assert database.execute("SELECT count(*) FROM gppufs_entries WHERE path LIKE 'big%'").fetchone()[0] == 0
   with closing(sqlite3.connect(index(tmp_path / 'big'))) as database:
     assert database.execute("SELECT count(*) FROM gppufs_entries WHERE path LIKE '%stale%'").fetchone()[0] == 0
@@ -245,7 +245,7 @@ def test_ls_drops_from_the_index_what_is_gone(tmp_path):
   assert fs.stored(tmp_path / 'gone.txt') is None and fs.stored(tmp_path / 'sub') is None
   assert fs.stored(tmp_path / 'sub' / 'deep' / 'below.txt') is None
   [index] = fs.indexes(tmp_path)
-  with closing(sqlite3.connect(index)) as db, db:   # a row an earlier index kept for a file gone before its folder was listed
+  with closing(sqlite3.connect(index)) as db, db:   # .. a row an earlier index kept for a file gone before its folder was listed
     metadata = json.loads(db.execute("SELECT metadata FROM gppufs_entries WHERE path='kept.txt'").fetchone()[0])
     db.execute('INSERT INTO gppufs_entries VALUES (?, ?, NULL)', ('long gone.pdf', json.dumps(metadata | {'name': 'long gone.pdf'})))
   fs = GppuFileSystem()
@@ -288,7 +288,7 @@ def test_failed_refresh_does_not_destroy_snapshot(tmp_path, monkeypatch):
   before = fs.ls(tmp_path)
   def denied(*args, **kwargs):
     raise PermissionError('source unavailable')
-  monkeypatch.setattr(fs, '_parse', denied)   # reading this host's disk, which a refresh does here
+  monkeypatch.setattr(fs, '_parse', denied)   # .. reading this host's disk, which a refresh does here
   with pytest.raises(PermissionError, match='source unavailable'):
     fs.ls(tmp_path, refresh=True)
   assert fs.ls(tmp_path) == before
@@ -508,7 +508,7 @@ def test_nonlocal_fsspec_location_is_read_and_never_written(tmp_path, monkeypatc
   native.makedirs(root)
   native.pipe_file(root + '/note.md', b'---\ntitle: Remote\n---\nText')
   fs = GppuFileSystem(target_protocol='memory')
-  assert 'title' not in fs.ls(root)[0]['gppu']['record']['data']   # a listing identifies; it fetches nothing
+  assert 'title' not in fs.ls(root)[0]['gppu']['record']['data']   # .. a listing identifies; it fetches nothing
   before = fs.ls(root, refresh=True)
   assert before[0]['gppu']['record']['data']['title'] == 'Remote'
   assert not native.exists(root + '/.' + tmp_path.name + '.gppufs.sqlite')
@@ -520,7 +520,7 @@ def test_nonlocal_fsspec_location_is_read_and_never_written(tmp_path, monkeypatc
   (local / 'note.md').write_bytes(native.cat_file(root + '/note.md'))
   GppuFileSystem().ls(local, refresh=True)
   native.pipe_file(root + '/.' + tmp_path.name + '.gppufs.sqlite', index(local).read_bytes())
-  reader = anew(target_protocol='memory')   # the store was asked for its index before this one was put there
+  reader = anew(target_protocol='memory')   # .. the store was asked for its index before this one was put there
   assert reader.ls(root, live=False)[0]['gppu']['record']['data']['title'] == 'Remote'
 
 
@@ -545,9 +545,9 @@ def test_nested_archives_retain_addresses_after_folder_rename(tmp_path, monkeypa
   with zipfile.ZipFile(old / 'outer.zip', 'w') as archive:
     archive.writestr('inner.zip', nested.getvalue())
   fs = GppuFileSystem()
-  assert [row['gppu']['name'] for row in fs.ls(tmp_path, recurse=True)] == ['old', 'outer.zip']   # a recursion opens no archive
+  assert [row['gppu']['name'] for row in fs.ls(tmp_path, recurse=True)] == ['old', 'outer.zip']   # .. a recursion opens no archive
   fs.ls(old / 'outer.zip')
-  fs.ls(old / 'outer.zip' / 'inner.zip')   # listed, each archive's listing is in the index, and a recursion enters it
+  fs.ls(old / 'outer.zip' / 'inner.zip')   # .. listed, each archive's listing is in the index, and a recursion enters it
   before = fs.ls(tmp_path, recurse=True)
   assert [row['gppu']['name'] for row in before] == ['old', 'outer.zip', 'inner.zip', 'note.md']
   assert [row['name'] for row in before] == [tmp_path.as_posix() + '/' + path for path in
@@ -627,7 +627,7 @@ def test_nested_archive_uris_read_without_prior_listing(tmp_path, provider):
   uri = root + '/outer.zip/inside/inner.zip/notes/note.md'
   assert fs.cat_file(uri) == content
   assert fs.cat_file(root + '/outer.zip/inside/inner.zip') == inner.getvalue()
-  assert fs.info(uri)['gppu']['handlers'] == ['markdown']   # identified from its archives' listings, nothing read
+  assert fs.info(uri)['gppu']['handlers'] == ['markdown']   # .. identified from its archives' listings, nothing read
   detail = fs.info(uri, refresh=True)
   assert detail['name'] == uri
   assert detail['gppu']['record']['data']['title'] == 'Nested direct read'
@@ -1017,7 +1017,7 @@ def test_a_folder_that_cannot_hold_the_index_is_still_listed(tmp_path):
   raising `unable to open database file` on every read path."""
   (tmp_path / 'notes').mkdir()
   (tmp_path / 'notes' / 'note.md').write_bytes(b'---\ntitle: No cache\n---\nText')
-  index(tmp_path).mkdir()                      # a directory where the database would go
+  index(tmp_path).mkdir()                      # .. a directory where the database would go
   fs = GppuFileSystem()
   rows = fs.ls(tmp_path, recurse=True)
   assert [row['gppu']['name'] for row in rows] == ['notes', 'note.md']
@@ -1060,7 +1060,7 @@ def test_a_move_carries_what_is_held_of_the_thing_moved(tmp_path):
   assert (tmp_path / 'b' / 'note.md').is_file()
   assert not (tmp_path / 'a' / 'note.md').exists()
 
-  # Nothing is read again: the row that was there is the row that is here.
+  # .. Nothing is read again: the row that was there is the row that is here.
   fs._live = no_live
   fs._identify_entry = no_live
   assert fs.info(tmp_path / 'b' / 'note.md')['gppu']['record']['data']['title'] == 'Moved'
@@ -1155,12 +1155,12 @@ def test_a_folder_read_from_its_index_alone_keeps_what_is_no_longer_there(tmp_pa
   assert [row['gppu']['name'] for row in fs.ls(notes)] == ['gone.md', 'kept.md']
   assert fs.info(notes / 'gone.md', refresh=True)['gppu']['record']['data']['title'] == 'Gone'
 
-  (notes / 'gone.md').unlink()        # as far as the folder knows, it is inside an archive now
+  (notes / 'gone.md').unlink()        # .. as far as the folder knows, it is inside an archive now
   again = anew()
   assert [row['gppu']['name'] for row in again.ls(notes, live=False)] == ['gone.md', 'kept.md']
   assert again.info(notes / 'gone.md')['gppu']['record']['data']['title'] == 'Gone'
 
-  # A folder that is still live is still read live, and there the record goes.
+  # .. A folder that is still live is still read live, and there the record goes.
   assert [row['gppu']['name'] for row in again.ls(notes)] == ['kept.md']
 
 

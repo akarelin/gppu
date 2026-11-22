@@ -134,7 +134,7 @@ class Vault:
 
   @staticmethod
   def _write(name: str, value: str) -> None:
-    Vault.provider().set(name, value)  # raises NotImplementedError if provider is read-only
+    Vault.provider().set(name, value)  # .. raises NotImplementedError if provider is read-only
     Vault._cache[name] = value
 
   @staticmethod

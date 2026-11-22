@@ -8,7 +8,7 @@ data manipulation, and type safety utilities.
 from .fs import Container, DataObject, FileSystem, Location, Provider
 
 from .gppu import (
-    # Env, its configuration mixins and the regular apps
+    # .. Env, its configuration mixins and the regular apps
     Env,
     glob,
     glob_int,
@@ -21,7 +21,7 @@ from .gppu import (
 )
 
 from .app import (
-    # apps with steps
+    # .. apps with steps
     AsyncApp,
     TimerHandle,
     _callback_wrapper,
@@ -33,7 +33,7 @@ from .app import (
     ListenerHandle,
     StateManager,
 
-    # sync lifecycle (AppDaemon / Y2)
+    # .. sync lifecycle (AppDaemon / Y2)
     _YMRO,
     YStepper,
     mixin_Stepper,
@@ -48,29 +48,29 @@ from .gppu import (
     y2uri,
     y2topic,
 
-    # Version info
+    # .. Version info
     VER_GPPU,
     VER_GPPU_BASE,
     VER_GPPU_BUILD,
 
-    # Human-readable formatters
+    # .. Human-readable formatters
     format_size,
     format_duration,
     format_since,
 
-    # OS detection
+    # .. OS detection
     OSType,
     detect_os,
 
-    # Logger setup
+    # .. Logger setup
 
-    # Async helpers
+    # .. Async helpers
     sync,
 
-    # Global configuration
+    # .. Global configuration
     TRACE_RULES,
 
-    # Configuration loading
+    # .. Configuration loading
     dict_from_yml,
     dict_to_yml,
     dict_from_json,
@@ -84,7 +84,7 @@ from .gppu import (
     apply_template,
     JinjaDocument,
 
-    # Dictionary utilities
+    # .. Dictionary utilities
     deepget,
     deepget_dict,
     deepget_int,
@@ -92,54 +92,54 @@ from .gppu import (
     deepget_list,
     deepdict,
 
-    # Type safety and coercion
+    # .. Type safety and coercion
     safe_int,
     safe_float,
     safe_list,
     safe_timedelta,
 
-    # Time utilities
+    # .. Time utilities
     now_str,
     now_ts,
     pretty_timedelta,
     prepend_datestamp,
     append_timestamp,
 
-    # String utilities
+    # .. String utilities
     pfy,
     slugify,
 
-    # Colored printing
+    # .. Colored printing
     pcp,
     dpcp,
     TColor,
 
-    # Logging
+    # .. Logging
     Debug,
     Info,
     Warn,
     Error,
     Dump,
 
-    # Mixins
+    # .. Mixins
     _mixin,
     Logger,
     mixin_Logger,
 
-    # Foundation classes
+    # .. Foundation classes
 )
 
 from .iot import (
-    # y2xxx classes
+    # .. y2xxx classes
     y2slug,
     y2eid,
 
-    # mqtt library (aiomqtt optional — gppu[mqtt])
+    # .. mqtt library (aiomqtt optional — gppu[mqtt])
     mixin_Mqtt,
     MqttApp,
     AppService,
 
-    # event-loop and device-control bridges
+    # .. event-loop and device-control bridges
     mixin_EventLoopBridge,
     SerializedControl,
     HTTPControl,
@@ -150,74 +150,74 @@ from .iot import (
 __version__ = VER_GPPU
 __all__ = [
     'Span', 'TimeSpan', 'uuid_create',
-    # Version
+    # .. Version
     'VER_GPPU', 'VER_GPPU_BASE', 'VER_GPPU_BUILD', '__version__',
 
-    # OS detection
+    # .. OS detection
     'OSType', 'detect_os',
 
-    # Logger setup
+    # .. Logger setup
 
-    # Async helpers
+    # .. Async helpers
     'sync',
 
-    # Global configuration
+    # .. Global configuration
     'TRACE_RULES',
 
-    # Configuration
+    # .. Configuration
     'dict_from_yml', 'dict_to_yml', 'dict_from_json', 'dict_to_json', 'dict_sanitize',
     'template_populate', 'jinja_template', 'jinja', 'jinja_configuration', 'render_template', 'apply_template',
     'JinjaDocument',
 
-    # Dictionary utilities
+    # .. Dictionary utilities
     'deepget', 'deepget_dict', 'deepget_float', 'deepget_int', 'deepget_list',
     'deepdict',
 
-    # Type utilities
+    # .. Type utilities
     'safe_int', 'safe_float', 'safe_list', 'safe_timedelta',
 
-    # Time utilities
+    # .. Time utilities
     'now_str', 'now_ts', 'pretty_timedelta', 'prepend_datestamp', 'append_timestamp',
 
-    # String utilities
+    # .. String utilities
     'pfy', 'slugify',
 
-    # Colored printing
+    # .. Colored printing
     'pcp', 'dpcp', 'TColor',
 
-    # Logging
+    # .. Logging
     'Debug', 'Info', 'Warn', 'Error', 'Dump',
 
-    # Mixins
+    # .. Mixins
     '_mixin', 'mixin_Config',
     'Logger', 'mixin_Logger',
 
-    # Vault / Secrets
+    # .. Vault / Secrets
     'Vault', 'VaultProvider',
     'VaultProviderOSEnviron', 'VaultProviderAzure',
 
-    # Human-readable formatters
+    # .. Human-readable formatters
     'format_size', 'format_duration', 'format_since',
 
-    # Env
+    # .. Env
     'Env',
 
-    # Config access
+    # .. Config access
     'glob', 'glob_int', 'glob_list', 'glob_dict',
 
-    # Foundation classes
+    # .. Foundation classes
     '_Base', 'App', 'TimerHandle', '_callback_wrapper', 'AsyncApp', 'APIApp', 'mixin_Rest',
 
-    # y2xxx classes
+    # .. y2xxx classes
     'y2list', 'y2path', 'y2uri', 'y2topic', 'y2slug', 'y2eid', 'Runtime', 'ListenerHandle', 'StateManager',
 
-    # mqtt library
+    # .. mqtt library
     'mixin_Mqtt', 'MqttApp', 'AppService',
 
-    # event-loop and device-control bridges
+    # .. event-loop and device-control bridges
     'mixin_EventLoopBridge', 'SerializedControl', 'HTTPControl', 'JSONHTTPControl',
 
-    # lifecycle: sync YMRO (AppDaemon/Y2)
+    # .. lifecycle: sync YMRO (AppDaemon/Y2)
     'YStepper', 'mixin_Stepper',
 ]
 

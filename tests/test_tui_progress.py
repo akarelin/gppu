@@ -9,7 +9,7 @@ from gppu.tui.progress import (
 )
 
 
-# ── TickProgress ──────────────────────────────────────────────────────────
+# .. ── TickProgress ──────────────────────────────────────────────────────────
 
 class TestTickProgress:
     def test_batches_and_summary(self):
@@ -18,11 +18,11 @@ class TestTickProgress:
         for _ in range(7):
             p.note()
         p.close()
-        # final line is the summary
+        # .. final line is the summary
         assert lines[-1] == '    discovered 7 items'
-        # running total visible in some strip
+        # .. running total visible in some strip
         assert any('(7)' in l for l in lines)
-        # markup format
+        # .. markup format
         assert all('[dim]·[/]' in l or 'discovered' in l for l in lines)
 
     def test_zero_notes_is_silent(self):
@@ -39,7 +39,7 @@ class TestTickProgress:
         assert any('\x1b[' in l for l in lines)
 
 
-# ── MarkerProgress ────────────────────────────────────────────────────────
+# .. ── MarkerProgress ────────────────────────────────────────────────────────
 
 _RED   = Marker('red',  'Red',  '●', 'red',  '31')
 _BLUE  = Marker('blue', 'Blue', '◆', 'blue', '34')
@@ -92,7 +92,7 @@ class TestMarkerProgress:
         assert lines == []
 
 
-# ── helpers ──────────────────────────────────────────────────────────────
+# .. ── helpers ──────────────────────────────────────────────────────────────
 
 class TestHelpers:
     def test_marker_rich_format(self):

@@ -21,7 +21,7 @@ class TestDeepget:
         assert deepget("x", {}) is None
 
     def test_top_level_key_with_slash_in_keys(self):
-        # If the exact key "a/b" exists, it should be returned directly
+        # .. If the exact key "a/b" exists, it should be returned directly
         d = {"a/b": "direct", "a": {"b": "nested"}}
         assert deepget("a/b", d) == "direct"
 
@@ -42,7 +42,7 @@ class TestDeepget:
         assert deepget("rest/name", d, default="x") == ""
         assert deepget("rest/none", d, default="x") is None
         assert deepget("rest/deep/on", d, default=True) is False
-        assert deepget("rest/name/below", d, default="x") == "x"   # a step that is no mapping
+        assert deepget("rest/name/below", d, default="x") == "x"   # .. a step that is no mapping
 
     def test_environment_reads_a_nested_false(self, ran):
         ran({"rest": {"enabled": False}})

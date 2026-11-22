@@ -654,7 +654,7 @@ deepdict: Callable[[], DefaultDict[Any, Any]] = lambda: defaultdict(deepdict)
 
 def deepget(path: str | y2path, d: dict, default=None):
   """The value at a slash path, falsy values included; default when any step is absent."""
-  if path in d.keys(): return d[path]   # a key that holds a slash itself
+  if path in d.keys(): return d[path]   # .. a key that holds a slash itself
   _ = d
   for pp in y2path(path):
     if not isinstance(_, Mapping) or pp not in _: return default
@@ -1010,8 +1010,7 @@ class JinjaDocument(SandboxedEnvironment):
     self.filters['from_yaml'] = lambda name: dict_from_yml(full_path(name, search_path))
     self.filters['to_yaml'] = lambda value: yaml.safe_dump(value, default_flow_style=True).strip()
     self.globals['hostname'] = lambda: socket.gethostname().split('.')[0].casefold()
-    # The builtins a document needs to merge a row onto its template and count what
-    # it loops over; the same set Y2 gives its own templates.
+    # .. The builtins a document needs to merge a row onto its template and count what it loops over; the same set Y2 gives its own templates.
     self.globals.update({name: getattr(builtins, name) for name in
                          ('dict', 'list', 'int', 'float', 'str', 'len', 'sorted', 'min', 'max', 'range')})
 
@@ -1021,7 +1020,7 @@ jinja.globals.update({name: getattr(builtins, name) for name in
                       ('dict', 'list', 'int', 'float', 'str', 'bool', 'len', 'round', 'sorted', 'min', 'max', 'range')},
                      re=re, render_template=jinja._render_template_in)
 
-# the template functions are globals: the one environment's methods
+# .. the template functions are globals: the one environment's methods
 render_template, jinja_configuration, templates_of = jinja.render_template, jinja.jinja_configuration, jinja.templates_of
 apply_template, jinja_template, jinja_fill = jinja.apply_template, jinja.jinja_template, jinja.jinja_fill
 # endregion
@@ -1135,7 +1134,7 @@ def pcp(*a: str | List[Any] | Tuple[Any, ...], **kw: Any) -> str:
   if kw and verbose: out += pfy(kw)
 
   # if not silent: print(out)
-  if not out.endswith('\u001b[0m'): out = out + '\u001b[0m' # Check if color reset is already present
+  if not out.endswith('\u001b[0m'): out = out + '\u001b[0m' # .. Check if color reset is already present
   return out
 
 
@@ -1193,7 +1192,7 @@ def dpcp(*a: Any, conditional: Optional[bool] = None, rules: Dict[str, bool] = {
   else: _ += list(a)
 
   result = pcp(*_, **kw)
-  # Never return None - return empty string instead to prevent logging issues
+  # .. Never return None - return empty string instead to prevent logging issues
   return result if result is not None else ''
 
 
@@ -1229,7 +1228,7 @@ def _colorize_list(l: List[Union[str, TColor]]) -> str:
     elif not result: result += [elem]
     else: result += [separator+elem]
     
-  return ''.join(result)  # Reset color at the end
+  return ''.join(result)  # .. Reset color at the end
 
 
 def _colorize(text: str, colorcode:str, fmt=None):
@@ -1238,7 +1237,7 @@ def _colorize(text: str, colorcode:str, fmt=None):
     fmt: accepts formatting syntax with < and > anchors
   """
   # ESC = '\u001b'
-  ESC = '\033'  # ANSI escape code for terminal colors
+  ESC = '\033'  # .. ANSI escape code for terminal colors
   NOP = ESC + '[0m'
   if (color := colorcode):
     if color[0] == ESC and color[1] == '[': pass
@@ -1319,7 +1318,7 @@ class Logger:
   _console = _sh
   _console.setFormatter(_LogColorizer())
   _console.addFilter(_EmptyMessageFilter())
-  _file_handlers: dict[str, logging.Handler] = {}   # on the shared parent, so classes made earlier receive them
+  _file_handlers: dict[str, logging.Handler] = {}   # .. on the shared parent, so classes made earlier receive them
 
 
   @staticmethod
@@ -1558,7 +1557,7 @@ class mixin_Stepper(YStepper, _mixin): pass
 # region DC - pseudo DataClass
 _DC_BASE_TYPE_MAP = {'str': str, 'list': list, 'dict': dict, 'set': set, 'int': int, 'float': float, 'bool': bool, 'None': type(None)}
 # from typing import Callable, Concatenate
-# Custom types register themselves here (e.g. iot.py adds y2eid/y2topic)
+# .. Custom types register themselves here (e.g. iot.py adds y2eid/y2topic)
 
 
 class _DC(UserDict):
@@ -1689,8 +1688,8 @@ class _Env(App):
   user: str
   os: OSType
   host: str
-  path: Path   # the environment's YAML file
-  environment: str = ''   # the environment loaded: RAN or IoT
+  path: Path   # .. the environment's YAML file
+  environment: str = ''   # .. the environment loaded: RAN or IoT
 
   _global_log = True
   # region - Env as an app
@@ -1735,6 +1734,6 @@ class _Env(App):
 
 Env = _Env()
 
-# the configuration's readers are globals: Env's my readers
+# .. the configuration's readers are globals: Env's my readers
 glob, glob_int, glob_list, glob_dict = Env.my, Env.my_int, Env.my_list, Env.my_dict
 # endregion

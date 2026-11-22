@@ -13,7 +13,7 @@ from gppu.gppu import (
 )
 
 
-# ── format_size ──────────────────────────────────────────────────────────
+# .. ── format_size ──────────────────────────────────────────────────────────
 
 class TestFormatSize:
     def test_bytes(self):
@@ -39,7 +39,7 @@ class TestFormatSize:
         assert format_size(int(7.8 * 1024 ** 4)) == "7.80 TB"
 
 
-# ── format_duration ──────────────────────────────────────────────────────
+# .. ── format_duration ──────────────────────────────────────────────────────
 
 class TestFormatDuration:
     def test_negative(self):
@@ -62,7 +62,7 @@ class TestFormatDuration:
         assert format_duration(3600 * 2 + 60 * 5) == "2h 5m"
 
 
-# ── format_since ─────────────────────────────────────────────────────────
+# .. ── format_since ─────────────────────────────────────────────────────────
 
 class TestFormatSince:
     def test_seconds(self):
@@ -94,7 +94,7 @@ class TestFormatSince:
         assert format_since(dt) == "2y"
 
     def test_iso_string_with_z(self):
-        # 1h ago in ISO format with Z suffix
+        # .. 1h ago in ISO format with Z suffix
         dt = datetime.now(timezone.utc) - timedelta(hours=1)
         iso = dt.strftime('%Y-%m-%dT%H:%M:%SZ')
         assert format_since(iso) == "1h"
@@ -121,7 +121,7 @@ class TestFormatSince:
         assert format_since(dt) == "0s"
 
 
-# ── top-level surface ────────────────────────────────────────────────────
+# .. ── top-level surface ────────────────────────────────────────────────────
 
 class TestTopLevelSurface:
     def test_importable_from_gppu(self):

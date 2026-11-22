@@ -39,7 +39,7 @@ async def test_tui_preserves_file_and_trace_rules_without_writing_to_terminal(tm
     assert app._log_handler not in logging.getLogger().handlers
   finally:
     core.Logger._console.setStream(original)
-    for handler in core.Logger._file_handlers.values():   # the file the test's environment opened
+    for handler in core.Logger._file_handlers.values():   # .. the file the test's environment opened
       core.Logger._root.removeHandler(handler)
       handler.close()
     core.Logger._file_handlers.clear()

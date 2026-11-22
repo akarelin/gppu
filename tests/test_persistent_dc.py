@@ -39,7 +39,7 @@ class TestPersistentDC:
         assert db.rows == {}
 
     def test_unbound_is_noop(self, DC):
-        DC(data={'name': 'x'}).persist()   # no bind_db — must not raise
+        DC(data={'name': 'x'}).persist()   # .. no bind_db — must not raise
         assert DC.load('x') is None
 
     def test_load(self, DC):

@@ -61,7 +61,7 @@ class Held:
 
 
 PDF = 'm365://karelin/sharepoint/Statements/Statements/2019 Statements.pdf'
-FOLDERS = {'Karelin/Statements/Statements': ROOT, 'Karelin/Statements/Statements/Tax Forms': FOLDER}   # the folders of the library, by path
+FOLDERS = {'Karelin/Statements/Statements': ROOT, 'Karelin/Statements/Statements/Tax Forms': FOLDER}   # .. the folders of the library, by path
 
 
 def served(held):
@@ -95,7 +95,7 @@ def test_a_library_is_browsed_by_ids_with_its_sources_dates():
     pdf = rows['Karelin/Statements/Statements/2019 Statements.pdf']
     assert (pdf['type'], pdf['size'], pdf['id'], pdf['content_type']) == ('file', 100, str(FILE), 'Statement')
     assert pdf['columns'] == {'ContentType': 'Statement', '_StartDate': '2019-01-01'}
-    assert pdf['ctime'] < pdf['mtime'] and 'uid' not in pdf   # a FUSE bridge reads uid as the owner's
+    assert pdf['ctime'] < pdf['mtime'] and 'uid' not in pdf   # .. a FUSE bridge reads uid as the owner's
     assert rows['Karelin/Statements/Statements/Tax Forms']['type'] == 'directory'
     assert fs.info('Karelin/Statements/Statements/2019 Statements.pdf') == pdf
 
@@ -124,7 +124,7 @@ def test_a_folder_the_desktop_shows_is_listed_by_its_path_with_each_entrys_colum
 
 
 def test_a_columns_value_is_shown_as_text():
-    assert _text('2019-12-31T19:52:07Z') == '2019-12-31'   # the local date it falls on, the same in every zone from UTC-12 to UTC+4
+    assert _text('2019-12-31T19:52:07Z') == '2019-12-31'   # .. the local date it falls on, the same in every zone from UTC-12 to UTC+4
     assert (_text(2023.0), _text(2.5), _text(None), _text('SunTrust')) == ('2023', '2.5', '', 'SunTrust')
     assert _text({'Label': 'Statement', 'WssId': 7, 'TermGuid': 'e7db99d3'}) == 'Statement'
     assert _text({'Url': 'https://karelin.sharepoint.com/x', 'Description': 'A2UDFJZW7PK5-793683518-112'}) == 'A2UDFJZW7PK5-793683518-112'
@@ -173,7 +173,7 @@ def test_gppufs_lists_and_opens_through_the_catalog_what_it_holds_no_index_for(t
     with fs.open(PDF) as file:
         assert file.read() == b'%PDF statements'
     (tmp_path / 'note.md').write_text('# here')
-    assert [row['name'] for row in fs.ls(tmp_path.as_posix())] == [(tmp_path / 'note.md').as_posix()]   # its own store is its own
+    assert [row['name'] for row in fs.ls(tmp_path.as_posix())] == [(tmp_path / 'note.md').as_posix()]   # .. its own store is its own
 
 
 def test_gppufs_has_no_catalog_unless_one_is_named_and_reaches_only_one(tmp_path, monkeypatch):
@@ -208,4 +208,4 @@ def test_a_location_on_this_host_by_its_handlers_access_is_read_in_its_folder(tm
     found = locations(records)
     assert str(found.location('top').uri_of('sub')) == 'file://elsewhere/srv/top/sub'
     assert found.location('top').container('sub').ls(detail=False) == ['note.md']
-    assert found.location('inner').container().ls(detail=False) == ['note.md']   # below the folder of the location above it
+    assert found.location('inner').container().ls(detail=False) == ['note.md']   # .. below the folder of the location above it

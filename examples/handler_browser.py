@@ -22,13 +22,13 @@ from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.widgets import Checkbox, DataTable, Footer, Static, TextArea
 
-ROOT = ''  # the tree root stands for the folder browsed, or the catalog's root
+ROOT = ''  # .. the tree root stands for the folder browsed, or the catalog's root
 LOADING = '\x00loading'
 FAILED = '\x00failed'
 COLUMNS = (TreeTableColumn('handlers', 'Handlers', 22), TreeTableColumn('files', 'Files', 9),
   TreeTableColumn('folders', 'Folders', 9), TreeTableColumn('bytes', 'Bytes', 12),
   TreeTableColumn('span', 'Span', 25), TreeTableColumn('indexed', 'Indexed', 17), TreeTableColumn('source', 'Source', 26))
-FILTERS = {'show-files': 'file', 'show-ignored': 'ignored'}  # checkbox -> the kind of entry it shows
+FILTERS = {'show-files': 'file', 'show-ignored': 'ignored'}  # .. checkbox -> the kind of entry it shows
 
 
 class Listing:
@@ -38,7 +38,7 @@ class Listing:
     self._request = request
     self._children: dict[str, list[TreeEntry]] = {}
     self._pending: set[str] = set()
-    self._locations: dict[str, list[TreeEntry]] = {}  # parent address -> Locations the catalog places beneath it
+    self._locations: dict[str, list[TreeEntry]] = {}  # .. parent address -> Locations the catalog places beneath it
     self._root = TreeEntry(id=ROOT, label=Text('…'), is_container=True)
     self.location_addresses: set[str] = set()
     self.show = {'file': True, 'ignored': True}
@@ -170,7 +170,7 @@ class HandlerBrowser(TUIApp):
     try:
       metadata = await self.gppufs._info(self.address(entry))
       if metadata['type'] != 'directory' and not metadata['gppu']['probed']:
-        metadata = await self.gppufs._info(self.address(entry), refresh=True)  # a file selected is a file parsed
+        metadata = await self.gppufs._info(self.address(entry), refresh=True)  # .. a file selected is a file parsed
       self.show_metadata(metadata)
       self.query_one('#status', Static).update(self.current['name'])
     except Exception as error:
@@ -206,7 +206,7 @@ class HandlerBrowser(TUIApp):
 
 
 def main() -> None:
-  app = App(config=__file__)   # its own configuration is its MANIFEST
+  app = App(config=__file__)   # .. its own configuration is its MANIFEST
   HandlerBrowser(GppuCatalog(app.my('catalog'))).run()
 
 

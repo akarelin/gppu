@@ -16,8 +16,7 @@ class TestTemplatePopulate:
         assert result == "$missing"
 
     def test_int_passthrough(self):
-        # Non-dict scalars go through str() then __tp; int/bool/float inside
-        # dicts are preserved, but top-level scalars become strings
+        # .. Non-dict scalars go through str() then __tp; int/bool/float inside dicts are preserved, but top-level scalars become strings
         result = template_populate(42, {})
         assert result == "42"
 
@@ -33,17 +32,17 @@ class TestTemplatePopulate:
         assert template_populate("DEL", {}) is None
 
     def test_list_template_in_string(self):
-        # List-in-string only triggers when '$' is present and result starts with '['
+        # .. List-in-string only triggers when '$' is present and result starts with '['
         result = template_populate("[1, 2, 3]", {})
-        assert result == "[1, 2, 3]"  # No '$' so no template processing
+        assert result == "[1, 2, 3]"  # .. No '$' so no template processing
 
     def test_list_template_with_variable(self):
-        # Decimal strings get coerced to int by template_populate
+        # .. Decimal strings get coerced to int by template_populate
         result = template_populate("[$a, $b]", {"a": "1", "b": "2"})
         assert result == [1, 2]
 
     def test_list_elements_substituted(self):
-        # Inside a dict, list elements are substituted properly
+        # .. Inside a dict, list elements are substituted properly
         result = template_populate({"items": ["$a", "$b"]}, {"a": "x", "b": "y"})
         assert result["items"] == ["x", "y"]
 

@@ -61,7 +61,7 @@ RUNTIME_SUFFIXES = frozenset({'.cmd', '.ps1', '.py', '.sh'})
 DEFAULT_PLATFORM = {'.cmd': ['W11'], '.ps1': ['W11']}
 
 
-# ── Manifests ────────────────────────────────────────────────────────────────
+# .. ── Manifests ────────────────────────────────────────────────────────────────
 
 def read_sidecar(sidecar: Path) -> dict:
     """Read one ``{name}.{ext}.md`` sidecar into a launcher manifest."""
@@ -132,7 +132,7 @@ def load_sidecar_registry(*directories: Path) -> dict[str, dict]:
     ))
 
 
-# ── Runtimes ─────────────────────────────────────────────────────────────────
+# .. ── Runtimes ─────────────────────────────────────────────────────────────────
 
 def sidecar_command(script: Path) -> list[str]:
     """Command that runs ``script`` under the interpreter its suffix names."""
@@ -156,7 +156,7 @@ def sidecar_command(script: Path) -> list[str]:
     raise ValueError(f'Unsupported utility type: {script.suffix}')
 
 
-# ── Injection ────────────────────────────────────────────────────────────────
+# .. ── Injection ────────────────────────────────────────────────────────────────
 
 def _python_literal(value: object) -> str:
     return repr(value)
@@ -215,7 +215,7 @@ def inject_source(script: Path, values: Mapping[str, object]) -> Path:
     return injected
 
 
-# ── Launching ────────────────────────────────────────────────────────────────
+# .. ── Launching ────────────────────────────────────────────────────────────────
 
 def run_sidecar(
     app: dict,
@@ -284,6 +284,6 @@ def sidecar_main(
         result = app_class(apps, app_dir).run()
         if not result:
             return 0
-        # a failed item's output stays on screen until Enter: the menu drawn at once over it would hide its error
+        # .. a failed item's output stays on screen until Enter: the menu drawn at once over it would hide its error
         if code := run_sidecar(result['app'], result.get('args') or (), result.get('inject') or None):
             input(f"\n{result['app'].get('name', 'The item')} stopped with exit code {code}. Enter returns to the menu. ")

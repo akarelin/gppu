@@ -19,7 +19,7 @@ class TestStateGlyphs:
             assert g.ansi_code, f'{key}: missing ansi_code'
 
     def test_required_keys_present(self):
-        # Core lifecycle states every consumer relies on
+        # .. Core lifecycle states every consumer relies on
         for required in ('pending', 'running', 'ok', 'fail', 'canceled',
                          'reachable', 'unreachable', 'warn', 'info', 'error'):
             assert required in STATE_GLYPHS, f'missing state: {required}'
@@ -46,7 +46,7 @@ class TestSpinners:
 
     def test_lookup_and_fallback(self):
         assert spinner_frames('dots') == SPINNERS['dots']
-        # unknown falls back to dots
+        # .. unknown falls back to dots
         assert spinner_frames('nonexistent-spinner') == SPINNERS['dots']
 
     def test_required_sets_present(self):

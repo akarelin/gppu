@@ -29,7 +29,7 @@ from gppu.tui import (  # noqa: E402
 from textual.widgets import ListView, RichLog, Static  # noqa: E402
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# .. ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _tmpscript(tmp_path: Path, name: str, body: str) -> None:
     (tmp_path / name).write_text(textwrap.dedent(body))
@@ -98,7 +98,7 @@ class _SectionedApp(_TestApp):
     SECTIONS = {'First': ['echo_app']}
 
 
-# ── Widget unit tests ────────────────────────────────────────────────────────
+# .. ── Widget unit tests ────────────────────────────────────────────────────────
 
 class TestSpinnerIndicator:
     @pytest.mark.asyncio
@@ -184,7 +184,7 @@ class TestModeItem:
         assert item.mode_def == {}
 
 
-# ── TUILauncher composition ─────────────────────────────────────────────────
+# .. ── TUILauncher composition ─────────────────────────────────────────────────
 
 class TestLauncherCompose:
     @pytest.mark.asyncio
@@ -216,7 +216,7 @@ class TestLauncherCompose:
             assert app._active_log is None
 
 
-# ── Navigation (direct method calls) ────────────────────────────────────────
+# .. ── Navigation (direct method calls) ────────────────────────────────────────
 
 class TestNavigation:
     @pytest.mark.asyncio
@@ -258,9 +258,9 @@ class TestNavigation:
         apps = _make_apps(tmp_path)
         app = _TestApp(apps, tmp_path)
         async with app.run_test() as pilot:
-            # Simulate selecting the direct_app item
+            # .. Simulate selecting the direct_app item
             lv = app.query_one('#app-list', ListView)
-            item = lv.children[2]  # direct_app
+            item = lv.children[2]  # .. direct_app
             app.on_list_view_selected(ListView.Selected(lv, item, 2))
             await pilot.pause()
             assert app.return_value is not None
@@ -290,7 +290,7 @@ class TestNavigation:
             assert inp is not None
 
 
-# ── Inline subprocess execution ──────────────────────────────────────────────
+# .. ── Inline subprocess execution ──────────────────────────────────────────────
 
 class TestInlineExecution:
     @pytest.mark.asyncio
@@ -343,7 +343,7 @@ class TestInlineExecution:
             assert len(app._processes) == 2
 
 
-# ── run_task ─────────────────────────────────────────────────────────────────
+# .. ── run_task ─────────────────────────────────────────────────────────────────
 
 def _dummy_task(*, log, steps=3):
     import time
@@ -434,7 +434,7 @@ class TestRunTask:
         assert any('[Logged] step 2' in r.message for r in caplog.records)
 
 
-# ── Log panel / show_process_logs ────────────────────────────────────────────
+# .. ── Log panel / show_process_logs ────────────────────────────────────────────
 
 class TestLogPanel:
     @pytest.mark.asyncio
@@ -536,7 +536,7 @@ class TestLogPanel:
             assert len(app._processes[proc_id].log_lines) > lines_before
 
 
-# ── launch_app exit code ─────────────────────────────────────────────────────
+# .. ── launch_app exit code ─────────────────────────────────────────────────────
 
 class TestLaunchAppExitCode:
     def test_failure_code_propagates(self, tmp_path):
@@ -553,7 +553,7 @@ class TestLaunchAppExitCode:
         assert launch_app(tmp_path, {'script': 'ok.py'}) == 0
 
 
-# ── DetailedSelector pre-selection ───────────────────────────────────────────
+# .. ── DetailedSelector pre-selection ───────────────────────────────────────────
 
 SELECTOR_ROWS = [{'name': 'a'}, {'name': 'b'}, {'name': 'c'}]
 
@@ -577,7 +577,7 @@ class TestDetailedSelectorPreselect:
     async def test_space_toggles_preselected_off(self):
         app = DetailedSelector(rows=list(SELECTOR_ROWS), summary_keys=['name'], initial_selected=[0, 2])
         async with app.run_test() as pilot:
-            await pilot.press('space')  # cursor starts on row 0
+            await pilot.press('space')  # .. cursor starts on row 0
             await pilot.press('enter')
         assert app.return_value == [SELECTOR_ROWS[2]]
 

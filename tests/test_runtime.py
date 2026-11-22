@@ -47,7 +47,7 @@ def test_a_topic_listener_hears_a_change_on_its_path():
     heard = []
     handle = Runtime.listen_topic_state(lambda path, old, new: heard.append((str(path), old, new)), path='sensor/motion/hall')
     Runtime.topic_changed(y2path('sensor/motion/hall'), old=0, new=1)
-    Runtime.topic_changed(y2path('sensor/motion/hall'), old=1, new=1)     # no change, nothing heard
+    Runtime.topic_changed(y2path('sensor/motion/hall'), old=1, new=1)     # .. no change, nothing heard
     Runtime.topic_changed(y2path('sensor/motion/den'), old=0, new=1)
     handle.cancel()
     Runtime.topic_changed(y2path('sensor/motion/hall'), old=1, new=0)

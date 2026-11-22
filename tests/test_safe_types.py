@@ -75,5 +75,5 @@ class TestSafeList:
         assert safe_list(None) == []
 
     def test_empty_string_returns_single_element(self):
-        # empty string is truthy for isinstance but falsy, so safe_list returns [""]
+        # .. empty string is truthy for isinstance but falsy, so safe_list returns [""]
         assert safe_list("") == [""]

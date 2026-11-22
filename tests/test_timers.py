@@ -26,7 +26,7 @@ def test_a_timer_fires_once_with_the_keywords_its_callback_takes():
     assert wait(fired)
     assert heard == [30]
     assert not handle.running
-    assert app.timers == {} and app.h_timeouts == {}     # a spent one-shot is no longer filed as armed
+    assert app.timers == {} and app.h_timeouts == {}     # .. a spent one-shot is no longer filed as armed
 
 
 def test_arming_a_key_again_replaces_the_timer_armed_under_it():
@@ -36,7 +36,7 @@ def test_arming_a_key_again_replaces_the_timer_armed_under_it():
     assert not first.running and second.running
     assert app.timers == {second.id: second} and app.h_timeouts == {'occupancy/hall': second}
     assert wait(fired)
-    threading.Event().wait(0.1)                           # past the first one's delay
+    threading.Event().wait(0.1)                           # .. past the first one's delay
     assert heard == ['second']
 
 

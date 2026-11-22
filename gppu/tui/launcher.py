@@ -54,7 +54,7 @@ from textual.widgets._header import HeaderIcon, HeaderTitle
 _log = logging.getLogger(__name__)
 
 
-# ── StatusHeader ──────────────────────────────────────────────────────────────
+# .. ── StatusHeader ──────────────────────────────────────────────────────────────
 
 class _HeaderIndicator(Static):
     """Right-aligned indicator area replacing Textual's empty HeaderClockSpace."""
@@ -112,7 +112,7 @@ class StatusHeader(Header):
         self.watch(self.screen, 'sub_title', set_indicator)
 
 
-# ── Utilities ────────────────────────────────────────────────────────────────
+# .. ── Utilities ────────────────────────────────────────────────────────────────
 
 def build_args(mode_def: dict | None) -> list[str]:
     """Build CLI args from a mode definition."""
@@ -217,7 +217,7 @@ def _child_env(app_def: dict | None = None) -> dict[str, str]:
     env = dict(os.environ)
     env['PYTHONUTF8'] = '1'
     env['PYTHONIOENCODING'] = 'utf-8'
-    env['FORCE_COLOR'] = '1'   # a sub-app run in the background colours its output as on a terminal; the launcher shows the colours
+    env['FORCE_COLOR'] = '1'   # .. a sub-app run in the background colours its output as on a terminal; the launcher shows the colours
     return env
 
 
@@ -277,14 +277,14 @@ def read_manifest(app_dir: Path, config_file: str, nav: str | None = None) -> di
     manifest = cfg.get('manifest', {})
     if not manifest:
         return {}
-    manifest['_config'] = {k: v for k, v in cfg.items() if k not in ('manifest', 'config', 'name')}   # its own keys, without what App was constructed with
+    manifest['_config'] = {k: v for k, v in cfg.items() if k not in ('manifest', 'config', 'name')}   # .. its own keys, without what App was constructed with
     if path.suffix.lower() not in ('.yaml', '.yml') and not {'script', 'url'} & manifest.keys():
         manifest['script'] = path.name
     for key in ('script', 'cwd'):
         if key in manifest:
             manifest[key] = _absolute(path.parent, manifest[key])
     if isinstance(manifest.get('script'), str):
-        manifest.setdefault('cwd', str(Path(manifest['script']).parent))   # as a sidecar carries it: the item runs where it lives
+        manifest.setdefault('cwd', str(Path(manifest['script']).parent))   # .. as a sidecar carries it: the item runs where it lives
     if nav:
         manifest['nav'] = nav
     return manifest
@@ -313,7 +313,7 @@ def load_registry(app_dir: Path, launcher: App) -> dict[str, dict]:
     return load_app_registry(app_dir, launcher) | (load_sidecar_registry(*directories) if directories else {})
 
 
-# ── Widgets ──────────────────────────────────────────────────────────────────
+# .. ── Widgets ──────────────────────────────────────────────────────────────────
 
 class AppItem(ListItem):
     """A selectable app entry."""
@@ -364,7 +364,7 @@ class ModeItem(ListItem):
         super().__init__()
         self.mode_key = mode_key
         self.mode_def = mode_def or {}
-        # Mode-level platform overrides app-level; otherwise inherit app-level.
+        # .. Mode-level platform overrides app-level; otherwise inherit app-level.
         if 'platform' in self.mode_def:
             self.enabled = platform_ok(self.mode_def)
             self._effective_platform = self.mode_def
@@ -498,7 +498,7 @@ class ProcessRow(Horizontal):
         self.app.show_process_logs(self.proc_id)
 
 
-# ── Base TUI App Classes ─────────────────────────────────────────────────────
+# .. ── Base TUI App Classes ─────────────────────────────────────────────────────
 
 def _tui_available() -> bool:
   """Check if a TUI can be displayed (textual installed + interactive terminal or web serve)."""
@@ -506,7 +506,7 @@ def _tui_available() -> bool:
     import textual  # noqa
   except ImportError:
     return False
-  # textual-serve runs without a real TTY but sets TEXTUAL_DRIVER
+  # .. textual-serve runs without a real TTY but sets TEXTUAL_DRIVER
   if os.environ.get('TEXTUAL_DRIVER'):
     return True
   return sys.stdin.isatty() and sys.stdout.isatty()
@@ -602,10 +602,10 @@ class TUIApp(AsyncApp, TextualApp, metaclass=_TUIAppMeta):
   ]
 
   _screen_wrapper: Screen | None = None
-  # _DC makes a property over its data of each annotated name; the ones Textual annotates stay Textual's.
+  # .. _DC makes a property over its data of each annotated name; the ones Textual annotates stay Textual's.
   _DC_EXCLUDE_NAMES = [*AsyncApp._DC_EXCLUDE_NAMES,
                        *(name for c in TextualApp.__mro__ if hasattr(c, '__annotations__') for name in c.__annotations__)]
-  # Textual runs the app, shows it and keys it by identity.
+  # .. Textual runs the app, shows it and keys it by identity.
   run = TextualApp.run
   __repr__ = TextualApp.__repr__
   __hash__ = object.__hash__
@@ -622,9 +622,7 @@ class TUIApp(AsyncApp, TextualApp, metaclass=_TUIAppMeta):
     logging.getLogger().addHandler(self._log_handler)
 
   async def _process_messages(self, *args, **kwargs):
-    # The debug panel is the console while Textual owns the terminal.
-    # Every way Textual runs an app passes here, so the app's TaskGroup opens here, its load and start steps run in it,
-    # and stopping the app cancels what it spawned. The steps are AsyncApp's, whatever a TUI calls its own.
+    # .. The debug panel is the console while Textual owns the terminal. Every way Textual runs an app passes here, so the app's TaskGroup opens here, its load and start steps run in it, and stopping the app cancels what it spawned. The steps are AsyncApp's, whatever a TUI calls its own.
     console_attached = Logger._console in Logger._root.handlers
     if console_attached: Logger._root.removeHandler(Logger._console)
     try:
@@ -775,10 +773,9 @@ class TUILauncher(TUIApp):
 
     TITLE = 'Launcher'
     MENU_TITLE = 'Apps'
-    # Headings of the start screen, each naming its top-level rows (an app key or a nav) in order. Rows no section
-    # names follow the last one. A class setting, not the app's data.
+    # .. Headings of the start screen, each naming its top-level rows (an app key or a nav) in order. Rows no section names follow the last one. A class setting, not the app's data.
     SECTIONS: ClassVar[dict[str, list[str]]] = {}
-    # The launcher's own configuration file, which Edit Config opens.
+    # .. The launcher's own configuration file, which Edit Config opens.
     CONFIG: Path | None = None
 
     CSS = """
@@ -884,12 +881,12 @@ class TUILauncher(TUIApp):
         self._apps = apps
         self._app_dir = app_dir
         self._selected_app: dict | None = None
-        self._group: str | None = None  # the nav whose apps the menu is showing
-        self._phase = 'apps'  # apps → modes → ask
+        self._group: str | None = None  # .. the nav whose apps the menu is showing
+        self._phase = 'apps'  # .. apps → modes → ask
         self._processes: dict[int, ProcessRow] = {}
         self._proc_counter = 0
         self._active_log: int | None = None
-        self._running_apps: dict[str, AppScreen] = {}  # name → screen
+        self._running_apps: dict[str, AppScreen] = {}  # .. name → screen
 
     def compose(self) -> ComposeResult:
         yield StatusHeader()
@@ -900,7 +897,7 @@ class TUILauncher(TUIApp):
             yield ListView(*self._items(), id='app-list')
         yield Footer()
 
-    # ── App / mode selection ─────────────────────────────────────────────
+    # .. ── App / mode selection ─────────────────────────────────────────────
 
     def _rows(self) -> dict[str, dict]:
         """What the menu shows: the top-level rows, or the apps of the group that is open."""
@@ -937,7 +934,7 @@ class TUILauncher(TUIApp):
             if not item.enabled:
                 self.bell()
                 return
-            if 'apps' in item.app_def:   # a group: open it
+            if 'apps' in item.app_def:   # .. a group: open it
                 self._group = item.app_key
                 self._show_apps()
                 return
@@ -972,7 +969,7 @@ class TUILauncher(TUIApp):
         base_args = build_args(mode_def)
         self._mode_inject = dict(mode_def.get('inject') or {})
         ask_for = mode_def.get('ask_for')
-        # Check mode-level then app-level for module/class
+        # .. Check mode-level then app-level for module/class
         tui_module = mode_def.get('module') or self._selected_app.get('module')
         tui_class = mode_def.get('class') or self._selected_app.get('class')
         if ask_for:
@@ -980,10 +977,10 @@ class TUILauncher(TUIApp):
         elif tui_module and tui_class:
             self._launch_tui_app({**self._selected_app, 'module': tui_module, 'class': tui_class}, base_args)
         elif mode_def.get('inline'):
-            # Run in background with output capture
+            # .. Run in background with output capture
             self._run_inline(base_args)
         else:
-            # Default: suspend TUI, run subprocess with terminal, resume
+            # .. Default: suspend TUI, run subprocess with terminal, resume
             self._run_suspended(base_args)
 
     def _run_suspended(self, cli_args: list[str]) -> None:
@@ -1001,12 +998,12 @@ class TUILauncher(TUIApp):
         class_name = app_def['class']
         app_name = app_def.get('name', class_name)
 
-        # If already running, switch to it
+        # .. If already running, switch to it
         if app_name in self._running_apps:
             self.push_screen(self._running_apps[app_name])
             return
 
-        # Add app's directory to sys.path for import
+        # ^^ Add app's directory to sys.path for import
         app_cwd = str(resolve_cwd(self._app_dir, app_def))
         if app_cwd not in sys.path:
             sys.path.insert(0, app_cwd)
@@ -1026,7 +1023,7 @@ class TUILauncher(TUIApp):
         self.push_screen(screen, callback=on_result)
         self._phase = 'apps'
 
-    # ── Inline / background execution ────────────────────────────────────
+    # .. ── Inline / background execution ────────────────────────────────────
 
     def run_task(self, name: str, fn, *args, **kwargs) -> int:
         """Start a background task with spinner and log capture.
@@ -1077,7 +1074,7 @@ class TUILauncher(TUIApp):
         bar = self.query_one('#process-bar')
         bar.mount(row)
 
-        # Return to apps list so user can keep navigating
+        # .. Return to apps list so user can keep navigating
         self._show_apps()
         self._run_inline_cmd(cli_args, proc_id, app_def)
 
@@ -1114,13 +1111,13 @@ class TUILauncher(TUIApp):
         row = self._processes.get(proc_id)
         if not row:
             return
-        text = Text.from_ansi(line) if '\x1b[' in line else line   # a script's colours, as its terminal would show them
+        text = Text.from_ansi(line) if '\x1b[' in line else line   # .. a script's colours, as its terminal would show them
         row.log_lines.append(text)
         plain = text.plain if isinstance(text, Text) else line
         display = plain if len(plain) <= 70 else plain[:67] + '…'
         display = display.replace('[', '\\[')
         row._status.update(f' [dim]{display}[/dim]')
-        # Live-append if this process's logs are currently shown
+        # .. Live-append if this process's logs are currently shown
         if self._active_log == proc_id:
             panel = self.query_one('#output-panel', RichLog)
             panel.write(text)
@@ -1151,10 +1148,10 @@ class TUILauncher(TUIApp):
             self._processes[proc_id].remove_class('active-log')
             self._active_log = None
             return
-        # Deselect previous
+        # .. Deselect previous
         if self._active_log is not None and self._active_log in self._processes:
             self._processes[self._active_log].remove_class('active-log')
-        # Populate and show
+        # .. Populate and show
         self._active_log = proc_id
         self._processes[proc_id].add_class('active-log')
         panel.clear()
@@ -1190,7 +1187,7 @@ class TUILauncher(TUIApp):
         self.install_screen(screen, name='app-config-editor')
         self.push_screen(screen, callback=lambda r: self._running_apps.pop(name, None))
 
-    # ── Ask form ─────────────────────────────────────────────────────────
+    # .. ── Ask form ─────────────────────────────────────────────────────────
 
     def _show_ask_form(
         self, fields: list, base_args: list[str] | None = None,
@@ -1219,7 +1216,7 @@ class TUILauncher(TUIApp):
             default = field_spec.get('default', app_config.get(fname, ''))
             default = str(default) if default is not None else ''
             options = field_spec.get('options')
-            # Resolve options from app config if it's a string key reference
+            # .. Resolve options from app config if it's a string key reference
             if isinstance(options, str):
                 options = app_config.get(options) or []
 
@@ -1229,7 +1226,7 @@ class TUILauncher(TUIApp):
                     *[str(o) for o in options], id=f'ask-{fname}',
                 )
                 menu.mount(ol)
-                # Pre-highlight the default value
+                # .. Pre-highlight the default value
                 for i, o in enumerate(options):
                     if str(o) == default:
                         ol.highlighted = i
@@ -1273,11 +1270,11 @@ class TUILauncher(TUIApp):
         mode_def = self._ask_mode_def
 
         if mode_def.get('inline'):
-            # Clean up ask form, return to app list, run in background
+            # .. Clean up ask form, return to app list, run in background
             self._cleanup_ask_form()
             self._run_inline_with_app(app_def, args)
         else:
-            # Exit TUI, run subprocess
+            # .. Exit TUI, run subprocess
             self.exit(result={'app': app_def, 'args': args, 'inject': inject})
 
     def _cleanup_ask_form(self) -> None:
@@ -1300,11 +1297,11 @@ class TUILauncher(TUIApp):
         self._run_inline(cli_args)
         self._selected_app = saved
 
-    # ── Navigation ───────────────────────────────────────────────────────
+    # .. ── Navigation ───────────────────────────────────────────────────────
 
     def action_back(self) -> None:
         if self._phase == 'apps':
-            # Hide output panel if visible, otherwise quit
+            # .. Hide output panel if visible, otherwise quit
             panel = self.query_one('#output-panel', RichLog)
             if panel.has_class('visible'):
                 panel.remove_class('visible')
@@ -1312,13 +1309,13 @@ class TUILauncher(TUIApp):
                     self._processes[self._active_log].remove_class('active-log')
                 self._active_log = None
                 return
-            if self._group is not None:   # leave the group before leaving the launcher
+            if self._group is not None:   # .. leave the group before leaving the launcher
                 self._group = None
                 self._show_apps()
                 return
             self.exit(result=None)
             return
-        # Clean up phase-specific widgets
+        # .. Clean up phase-specific widgets
         if self._phase == 'ask':
             menu = self.query_one('#menu')
             for widget in list(menu.children):
@@ -1329,11 +1326,11 @@ class TUILauncher(TUIApp):
                     widget.remove()
             lv = self.query_one('#app-list', ListView)
             lv.display = True
-        # Reset to app list
+        # .. Reset to app list
         self._show_apps()
 
 
-# ── CLI entrypoint ───────────────────────────────────────────────────────────
+# .. ── CLI entrypoint ───────────────────────────────────────────────────────────
 
 def launcher_main(
     apps: dict[str, dict],
@@ -1397,7 +1394,7 @@ def launcher_main(
         server.serve()
         return
 
-    # Direct launch
+    # .. Direct launch
     if args.app:
         app_def = apps[args.app]
         if not platform_ok(app_def):
@@ -1407,22 +1404,21 @@ def launcher_main(
                 file=sys.stderr,
             )
             sys.exit(2)
-        # direct launch is scriptable — propagate the sub-app's exit code
-        # (the interactive TUI loop and CLI fallback below keep ignoring it)
+        # .. direct launch is scriptable — propagate the sub-app's exit code (the interactive TUI loop and CLI fallback below keep ignoring it)
         sys.exit(launch_app(app_dir, app_def, args.extra or None))
 
-    # CLI fallback when no TUI available
+    # ^^ CLI fallback when no TUI available
     if not _tui_available():
         _launcher_cli(apps, app_dir)
         return
 
-    # TUI launcher — loop back after sub-app exits
+    # .. TUI launcher — loop back after sub-app exits
     while True:
         tui = app_class(apps, app_dir)
         result = tui.run()
         if not result:
             break
-        # a failed app's output stays on screen until Enter: the menu drawn at once over it would hide its error
+        # .. a failed app's output stays on screen until Enter: the menu drawn at once over it would hide its error
         if code := launch_app(app_dir, result['app'], result.get('args') or None):
             input(f"\n{result['app'].get('name', 'The app')} stopped with exit code {code}. Enter returns to the menu. ")
 

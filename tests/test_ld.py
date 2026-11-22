@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-pytest.importorskip('fastapi')   # gppu's ld extra; the build's tests install gppu without it
+pytest.importorskip('fastapi')   # .. gppu's ld extra; the build's tests install gppu without it
 if not os.environ.get('LD_TEST_DSN'):
     pytest.skip('LD_TEST_DSN, the Postgres these tests make their database on, is not set', allow_module_level=True)
 
@@ -24,7 +24,7 @@ from gppu.fs import files
 from gppu.ld import Page, Params, api_at, serve, sessions
 
 DSN = os.environ['LD_TEST_DSN']
-DB = f'gppu_ld_test_{uuid4().hex[:12]}'   # its own, so no other database on the server is touched
+DB = f'gppu_ld_test_{uuid4().hex[:12]}'   # .. its own, so no other database on the server is touched
 STORE = DSN.rsplit('/', 1)[0] + '/' + DB
 ordered = APIRouter()
 
@@ -45,9 +45,9 @@ def api():
     try:
         with psycopg.connect(STORE, autocommit=True) as db:
             db.execute((Path(__file__).parent / 'ld.sql').read_text(encoding='utf-8'))
-        Env._load_dict({'db': STORE})   # the store's `db`, as an app's configuration gives it
+        Env._load_dict({'db': STORE})   # .. the store's `db`, as an app's configuration gives it
         apis = {'/fs': files.app, '/sessions': sessions.app, '/ordered': api_at('/ordered', 'ordered', "A session's messages in order.", ordered)}
-        with TestClient(serve(apis, _SQABase()), backend_options={'loop_factory': asyncio.SelectorEventLoop}) as client:   # psycopg's async connections need the selector loop on Windows, as RAN's api.py runs it
+        with TestClient(serve(apis, _SQABase()), backend_options={'loop_factory': asyncio.SelectorEventLoop}) as client:   # .. psycopg's async connections need the selector loop on Windows, as RAN's api.py runs it
             yield client
     finally:
         Env.reset()
@@ -104,7 +104,7 @@ def test_a_key_of_meta_is_filtered_sorted_and_searched_as_a_column_is(api):
         ok(api.post('/nodes', json={'type': 'task', 'parent_id': parent['id']} | ({'meta': {'display_name': name}} if name else {})))
     under = {'parent_id': {'$eq': parent['id']}}
     named = lambda **params: [t['meta'].get('display_name') for t in pages(api, '/nodes', **params)]
-    assert named(filters=json.dumps(under), sort='meta.display_name:asc', limit=1) == [None, 'Alpha', 'beta', 'gamma']   # one without a name is least
+    assert named(filters=json.dumps(under), sort='meta.display_name:asc', limit=1) == [None, 'Alpha', 'beta', 'gamma']   # .. one without a name is least
     assert named(filters=json.dumps(under), sort='meta.display_name:desc', limit=1) == ['gamma', 'beta', 'Alpha', None]
     assert named(filters=json.dumps(under | {'meta.display_name': {'$startswith': 'g'}})) == ['gamma']
     assert named(filters=json.dumps({'$or': [{'meta.display_name': {'$eq': 'alpha'}}, {'meta.display_name': {'$eq': 'Beta'}}]})) == ['beta', 'Alpha']
@@ -114,7 +114,7 @@ def test_a_key_of_meta_is_filtered_sorted_and_searched_as_a_column_is(api):
         ok(api.post('/nodes', json={'type': 'task', 'parent_id': ranked['id'], 'meta': {'display_name': f'rank {rank}'} | ({'rank': rank} if rank else {})}))
     of = json.dumps({'parent_id': {'$eq': ranked['id']}})
     ranks = lambda **params: [t['meta'].get('rank') for t in pages(api, '/nodes', **params)]
-    assert ranks(filters=of, sort='meta.rank:asc', limit=1) == [None, 2, 9, 10]   # numbers as numbers, one without least
+    assert ranks(filters=of, sort='meta.rank:asc', limit=1) == [None, 2, 9, 10]   # .. numbers as numbers, one without least
     assert ranks(filters=json.dumps({'$and': [json.loads(of), {'meta.rank': {'$gt': 5}}]}), sort='meta.rank:desc') == [10, 9]
     assert 'no column' in ok(api.get('/nodes', params={'filters': json.dumps({'name': {'$eq': 'x'}})}), 400)['detail']
 
@@ -123,7 +123,7 @@ def test_abandoned_comes_with_archived_and_rejected_with_deleted(api):
     work = ok(api.post('/nodes', json={'type': 'task', 'meta': {'status': 'proposed'}}))
     abandoned = ok(api.put(f"/nodes/{work['id']}", json={'meta': {'status': 'abandoned'}}))
     assert (abandoned['status'], abandoned['flags']) == ('abandoned', 16) and ok(api.get(f"/nodes/{work['id']}"))['flags'] == 16
-    assert ok(api.put(f"/nodes/{work['id']}", json={'flags': 0}))['flags'] == 0   # un-archive keeps the status it has
+    assert ok(api.put(f"/nodes/{work['id']}", json={'flags': 0}))['flags'] == 0   # .. un-archive keeps the status it has
     rejected = ok(api.post('/nodes', json={'type': 'task', 'meta': {'status': 'rejected'}}))
     assert rejected['flags'] == 4 and ok(api.get(f"/nodes/{rejected['id']}"))['flags'] == 4
 
@@ -136,7 +136,7 @@ def test_an_update_merges_data_and_a_null_removes_a_key(api):
 
 def test_an_id_the_store_made_twice_is_made_again(api):
     taken = ok(api.post('/nodes', json={'type': 'node'}))['id']
-    with psycopg.connect(STORE, autocommit=True) as db:   # the store's next id one already taken, as two writes in one millisecond can draw
+    with psycopg.connect(STORE, autocommit=True) as db:   # .. the store's next id one already taken, as two writes in one millisecond can draw
         db.execute('CREATE SEQUENCE ld.drawn')
         db.execute(f"""ALTER TABLE ld.nodes ALTER COLUMN id SET DEFAULT CASE nextval('ld.drawn') WHEN 1 THEN '{taken}'::uuid ELSE ld.uuid_create(x'0001'::int) END""")
         try:
@@ -148,10 +148,10 @@ def test_an_id_the_store_made_twice_is_made_again(api):
 
 
 def test_a_put_of_an_id_not_there_creates_it(api):
-    id = uuid_create(0x0001)   # made offline as the store makes them
+    id = uuid_create(0x0001)   # .. made offline as the store makes them
     assert ok(api.put(f'/nodes/{id}', json={'type': 'node'}))['id'] == str(id)
     assert ok(api.get(f'/nodes/{id}'))['type'] == 'node'
-    assert 'no record' in ok(api.put(f'/nodes/{uuid_create(0x0020)}', json={'type': 'node'}), 422)['detail']   # an id of another table
+    assert 'no record' in ok(api.put(f'/nodes/{uuid_create(0x0020)}', json={'type': 'node'}), 422)['detail']   # .. an id of another table
 
 
 def test_a_link_joins_two_records(api):
@@ -170,7 +170,7 @@ def test_a_read_only_record_changes_only_its_flags(api):
 
 def test_a_read_only_type_is_neither_changed_nor_deleted_by_the_api_or_in_the_database(api):
     kept = ok(api.post('/types', json={'slug': 'kept', 'shard': 0x0001, 'meta': {'display_name': 'Kept'}}))
-    assert ok(api.put(f"/types/{kept['id']}", json={'flags': 1}))['flags'] == 1   # toggle ro
+    assert ok(api.put(f"/types/{kept['id']}", json={'flags': 1}))['flags'] == 1   # .. toggle ro
     assert 'read only' in ok(api.put(f"/types/{kept['id']}", json={'data': {'a': 1}}), 422)['detail']
     assert 'change only by toggle ro' in ok(api.delete(f"/types/{kept['id']}"), 422)['detail']
     with psycopg.connect(STORE, autocommit=True) as db:
@@ -178,7 +178,7 @@ def test_a_read_only_type_is_neither_changed_nor_deleted_by_the_api_or_in_the_da
             db.execute("UPDATE ld.types SET data = '{\"a\": 1}' WHERE id = %s", (kept['id'],))
         with pytest.raises(psycopg.errors.RaiseException, match='it is not deleted'):
             db.execute('DELETE FROM ld.types WHERE id = %s', (kept['id'],))
-    assert ok(api.put(f"/types/{kept['id']}", json={'flags': 0}))['flags'] == 0   # toggle ro, and it changes again
+    assert ok(api.put(f"/types/{kept['id']}", json={'flags': 0}))['flags'] == 0   # .. toggle ro, and it changes again
     assert ok(api.put(f"/types/{kept['id']}", json={'data': {'a': 1}}))['data'] == {'a': 1}
 
 
@@ -193,23 +193,23 @@ def test_a_deleted_record_is_out_of_sight_and_read_by_its_id(api):
     assert 'read only' in ok(api.put(f"/nodes/{child['id']}", json={'data': {'a': 1}}), 422)['detail']
     under = {'parent_id': {'$eq': parent['id']}}
     asked = lambda *more: sorted(r['id'] for r in ok(api.get('/nodes', params={'filters': json.dumps({'$and': [under, *more]})}))['items'])
-    assert asked({'flags': {'$gte': 0}}) == sorted([child['id'], hidden['id']])   # out of sight when the filters ask for flags
+    assert asked({'flags': {'$gte': 0}}) == sorted([child['id'], hidden['id']])   # .. out of sight when the filters ask for flags
     assert asked({'$or': [{'flags': {'$eq': 4}}]}) == [child['id']]
 
 
 def test_flags_change_only_by_their_transitions(api):
     node = ok(api.post('/nodes', json={'type': 'node'}))
     assert 'change only by delete, archive, toggle hidden, toggle ro' in ok(api.put(f"/nodes/{node['id']}", json={'flags': 3}), 422)['detail']
-    assert ok(api.put(f"/nodes/{node['id']}", json={'flags': 16}))['flags'] == 16   # archive
+    assert ok(api.put(f"/nodes/{node['id']}", json={'flags': 16}))['flags'] == 16   # .. archive
     assert 'change only by un-archive' in ok(api.put(f"/nodes/{node['id']}", json={'flags': 20}), 422)['detail']
     assert 'change only by un-archive' in ok(api.delete(f"/nodes/{node['id']}"), 422)['detail']
-    assert ok(api.put(f"/nodes/{node['id']}", json={'flags': 0}))['flags'] == 0   # un-archive
+    assert ok(api.put(f"/nodes/{node['id']}", json={'flags': 0}))['flags'] == 0   # .. un-archive
     hidden = ok(api.post('/nodes', json={'type': 'node', 'flags': 8}))
     assert 'change only by toggle hidden' in ok(api.delete(f"/nodes/{hidden['id']}"), 422)['detail']
     system = ok(api.post('/nodes', json={'type': 'node', 'flags': 2}))
     assert 'no transition' in ok(api.put(f"/nodes/{system['id']}", json={'flags': 0}), 422)['detail']
     ok(api.delete(f"/nodes/{node['id']}"), 204)
-    assert ok(api.put(f"/nodes/{node['id']}", json={'flags': 0}))['flags'] == 0   # un-delete
+    assert ok(api.put(f"/nodes/{node['id']}", json={'flags': 0}))['flags'] == 0   # .. un-delete
 
 
 def types(api, path: str, **filters) -> list[dict]:
@@ -225,15 +225,15 @@ def test_each_schema_defines_its_own_types_and_values(api):
     assert (cc['shard'], cc['parent_id'], cc['kind'], cc['meta']['uri']) == (0x2000, harness['id'], 'session', 'uo:HarnessClaudeCode')
     status, = [t for t in types(api, '/types', slug='status') if t['meta'].get('uri') == 'uo:Status']
     parsed, = types(api, '/fs/types', slug='parsed')
-    assert (parsed['parent_id'], parsed['kind']) == (status['id'], 'file')   # a value of the core's vocabulary, for an fs type
+    assert (parsed['parent_id'], parsed['kind']) == (status['id'], 'file')   # .. a value of the core's vocabulary, for an fs type
     assert {t['slug'] for t in types(api, '/types', parent_id=status['id'])} == {'proposed', 'active', 'rejected', 'pending', 'planned', 'suspended', 'abandoned', 'completed'}
-    assert [t['shard'] for t in types(api, '/types', slug='next')] == [0x0010]   # every schema's links take the core's link types
+    assert [t['shard'] for t in types(api, '/types', slug='next')] == [0x0010]   # .. every schema's links take the core's link types
 
 
 def test_a_slug_is_one_under_its_parent(api):
     status, = [t for t in types(api, '/types', slug='status') if t['meta'].get('uri') == 'uo:Status']
     meta, = types(api, '/types', slug='meta')
-    assert {t['parent_id'] for t in types(api, '/types', slug='status')} == {meta['id'], status['parent_id']}   # a key of meta and a vocabulary
+    assert {t['parent_id'] for t in types(api, '/types', slug='status')} == {meta['id'], status['parent_id']}   # .. a key of meta and a vocabulary
     ok(api.post('/types', json={'slug': 'active', 'shard': 0, 'parent_id': status['id'], 'meta': {'kind': 'node'}}), 422)
     ok(api.post('/types', json={'slug': 'active', 'shard': 0, 'parent_id': meta['id']}))
 
@@ -247,7 +247,7 @@ def test_the_file_system_is_in_its_own_schema(api):
     assert [header(r) for r in (host, file, instance, link)] == [bytes([0x10, s, 1]) + bytes(5) for s in (0x01, 0x02, 0x03, 0x10)]
     assert ok(api.get(f"/fs/files/{file['id']}"))['type'] == 'markdown' and instance['kind'] == 'symlink' and host['status'] == 'active'
     assert [l['id'] for l in ok(api.get('/fs/links', params={'filters': links_of(node)}))['items']] == [link['id']]
-    assert ok(api.get('/links', params={'filters': links_of(node)}))['items'] == []   # each schema's links are its own
+    assert ok(api.get('/links', params={'filters': links_of(node)}))['items'] == []   # .. each schema's links are its own
     assert [t['slug'] for t in types(api, '/fs/types', slug='session-file')] == ['session-file']
     assert ok(api.post('/fs/locations', json={'type': 'location', 'provider': 'file_system'}), 422)['detail'][0]['loc'] == ['body', 'provider']
 
@@ -273,9 +273,9 @@ def test_a_session_is_known_by_its_harness_and_uid(api):
 def test_a_sessions_messages_are_read_in_the_order_of_their_lines_a_page_at_a_time(api):
     session = ok(api.post('/sessions', json={'type': 'session', 'meta': {'harness': 'cx', 'uid': 'ordered'}}))
     ids = sorted(uuid_create(0x2002) for _ in range(5))
-    for id, line in zip(ids, (11, 10, 9, 2, 1)):   # the ids sort against the lines, and 10 and 11 sort before 9 and 2 as text
+    for id, line in zip(ids, (11, 10, 9, 2, 1)):   # .. the ids sort against the lines, and 10 and 11 sort before 9 and 2 as text
         ok(api.put(f'/sessions/messages/{id}', json={'type': 'message', 'parent_id': session['id'], 'meta': {'kind': 'assistant', 'line': line}}))
-    lineless = ok(api.post('/sessions/messages', json={'type': 'message', 'parent_id': session['id'], 'meta': {'kind': 'user'}}))   # read as line 0
+    lineless = ok(api.post('/sessions/messages', json={'type': 'message', 'parent_id': session['id'], 'meta': {'kind': 'user'}}))   # .. read as line 0
     read, cursor = [], None
     while True:
         page = ok(api.get(f"/ordered/{session['id']}/messages", params={'limit': 2} | ({'cursor': cursor} if cursor else {})))

@@ -54,7 +54,7 @@ from . import handlers
 
 # region providers
 
-# The file in a folder that says what a write may do to the files it holds: a list of update, upsert, delete.
+# .. The file in a folder that says what a write may do to the files it holds: a list of update, upsert, delete.
 MERGE_RULES = '.merge.yaml'
 OPERATIONS = ('update', 'upsert', 'delete')
 
@@ -198,7 +198,7 @@ class Container:
     self.provider = provider
     self.uri = y2uri(uri)
     self.templates = None if templates is None else deepcopy(dict(templates))
-    self._jinja = None if templates is None else jinja.overlay(loader=DictLoader(self.templates))   # gppu's Jinja, where one naming template includes another by its name
+    self._jinja = None if templates is None else jinja.overlay(loader=DictLoader(self.templates))   # .. gppu's Jinja, where one naming template includes another by its name
     self._paths: dict[str, str] | None = None
     self._identities: dict[str, str] = {}
     self._rules: dict[str, frozenset[str] | None] = {}
@@ -319,7 +319,7 @@ class Container:
         try:
           self.delete(path)
         except FileNotFoundError:
-          pass  # the source removed an object this folder never held
+          pass  # .. the source removed an object this folder never held
       return
     binary = isinstance(obj.content, bytes) or hasattr(obj.content, 'read')
     if not binary and self.templates is not None and 'identity' in self.templates:
@@ -599,7 +599,7 @@ def file_path(type: str, name: str, **values: Any) -> str:
         raise ValueError(f'{name}: no path for a {type}')
     try:
         path = jinja_template(places[type], name=name, stem=Path(name).stem, ext=Path(name).suffix, re=re, **values)
-    except UndefinedError as error:   # the line asks for what the writer did not give, such as the date of a session with no time
+    except UndefinedError as error:   # .. the line asks for what the writer did not give, such as the date of a session with no time
         raise ValueError(f'{name}: no path for a {type}: {error}') from error
     path = str(path or '').strip()
     if not path:
@@ -644,7 +644,7 @@ class FileSystem(Provider):
     rows = []
     for target in sorted(self.local(uri).iterdir()):
       if target.is_symlink() or target.is_junction():
-        # A link is listed as itself, never followed: fsspec's islink and destination.
+        # .. A link is listed as itself, never followed: fsspec's islink and destination.
         rows.append({'name': target.name, 'type': 'other', 'size': target.lstat().st_size, 'islink': True,
                      'destination': os.readlink(target)})
         continue
@@ -687,7 +687,7 @@ class FileSystem(Provider):
       stream = incoming
     if isinstance(stream, BytesIO) and target.is_file() and target.read_bytes() == stream.getvalue():
       return
-    # Stage beside the object so replacement stays on its filesystem.
+    # .. Stage beside the object so replacement stays on its filesystem.
     with tempfile.NamedTemporaryFile(dir=target.parent, prefix='.', suffix='.pending', delete=False) as staged:
       pending = Path(staged.name)
       try:
@@ -782,7 +782,7 @@ def _updated(previous: dict[str, Any], incoming: dict[str, Any]) -> dict[str, An
 # endregion
 # region names
 
-# A name this host cannot spell is spelled with these replaced, and no longer than NAME_LIMIT.
+# .. A name this host cannot spell is spelled with these replaced, and no longer than NAME_LIMIT.
 UNSAFE = '\\/:*?"<>|\r\n\t'
 NAME_LIMIT = 254
 
@@ -809,13 +809,13 @@ class _RarFileSystem(AbstractArchiveFileSystem):
 
   protocol = 'gppu-rar'
   cachable = False
-  timeout = 1800   # one RAR gets half an hour of the command; a longer one is an error, not a partial extraction
+  timeout = 1800   # .. one RAR gets half an hour of the command; a longer one is an error, not a partial extraction
 
   def __init__(self, fo: str, target_protocol=None, target_options=None, **kwargs):
     super().__init__(**kwargs)
     self._scratch = _scratch('gppufs-rar-')
     if target_protocol in (None, 'file', 'local') and Path(fo).is_file():
-      self._archive = Path(fo)   # on this host, a mounted share's among it: read where it is, never copied
+      self._archive = Path(fo)   # .. on this host, a mounted share's among it: read where it is, never copied
     else:
       self._archive = Path(self._scratch.name) / 'archive.rar'
       options = {} if target_options is None else target_options
@@ -856,7 +856,7 @@ class _RarFileSystem(AbstractArchiveFileSystem):
       if entries:
         entries[-1][key] = value
     listing: dict[str, dict] = {}
-    self._names: dict[str, str] = {}   # a member's path, as fsspec names it, to the name the archive gives it
+    self._names: dict[str, str] = {}   # .. a member's path, as fsspec names it, to the name the archive gives it
     for entry in entries:
       name = PurePosixPath(entry['Name'].lstrip('/').replace('\\', '/'))
       self._names[name.as_posix()] = entry['Name']
@@ -879,7 +879,7 @@ class _RarFileSystem(AbstractArchiveFileSystem):
     if mode != 'rb':
       raise NotImplementedError('RAR listings are read-only')
     if self._member is not None:
-      shutil.rmtree(self._member, ignore_errors=True)   # the member opened before; what was read of it is the caller's
+      shutil.rmtree(self._member, ignore_errors=True)   # .. the member opened before; what was read of it is the caller's
     self._member = Path(tempfile.mkdtemp(dir=self._scratch.name))
     subprocess.run([str(self.executable()), 'x', '-y', '-inul', '-p-', str(self._archive), self._names[PurePosixPath(path).as_posix()],
                     str(self._member) + os.sep], stdin=subprocess.DEVNULL, capture_output=True, check=True, timeout=self.timeout)
@@ -892,7 +892,7 @@ class _RarFileSystem(AbstractArchiveFileSystem):
 register_implementation('gppu-rar', _RarFileSystem)
 
 
-# Where gppufs and the walk put what they must hold for a moment: the cache, never the system's temporary folder.
+# .. Where gppufs and the walk put what they must hold for a moment: the cache, never the system's temporary folder.
 CACHE = Path('C:/.cache') if os.name == 'nt' else Path.home() / '.cache'
 
 def _scratch(prefix: str) -> tempfile.TemporaryDirectory:
@@ -909,7 +909,7 @@ def _probe_name(name: str, directory: bool, size: int | None = None) -> handlers
     spelled = spelled[:NAME_LIMIT - len(suffix) - 1] + dot + suffix if dot else spelled[:NAME_LIMIT]
   with _scratch('gppufs-name-') as scratch:
     stand_in = Path(scratch) / spelled
-    stand_in.mkdir() if directory else stand_in.write_bytes(b'\0' if size else b'')   # probe names a handler only for a file that holds something
+    stand_in.mkdir() if directory else stand_in.write_bytes(b'\0' if size else b'')   # .. probe names a handler only for a file that holds something
     record = handlers.probe(stand_in)
   if not directory:
     record.meta['size'] = int(size or 0)
@@ -1006,7 +1006,7 @@ def _read(path: Path, parse: bool) -> tuple[handlers.Record, str | None]:
     return record, None
   try:
     return handler.parse(path), None
-  except Exception as error:   # the walk records what it could not read and goes on
+  except Exception as error:   # .. the walk records what it could not read and goes on
     return record, f'{handler.__name__}: {type(error).__name__}: {error}'
 
 
@@ -1071,7 +1071,7 @@ def walk_files(root: Path, path: str, level: str, recursive: bool,
             copy = Path(scratch) / PurePosixPath(member).name
             try:
               fs.get_file(member, str(copy))
-            except Exception as error:   # a member that cannot be extracted is said, and the walk goes on
+            except Exception as error:   # .. a member that cannot be extracted is said, and the walk goes on
               unread = f'extract: {type(error).__name__}: {error}'
             else:
               record, unread = _read(copy, parse)
@@ -1085,14 +1085,14 @@ def walk_files(root: Path, path: str, level: str, recursive: bool,
           nested.append((member, name, row))
         rows.append(row)
       found = []
-      for member, name, row in nested:   # read whole before this folder is answered, held only while it is read
+      for member, name, row in nested:   # .. read whole before this folder is answered, held only while it is read
         with _scratch('container-index-') as scratch:
           copy = Path(scratch) / PurePosixPath(member).name
           try:
             fs.get_file(member, str(copy))
             with _archive(copy) as inner:
               found.append(list(members(inner, name)))
-          except Exception as error:   # an archive read failure remains file evidence, never a successful enumeration
+          except Exception as error:   # .. an archive read failure remains file evidence, never a successful enumeration
             row['unread'] = [*row.get('unread', []), f'archive: {type(error).__name__}: {error}']
       yield {'name': under, 'type': 'directory', 'size': 0}, rows
       for listing_below in found:
@@ -1133,11 +1133,11 @@ def walk_files(root: Path, path: str, level: str, recursive: bool,
         archives.append((entry, name, row))
       rows.append(row)
     found = []
-    for entry, name, row in archives:   # read whole before this folder is answered
+    for entry, name, row in archives:   # .. read whole before this folder is answered
       try:
         with _archive(entry) as archive:
           found.append(list(members(archive, name)))
-      except Exception as error:   # an archive read failure remains file evidence, never a successful enumeration
+      except Exception as error:   # .. an archive read failure remains file evidence, never a successful enumeration
         row['unread'] = [*row.get('unread', []), f'archive: {type(error).__name__}: {error}']
     yield {'name': under, 'type': 'directory', 'size': 0}, rows
     for listing_below in found:

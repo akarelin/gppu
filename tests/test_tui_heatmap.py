@@ -22,7 +22,7 @@ class TestRenderHeatmap:
         today = date.today()
         counts = {today - timedelta(days=i): i + 1 for i in range(5)}
         lines = render_heatmap_lines(counts, days=30)
-        # 1+2+3+4+5 = 15
+        # .. 1+2+3+4+5 = 15
         assert any('total activity: 15' in l for l in lines)
         assert any('active days: 5/30' in l for l in lines)
 
@@ -39,7 +39,7 @@ class TestRenderHeatmap:
 
     def test_title_can_be_suppressed(self):
         lines = render_heatmap_lines({}, days=10, title=None)
-        # No bold header
+        # .. No bold header
         assert not any(l.startswith('[bold]') for l in lines)
 
 

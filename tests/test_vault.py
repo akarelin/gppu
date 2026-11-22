@@ -168,7 +168,7 @@ class TestList:
 
     def test_lists_env_var_secrets(self, monkeypatch):
         monkeypatch.delenv("AZURE_KEYVAULT_NAME", raising=False)
-        # Clear any pre-existing SECRET_* in the test env so we get a clean baseline
+        # .. Clear any pre-existing SECRET_* in the test env so we get a clean baseline
         for k in list(__import__("os").environ):
             if k.startswith("SECRET_"): monkeypatch.delenv(k, raising=False)
         monkeypatch.setenv("SECRET_FOO_BAR", "v1")
@@ -190,7 +190,7 @@ class TestList:
 
         class _NoList(VaultProvider):
             def get(self, name): return None
-            # list() inherits NotImplementedError
+            # .. list() inherits NotImplementedError
 
         Vault.provider_set(_NoList())
         assert Vault.list() == ["only"]
@@ -208,7 +208,7 @@ class TestCreateDesignation:
         assert writes == [("slack-bot-token", "xxx")]
 
     def test_no_collision_designation_ignored(self):
-        # Designation is a disambiguator — not applied if base name is free.
+        # .. Designation is a disambiguator — not applied if base name is free.
         writes = []
         with patch.object(VaultProviderAzure, "get", return_value=None), \
              patch.object(VaultProviderAzure, "set", side_effect=lambda n, v: writes.append((n, v))):

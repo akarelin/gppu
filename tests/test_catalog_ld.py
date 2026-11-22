@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip('fastapi')   # gppu's ld extra; the build's tests install gppu without it
+pytest.importorskip('fastapi')   # .. gppu's ld extra; the build's tests install gppu without it
 
 from gppu.fs.catalog import Catalog
 from gppu.fs.gppufs import GppuFileSystem
@@ -56,39 +56,39 @@ def test_an_index_is_loaded_as_its_folders_latest_copy_and_read_back(ld, tmp_pat
     assert {(row['name'], row['indexed']) for row in tree.values()} == {('Alex-PC', False), ('data', False), ('Dev', True)}
     root = list(found.entries(location=ld.made['dev']))
     assert [(row['name'], row['kind']) for row in root] == [('note.md', 'file'), ('old.md', 'file'), ('sub', 'folder')]
-    assert root[0]['size'] == 6 and root[0]['id'].startswith('1002') and root[0]['modified'] and root[0]['created']   # a file
+    assert root[0]['size'] == 6 and root[0]['id'].startswith('1002') and root[0]['modified'] and root[0]['created']   # .. a file
     assert [row['name'] for row in found.entries(path='Alex-PC/data/Dev/sub')] == ['a.csv']
     sub = found.at(ld.made['dev'], 'sub')
     assert [row['name'] for row in found.entries(parent=sub)] == ['a.csv']
-    assert (found.entry(sub)['uri'], found.entry(sub)['type']) == ('file://alex-pc/D:/Dev/sub', 'folder')   # a folder is a file
-    assert found.info('file://alex-pc/D:/Dev')['parent'] == ld.made['dev']   # a location's folder is inside the location
-    note = found.instances('file://alex-pc/D:/Dev/note.md')   # its one copy, by its gppufs id
+    assert (found.entry(sub)['uri'], found.entry(sub)['type']) == ('file://alex-pc/D:/Dev/sub', 'folder')   # .. a folder is a file
+    assert found.info('file://alex-pc/D:/Dev')['parent'] == ld.made['dev']   # .. a location's folder is inside the location
+    note = found.instances('file://alex-pc/D:/Dev/note.md')   # .. its one copy, by its gppufs id
     assert [(row['uri'], row['id'][:4]) for row in note] == [('file://alex-pc/D:/Dev/note.md', '1003')]
-    copy = ld.get(f"/fs/instances/{note[0]['id']}").json()   # inside its folder's instance, which is inside the location
+    copy = ld.get(f"/fs/instances/{note[0]['id']}").json()   # .. inside its folder's instance, which is inside the location
     assert (copy['type'], copy['meta']['display_name'], ld.get(f"/fs/instances/{copy['parent_id']}").json()['parent_id']) == (
         'instance', 'note.md', ld.made['dev'])
-    held = ld.get(f"/fs/files/{root[0]['id']}").json()   # a file and an instance hold their name, never their address
+    held = ld.get(f"/fs/files/{root[0]['id']}").json()   # .. a file and an instance hold their name, never their address
     assert 'uri' not in copy['meta'] and 'uri' not in held['meta'] and 'index' not in copy['data']
-    assert found.entry(root[0]['id'])['span']['start']   # the file's span starts when its source says it was created
+    assert found.entry(root[0]['id'])['span']['start']   # .. the file's span starts when its source says it was created
     first = found.loaded('file://alex-pc/D:/Dev')['loaded']
     with pytest.raises(LookupError):
-        found.loaded('file://alex-pc/D:/Dev/sub')   # held inside Dev's index, no index of its own
+        found.loaded('file://alex-pc/D:/Dev/sub')   # .. held inside Dev's index, no index of its own
 
     old = root[1]['id']
     (dev / 'old.md').unlink()
     found.load('file://alex-pc/D:/Dev/.Dev.gppufs.sqlite', indexed(dev))
-    assert [row['name'] for row in found.entries(location=ld.made['dev'])] == ['note.md', 'sub']   # gone from the latest copy
+    assert [row['name'] for row in found.entries(location=ld.made['dev'])] == ['note.md', 'sub']   # .. gone from the latest copy
     assert found.loaded('file://alex-pc/D:/Dev')['loaded'] > first
     with pytest.raises(LookupError):
         found.info('file://alex-pc/D:/Dev/old.md')
-    kept = ld.get(f'/fs/files/{old}').json()   # kept, flagged deleted (# Flags), its links and timeline with it
+    kept = ld.get(f'/fs/files/{old}').json()   # .. kept, flagged deleted (# Flags), its links and timeline with it
     assert (kept['flags'], kept['meta']['display_name']) == (4, 'old.md')
     (dev / 'old.md').write_text('# old again', encoding='utf-8')
     found.load('file://alex-pc/D:/Dev/.Dev.gppufs.sqlite', indexed(dev))
-    assert found.info('file://alex-pc/D:/Dev/old.md')['id'] == old   # its copy back: the same file, un-deleted
+    assert found.info('file://alex-pc/D:/Dev/old.md')['id'] == old   # .. its copy back: the same file, un-deleted
     assert ld.get(f'/fs/files/{old}').json()['flags'] == 0
     with pytest.raises(LookupError):
-        list(found.entries(location=ld.made['work']))   # the catalog holds nothing there
+        list(found.entries(location=ld.made['work']))   # .. the catalog holds nothing there
 
 
 def test_a_file_the_lake_saves_is_recorded_inside_the_folders_above_it(ld):
@@ -99,14 +99,14 @@ def test_a_file_the_lake_saves_is_recorded_inside_the_folders_above_it(ld):
     assert [entry['name'] for entry in found.entries(uri='file://five/mnt/S1/Lake/timeseries/2026/Screenshots/10')] == ['Screenshot 1.png']
     assert [entry['name'] for entry in found.entries(uri='file://five/mnt/S1/Lake')] == ['timeseries']
     top = found.info('file://five/mnt')
-    assert top['parent'] is None and ld.get(f"/fs/files/{top['id']}").json()['meta']['uri'] == 'file://five/mnt'   # the top of a host no location holds keeps its address
+    assert top['parent'] is None and ld.get(f"/fs/files/{top['id']}").json()['meta']['uri'] == 'file://five/mnt'   # .. the top of a host no location holds keeps its address
     assert found.info('file://five/mnt/S1/Lake/timeseries/2026/Screenshots/10/Screenshot 1.png')['uri'] ==         'file://five/mnt/S1/Lake/timeseries/2026/Screenshots/10/Screenshot 1.png'
     again = found.record('file://five/mnt/S1/Lake/timeseries/2026/Screenshots/10/Screenshot 1.png', 'file', {'kind': 'file', 'size': 5})
-    assert (again['id'], again['size']) == (row['id'], 5)   # saved again, the same file
-    found.forget('file://five/mnt/S1/Lake/timeseries/2026/Screenshots/10/Screenshot 1.png')   # removed from the Lake: flagged, kept
+    assert (again['id'], again['size']) == (row['id'], 5)   # .. saved again, the same file
+    found.forget('file://five/mnt/S1/Lake/timeseries/2026/Screenshots/10/Screenshot 1.png')   # .. removed from the Lake: flagged, kept
     assert ld.get(f"/fs/files/{row['id']}").json()['flags'] == 4
     back = found.record('file://five/mnt/S1/Lake/timeseries/2026/Screenshots/10/Screenshot 1.png', 'file', {'kind': 'file', 'size': 7})
-    assert (back['id'], back['size']) == (row['id'], 7)   # saved there again: the same file, un-deleted
+    assert (back['id'], back['size']) == (row['id'], 7)   # .. saved there again: the same file, un-deleted
 
 
 def test_a_librarys_content_type_and_columns_come_from_its_index(ld, tmp_path):
@@ -184,11 +184,11 @@ def test_every_hosts_synced_copy_is_an_instance_of_the_cloud_folders_file(ld, tm
     assert plan['uri'] == 'smb://s1.karel.in/SD/2026.work/10/plan.md' == found.info('file://alex-laptop/C:/Synced/10/plan.md')['uri']
     assert sorted(row['uri'] for row in found.instances('smb://s1.karel.in/SD/2026.work/10/plan.md')) == [
         'file://alex-laptop/C:/Synced/10/plan.md', 'file://alex-pc/D:/Synced/10/plan.md']
-    assert found.info('smb://s1.karel.in/SD/2026.work')['parent'] == made['cloud']   # the cloud folder's file, inside its location
+    assert found.info('smb://s1.karel.in/SD/2026.work')['parent'] == made['cloud']   # .. the cloud folder's file, inside its location
     assert [row['name'] for row in found.entries(location=made['here'])] == ['10'] == [row['name'] for row in found.entries(location=made['cloud'])]
-    found.unload('file://alex-laptop/C:/Synced')   # one host's copy gone: the file stays, an instance of the other
+    found.unload('file://alex-laptop/C:/Synced')   # .. one host's copy gone: the file stays, an instance of the other
     assert [row['uri'] for row in found.instances('smb://s1.karel.in/SD/2026.work/10/plan.md')] == ['file://alex-pc/D:/Synced/10/plan.md']
-    found.unload('file://alex-pc/D:/Synced')   # the last copy gone: the file goes with it
+    found.unload('file://alex-pc/D:/Synced')   # .. the last copy gone: the file goes with it
     with pytest.raises(LookupError):
         found.info('smb://s1.karel.in/SD/2026.work/10/plan.md')
 
@@ -205,7 +205,7 @@ def test_a_folders_index_leaves_alone_what_a_deeper_index_holds(ld, tmp_path):
                            [(path, json.dumps({'gppu': {'id': id, 'type': kind, 'handlers': [kind], 'size': 1}})) for path, kind, id in rows])
             db.commit()
         return at
-    outer = [('.', 'folder', uid()), ('kept.md', 'file', uid()), ('gone.md', 'file', uid())]   # gppufs keeps a row's id
+    outer = [('.', 'folder', uid()), ('kept.md', 'file', uid()), ('gone.md', 'file', uid())]   # .. gppufs keeps a row's id
     found = catalog_of(ld)
     found.load('file://alex-pc/D:/Nest/.Nest.gppufs.sqlite', index(tmp_path / 'outer1.sqlite', outer))
     found.load('file://alex-pc/D:/Nest/0802 #meta/.0802 #meta.gppufs.sqlite',
@@ -215,7 +215,7 @@ def test_a_folders_index_leaves_alone_what_a_deeper_index_holds(ld, tmp_path):
     assert [row['name'] for row in found.entries(uri='file://alex-pc/D:/Nest/0802 #meta')] == ['x.md']
     assert found.info('file://alex-pc/D:/Nest/0802 #meta/x.md')['uri'] == 'file://alex-pc/D:/Nest/0802 #meta/x.md'
     assert found.loaded('file://alex-pc/D:/Nest/0802 #meta')['loaded']
-    found.load('file://alex-pc/D:/Nest/.Nest.gppufs.sqlite',   # the folder's index made again, every row a new id
+    found.load('file://alex-pc/D:/Nest/.Nest.gppufs.sqlite',   # .. the folder's index made again, every row a new id
                index(tmp_path / 'outer3.sqlite', [(path, kind, uid()) for path, kind, _ in outer[:2]]))
     assert [row['uri'] for row in found.instances('file://alex-pc/D:/Nest/0802 #meta/x.md')] == ['file://alex-pc/D:/Nest/0802 #meta/x.md']
     assert found.loaded('file://alex-pc/D:/Nest/0802 #meta')['loaded'] and found.loaded('file://alex-pc/D:/Nest')['loaded']

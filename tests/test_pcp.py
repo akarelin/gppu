@@ -22,7 +22,7 @@ class TestColorize:
 
     def test_format_padding(self):
         result = _colorize("hi", TColor.RED, fmt="10")
-        # Should be padded to 10 chars (plus ANSI codes)
+        # .. Should be padded to 10 chars (plus ANSI codes)
         assert "hi" in result
 
     def test_right_justify(self):

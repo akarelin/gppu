@@ -14,7 +14,7 @@ class TestY2List:
 
     def test_str_representation(self):
         yl = y2list(["a", "b"])
-        assert str(yl) == "ab"  # empty token
+        assert str(yl) == "ab"  # .. empty token
 
     def test_head_and_tail(self):
         yl = y2list(["first", "middle", "last"])

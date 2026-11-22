@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from uuid import uuid4
 
-# Add repo root to path for direct execution (without pip install -e)
+# .. Add repo root to path for direct execution (without pip install -e)
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
@@ -60,7 +60,7 @@ def ld():
     from gppu.data import _SQABase
     from gppu.fs import files
     from gppu.ld import serve
-    db = f'gppu_catalog_test_{uuid4().hex[:12]}'   # its own, so no other database on the server is touched
+    db = f'gppu_catalog_test_{uuid4().hex[:12]}'   # .. its own, so no other database on the server is touched
     with psycopg.connect(dsn, autocommit=True) as server:
         server.execute(f'CREATE DATABASE {db}')
     previous, initialized = Env._my, Env.initialized

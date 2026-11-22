@@ -109,7 +109,7 @@ class TestEnvLogging:
 class TestInitLogger:
     def test_init_sets_name(self):
         Logger.init_logger("test_app")
-        # Should not raise
+        # .. Should not raise
 
     def test_init_with_trace_rules(self):
         rules = {"debug": True, "MyClass": False}
@@ -157,7 +157,7 @@ def configured_output():
   original = core.Logger._console.setStream(console)
   yield core, console
   Env.reset()
-  for handler in core.Logger._file_handlers.values():   # the files the test's environment opened
+  for handler in core.Logger._file_handlers.values():   # .. the files the test's environment opened
     core.Logger._root.removeHandler(handler)
     handler.close()
   core.Logger._file_handlers.clear()

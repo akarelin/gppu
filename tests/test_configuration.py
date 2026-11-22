@@ -56,7 +56,7 @@ def test_later_apps_share_the_loaded_environment():
 
     Example(environment='RAN')
     assert Second().my('value') == 2
-    assert Second(environment='RAN').my('value') == 2     # naming the loaded environment again is the same one
+    assert Second(environment='RAN').my('value') == 2     # .. naming the loaded environment again is the same one
 
 
 def test_an_app_naming_another_environment_raises():
@@ -97,7 +97,7 @@ def test_reset_lets_the_next_app_load_another_environment():
 
 
 def test_unknown_environment_raises():
-    with pytest.raises(KeyError):   # a name that is neither of the two environments
+    with pytest.raises(KeyError):   # .. a name that is neither of the two environments
         App(environment='Creekview')
     assert not Env.initialized
 
@@ -112,7 +112,7 @@ def test_missing_environment_file_raises(home):
 class Stepped(AsyncApp):
 
 
-    def __init(self):   # its part of init: a private step, run after App's, which loaded the configuration
+    def __init(self):   # .. its part of init: a private step, run after App's, which loaded the configuration
         self.seen = (self.my('enabled'), glob('second/value'))
 
 

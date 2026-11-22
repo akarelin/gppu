@@ -107,7 +107,7 @@ class GppuCatalog(AsyncFileSystem):
       self._lock = RLock()
       self._config = deepcopy(dict(catalog))
       self._bound_locations = {}
-      self._here: dict[str, str] | None = None   # each location's folder on this host, found once (`reached`)
+      self._here: dict[str, str] | None = None   # .. each location's folder on this host, found once (`reached`)
       self._load_configuration()
       return
     if not Path(catalog).is_absolute():
@@ -123,7 +123,7 @@ class GppuCatalog(AsyncFileSystem):
       for file in sorted(self.catalog.glob('*.yaml'))}
     canonical: dict[tuple[str, str], dict] = {}
     def walk(service: str, entries: list[dict], above: tuple[str, ...]) -> None:
-      for location in entries:  # a location carries its children in its own ``locations``; the top level is a server
+      for location in entries:  # .. a location carries its children in its own ``locations``; the top level is a server
         names = (*above, location['name'])
         canonical[service, '/'.join(names)] = {'service': service, 'location': '/'.join(names),
           **({'server': names[0]} if len(names) > 1 else {}),
@@ -142,9 +142,9 @@ class GppuCatalog(AsyncFileSystem):
         self._replicas[os.path.normcase(os.path.normpath(replica['path']))] = {**location, 'checked_at': replica['checked_at']}
     self.root = f'gppu-catalog://{self.catalog.as_posix()}'
     self._lock = RLock()
-    self.files = GppuFileSystem()   # what is in the locations, as gppufs lists it
-    self._roots: dict[str, str] = {}   # a location's root_path -> its folder as gppufs names it
-    self._split: set[str] = set()   # the locations given their own index by this instance
+    self.files = GppuFileSystem()   # .. what is in the locations, as gppufs lists it
+    self._roots: dict[str, str] = {}   # .. a location's root_path -> its folder as gppufs names it
+    self._split: set[str] = set()   # .. the locations given their own index by this instance
     self._load()
 
   def _load_configuration(self) -> None:
@@ -159,7 +159,7 @@ class GppuCatalog(AsyncFileSystem):
     connection_templates = definitions['templates'] if 'templates' in definitions else {}
     def connection(uid: str, row: dict) -> dict:
       resolved = _resolve({'uid': uid, **row}, connection_templates, config)
-      return jinja_fill(resolved, **resolved)   # Jinja reading the row, as loading leaves it, renders with the row
+      return jinja_fill(resolved, **resolved)   # .. Jinja reading the row, as loading leaves it, renders with the row
     self.connections = {
       uid: connection(uid, row)
       for uid, row in definitions.items()
@@ -283,7 +283,7 @@ class GppuCatalog(AsyncFileSystem):
       below.insert(0, name)
     location = self.location(by_uri[at])
     if isinstance(location.provider, FileSystem) and not urlsplit(at).path and below:
-      # A host has no folder of its own: the drive below it is the root of what is listed.
+      # .. A host has no folder of its own: the drive below it is the root of what is listed.
       location = Location({'uid': location.uid, 'canonical': f'{at}/{below.pop(0)}'}, provider=location.provider,
                           parent=location, templates=location.templates)
     return location, y2path(unquote('/'.join(below)))
@@ -350,7 +350,7 @@ class GppuCatalog(AsyncFileSystem):
       raise FileNotFoundError(f'{path}: not inside a catalog Location')
     location = max(owners, key=lambda location: len(self._roots[location]))
     if location not in self._split and self.files.fs.isdir(self._roots[location]):
-      self.files.split(self._roots[location])   # a Location keeps its own index, where the catalog says it is
+      self.files.split(self._roots[location])   # .. a Location keeps its own index, where the catalog says it is
       self._split.add(location)
     return location
 
@@ -572,15 +572,15 @@ def resolve(folders: dict[str, dict[str, str]], address: str) -> str:
 # endregion
 # region what is in the locations
 
-PAGE = 1000   # the records a listing asks Linked Data for at a time, so a folder of any size is never held whole
-DELETED = 0x04   # the flag deleted (Linked Data.md # Flags): a record kept, read only and out of sight until it is un-deleted
-IDS = 120   # ids to one read of what is inside them, so its address, escaped, stays under the 8 kB request line a proxy takes
+PAGE = 1000   # .. the records a listing asks Linked Data for at a time, so a folder of any size is never held whole
+DELETED = 0x04   # .. the flag deleted (Linked Data.md # Flags): a record kept, read only and out of sight until it is un-deleted
+IDS = 120   # .. ids to one read of what is inside them, so its address, escaped, stays under the 8 kB request line a proxy takes
 
 
 def _name(uri: str) -> str:
     """The name a uri ends in, as it is: a # or a ? in a name is part of it."""
     return uri.rstrip('/').rpartition('/')[2]
-WHEN = re.compile(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ')   # how SharePoint gives a date or a time
+WHEN = re.compile(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ')   # .. how SharePoint gives a date or a time
 
 
 def _json(value: Any) -> Any:
@@ -631,7 +631,7 @@ def where(tree: dict[str, dict[str, Any]], path: str) -> tuple[dict[str, Any] | 
     return None, path
 
 
-INSTANCE_KINDS = ('symlink', 'junction', 'offline')   # what a copy is when nothing is read from it, its instance's meta.kind (Linked Data.md # FS)
+INSTANCE_KINDS = ('symlink', 'junction', 'offline')   # .. what a copy is when nothing is read from it, its instance's meta.kind (Linked Data.md # FS)
 
 
 def _earliest(*times: str | None) -> str | None:
@@ -654,7 +654,7 @@ def rows(index: Path) -> list[dict[str, Any]]:
         own = row['gppu']
         if not own.get('id'):
             raise ValueError(f'{index.name}: {path or "its folder"} has no id; gppufs gives every row one when it next writes the index')
-        if not own.get('handlers'):   # a row gppufs kept for what its folder no longer holds, as it did before gppu 4c73238
+        if not own.get('handlers'):   # .. a row gppufs kept for what its folder no longer holds, as it did before gppu 4c73238
             raise ValueError(f'{index.name}: {path or "its folder"} has no handler, a row for what is no longer there; gppufs drops it '
                              'when it next lists the folder, and the index is sent again')
         created = row.get('created_at') or (datetime.fromtimestamp(row['created']).astimezone().isoformat() if row.get('created') else None)
@@ -682,8 +682,8 @@ class Catalog:
     def __init__(self, records: Callable[[], list[dict]], ld: Any) -> None:
         self.records = records
         self.ld = ld
-        self._columns: list[str] | None = None   # columns(), read once and again after an m365 index is loaded
-        self._received: dict[str, dict[str, Any]] = {}   # each folder whose index this process received, and how its load went
+        self._columns: list[str] | None = None   # .. columns(), read once and again after an m365 index is loaded
+        self._received: dict[str, dict[str, Any]] = {}   # .. each folder whose index this process received, and how its load went
         self._guard = RLock()
 
     def _get(self, route: str, **params: Any) -> Any:
@@ -719,7 +719,7 @@ class Catalog:
         if (at := max((u for u in places if _below(u, uri) is not None), key=len, default=None)) is not None:
             return self._first(table, {'parent_id': {'$eq': places[at]['id']}}, flagged), _below(at, uri)
         parts = uri.rstrip('/').split('/')
-        above = ['/'.join(parts[:n]) for n in range(len(parts), 3, -1)]   # the uri and each folder above it, below its host
+        above = ['/'.join(parts[:n]) for n in range(len(parts), 3, -1)]   # .. the uri and each folder above it, below its host
         if not above:
             return None, ''
         found = self._get(f'/fs/{table}', filters=json.dumps({'meta.uri': {'$in': above}, 'flags': {'$gte': 0}}), limit=len(above))['items']
@@ -764,7 +764,7 @@ class Catalog:
         while True:
             if (parent := r['parent_id']) is None:
                 return _address(r['meta']['uri'], '/'.join(reversed(names))) if r['meta'].get('uri') else None
-            if parent.startswith('1001'):   # a location (Linked Data.md # fs: 0x1001)
+            if parent.startswith('1001'):   # .. a location (Linked Data.md # fs: 0x1001)
                 place = next((p for p in self.records() if p['id'] == parent), None)
                 return _address(place['meta']['uri'], '/'.join(reversed(names))) if place and place['meta'].get('uri') else None
             names.append(r['meta']['display_name'])
@@ -788,7 +788,7 @@ class Catalog:
         body = {'type': type, 'parent_id': parent, 'data': data, 'span': span, 'meta': meta}
         r = self.ld.put(f'/fs/{table}/{id}', json=body)
         if r.status_code == 422 and (held := self.ld.get(f'/fs/{table}/{id}')).is_success and held.json()['flags'] & DELETED:
-            self.ld.put(f'/fs/{table}/{id}', json={'flags': held.json()['flags'] & ~DELETED}).raise_for_status()   # un-delete: only its flags
+            self.ld.put(f'/fs/{table}/{id}', json={'flags': held.json()['flags'] & ~DELETED}).raise_for_status()   # .. un-delete: only its flags
             r = self.ld.put(f'/fs/{table}/{id}', json=body)
         r.raise_for_status()
 
@@ -889,11 +889,11 @@ class Catalog:
         top = self.file_of(folder)
         file, copy = self._at('files', top, flagged=True), self._at('instances', folder, flagged=True)
         files = self._tree('files', file, top) if file else {}
-        deeper: dict[str, dict[str, Any]] = {}   # the folders of the indexes inside this one, by their uris
-        instances = self._tree('instances', copy, folder, held=self._index, left=deeper) if copy else {}   # what this index put there
-        ids: dict[str, str] = {}   # each row's path -> its file's id
-        copies = {row['path']: row['id'] for row in held}   # each row's path -> its instance's id, its gppufs id
-        inside: dict[str, str | None] = {}   # each row's path -> the id of what its instance is inside
+        deeper: dict[str, dict[str, Any]] = {}   # .. the folders of the indexes inside this one, by their uris
+        instances = self._tree('instances', copy, folder, held=self._index, left=deeper) if copy else {}   # .. what this index put there
+        ids: dict[str, str] = {}   # .. each row's path -> its file's id
+        copies = {row['path']: row['id'] for row in held}   # .. each row's path -> its instance's id, its gppufs id
+        inside: dict[str, str | None] = {}   # .. each row's path -> the id of what its instance is inside
         for row in held:
             path = row['path']
             uri, at = _address(top, path), _address(folder, path)
@@ -901,26 +901,25 @@ class Catalog:
             ids[path] = found['id'] if found else str(uuid_create(0x1002))
             start = _earliest(row['created'], ((found or {}).get('span') or {}).get('start'))
             above = path.rpartition('/')[0] if path else None
-            parent = ids[above] if above in ids else self._parent(uri)   # a row whose folder the index holds no row for: that folder's file
-            name = path.rpartition('/')[2] if path else None   # as the index names it; the folder's own as its uri does
+            parent = ids[above] if above in ids else self._parent(uri)   # .. a row whose folder the index holds no row for: that folder's file
+            name = path.rpartition('/')[2] if path else None   # .. as the index names it; the folder's own as its uri does
             self._put('files', ids[path], row['type'], parent, uri,
                       row['file'], span={'start': start, 'end': None, 'bounds': '[)'} if start else None, name=name)
-            # its folder's instance; the folder's own, and a row whose folder the index holds no row for, inside the location at its
-            # address or the instance of the folder holding it, found or made
+            # .. its folder's instance; the folder's own, and a row whose folder the index holds no row for, inside the location at its address or the instance of the folder holding it, found or made
             inside[path] = copies[above] if above in copies else self._inside_of('instances', at)
             self._put('instances', row['id'], 'instance', inside[path], at, row['instance'], kind=row['kind'], name=name)
-        for at, inner in deeper.items():   # an index inside this one stays inside its folder's instance, under its id in this copy
+        for at, inner in deeper.items():   # .. an index inside this one stays inside its folder's instance, under its id in this copy
             above = _below(folder, at).rpartition('/')[0]
             if above in copies and inner['parent_id'] != copies[above] and not inner['flags'] & DELETED:
                 self._put('instances', inner['id'], inner['type'], copies[above], at, inner['data'], kind=inner['meta'].get('kind'),
                           name=inner['meta']['display_name'])
         kept, left = {row['id'] for row in held}, set()
         for at, instance in instances.items():
-            if instance['id'] not in kept and not instance['flags'] & DELETED:   # gone from the latest copy
+            if instance['id'] not in kept and not instance['flags'] & DELETED:   # .. gone from the latest copy
                 self._delete('instances', instance['id'])
                 left.add(at)
         self._orphans(left)
-        root = held[0]   # the folder's own instance, stamped loaded last, so a load that fails before its end is never taken as loaded
+        root = held[0]   # .. the folder's own instance, stamped loaded last, so a load that fails before its end is never taken as loaded
         self._put('instances', root['id'], 'instance', inside[''], folder,
                   root['instance'] | {'loaded': datetime.now().astimezone().isoformat()}, kind=root['kind'])
         if urlsplit(top).scheme == 'm365':
@@ -997,7 +996,7 @@ class Catalog:
             id = self.entry(parent)['id']
         elif path is not None:
             if not path.strip('/'):
-                return iter(())   # the catalog's root holds only locations
+                return iter(())   # .. the catalog's root holds only locations
             found, below = where(paths(self.locations()), path)
             if found is None:
                 raise LookupError(f'{path}: the catalog holds no location there')
@@ -1100,7 +1099,7 @@ def api(catalog: Catalog):
 
     def lines(rows: Iterator[dict[str, Any]]) -> StreamingResponse:
         return StreamingResponse((json.dumps(row, default=_json, ensure_ascii=False) + '\n' for row in rows),
-                                 media_type='application/x-ndjson; charset=utf-8')   # as a client takes text without one differs
+                                 media_type='application/x-ndjson; charset=utf-8')   # .. as a client takes text without one differs
 
     app = FastAPI(title='Catalog')
     app.add_exception_handler(LookupError, lambda request, error: reply({'error': str(error)}, 404))
@@ -1159,8 +1158,8 @@ class CatalogFileSystem(AbstractFileSystem):
         super().__init__(**kwargs)
         import httpx
         self.client = client or httpx.Client(base_url=url.rstrip('/'), timeout=300)
-        self._tree: dict[str, dict[str, Any]] | None = None   # Linked Data's locations by path, read once
-        self._listed: dict[str, dict[str, dict[str, Any]]] = {}   # each folder listed -> its entries by name
+        self._tree: dict[str, dict[str, Any]] | None = None   # .. Linked Data's locations by path, read once
+        self._listed: dict[str, dict[str, dict[str, Any]]] = {}   # .. each folder listed -> its entries by name
 
     def _get(self, route: str, **params: str):
         r = self.client.get(f"/lake/catalog{route}", params=params)
@@ -1239,7 +1238,7 @@ class CatalogFileSystem(AbstractFileSystem):
         location, below = self._where(path)
         if location is None or not below or not location.get('canonical'):
             raise FileNotFoundError(f'{path}: the catalog holds no entry with an address there')
-        from .lake import LakeFileSystem   # the Lake's module imports the catalog's
+        from .lake import LakeFileSystem   # .. the Lake's module imports the catalog's
         return LakeFileSystem(root=_address(location['canonical'], below), client=self.client)._open('', mode)
 
 # endregion

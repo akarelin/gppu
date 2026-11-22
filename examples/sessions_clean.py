@@ -48,9 +48,9 @@ from gppu.fs.gppufs import GppuFileSystem
 from gppu.fs.handlers import SessionHandler
 from gppu.tui.progress import Marker, legend_ansi, marker_ansi
 
-SESSION = ('session', *SessionHandler.UID)   # a session is probed as one and read as its harness's
+SESSION = ('session', *SessionHandler.UID)   # .. a session is probed as one and read as its harness's
 COLOUR = sys.stdout.isatty() or bool(os.environ.get('FORCE_COLOR'))
-MARKS = {   # where a session goes, as the row shows it
+MARKS = {   # .. where a session goes, as the row shows it
     'human': Marker('human', 'nothing typed by a person', '>', 'cyan', '36'),
     'orphan': Marker('orphan', 'subagents only', '?', 'magenta', '35'),
     'damaged': Marker('damaged', 'unreadable', '!', 'red', '31'),
@@ -78,13 +78,13 @@ async def clean(fs: GppuFileSystem, base: str, keep: float) -> list[tuple[str, s
             continue
         path = entry['name']
         if any(os.path.isfile(f'{base}/{above}.jsonl') for above in PurePosixPath(path).relative_to(base).parents[:-1]):
-            continue   # in a session's own folder, which moves with it
+            continue   # .. in a session's own folder, which moves with it
         hours = (time.time() - entry['mtime']) / 3600
         if hours < keep:
-            active.add(PurePosixPath(path).stem)   # a harness names a session's file by its uid
+            active.add(PurePosixPath(path).stem)   # .. a harness names a session's file by its uid
             row('active', entry['gppu']['record']['type'], hours, 0, PurePosixPath(path).name)
             continue
-        gppu = (await fs._info(path, refresh=True))['gppu']   # its handler reads it once; the index keeps what it read
+        gppu = (await fs._info(path, refresh=True))['gppu']   # .. its handler reads it once; the index keeps what it read
         record = gppu.get('record') or {}
         data = record.get('data') or {}
         if gppu.get('unread'):
@@ -92,10 +92,10 @@ async def clean(fs: GppuFileSystem, base: str, keep: float) -> list[tuple[str, s
         elif data.get('subagent'):
             uid = parent[record['uid']] = record['meta'].get('parent_uid')
             while parent.get(uid):
-                uid = parent[uid]   # a subagent's own subagents belong to the session at the top
+                uid = parent[uid]   # .. a subagent's own subagents belong to the session at the top
             to = None if any(stem.endswith(uid or '?') for stem in active) else went.get(uid, 'orphan')
         else:
-            to = went[record['uid']] = None if ' - ' in data['normalized_name'] else 'human'   # the handler names a session by what a person typed in it, when anyone did
+            to = went[record['uid']] = None if ' - ' in data['normalized_name'] else 'human'   # .. the handler names a session by what a person typed in it, when anyone did
         if to is not None:
             row(to, record['type'], hours, data.get('turns') or 0, gppu.get('unread') or data.get('normalized_name') or PurePosixPath(path).name)
             moves.append((to, PurePosixPath(path).relative_to(base).as_posix()))
@@ -103,10 +103,10 @@ async def clean(fs: GppuFileSystem, base: str, keep: float) -> list[tuple[str, s
 
 
 def main() -> None:
-    app = App(config=__file__, argv=sys.argv[1:])   # its own configuration is its MANIFEST, the command line over it
+    app = App(config=__file__, argv=sys.argv[1:])   # .. its own configuration is its MANIFEST, the command line over it
     run, keep = app.my('run') is True, float(app.my('keep_hours'))
     home, archive = Path(app.my('home')).expanduser(), Path(app.my('archive'))
-    # The harnesses watch their folders and a sync client holds the archive's files: no index file in either.
+    # .. The harnesses watch their folders and a sync client holds the archive's files: no index file in either.
     fs = GppuFileSystem(cache=[*((home / folder).as_posix() for folder in app.my('sessions')), archive.as_posix()])
     print(legend_ansi(tuple(MARKS.values())) if COLOUR else '  '.join(f'{m.symbol}={m.label}' for m in MARKS.values()))
     going = Counter()
@@ -117,7 +117,7 @@ def main() -> None:
         going.update(to for to, _ in moves)
         if run:
             for to, path in moves:
-                for entry in (path, str(PurePosixPath(path).with_suffix(''))):   # Claude Code keeps a session's other files in a folder by its uid
+                for entry in (path, str(PurePosixPath(path).with_suffix(''))):   # .. Claude Code keeps a session's other files in a folder by its uid
                     if fs.exists(f'{base}/{entry}'):
                         there = (archive / app.my(f'buckets/{to}') / folder / entry).as_posix()
                         fs.makedirs(str(PurePosixPath(there).parent), exist_ok=True)

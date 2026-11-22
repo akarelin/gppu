@@ -149,14 +149,14 @@ def test_session_handler_reads_a_codex_session(tmp_path: Path) -> None:
 
 
 def test_a_codex_session_names_no_models(tmp_path: Path) -> None:
-  # Codex is read as Linked Data's sessions read it, and they read no model from turn_context.
+  # .. Codex is read as Linked Data's sessions read it, and they read no model from turn_context.
   session = SessionHandler.parse(_jsonl(tmp_path / 'rollout.jsonl', CODEX))
 
   assert 'models' not in session.data
 
 
 def test_a_codex_session_spans_its_session_messages(tmp_path: Path) -> None:
-  # A session's span is its session messages', as Linked Data's: from the first user or agent message, not session_meta.
+  # .. A session's span is its session messages', as Linked Data's: from the first user or agent message, not session_meta.
   session = SessionHandler.parse(_jsonl(tmp_path / 'rollout.jsonl', CODEX))
 
   assert _iso(session.span) == [datetime.fromisoformat(value) for value in [
@@ -459,17 +459,14 @@ def test_session_name_skips_machine_preamble_and_internal_turns(tmp_path: Path) 
 
 
 def test_a_claude_code_topic_is_its_first_prompt(tmp_path: Path) -> None:
-  # data.topic is Linked Data's: the first line of the first prompt, a sidechain's among them; the name a person
-  # typed is normalized_name's.
+  # .. data.topic is Linked Data's: the first line of the first prompt, a sidechain's among them; the name a person typed is normalized_name's.
   session = SessionHandler.parse(_topic_session(tmp_path))
 
   assert session.data['topic'] == 'tool instruction'
 
 
 def test_claude_subagent_is_identified_by_its_agent_id(tmp_path: Path) -> None:
-  # A subagent transcript carries its parent's sessionId on every record and its own agentId,
-  # which is what the file is named after. Without the agent id every subagent in a session
-  # answers with the parent's id and denies being one.
+  # .. A subagent transcript carries its parent's sessionId on every record and its own agentId, which is what the file is named after. Without the agent id every subagent in a session answers with the parent's id and denies being one.
   subagent = [
     {**record, 'agentId': 'a067dda7f881a582d', 'isSidechain': True} for record in CLAUDE
   ]
@@ -688,7 +685,7 @@ def test_human_messages_leave_out_generated_text_and_envelopes(tmp_path: Path) -
 
 
 def test_a_claude_code_topic_keeps_generated_text(tmp_path: Path) -> None:
-  # Linked Data's topic is the first prompt as written; leaving out generated text and envelopes is normalized_name's.
+  # .. Linked Data's topic is the first prompt as written; leaving out generated text and envelopes is normalized_name's.
   session = SessionHandler.parse(_human_session(tmp_path))
 
   assert session.data['topic'] == PONG
@@ -867,7 +864,7 @@ def test_a_sqlite_file_is_read_as_material(tmp_path: Path) -> None:
   assert list(read.data['tables']) == ['records', 'spans']
   assert read.data['tables']['records'] == ['uid', 'path', 'size']
   assert read.meta['size'] == database.stat().st_size
-  # Opened immutable, so SQLite writes neither companion beside a file in a synced folder.
+  # .. Opened immutable, so SQLite writes neither companion beside a file in a synced folder.
   assert sorted(path.name for path in tmp_path.iterdir()) == ['note.md', 'old-index.sqlite']
 
 

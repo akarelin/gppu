@@ -36,8 +36,7 @@ import yaml
 
 from ..gppu import Path, TimeSpan, probe_path
 
-# Times tools write in place of a time: Windows FILETIME zero, Unix epoch zero, DOS zero, and the constant
-# Android build tools stamp on every APK member. Anything at or before DOS zero is not a time either.
+# .. Times tools write in place of a time: Windows FILETIME zero, Unix epoch zero, DOS zero, and the constant Android build tools stamp on every APK member. Anything at or before DOS zero is not a time either.
 PLACEHOLDER_TIMES = (
     (1601, 1, 1, 0, 0, 0),
     (1970, 1, 1, 0, 0, 0),
@@ -45,18 +44,17 @@ PLACEHOLDER_TIMES = (
     (1981, 1, 1, 1, 1, 2),
 )
 FUTURE_TOLERANCE = timedelta(days=1)
-# The record-level time keys of the harnesses and exporters; a Gemini CLI chat's startTime and lastUpdated among them.
+# .. The record-level time keys of the harnesses and exporters; a Gemini CLI chat's startTime and lastUpdated among them.
 TIME_KEYS = ("timestamp", "ts", "started_at", "session_start", "time", "created_at", "startTime", "lastUpdated")
-LOG_BLOCK = 65536   # how much of a log's tail is read at a time
+LOG_BLOCK = 65536   # .. how much of a log's tail is read at a time
 LOG_TIMESTAMP = re.compile(
     r"^\s*[\[(]?(?P<timestamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)"
 )
-# What probe gives that counts as ignored, never counted in a folder's files, folders or bytes.
+# .. What probe gives that counts as ignored, never counted in a folder's files, folders or bytes.
 IGNORED = ("ignored", "offline", "junction", "symlink")
-# What gppufs and FileIndexer's walk open as archives, by the end of the name.
+# .. What gppufs and FileIndexer's walk open as archives, by the end of the name.
 ARCHIVES = (".rar", ".tar.gz", ".zip")
-# What a name says of its time, the first that matches: a span of two YYMMDD dates, a date and time with its GMT offset,
-# a date and time without a zone, which is local, Unix seconds or milliseconds; else an ISO date or a YYMMDD date, which is the whole day.
+# .. What a name says of its time, the first that matches: a span of two YYMMDD dates, a date and time with its GMT offset, a date and time without a zone, which is local, Unix seconds or milliseconds; else an ISO date or a YYMMDD date, which is the whole day.
 NAMED_SPAN = re.compile(r"(?<![A-Za-z0-9])(\d{6})-(\d{6})(?![A-Za-z0-9])")
 NAMED_GMT = re.compile(r"(?<![A-Za-z0-9])(\d{2}-\d{2}-\d{4},\s*\d{2}\.\d{2}\.\d{2})\s*GMT([+-]\d{1,2})(?!\d)", re.I)
 NAMED_TIMES = (
@@ -72,9 +70,9 @@ NAMED_DATES = (
     (re.compile(r"(?<![A-Za-z0-9])(\d{4}-\d{2}-\d{2})(?![A-Za-z0-9])"), "%Y-%m-%d"),
     (re.compile(r"(?<![A-Za-z0-9])(\d{6})(?![A-Za-z0-9])"), "%y%m%d"),
 )
-# The dates that lead a name, as a partitioned folder's things are named: the times and dates above, and a month, YYYY-MM.
+# .. The dates that lead a name, as a partitioned folder's things are named: the times and dates above, and a month, YYYY-MM.
 NAMED_LEADING = NAMED_TIMES + NAMED_DATES + ((re.compile(r"(\d{4}-\d{2})(?![A-Za-z0-9-])"), "%Y-%m"),)
-# A duration after a single time in a name, `~2h` or `(30m)`, is where its span ends.
+# .. A duration after a single time in a name, `~2h` or `(30m)`, is where its span ends.
 NAMED_DURATION = re.compile(r"(?:~|\()\s*(\d+)\s*([dhms])\)?", re.I)
 SECONDS = {"d": 86400, "h": 3600, "m": 60, "s": 1}
 Harness = Literal[
@@ -103,31 +101,31 @@ NON_HUMAN = (
         r"^\s*</?(?:system-reminder|command-message|command-name|local-command-caveat|local-command-stdout|local-command-stderr|environment_context|recommended_plugins|turn_aborted|scheduled-task|ide_opened_file|ide_selection|bash-input|bash-stdout|bash-stderr|task-notification|subagent_notification|codex_delegation|codex_internal_context|user_shell_command|image)\b",
         re.I,
     ),
-    # A slash command carrying no prompt of its own, mistypes included.
+    # .. A slash command carrying no prompt of its own, mistypes included.
     re.compile(r"^\s*/\S*\s*$"),
-    # The same command recorded without its slash.
+    # .. The same command recorded without its slash.
     re.compile(r"^\s*(?:upgrade|login|exit|plugins|marketplace)\s*$", re.I),
-    # An instruction file the harness prepends to the first turn.
+    # .. An instruction file the harness prepends to the first turn.
     re.compile(r"^\s*#\s*AGENTS\.md instructions\b", re.I),
-    # A probe that verifies a session's setup by demanding a fixed token back.
+    # .. A probe that verifies a session's setup by demanding a fixed token back.
     re.compile(
         r"\b(?:reply|respond|output|answer)(?:\s+with)?(?:\s+the)?(?:\s+single)?"
         r"(?:\s+word)?\s+(?:exactly\s+)?[A-Z][A-Z0-9_]{2,}[.!]?\s*$",
         re.I | re.M,
     ),
-    # The summary the harness writes in place of a turn when context runs out.
+    # .. The summary the harness writes in place of a turn when context runs out.
     re.compile(
         r"^\s*This session is being continued from a previous conversation\b", re.I
     ),
-    # The harness reporting that a dispatched plan never started.
+    # .. The harness reporting that a dispatched plan never started.
     re.compile(r"^\s*ultraplan(?:\s+terminated|:\s*session creation failed)\b", re.I),
-    # The shell integration asking for a diagnosis of a failed command.
+    # .. The shell integration asking for a diagnosis of a failed command.
     re.compile(r"^\s*A command failed\. Diagnose the error\b", re.I),
-    # A request relayed into a dispatched session, quoted rather than typed.
+    # .. A request relayed into a dispatched session, quoted rather than typed.
     re.compile(r"^\s*[Uu]ser['’]s request:"),
-    # The harness marking a turn cut short, in place of anything typed.
+    # .. The harness marking a turn cut short, in place of anything typed.
     re.compile(r"^\s*\[Request interrupted by user\b"),
-    # The link a hand-off from ChatGPT opens the session with.
+    # .. The link a hand-off from ChatGPT opens the session with.
     re.compile(r"^\s*Continuing from \[[^\]]*\]\(chatgpt-conversation://", re.I),
 )
 ENVELOPE = re.compile(r"\A.*?^##\s*My request for Codex:[^\S\n]*$", re.S | re.M)
@@ -139,10 +137,7 @@ HOMES: dict[Harness, tuple[str, ...]] = {
     "hermes": ("state.db",),
     "agy": ("antigravity_state.pbtxt", "jetski_state.pbtxt"),
 }
-# Linked Data's sessions (RAN Projects/ld/sessions.py): a name is the first line of a text, clipped; the messages of Claude
-# Code that name its session and the key each holds the name in; the Codex payloads that are messages and the roles of its
-# messages; how Codex opens the AGENTS.md it reads into a session; the namespace of a Codex message's id; and the tags a
-# prompt is wrapped in.
+# .. Linked Data's sessions (RAN Projects/ld/sessions.py): a name is the first line of a text, clipped; the messages of Claude Code that name its session and the key each holds the name in; the Codex payloads that are messages and the roles of its messages; how Codex opens the AGENTS.md it reads into a session; the namespace of a Codex message's id; and the tags a prompt is wrapped in.
 NAME_LEN = 120
 TITLES = {"ai-title": "aiTitle", "agent-name": "agentName", "custom-title": "customTitle"}
 CODEX_MESSAGES = {"message", "function_call", "custom_tool_call", "function_call_output", "custom_tool_call_output", "agent_message"}
@@ -276,7 +271,7 @@ class Handler:
             try:
                 return cls.valid_time(moment.replace(tzinfo=zone) if zone else moment.astimezone())
             except (OSError, OverflowError, ValueError):
-                return None   # a number shaped like a date this host cannot put a zone on is not a date
+                return None   # .. a number shaped like a date this host cannot put a zone on is not a date
 
         def days(dates: list[datetime]) -> TimeSpan | None:
             return TimeSpan(min(dates), max(dates) + timedelta(days=1, microseconds=-1)) if dates else None
@@ -344,7 +339,7 @@ class PartitionedFolderHandler(FolderHandler):
         """Whether a folder named name, level partitions below this folder, is a partition."""
         if level >= len(cls.partitions):
             return False
-        try:   # read in a leap year, as a month or a day has no year of its own and Python 3.15 asks for one
+        try:   # .. read in a leap year, as a month or a day has no year of its own and Python 3.15 asks for one
             datetime.strptime(f'2000 {name}', f'%Y {cls.partitions[level]}')
         except ValueError:
             return False
@@ -640,14 +635,12 @@ class SessionHandler(FileHandler):
     )
     UID = {"cx": "_codex_uid", "gemini": "_gemini_uid", "cc": "_claude_code_uid",
            "openclaw": "_openclaw_uid", "agy": "_agy_uid", "hermes": "_hermes_uid"}
-    # What a file says of the conversation above it: Codex names a parent thread, Claude Code the session
-    # that spawned the subagent. The other harnesses name none.
+    # .. What a file says of the conversation above it: Codex names a parent thread, Claude Code the session that spawned the subagent. The other harnesses name none.
     PARENT = {"cx": "_parent", "cc": "_claude_code_parent"}
     TURNS = {"cx": "_codex_turns", "gemini": "_gemini_turns",
              "cc": "_claude_code_turns", "openclaw": "_openclaw_turns", "agy": "_agy_turns",
              "hermes": "_hermes_turns"}
-    # What parse reads of a Claude Code or a Codex message, the rest dropped as each line is read: a tool's input and output, a
-    # hook's parameters and a thinking block's signature are most of a long session's file, which parse never holds whole.
+    # .. What parse reads of a Claude Code or a Codex message, the rest dropped as each line is read: a tool's input and output, a hook's parameters and a thinking block's signature are most of a long session's file, which parse never holds whole.
     KEPT = {"cc": "_kept_claude_code", "cx": "_kept_codex"}
     CLAUDE_CODE_KEYS = ("type", "sessionId", "uuid", "parentUuid", "agentId", "isSidechain", "isMeta", "cwd", *TITLES.values(),
                         *ID_KEYS, *TIME_KEYS)
@@ -825,8 +818,8 @@ class SessionHandler(FileHandler):
                 session["title"] = message.get(TITLES[kind]) or session["title"]
             attachment = message.get("attachment") or {}
             if kind == "attachment" and attachment.get("type") == "queued_command" and (attachment.get("origin") or {}).get("kind") == "human":
-                # a prompt the person sent while the session worked: the harness keeps it as an attachment, not a user line
-                prompt = cls._text_of(attachment.get("prompt"), ("text",))   # a string, or blocks when it carries an image
+                # .. a prompt the person sent while the session worked: the harness keeps it as an attachment, not a user line
+                prompt = cls._text_of(attachment.get("prompt"), ("text",))   # .. a string, or blocks when it carries an image
                 session["uid"] = message.get("sessionId") or session["uid"]
                 cls._prompted(session, prompt)
                 session_messages.append(cls._session_message(message.get("uuid"), message, n, "user", prompt))
@@ -1225,8 +1218,7 @@ class SessionHandler(FileHandler):
     def _messages(path: Path) -> tuple[Mapping[str, Any], ...]:
         """Read valid JSON objects from a JSONL session file."""
 
-        # a writer crash or interrupted flush can leave one line truncated mid-message;
-        # skip that line rather than losing every message in the file over it.
+        # ^^ a writer crash or interrupted flush can leave one line truncated mid-message; skip that line rather than losing every message in the file over it.
         messages: list[Mapping[str, Any]] = []
         with path.open("r", encoding="utf-8") as stream:
             for line in stream:
@@ -1533,7 +1525,7 @@ class ExportHandler(FileHandler):
 
     type = "export"
 
-    # harness -> what its conversations have, the keys of a conversation's id and its own times
+    # .. harness -> what its conversations have, the keys of a conversation's id and its own times
     SHAPES = {"chatgpt": (("mapping", Mapping), ("current_node", str)), "claude": (("chat_messages", list), ("uuid", str))}
     IDS = {"chatgpt": ("id", "conversation_id"), "claude": ("uuid", "id")}
     TIMES = {"chatgpt": ("create_time", "update_time"), "claude": ("created_at", "updated_at")}
@@ -1638,13 +1630,13 @@ class SessionFolderHandler(FolderHandler):
                 yield SessionHandler.parse(member)
 
 
-# The handler that reads a file of a type; a link, a junction, an offline file or an ignored path has none.
+# .. The handler that reads a file of a type; a link, a junction, an offline file or an ignored path has none.
 HANDLERS: dict[str, type[Handler]] = {
     handler.type: handler
     for handler in (FolderHandler, FileHandler, SqliteHandler, MarkdownHandler, CSVHandler, LogHandler, EmailHandler,
                     SessionHandler, ExportHandler, SessionFolderHandler, WorkFolderHandler, ProjectsFolderHandler)
 }
-# The types of the handlers that read a folder.
+# .. The types of the handlers that read a folder.
 FOLDERS = tuple(handler.type for handler in HANDLERS.values() if issubclass(handler, FolderHandler))
 
 

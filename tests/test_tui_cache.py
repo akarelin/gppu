@@ -28,7 +28,7 @@ class _FakeCache:
         self._d.pop(key, None)
 
 
-# ── CachedFetcher ─────────────────────────────────────────────────────────
+# .. ── CachedFetcher ─────────────────────────────────────────────────────────
 
 class TestCachedFetcher:
     def test_miss_then_hit(self):
@@ -39,7 +39,7 @@ class TestCachedFetcher:
         f = CachedFetcher(cache=_FakeCache(), fetch=fetch_fn,
                           key_fn=lambda x: f'k:{x}')
         assert f(3) == 30 and len(calls) == 1
-        # second call hits cache, no extra fetch
+        # .. second call hits cache, no extra fetch
         assert f(3) == 30 and len(calls) == 1
 
     def test_use_cache_false_bypasses(self):
@@ -68,7 +68,7 @@ class TestCachedFetcher:
         f = CachedFetcher(cache=_FakeCache(),
                           fetch=lambda a, b: a + b)
         assert f(1, 2) == 3
-        # Same inputs → same key → cache hit second call (verified by no extra side-effect)
+        # .. Same inputs → same key → cache hit second call (verified by no extra side-effect)
         side_effects = []
         f2 = CachedFetcher(
             cache=_FakeCache(),
@@ -89,11 +89,11 @@ class TestCachedFetcher:
         assert len(calls) == 2
 
 
-# ── PaginatedFetcher ──────────────────────────────────────────────────────
+# .. ── PaginatedFetcher ──────────────────────────────────────────────────────
 
 class TestPaginatedFetcher:
     def test_fetches_and_aggregates(self):
-        # 3 pages of 10 items each, then empty
+        # .. 3 pages of 10 items each, then empty
         def fetch_page(*, page, limit, **_):
             if page > 3:
                 return {'data': [], 'meta': {'totalItems': 25}}
@@ -105,14 +105,13 @@ class TestPaginatedFetcher:
             max_pages=5, limit=10,
         )
         rows, total = pf()
-        # stops when a page returns fewer than `limit` rows — but all pages
-        # here return exactly `limit` until an empty page
+        # .. stops when a page returns fewer than `limit` rows — but all pages here return exactly `limit` until an empty page
         assert total == 25
-        assert len(rows) == 30      # 3 pages × 10 items
+        assert len(rows) == 30      # .. 3 pages × 10 items
 
     def test_short_page_stops_early(self):
         def fetch_page(*, page, limit, **_):
-            return {'data': list(range(3))}   # only 3 < limit=10
+            return {'data': list(range(3))}   # .. only 3 < limit=10
         pf = PaginatedFetcher(
             cache=_FakeCache(),
             fetch_page=fetch_page,
@@ -121,12 +120,12 @@ class TestPaginatedFetcher:
         )
         rows, total = pf()
         assert len(rows) == 3
-        # total falls back to len(rows) when meta has no totalItems
+        # .. total falls back to len(rows) when meta has no totalItems
         assert total == 3
 
     def test_max_pages_bounds(self):
         def fetch_page(*, page, limit, **_):
-            return {'data': list(range(limit))}   # infinite
+            return {'data': list(range(limit))}   # .. infinite
         pf = PaginatedFetcher(
             cache=_FakeCache(),
             fetch_page=fetch_page,
@@ -134,7 +133,7 @@ class TestPaginatedFetcher:
             max_pages=2, limit=5,
         )
         rows, _ = pf()
-        assert len(rows) == 10    # max_pages × limit
+        assert len(rows) == 10    # .. max_pages × limit
 
     def test_per_page_caching(self):
         cache = _FakeCache()
@@ -147,16 +146,16 @@ class TestPaginatedFetcher:
             key_fn=lambda *, page, limit, **_: f'p:{page}',
             max_pages=3, limit=4,
         )
-        # First run: fetches pages 1, 2, 3
+        # .. First run: fetches pages 1, 2, 3
         pf()
         assert calls == [1, 2, 3]
-        # Second run: all cached — no new fetches
+        # .. Second run: all cached — no new fetches
         pf()
         assert calls == [1, 2, 3]
-        # Bypass one page by deleting its cache entry
+        # .. Bypass one page by deleting its cache entry
         cache.delete('p:2')
         pf()
-        # Only page 2 should re-fetch; 1 and 3 remain cached
+        # .. Only page 2 should re-fetch; 1 and 3 remain cached
         assert calls == [1, 2, 3, 2]
 
     def test_bypass(self):
@@ -170,7 +169,7 @@ class TestPaginatedFetcher:
             key_fn=lambda *, page, limit, **_: f'p:{page}',
             max_pages=2, limit=3,
         )
-        pf()                # fills cache
-        pf(use_cache=False) # bypass
-        # Each run does its own fetches
+        pf()                # .. fills cache
+        pf(use_cache=False) # .. bypass
+        # .. Each run does its own fetches
         assert calls.count(1) == 2

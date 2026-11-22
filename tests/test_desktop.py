@@ -95,7 +95,7 @@ def test_index_view_reads_deep_entries_without_listing_source(tmp_path, monkeypa
     view = '/Indexed/Data › source'
     monkeypatch.setattr(GppuFileSystem, '_listing', refused('indexed listing touched source hierarchy'))
     names = fs.ls(view, detail=False)
-    assert view + '/day › note.txt' in names   # named by the fewest folders that tell the two notes apart
+    assert view + '/day › note.txt' in names   # .. named by the fewest folders that tell the two notes apart
     assert view + '/other › note.txt' in names
     assert fs.cat_file(view + '/day › note.txt') == b'deep indexed content'
     assert fs.cat_file(view + '/other › note.txt') == b'another note'
@@ -131,7 +131,7 @@ def test_index_view_names_archive_members_for_windows_and_leaves_out_ignored(tmp
         archive.writestr('inner/member.txt', 'from the archive')
     GppuFileSystem().ls(str(root))
     index = root / '.original.gppufs.sqlite'
-    with sqlite3.connect(index) as db:   # rows an earlier gppufs wrote: archive members chained as fsspec chains them, an ignored file
+    with sqlite3.connect(index) as db:   # .. rows an earlier gppufs wrote: archive members chained as fsspec chains them, an ignored file
         metadata = db.execute("SELECT metadata FROM gppufs_entries WHERE path='note.txt'").fetchone()[0]
         ignored = metadata.replace('"handlers": [', '"handlers": ["ignored", ')
         db.executemany('INSERT INTO gppufs_entries VALUES (?, ?, NULL)', [
@@ -150,7 +150,7 @@ def test_a_time_an_index_holds_as_text_reaches_windows_in_seconds(tmp_path):
     root.mkdir()
     (root / 'note.txt').write_text('a note')
     GppuFileSystem().ls(str(root))
-    with sqlite3.connect(root / '.original.gppufs.sqlite') as db:   # an archive member's row: its time as text
+    with sqlite3.connect(root / '.original.gppufs.sqlite') as db:   # .. an archive member's row: its time as text
         metadata = db.execute("SELECT metadata FROM gppufs_entries WHERE path='note.txt'").fetchone()[0]
         member = re.sub(r'"mtime": [0-9.]+', '"mtime": "2026-08-05 16:08:05-07:00"', metadata)
         db.execute('INSERT INTO gppufs_entries VALUES (?, ?, NULL)', ('zip://member.txt::bundle.zip', member))
@@ -166,14 +166,14 @@ def test_a_name_longer_than_windows_holds_keeps_the_end_nearest_the_file(tmp_pat
     (root / 'note.txt').write_text('a note')
     GppuFileSystem().ls(str(root))
     index = root / '.original.gppufs.sqlite'
-    with sqlite3.connect(index) as db:   # two notes told apart only by folders whose names together pass 255 characters
+    with sqlite3.connect(index) as db:   # .. two notes told apart only by folders whose names together pass 255 characters
         metadata = db.execute("SELECT metadata FROM gppufs_entries WHERE path='note.txt'").fetchone()[0]
         db.executemany('INSERT INTO gppufs_entries VALUES (?, ?, NULL)', [
             (f'{"a" * 200}/{"b" * 100}/note.txt', metadata), (f'{"c" * 200}/{"b" * 100}/note.txt', metadata)])
     names = [name.lstrip('/') for name in GppuIndexedFileSystem(index).ls(detail=False)]
     long = [name for name in names if name.startswith('…')]
     assert len(long) == 2 and all(len(name) == 255 and name.endswith('b' * 100 + ' › note.txt') for name in long)
-    assert 'note.txt' in names and len(set(names)) == 3   # the note at the top has no folder to be told apart by
+    assert 'note.txt' in names and len(set(names)) == 3   # .. the note at the top has no folder to be told apart by
 
 
 def test_a_drive_root_is_a_source(tmp_path):
@@ -234,7 +234,7 @@ def _made(root, *paths):
                 archive.writestr('final.md', path)
         else:
             target.write_text(path)
-        os.utime(target, (1_790_000_000 + n, 1_790_000_000 + n))   # each written after the one before
+        os.utime(target, (1_790_000_000 + n, 1_790_000_000 + n))   # .. each written after the one before
 
 
 def test_work_shows_each_task_once_by_its_own_name(tmp_path):
@@ -244,15 +244,15 @@ def test_work_shows_each_task_once_by_its_own_name(tmp_path):
     fs = DesktopFileSystem({'Work': f'gppu::{work}'})
     assert sorted(fs.ls('/Work', detail=False)) == ['/Work/README.md', '/Work/gppu', '/Work/notes.md', '/Work/ov-memory', '/Work/speed']
     assert sorted(fs.ls('/Work/ov-memory', detail=False)) == ['/Work/ov-memory/plan.md', '/Work/ov-memory/run.py']
-    assert fs.cat_file('/Work/ov-memory/plan.md') == b'10/22/ov-memory/plan.md'   # a file a task keeps on several days: its latest
+    assert fs.cat_file('/Work/ov-memory/plan.md') == b'10/22/ov-memory/plan.md'   # .. a file a task keeps on several days: its latest
     assert fs.cat_file('/Work/notes.md') == b'10/22/notes.md'
-    assert sorted(fs.ls('/Work/gppu', detail=False)) == ['/Work/gppu/final.md', '/Work/gppu/notes.md']   # its archived stage too
+    assert sorted(fs.ls('/Work/gppu', detail=False)) == ['/Work/gppu/final.md', '/Work/gppu/notes.md']   # .. its archived stage too
     assert fs.cat_file('/Work/gppu/final.md') == b'10/23/gppu.zip'
     task = fs.info('/Work/ov-memory')
     assert task['type'] == 'directory' and task['mtime'] == pytest.approx(max((work / '10' / day / 'ov-memory').stat().st_mtime for day in ('21', '22')), abs=1e-3)
     with pytest.raises(IsADirectoryError):
         fs.open('/Work/ov-memory')
-    fs.ls('/Work', detail=False)   # its files are in the index now: a task's span is theirs, on each day it was kept
+    fs.ls('/Work', detail=False)   # .. its files are in the index now: a task's span is theirs, on each day it was kept
     task = fs.info('/Work/ov-memory')
     assert (task['ctime'], task['mtime']) == (pytest.approx(1_790_000_000, abs=1e-3), pytest.approx(1_790_000_002, abs=1e-3))
 
@@ -280,7 +280,7 @@ def test_a_folder_stored_before_its_handler_existed_is_identified_again(tmp_path
     _made(tmp_path, 'Work/10/21/task/a.md')
     probe = handlers.probe
 
-    def before(path):   # as gppufs read Work before WorkFolderHandler existed
+    def before(path):   # .. as gppufs read Work before WorkFolderHandler existed
         record = probe(path)
         if record.type == handlers.WorkFolderHandler.type:
             record.type = handlers.FolderHandler.type
@@ -289,5 +289,5 @@ def test_a_folder_stored_before_its_handler_existed_is_identified_again(tmp_path
     fs = DesktopFileSystem({'D': f'gppu::{tmp_path}'})
     assert fs.ls('/D/Work', detail=False) == ['/D/Work/10']
     monkeypatch.setattr(handlers, 'probe', probe)
-    GppuFileSystem().ls(str(tmp_path))   # listed live, as a FileIndexer run lists it
+    GppuFileSystem().ls(str(tmp_path))   # .. listed live, as a FileIndexer run lists it
     assert DesktopFileSystem({'D': f'gppu::{tmp_path}'}).ls('/D/Work', detail=False) == ['/D/Work/task']

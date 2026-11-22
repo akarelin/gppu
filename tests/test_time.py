@@ -17,7 +17,7 @@ class TestNowTs:
         assert isinstance(now_ts(), float)
 
     def test_recent_timestamp(self):
-        assert now_ts() > 1700000000  # After Nov 2023
+        assert now_ts() > 1700000000  # .. After Nov 2023
 
 
 class TestPrettyTimedelta:

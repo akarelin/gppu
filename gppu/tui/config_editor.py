@@ -43,7 +43,7 @@ def _load_include(loader: LoaderWithInclude, node: yaml.Node) -> str:
 LoaderWithInclude.add_constructor('!include', _load_include)
 
 
-# ── File discovery ──────────────────────────────────────────────────────────
+# .. ── File discovery ──────────────────────────────────────────────────────────
 
 def find_direct_includes(yaml_path: Path) -> list[Path]:
     """Return include targets declared in *yaml_path*."""
@@ -106,7 +106,7 @@ def collect_yaml_targets(
     return files
 
 
-# ── Validation ──────────────────────────────────────────────────────────────
+# .. ── Validation ──────────────────────────────────────────────────────────────
 
 def _normalize_bare_includes(content: str) -> str:
     normalized_lines: list[str] = []
@@ -134,7 +134,7 @@ def validate_yaml(path: Path) -> tuple[bool, str | None]:
     return True, None
 
 
-# ── Editor ──────────────────────────────────────────────────────────────────
+# .. ── Editor ──────────────────────────────────────────────────────────────────
 
 def pick_editor() -> str:
     """Pick terminal editor command."""
@@ -147,7 +147,7 @@ def pick_editor() -> str:
     return 'vi'
 
 
-# ── TUI App ─────────────────────────────────────────────────────────────────
+# .. ── TUI App ─────────────────────────────────────────────────────────────────
 
 from .launcher import TUIApp, StatusHeader, _tui_available
 from textual.app import ComposeResult
@@ -253,7 +253,7 @@ class ConfigEditorApp(TUIApp):
             f'{len(self._files)} files  |  Enter: edit  v: validate all  r: refresh  q: quit'
         )
 
-    # ── Preview mode ────────────────────────────────────────────────────
+    # .. ── Preview mode ────────────────────────────────────────────────────
 
     def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
         if self._editing:
@@ -307,7 +307,7 @@ class ConfigEditorApp(TUIApp):
                         r = inc
                     log.write(f'  {exists} {r}')
 
-    # ── Edit mode ───────────────────────────────────────────────────────
+    # .. ── Edit mode ───────────────────────────────────────────────────────
 
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
         self.action_edit()
@@ -384,7 +384,7 @@ class ConfigEditorApp(TUIApp):
         else:
             self.action_quit()
 
-    # ── Validate all ────────────────────────────────────────────────────
+    # .. ── Validate all ────────────────────────────────────────────────────
 
     def action_validate_all(self) -> None:
         if self._editing:
@@ -420,7 +420,7 @@ class ConfigEditorApp(TUIApp):
         return _cli_editor(self._root_config, self._extra_dirs, self._extra_files, self._project_root)
 
 
-# ── CLI fallback ────────────────────────────────────────────────────────────
+# ^^ ── CLI fallback ────────────────────────────────────────────────────────────
 
 def _cli_editor(
     root_config: Path,

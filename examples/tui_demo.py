@@ -24,7 +24,7 @@ from pathlib import Path
 
 from gppu.tui import TUILauncher, launch_app
 
-# ── Create temporary sub-app scripts ────────────────────────────────────────
+# .. ── Create temporary sub-app scripts ────────────────────────────────────────
 
 _tmpdir = Path(tempfile.mkdtemp(prefix='gppu_tui_demo_'))
 atexit.register(shutil.rmtree, _tmpdir, ignore_errors=True)
@@ -73,7 +73,7 @@ atexit.register(shutil.rmtree, _tmpdir, ignore_errors=True)
     input("Press Enter to return...")
 """))
 
-# ── App registry ────────────────────────────────────────────────────────────
+# .. ── App registry ────────────────────────────────────────────────────────────
 
 APPS: dict[str, dict] = {
     'counter': {
@@ -128,7 +128,7 @@ APPS: dict[str, dict] = {
     },
 }
 
-# ── Demo app ────────────────────────────────────────────────────────────────
+# .. ── Demo app ────────────────────────────────────────────────────────────────
 
 
 def _simulate_sync(*, log, steps=8):

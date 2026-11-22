@@ -23,21 +23,21 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 
 
-# -- Defaults (overridable via prepare_driver kwargs) --
+# .. -- Defaults (overridable via prepare_driver kwargs) --
 DEFAULT_PROFILE = os.path.expanduser("~/.config/chrome-automation")
 SYSTEM_CHROME = "/opt/google/chrome/chrome"
 
 
-# ##########################################################################
-#                         Chrome Process Management
-# ##########################################################################
+# .. ##########################################################################
+# .. Chrome Process Management
+# .. ##########################################################################
 
 def _pgrep(pattern: str) -> List[str]:
   try:
     out = subprocess.check_output(["pgrep", "-af", pattern], text=True)
     return out.splitlines()
   except subprocess.CalledProcessError as e:
-    if e.returncode == 1: return []   # pgrep matched no process
+    if e.returncode == 1: return []   # .. pgrep matched no process
     raise
 
 
@@ -98,9 +98,9 @@ def _ensure_profile_unlocked(profile: str, timeout: float = 5.0, interactive: bo
   _remove_stale_locks(profile)
 
 
-# ##########################################################################
-#                           Driver Preparation
-# ##########################################################################
+# .. ##########################################################################
+# .. Driver Preparation
+# .. ##########################################################################
 
 def prepare_driver(
     download_directory: str = "~/Downloads",
@@ -137,7 +137,7 @@ def prepare_driver(
   options.add_argument("--no-sandbox")
   options.add_argument("--disable-dev-shm-usage")
 
-  # Remove stale DevToolsActivePort
+  # .. Remove stale DevToolsActivePort
   devtools_port = os.path.join(user_data_dir, "DevToolsActivePort")
   if os.path.exists(devtools_port):
     os.remove(devtools_port)
@@ -148,9 +148,9 @@ def prepare_driver(
   return driver
 
 
-# ##########################################################################
-#                         Mobile / Desktop Emulation
-# ##########################################################################
+# .. ##########################################################################
+# .. Mobile / Desktop Emulation
+# .. ##########################################################################
 
 def switch_to_mobile(driver: webdriver.Chrome, device: str = "iPhone X") -> None:
   """Switch driver to mobile emulation mode."""

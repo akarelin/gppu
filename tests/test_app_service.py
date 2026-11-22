@@ -69,7 +69,7 @@ def test_mqtt_startup_loads_every_topic_into_env_and_disconnects(monkeypatch):
     assert glob_dict('display-control') == {'scene': 'pc'}
     assert glob('ov/server/url') == 'https://ov'
     assert glob_dict('kept') == {'by': 'test'}
-    assert {key: app[key] for key in config} == config   # its data holds its configuration, beside what it was constructed with
+    assert {key: app[key] for key in config} == config   # .. its data holds its configuration, beside what it was constructed with
     assert client.subscriptions == [('config/dc', 1), ('config/ov', 1)]
     assert client.closed
     assert client.connections == 1
@@ -113,7 +113,7 @@ def test_constructing_a_service_does_not_start_a_connection(monkeypatch):
     app = AppService(config=config)
     assert client.connections == 0
     assert app._mqtt_task is None
-    assert {key: app[key] for key in config} == config   # its data holds its configuration, beside what it was constructed with
+    assert {key: app[key] for key in config} == config   # .. its data holds its configuration, beside what it was constructed with
   asyncio.run(run())
 
 

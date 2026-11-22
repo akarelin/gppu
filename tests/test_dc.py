@@ -60,6 +60,6 @@ class TestDC:
         class Item(DC):
             name: str
 
-        # When data kwarg is a string, it gets wrapped: {"data": "raw"}
+        # .. When data kwarg is a string, it gets wrapped: {"data": "raw"}
         item = Item(data="raw")
         assert item.data == {"data": "raw"}
