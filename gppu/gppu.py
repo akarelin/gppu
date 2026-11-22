@@ -955,6 +955,18 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
             return self.apply_template(templates[name], templates) | node
         return node
 
+    def configuration(self, node: dict) -> dict:
+        """A configuration as loaded: its macros and named templates added, its Jinja that reads only the configuration
+        filled (``glob`` reads the value it fills, filled), and its `template:` rows merged over their templates. Env's
+        configuration and an app's own both load through it."""
+        self.jinja_configuration(node)
+        def read(path: str) -> Any: return self.jinja_fill(glob(path), **readers)
+        readers = {'glob': read,
+                   'glob_int': lambda path: _ if isinstance(_ := read(path), int) else 0,
+                   'glob_list': lambda path: _ if isinstance(_ := read(path), list) else [],
+                   'glob_dict': lambda path: _ if isinstance(_ := read(path), dict) else {}}
+        return self.apply_template(self.jinja_fill(node, **readers), self.templates_of(node))
+
     @cache
     def _jinja_compile(self, template: str):
         return self.from_string(template)
@@ -1616,7 +1628,7 @@ class App(YInit, _Base, _DC):
             if not manifest: raise ValueError(f'{source}: no MANIFEST in its first 4 KB')
             loaded = dict(yaml.load(manifest[1], Loader=YmlLoader))
         else: loaded = dict_from_yml(source)
-        self.data = self.data | loaded
+        self.data = self.data | jinja.configuration(loaded)
         i = 0
         while i < len(argv):
             arg, i = argv[i], i + 1
@@ -1664,21 +1676,15 @@ class _Env(App):
     self.user = getpass.getuser()
     self.home = Path.home()
 
-    if not environment: return
+    if not environment and 'config' not in kw: return   # .. a host without its repository is given its configuration, from MQTT
     self.environment = environment
-    self.path = Path("D:\\Dev" if self.os == OSType.W11 else "~").expanduser() / _ENV_PATHS[environment]
+    if environment: self.path = Path("D:\\Dev" if self.os == OSType.W11 else "~").expanduser() / _ENV_PATHS[environment]
     self.data = kw['config'] if 'config' in kw else dict_from_yml(self.path)   # .. one YAML load of its file; MQTT and Y2's configure give it whole
     # region - the configuration's macros, named templates, `template:` rows and the Jinja that reads only the configuration
     # .. Creekview and RAN use all four: _creekview.yaml's macros, the *_templates and templates blocks of groups, Insteon,
     # .. covers and the devices, and RAN config.yaml's mounts; glob reads the value it fills, filled
     # endregion
-    jinja.jinja_configuration(self.data)
-    def read(path: str) -> Any: return jinja.jinja_fill(glob(path), **readers)
-    readers = {'glob': read,
-               'glob_int': lambda path: _ if isinstance(_ := read(path), int) else 0,
-               'glob_list': lambda path: _ if isinstance(_ := read(path), list) else [],
-               'glob_dict': lambda path: _ if isinstance(_ := read(path), dict) else {}}
-    self.data = jinja.apply_template(jinja.jinja_fill(self.data, **readers), jinja.templates_of(self.data))
+    self.data = jinja.configuration(self.data)
     if 'log_file' in self.data: Logger.enable_file_logging(self.data['log_file'])
     if 'trace_rules' in self.data: Logger.init_logger(trace_rules=self.data['trace_rules'])
     self.initialized = True
