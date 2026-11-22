@@ -148,6 +148,11 @@ Notes of an agent session, 2026-11-21. The first part is what Alex said in that 
 - An indicator's state is retained like any other state, and a mechanism keeps the state of every button of an indicator matching the indicator.
 - A pressed button may be out of sync with the rest of its indicator for a few seconds: the action the press triggered takes time, and its feedback may come by a completely different path, such as power consumption. That is fine: the user pressed the button and sees it in the state he pressed it to.
 - That is what the poll is for: a button that stays out of sync after that time is brought back to its indicator.
+- Polling a device makes it re-report its most recent state, and that is all a poll does. There is no separate path for polling: the report triggers a state change, which triggers the indicator change like any other.
+- There is one path to an indicator update: a state is reported and the indicator is updated. A report of an unchanged state, a device that stayed off, takes the same path, so polls several times a day bring indicators back even with no change. Nothing about an indicator change differs from a state change.
+- No individual step is forced to succeed: no repeats, retries or fallbacks. Things are done gently, knowing that a step that failed, say in a broadcast storm, is picked up by a poll.
+- A device is polled again soon after a command to it, as AV devices are 30 seconds after one. A device whose state change did not arrive in real time, or within a few seconds of it, is first in the queue to be polled again. Every device is polled at least once an hour.
+- Keeping buttons matching their indicator is not about catching every case. After a press the keypad in front of the user is probably already right; what matters is that the entity's next refresh comes soon, in a queue. Flapping is not removed by manipulating how the system works: a longer delay is allowed, because a more thorough round follows.
 - A command to an indicator is sent to every button of the indicator.
 - A change of a source's state triggers a state refresh, and the refresh sends every notification due, one of them to the indicator. Whether a button needs a command is decided by that button's own state, not by the indicator's group state.
 
