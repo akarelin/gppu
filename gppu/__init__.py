@@ -45,6 +45,7 @@ from .gppu import (
     uuid_create,
     y2list,
     y2path,
+    Path,
     y2uri,
     y2topic,
     VER_GPPU,
@@ -64,7 +65,6 @@ from .gppu import (
     sync,
 
     # .. Global configuration
-    TRACE_RULES,
 
     # .. Configuration loading
     dict_from_yml,
@@ -106,7 +106,6 @@ from .gppu import (
 
     # .. Colored printing
     pcp,
-    dpcp,
     TColor,
 
     # .. Logging
@@ -153,9 +152,6 @@ __all__ = [
     # .. Async helpers
     'sync',
 
-    # .. Global configuration
-    'TRACE_RULES',
-
     # .. Configuration
     'dict_from_yml', 'dict_to_yml', 'dict_from_json', 'dict_to_json', 'dict_sanitize',
     'template_populate', 'jinja_template', 'jinja', 'jinja_configuration', 'render_template', 'apply_template',
@@ -174,7 +170,7 @@ __all__ = [
     'pfy', 'slugify',
 
     # .. Colored printing
-    'pcp', 'dpcp', 'TColor',
+    'pcp', 'TColor',
 
     # .. Logging
     'Debug', 'Info', 'Warn', 'Error', 'Dump',
@@ -200,7 +196,7 @@ __all__ = [
     '_Base', 'App', 'TimerHandle', '_callback_wrapper', 'AsyncApp', 'APIApp', 'mixin_Rest',
 
     # .. y2xxx classes
-    'y2list', 'y2path', 'y2uri', 'y2topic', 'y2slug', 'y2eid', 'Runtime', 'ListenerHandle',
+    'y2list', 'y2path', 'Path', 'y2uri', 'y2topic', 'y2slug', 'y2eid', 'Runtime', 'ListenerHandle',
 
     # .. mqtt library
     'mixin_Mqtt', 'MqttApp', 'AppService',

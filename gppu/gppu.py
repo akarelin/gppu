@@ -8,7 +8,6 @@ import pathlib
 
 import inspect
 import logging
-from logging.handlers import RotatingFileHandler
 import sys
 import platform
 import asyncio
@@ -493,9 +492,8 @@ class Path(y2path, pathlib.Path):
     return other if other.is_absolute() else Path(self, other)   # .. an absolute right side wins, as in pathlib
 
   def open(self, mode: str = 'r', buffering: int = -1, encoding: str | None = None, *args, **kwargs):
-    # .. the one place a file is opened: a written file's folder is made, and text is UTF-8 unless a caller names another
-    # .. encoding (pathlib's read_text and write_text pass 'locale', Windows' code page before Python 3.15)
-    if mode[0] in 'wax': self.parent.mkdir(parents=True, exist_ok=True)
+    # .. text is UTF-8 unless a caller names another encoding (pathlib's read_text and write_text pass 'locale', Windows'
+    # .. code page before Python 3.15)
     if 'b' not in mode and encoding in (None, 'locale'): encoding = 'utf-8'
     return pathlib.Path.open(self, mode, buffering, encoding, *args, **kwargs)
 
@@ -1128,60 +1126,62 @@ def pcp(*a: str | List[Any] | Tuple[Any, ...], **kw: Any) -> str:
 
 _remove_prefixes = lambda s, prefixes: next((s.removeprefix(prefix) for prefix in prefixes if s.startswith(prefix)), s)
 _SHORTEN_BY_PREFIX = ['process_', '_cb_']
-_IGNORE_FUNCTIONS = ['dpcp', 'trace', 'pcp', 'Trace', 'Info', 'Debug', 'Warn', 'Error', '_LogColorizer', '_PlainFormatter']
 _SEVERITY_COLORS = {'Error': 'WRED', 'Warn': 'WYELLOW', 'Info': 'WBLUE', 'Debug': 'GRAY4', None: 'WPURPLE'}
-def dpcp(*a: Any, conditional: Optional[bool] = None, rules: Dict[str, bool] = {}, no_prefix: bool = False, severity: Optional[str] = None, **kw: Any) -> str | None:
-  """ Version of pcp that adds info on where it was called from """
-  def is_traced(name : Optional[str] = None) -> bool:
-    if not conditional: return True
-    if not name or name not in rules: return rules.get('all', False)
-    else: return rules.get(name, False)
-
-  def is_ignored(f, fi) -> bool:
-    if 'python' in fi.filename: return True # !!! Ignoring all python3 libraries
-    elif fi.function in _IGNORE_FUNCTIONS: return True
-    elif 'self' in f.f_locals and f.f_locals['self'].__class__.__name__ in _IGNORE_FUNCTIONS: return True
-    return False
-
-  print = lambda *a, **kw: None
-
-  if not conditional and rules: conditional = True
-  frame = inspect.currentframe()
-  if frame is None: return None
-  frame_info = inspect.getframeinfo(frame)
-  func_name = frame_info.function
-  filename = frame_info.filename
-
-  frame = frame.f_back
-  while frame and frame.f_back:
-    frame = frame.f_back
-    frame_info = inspect.getframeinfo(frame)
-    filename = frame_info.filename
-    func_name = frame_info.function
-    if not is_ignored(frame, frame_info): break
-
-    func_name = _remove_prefixes(func_name, _SHORTEN_BY_PREFIX)
-
-  if frame is None: print(f"\tframe is None"); return None
-
-  if not is_traced(func_name): print(f"\tis_traced({func_name}) is False"); return None
-  module = filename.rsplit('/', 1)[-1].rsplit('.', 1)[0]
-  if not is_traced(module) or not is_traced(f"{module}.{func_name}"): print(f"\tis_traced({module}.{func_name}) is False"); return None
-
-  if 'self' in frame.f_locals: 
-    if not is_traced(class_name := frame.f_locals["self"].__class__.__name__): print(f"\tis_traced({class_name}) is False"); return None
-    if not is_traced(f"{class_name}.{func_name}"): print(f"\tis_traced({class_name}.{func_name}) is False"); return None
-    _ = ['GRAY0', f"{class_name}.", 'GRAY1', f".{func_name}"]
-  else: _ = ['GRAY1', f".{func_name}"]
-  _ += ['NONE']
-
-  if severity: _ = [_SEVERITY_COLORS.get(severity, _SEVERITY_COLORS[None]), severity] + _
-  if no_prefix: _ = list(a)
-  else: _ += list(a)
-
-  result = pcp(*_, **kw)
-  # ^^ Never return None - return empty string instead to prevent logging issues
-  return result if result is not None else ''
+# region - // dpcp: a second trace printer beside the logger, which reads the trace rules and names the caller itself (gppu.py, Alex)
+# // _IGNORE_FUNCTIONS = ['dpcp', 'trace', 'pcp', 'Trace', 'Info', 'Debug', 'Warn', 'Error', '_LogColorizer', '_PlainFormatter']
+# // def dpcp(*a: Any, conditional: Optional[bool] = None, rules: Dict[str, bool] = {}, no_prefix: bool = False, severity: Optional[str] = None, **kw: Any) -> str | None:
+# //   """ Version of pcp that adds info on where it was called from """
+# //   def is_traced(name : Optional[str] = None) -> bool:
+# //     if not conditional: return True
+# //     if not name or name not in rules: return rules.get('all', False)
+# //     else: return rules.get(name, False)
+# //
+# //   def is_ignored(f, fi) -> bool:
+# //     if 'python' in fi.filename: return True # !!! Ignoring all python3 libraries
+# //     elif fi.function in _IGNORE_FUNCTIONS: return True
+# //     elif 'self' in f.f_locals and f.f_locals['self'].__class__.__name__ in _IGNORE_FUNCTIONS: return True
+# //     return False
+# //
+# //   print = lambda *a, **kw: None
+# //
+# //   if not conditional and rules: conditional = True
+# //   frame = inspect.currentframe()
+# //   if frame is None: return None
+# //   frame_info = inspect.getframeinfo(frame)
+# //   func_name = frame_info.function
+# //   filename = frame_info.filename
+# //
+# //   frame = frame.f_back
+# //   while frame and frame.f_back:
+# //     frame = frame.f_back
+# //     frame_info = inspect.getframeinfo(frame)
+# //     filename = frame_info.filename
+# //     func_name = frame_info.function
+# //     if not is_ignored(frame, frame_info): break
+# //
+# //     func_name = _remove_prefixes(func_name, _SHORTEN_BY_PREFIX)
+# //
+# //   if frame is None: print(f"\tframe is None"); return None
+# //
+# //   if not is_traced(func_name): print(f"\tis_traced({func_name}) is False"); return None
+# //   module = filename.rsplit('/', 1)[-1].rsplit('.', 1)[0]
+# //   if not is_traced(module) or not is_traced(f"{module}.{func_name}"): print(f"\tis_traced({module}.{func_name}) is False"); return None
+# //
+# //   if 'self' in frame.f_locals: 
+# //     if not is_traced(class_name := frame.f_locals["self"].__class__.__name__): print(f"\tis_traced({class_name}) is False"); return None
+# //     if not is_traced(f"{class_name}.{func_name}"): print(f"\tis_traced({class_name}.{func_name}) is False"); return None
+# //     _ = ['GRAY0', f"{class_name}.", 'GRAY1', f".{func_name}"]
+# //   else: _ = ['GRAY1', f".{func_name}"]
+# //   _ += ['NONE']
+# //
+# //   if severity: _ = [_SEVERITY_COLORS.get(severity, _SEVERITY_COLORS[None]), severity] + _
+# //   if no_prefix: _ = list(a)
+# //   else: _ += list(a)
+# //
+# //   result = pcp(*_, **kw)
+# //   # ^^ Never return None - return empty string instead to prevent logging issues
+# //   return result if result is not None else ''
+# endregion
 
 
 def _colorize_log(msg, level=None, *args) -> str:
@@ -1268,13 +1268,6 @@ class _LogColorizer(logging.Formatter):
     return text
 
 
-class _PlainFormatter(_LogColorizer):
-  """The line without colours or prefix, for the log file."""
-  no_prefix = True
-
-  def format(self, record: logging.LogRecord) -> str: return self.ANSI.sub('', super().format(record))
-
-
 class _EmptyMessageFilter(logging.Filter):
   """Drops an empty record, and a Debug record the trace rules do not trace."""
 
@@ -1283,7 +1276,7 @@ class _EmptyMessageFilter(logging.Filter):
       function = _remove_prefixes(record.funcName or '', _SHORTEN_BY_PREFIX)
       names = [function, record.module, f'{record.module}.{function}']
       if class_name := getattr(record, 'gppu_class', ''): names += [class_name, f'{class_name}.{function}']
-      if not all(TRACE_RULES[name] if name in TRACE_RULES else TRACE_RULES.get('all', False) for name in names): return False
+      if not all(Logger.trace_rules[name] if name in Logger.trace_rules else Logger.trace_rules.get('all', False) for name in names): return False
     return bool(record.getMessage().strip() or record.exc_info)
 # endregion
 
@@ -1291,71 +1284,24 @@ class _mixin: pass
 
 # region Logger
 # ^~            Logger
-TRACE_RULES: dict = {}
-
-
 class Logger:
-  """The program's log: the console the bootstrap started, with colours and trace rules, and the file mirror. Its
-  calls reconfigure it: ``Logger.init_logger(name, trace_rules)``, ``Logger.enable_file_logging(log_file)``.
-  A class logs with it through ``mixin_Logger``."""
+  """The program's log: the console the bootstrap started, with colours, and the trace rules the configuration sets
+  on top with ``Logger.init_logger(name, trace_rules)``. A class logs with it through ``mixin_Logger``."""
 
   trace_folder: str = '.'
-  trace_rules: dict = TRACE_RULES
+  trace_rules: dict = {}
 
   _root = _logger = _log_root
   _console = _sh
   _console.setFormatter(_LogColorizer())
   _console.addFilter(_EmptyMessageFilter())
-  _file_handlers: dict[str, logging.Handler] = {}   # .. on the shared parent, so classes made earlier receive them
 
 
   @staticmethod
   def init_logger(name: str = 'gppu', trace_rules: dict | None = None) -> None:
     """Name the global logger, and optionally set the trace rules."""
-    if trace_rules is not None:
-      trace_rules = dict(trace_rules)
-      TRACE_RULES.clear()
-      TRACE_RULES.update(trace_rules)
+    if trace_rules is not None: Logger.trace_rules = dict(trace_rules)
     Logger._logger = Logger._root if name == 'gppu' else Logger._root.getChild(name)
-
-
-  @staticmethod
-  def enable_file_logging(log_file: str) -> Path:
-    """ Need justification for this to exist """
-    # region - ^^ why enable_file_logging exists
-    # ^^ RAN's config.yaml has the line `log_file: ~/.cache/gppu/hosts.log`, and loading that configuration calls this:
-    # ^^ every line a RAN program prints also goes into that one file, without time or severity. No program reads it.
-    # ^^ The file rotates at 4 MB and keeps 5 older files; both numbers are written here, not configured.
-    # endregion
-    if not isinstance(log_file, str) or not log_file.strip(): raise ValueError('File logging requires an explicit log_file in configuration')
-    path = Path(log_file)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    key = str(path)
-    if key in Logger._file_handlers: return path
-    fh = RotatingFileHandler(path, maxBytes=4_000_000, backupCount=5, encoding='utf-8')
-    fh.setFormatter(_PlainFormatter())
-    fh.addFilter(_EmptyMessageFilter())
-    Logger._root.addHandler(fh)
-    Logger._file_handlers[key] = fh
-    return path
-
-
-  @staticmethod
-  def file_log(msg: str, *args, level: int = logging.INFO) -> None:
-    """Emit a line only to gppu's file handler(s), bypassing the console handler.
-
-    For Textual TUI apps whose visible "console" is the on-screen panel: this
-    mirrors panel lines into the log file without writing to stderr (which would
-    corrupt the live TUI). No-op when file logging isn't enabled.
-    """
-    if not Logger._file_handlers:
-      return
-    record = Logger._logger.makeRecord(Logger._logger.name, level, '(app)', 0,
-                                       _LogColorizer.ANSI.sub('', pcp(msg, *args)), (), None,
-                                       func='file_log', extra={'gppu_args': (msg, *args)})
-    for h in Logger._file_handlers.values():
-      if record.levelno >= h.level:
-        h.handle(record)
 
 
   @staticmethod
@@ -1688,7 +1634,6 @@ class _Env(App):
     # .. covers and the devices, and RAN config.yaml's mounts; glob reads the value it fills, filled
     # endregion
     self.data = jinja.configuration(self.data)
-    if 'log_file' in self.data: Logger.enable_file_logging(self.data['log_file'])
     if 'trace_rules' in self.data: Logger.init_logger(trace_rules=self.data['trace_rules'])
     self.initialized = True
 

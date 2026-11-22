@@ -196,6 +196,7 @@ class _FileBackend:
   def __init__(self, path: str, serializer, name: str):
     self._serializer, self._binary = serializer, serializer is pickle
     self._path = Path(path) / name if Path(path).is_dir() else Path(path)
+    self._path.parent.mkdir(parents=True, exist_ok=True)
     self._data: dict = {}
     if self._path.exists():
       with self._path.open('rb' if self._binary else 'r') as f: self._data = self._serializer.load(f)
@@ -263,7 +264,7 @@ class _DiskcacheBackend:
 
   def __init__(self, path: str):
     from diskcache import Cache
-    self._cache = Cache(path)
+    self._cache = Cache(str(Path(path)))
 
   def get(self, key: str, default=None): return self._cache.get(key, default)
   def set(self, key: str, value, expire=None): self._cache.set(key, value, expire=expire)
@@ -407,6 +408,7 @@ class _FilePersistBackend:
   def __init__(self, path: str, serializer, name: str):
     self._serializer, self._binary = serializer, serializer is pickle
     self._path = Path(path) / name if Path(path).is_dir() else Path(path)
+    self._path.parent.mkdir(parents=True, exist_ok=True)
     self._data: dict[str, dict[str, dict]] = {}
     if self._path.exists():
       with self._path.open('rb' if self._binary else 'r') as f: self._data = self._serializer.load(f)
