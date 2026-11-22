@@ -24,7 +24,7 @@ Principles: no new verb or noun; gppu.py core shrinks; downstreams that never us
 
 Independent and unscoped:
 - Y2's state managers read their rows through `_DC` accessors, with no `_key`, `poll_interval` or section copies
-- Swallowed exceptions in AI code
+- Swallowed exceptions in AI code. Gone: `Cache.get`, `set` and `delete` (gppu dad6355) and the close of ecobee's, nest's and UniFi's cloud session (y2 11d77db). Left: `HTTPControl` and `JSONHTTPControl` answering None for a failed request, which Y2's PowerView, Hue and AV callers branch on, so gppu and those callers change together
 - Y2 onto gppu's loader: Y2's StateManager a thin subclass, its apps the rows of `y2/apps`, its `initialize`, `terminate`, `start` and `stop` overrides private steps, its mixins lifecycle members; `D:\Work\11\21\y2-gppu-overlap\review.md` lists every place
 - Fleet in gppu under its own name, RAN's reduced to `expand` and `values`; a row's platform read from the environment
 - Objects read `self.name`, their annotated accessors, never `my('name')`
@@ -144,6 +144,6 @@ These move in the same commit as the release. gppu 3.7.7 is released and alex-pc
 - Linked Data's tests: `tests/test_ld.py` and conftest's `ld` fixture read `Env._my` and call the removed `Env._load_dict`; RAN `Systems/ld/fileindexer/tests` set `Env._my`
 - Y2: `news/news.py` reads its configuration in `setup`, which no step calls, and Creekview has no `news` section
 - Y2: `ui/data.py` copies `ui/ui` into its own data, because `ui.yaml` nests a `ui:` key inside the `ui` section
-- RAN: `_config/config.yaml`'s `server_mounts` is statement Jinja, a `{% for %}` over six locations, and `topology/locations.yaml`'s `sessionfolder` opens with a `{% set %}`
+- Fixed: RAN: `server_mounts` is a row per location, each an expression that loading fills from `locations` and S1's host row, and `sessionfolder` is one expression (RAN e592787e9, 3847a7eec); the loaded configuration is identical on master and on 3.7.9, and every session file is placed where it was
 - gppu: handlers that turn a failure into a value, none changed: `mixin_Rest._born` (TypeError to an empty string), `mixin_Mqtt`'s offline publish on disconnect and its JSON decode of a payload, `HTTPControl` and `JSONHTTPControl` (a failed request or a body that is not JSON to None, which Y2's callers branch on), `Vault`'s provider probe
 - The scripts that still call the removed `Env.from_env`, `Env.from_dict`, `Env._load_dict` or read `Env.data`, about 110 in CRAP, IoT's CCTV-detective and RAN's Systems and Skills; CRAP's `prior/` trees; CRAP's `_Base` and `_PGBase` users: `_Base` is still the logger with the configuration's readers, and the readers now read a `_DC`'s data, which those classes do not have; none of them calls `my`
