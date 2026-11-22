@@ -1404,7 +1404,7 @@ def launcher_main(
                 file=sys.stderr,
             )
             sys.exit(2)
-        # .. direct launch is scriptable — propagate the sub-app's exit code (the interactive TUI loop and CLI fallback below keep ignoring it)
+        # ^^ direct launch is scriptable — propagate the sub-app's exit code (the interactive TUI loop and CLI fallback below keep ignoring it)
         sys.exit(launch_app(app_dir, app_def, args.extra or None))
 
     # ^^ CLI fallback when no TUI available

@@ -28,9 +28,11 @@ DEFAULT_PROFILE = os.path.expanduser("~/.config/chrome-automation")
 SYSTEM_CHROME = "/opt/google/chrome/chrome"
 
 
+# region - Chrome Process Management
 # .. ##########################################################################
 # .. Chrome Process Management
 # .. ##########################################################################
+# endregion
 
 def _pgrep(pattern: str) -> List[str]:
   try:
@@ -98,9 +100,11 @@ def _ensure_profile_unlocked(profile: str, timeout: float = 5.0, interactive: bo
   _remove_stale_locks(profile)
 
 
+# region - Driver Preparation
 # .. ##########################################################################
 # .. Driver Preparation
 # .. ##########################################################################
+# endregion
 
 def prepare_driver(
     download_directory: str = "~/Downloads",
@@ -148,9 +152,11 @@ def prepare_driver(
   return driver
 
 
+# region - Mobile / Desktop Emulation
 # .. ##########################################################################
 # .. Mobile / Desktop Emulation
 # .. ##########################################################################
+# endregion
 
 def switch_to_mobile(driver: webdriver.Chrome, device: str = "iPhone X") -> None:
   """Switch driver to mobile emulation mode."""

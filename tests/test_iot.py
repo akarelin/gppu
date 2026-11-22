@@ -31,4 +31,4 @@ class TestTopLevelExports:
             assert hasattr(gppu, name), name
 
 
-# .. TestAsyncLoopThread removed: _AsyncLoopThread/_ControlBase left gppu.iot in the async/IoT refactor (4e92486); the replacement lifecycle is covered by tests/test_async.py and tests/test_async_iot.py.
+# // TestAsyncLoopThread removed: _AsyncLoopThread/_ControlBase left gppu.iot in the async/IoT refactor (4e92486); the replacement lifecycle is covered by tests/test_async.py and tests/test_async_iot.py.

@@ -572,9 +572,9 @@ def resolve(folders: dict[str, dict[str, str]], address: str) -> str:
 # endregion
 # region what is in the locations
 
-PAGE = 1000   # .. the records a listing asks Linked Data for at a time, so a folder of any size is never held whole
+PAGE = 1000   # ^^ the records a listing asks Linked Data for at a time, so a folder of any size is never held whole
 DELETED = 0x04   # .. the flag deleted (Linked Data.md # Flags): a record kept, read only and out of sight until it is un-deleted
-IDS = 120   # .. ids to one read of what is inside them, so its address, escaped, stays under the 8 kB request line a proxy takes
+IDS = 120   # ^^ ids to one read of what is inside them, so its address, escaped, stays under the 8 kB request line a proxy takes
 
 
 def _name(uri: str) -> str:

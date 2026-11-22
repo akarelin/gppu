@@ -809,7 +809,7 @@ class _RarFileSystem(AbstractArchiveFileSystem):
 
   protocol = 'gppu-rar'
   cachable = False
-  timeout = 1800   # .. one RAR gets half an hour of the command; a longer one is an error, not a partial extraction
+  timeout = 1800   # ^^ one RAR gets half an hour of the command; a longer one is an error, not a partial extraction
 
   def __init__(self, fo: str, target_protocol=None, target_options=None, **kwargs):
     super().__init__(**kwargs)
