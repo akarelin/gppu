@@ -21,6 +21,7 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [x] What the reduction removed since 3.7.9 is in `archive/`, beside the module it came from
 - [x] A `TUIApp` has no constructor: Textual's construction is the last part of its init step (architecture notes, item 6)
 - [ ] The database bases made from their data, with an init step and a connection on first use (architecture notes, item 7)
+  - Their users downstream construct themselves: CCTV-detective's Postgres and the admin UI's graph store skip the base's constructor and set its connection string; Transcriber's, Plaud's, the admin UI's sync store and the file indexer's stores have constructors of their own. A base made from its data needs each of them to give it data and move its constructor into an init step
 - [x] gppufs (`gppu.fs` with `gppu.ld`) is a submodule of gppu, reduced as the rest
 - [x] gppu's tests run on the environment gppu has and pass whole; those of removed behaviour are archived
 
