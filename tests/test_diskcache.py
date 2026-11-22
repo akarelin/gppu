@@ -61,11 +61,12 @@ class TestCache:
         assert cache.skip is False
         cache.close()
 
-    def test_graceful_after_close(self, tmp_path, backend):
+    def test_a_closed_cache_raises(self, tmp_path, backend):
+        # .. a failure of the backend reaches the caller: nothing turns it into the default
         cache = Cache(str(tmp_path / 'cache'), ttl=60, backend=backend, skip_env='')
         cache.set('key', 'value')
         cache.close()
-        assert cache.get('key', 'fallback') == 'fallback'
+        with pytest.raises(AttributeError): cache.get('key', 'fallback')
 
     def test_context_manager(self, tmp_path, backend):
         with Cache(str(tmp_path / 'cache'), ttl=60, backend=backend, skip_env='') as cache:

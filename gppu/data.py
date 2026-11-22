@@ -379,17 +379,13 @@ class Cache:
 
   def get(self, key: str, default: Any = None) -> Any:
     if self._skip: return default
-    try: return self._cache.get(key, default)
-    except Exception: return default
+    return self._cache.get(key, default)
 
   def set(self, key: str, value: Any, ttl: int | None = None) -> None:
     if self._skip: return
-    try: self._cache.set(key, value, expire=self._ttl if ttl is None else (ttl or None))
-    except Exception: pass
+    self._cache.set(key, value, expire=self._ttl if ttl is None else (ttl or None))
 
-  def delete(self, key: str) -> None:
-    try: self._cache.delete(key)
-    except Exception: pass
+  def delete(self, key: str) -> None: self._cache.delete(key)
 
   def __call__(self, fn):
     """Use as @cache decorator for automatic memoization."""
