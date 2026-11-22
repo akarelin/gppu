@@ -218,10 +218,6 @@ class AsyncApp(App, YStart):
 
 # region MQTT: an async app's broker, the `mqtt` of its configuration
 class mixin_Mqtt(YStart):
-    """An async app's MQTT, two methods: ``mqtt_listen`` and ``mqtt_publish``. Its broker is the connection in the ``mqtt``
-    of its configuration: ``hostname``, ``port``, ``username``, ``password`` and ``identifier``; its other keys are the
-    app's. Where it names a ``status_topic``, the app's will is ``offline`` there, and it says ``online`` there as it
-    connects. Its start step connects, on MQTT 5, and the client connects again 5 s after it loses the broker."""
 
     def __init(self) -> None:
         self._client: aiomqtt.Client | None = None
