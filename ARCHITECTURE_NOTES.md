@@ -111,8 +111,11 @@ Notes of an agent session, 2026-11-21. The first part is what Alex said in that 
 - The users' configuration is Creekview: it describes the whole house, what lights belong where. It is human-readable, has nothing excessive, and is meant for editing. It may be a very large file; nested well, it gives a view of everything, and it is not crowded with how requests are built from templates. Today it is groups. Its format is universal: everything is a group.
 - Every entity a user may be expected to interact with, a named entity such as one exposed to Homebridge, can be in that one file: one big foldable topology, not polluted with the specifics of how Homebridge is built.
 - Homebridge is configured in one place, `homebridge.yaml`: it holds everything needed to change how Homebridge works, and it is the only file to look at for Homebridge. Nothing of Homebridge is hard-coded in code.
-- `homebridge.yaml` says which Homebridge instance handles which entities.
+- In `homebridge.yaml` the user only says which entities each Homebridge instance exposes. Homebridge picks the template that exposes each entity correctly; how that becomes Homebridge's configuration is a different scope.
+- What is special about an entity, such as an overridden area, is the entity's metadata, not Homebridge's.
 - Templates, generators of API requests and formatters are the technical part a user does not look into. Big templates, such as Homebridge's, can be external files.
+- Nothing about how actions are performed is hard-coded in code. Everything about doing actions is in one kind of configuration, and the higher abstractions, such as groups, are in the other.
+- For a given task the user never has to leave a single configuration file. Today the configuration is all over the place: Hue in more than one place, Kasa scattered, Homebridge impossible to take apart. Consolidating it by these rules makes the topology readable.
 
 ## UI
 - All objects are data classes with the same `self.data`, and state is lists and dicts of them, so any object can be displayed in a list by a UI that knows nothing about it.
