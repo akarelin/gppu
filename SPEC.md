@@ -10,6 +10,8 @@
 - The two environments are almost the same, and the library provides very little that is unique to either. A different way of loading, such as from MQTT, is a different init provider for configuration. The hooks are reload, reinitialize from the environment, create state from the environment, and create objects inside the state.
 - gppu hard-codes the paths of the two environment files: two lines for the only two use cases. Nothing else finds configuration, and nothing walks up and down folders.
 - An environment is a single YAML file. Its path is constructed from the location of the repository.
+- Env's load is one YAML load of its file. Env reads no source code, and no other loader is needed.
+- There are no sections.
 - An app declares RAN or IoT; the rest is determined from that declaration.
 - There is no topology file.
 - The command line overrides an application's behaviour, not the environment.
