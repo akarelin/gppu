@@ -23,7 +23,6 @@ from .gppu import (
 from .app import (
     # .. apps with steps
     AsyncApp,
-    TimerHandle,
     _callback_wrapper,
     APIApp,
     mixin_Rest,
@@ -190,7 +189,7 @@ __all__ = [
     'glob', 'glob_int', 'glob_list', 'glob_dict',
 
     # .. Foundation classes
-    '_Base', 'App', 'TimerHandle', '_callback_wrapper', 'AsyncApp', 'APIApp', 'mixin_Rest',
+    '_Base', 'App', '_callback_wrapper', 'AsyncApp', 'APIApp', 'mixin_Rest',
 
     # .. y2xxx classes
     'y2list', 'y2path', 'Path', 'y2uri', 'y2topic', 'y2slug', 'y2eid', 'Runtime', 'ListenerHandle',

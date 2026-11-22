@@ -7,13 +7,10 @@ on it. For Textual, use ``gppu.tui.TUIApp``; an async app with MQTT mixes in ``m
 from __future__ import annotations
 
 import asyncio
-import heapq
 import inspect
 import json
 import os
 import random
-import threading
-import time
 from abc import abstractmethod
 from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
@@ -77,7 +74,7 @@ class mixin_EventLoopBridge(_mixin):
 
 
 # region async application
-# region - Timers: an async app's, held by one thread
+# region - a callback, called with only the keywords it takes
 def _callback_wrapper(callback: Callable[..., Any]) -> Callable[..., Any]:
   """The callback called with only the keywords it takes."""
   signature = inspect.signature(callback)
@@ -93,69 +90,6 @@ def _callback_wrapper(callback: Callable[..., Any]) -> Callable[..., Any]:
     return callback(*args, **{k: v for k, v in data.items() if k in allowed})
 
   return wrapped
-
-
-@dataclass
-# !!! Unjustified class
-class TimerHandle:
-  """An armed timer: the callback's name, whether it fires once or repeats, its interval, and when it next fires
-  (epoch seconds)."""
-  id: int
-  name: str = ''
-  kind: str = ''
-  interval: float | None = None
-  next_run: float = 0.0
-  _cancelled: bool = False
-  _spent: bool = False          # .. a one-shot that has fired
-
-  def cancel(self) -> None:
-    self._cancelled = True
-
-  @property
-  def running(self) -> bool:
-    return not self._cancelled and not self._spent
-
-
-class _Scheduler:
-# !!! Antipatterns
-  """One thread holds every armed timer, instead of one thread per arm.
-
-  `threading.Timer` parks an OS thread for the whole delay, and `run_every`
-  builds a fresh one on every tick: the live process carried 976 parked
-  threads having created 460,972 of them at ~8/s. A due callback still gets a
-  thread of its own, so one slow callback cannot hold up the rest — the same
-  concurrency the Timer-per-arm had, without the parked threads.
-
-  Deadlines are monotonic (a wall-clock step must not move an armed timer);
-  `TimerHandle.next_run` stays epoch seconds, which is what the container view
-  renders. A cancelled entry is skipped when it comes due rather than removed,
-  so the heap holds it until then."""
-
-  def __init__(self) -> None:
-    self._heap: list[tuple[float, int, TimerHandle, Callable[[], None]]] = []
-    self._wake = threading.Condition()
-    self._thread: threading.Thread | None = None
-
-  def arm(self, handle: TimerHandle, fire: Callable[[], None], delay: float) -> None:
-    with self._wake:
-      heapq.heappush(self._heap, (time.monotonic() + delay, handle.id, handle, fire))
-      if self._thread is None:
-        self._thread = threading.Thread(target=self._run, name='y2-timers', daemon=True)
-        self._thread.start()
-      self._wake.notify()
-
-  def _run(self) -> None:
-    while True:
-      with self._wake:
-        while not self._heap: self._wake.wait()
-        due, _, handle, fire = self._heap[0]
-        remaining = due - time.monotonic()
-        if remaining > 0:
-          self._wake.wait(remaining)      # .. a nearer arm notifies; re-read the head
-          continue
-        heapq.heappop(self._heap)
-      if handle._cancelled: continue
-      threading.Thread(target=fire, daemon=True).start()
 
 
 # endregion
@@ -175,8 +109,8 @@ class AsyncApp(App, YStart, mixin_EventLoopBridge):
   ``schedule``/``submit``/``call`` work onto it.
 
   Its timers: ``run_later`` fires a callback once after a delay, and arming it again under the same key replaces it;
-  ``run_every`` fires it at an interval. ``timers`` holds every armed timer by its id, ``h_timeouts`` those armed under
-  a key.
+  ``run_every`` fires it at an interval. ``timers`` holds every armed timer's row by its id (its callback's name, its
+  kind, its interval and its next run in epoch seconds), ``h_timeouts`` those armed under a key.
 
   Its objects are the rows of the list at its ``key``, each ``cls(data=row, parent=self)`` of the class its ``kind``
   names in ``_supported_types``; its steps start and stop them. With a ``poll_interval`` and objects, it refreshes them
@@ -198,8 +132,8 @@ class AsyncApp(App, YStart, mixin_EventLoopBridge):
     self._task_group = None
     self._background_tasks = set()
     self._loop = None
-    self.timers: dict[int, TimerHandle] = {}
-    self.h_timeouts: dict[str, TimerHandle] = {}
+    self.timers: dict[int, dict] = {}
+    self.h_timeouts: dict[str, dict] = {}
     self._my_groups: list = []
     self._polled: list = []
     for data in glob_list(self.key): self._add_group(data)
@@ -217,69 +151,60 @@ class AsyncApp(App, YStart, mixin_EventLoopBridge):
     if not self._polled: self._polled = random.sample(self._my_groups, len(self._my_groups))
     self._polled.pop().refresh(**data)
 
-  def run_later(self, callback: Callable[..., Any], *, delay: int | float, key: str | None = None, **data: Any) -> TimerHandle:
-    if key is not None:
-      previous = self.h_timeouts.pop(key, None)
-      if previous is not None:
-        previous.cancel()
-        self.timers.pop(previous.id, None)
-    name = getattr(callback, '__name__', '') or getattr(getattr(callback, 'func', None), '__name__', '')
+  def run_later(self, callback: Callable[..., Any], *, delay: int | float, key: str | None = None, **data: Any) -> Future:
+    """``callback`` once, ``delay`` seconds from now; armed again under ``key``, the timer armed under it before is
+    cancelled. Any thread arms it, and its handle's ``cancel()`` cancels it."""
+    return self._timer(callback, float(delay), None, key, data)
+
+  def run_every(self, callback: Callable[..., Any], *, start: int | float, interval: int | float, **data: Any) -> Future:
+    """``callback`` ``start`` seconds from now, and again ``interval`` seconds after each run of it ends."""
+    return self._timer(callback, float(start), float(interval), None, data)
+
+  def _timer(self, callback: Callable[..., Any], delay: float, interval: float | None, key: str | None, data: dict) -> Future:
+    # region - a timer is a coroutine on the app's loop
+    # .. It keeps the app's registries itself, on the loop: its row is in `timers`, and under its key in `h_timeouts`,
+    # .. while it is armed. Its callback runs on one of the loop's worker threads; one that raises is logged, and an
+    # .. interval timer runs it again the next time. A one-shot is spent as it fires, so its key is free while its
+    # .. callback runs.
+    # endregion
+    row = {'name': getattr(callback, '__name__', ''), 'kind': 'once' if interval is None else 'interval', 'interval': interval, 'next_run': now_ts() + delay}
     callback = _callback_wrapper(callback)
-    handle = TimerHandle(id=next(self._timer_ids), name=name, kind='once', next_run=now_ts() + float(delay))
 
-    def wrapped() -> None:
-      handle._spent = True                  # .. a one-shot is spent once it fires, and so is its slot under the key
-      self.timers.pop(handle.id, None)
-      if self.h_timeouts.get(key) is handle: del self.h_timeouts[key]
-      if handle._cancelled: return
-      callback(**data)
+    async def call() -> None:
+      try: await asyncio.to_thread(callback, **data)
+      except Exception as error: self.Error('timer', row['name'], 'raised:', error)
 
-    self.timers[handle.id] = handle
-    if key is not None: self.h_timeouts[key] = handle
-    _SCHEDULER.arm(handle, wrapped, float(delay))
-    return handle
-
-  def run_every(self, callback: Callable[..., Any], *, start: int | float, interval: int | float, **data: Any) -> TimerHandle:
-    name = getattr(callback, '__name__', '') or getattr(getattr(callback, 'func', None), '__name__', '')
-    callback = _callback_wrapper(callback)
-    handle = TimerHandle(id=next(self._timer_ids), name=name, kind='interval',
-                         interval=float(interval), next_run=now_ts() + float(start))
-
-    def wrapped() -> None:
-      if handle._cancelled: return
+    async def timer() -> None:
+      row['task'], tid = asyncio.current_task(), next(self._timer_ids)
+      if key in self.h_timeouts: self.h_timeouts[key]['task'].cancel()
+      self.timers[tid] = row
+      if key is not None: self.h_timeouts[key] = row
       try:
-        callback(**data)
+        await asyncio.sleep(delay)
+        while interval is not None:
+          await call()
+          row['next_run'] = now_ts() + interval
+          await asyncio.sleep(interval)
       finally:
-        # .. Space completions without overlap; a failed poll must not stop the timer.
-        if not handle._cancelled:
-          handle.next_run = now_ts() + float(interval)
-          _SCHEDULER.arm(handle, wrapped, float(interval))
+        del self.timers[tid]
+        if self.h_timeouts.get(key) is row: del self.h_timeouts[key]
+      await call()
 
-    self.timers[handle.id] = handle
-    _SCHEDULER.arm(handle, wrapped, float(start))
-    return handle
-
-  def cancel_timer(self, handle: TimerHandle) -> None:
-    handle.cancel()
-    self.timers.pop(handle.id, None)
-
-  def timer_running(self, handle: TimerHandle) -> bool:
-    return handle.running
+    return asyncio.run_coroutine_threadsafe(timer(), self._get_loop())
 
   def cancel_timers(self) -> None:
-    """Every timer this app armed, cancelled."""
-    for handle in list(self.h_timeouts.values()) + list(self.timers.values()):
-      handle.cancel()
-    self.timers.clear()
-    self.h_timeouts.clear()
+    """Every timer this app armed, cancelled, from any thread."""
+    for row in list(self.timers.values()): row['task'].get_loop().call_soon_threadsafe(row['task'].cancel)
 
   def __stop(self) -> None:
     for group in self._my_groups: group.stop()
+    self.cancel_timers()
     loop = self._loop
     if loop is None: return                    # .. not running: nothing it spawned is left to cancel
-    # .. the loop cancels everything the app spawned, from any thread and from inside its own tasks: an MQTT listener
-    # .. that stops its app ends the MQTT loop it runs in
-    loop.call_soon_threadsafe(lambda: [task.cancel() for task in list(self._background_tasks)])
+    # .. the loop cancels what the app spawned before it stopped, from any thread and from inside its own tasks: an MQTT
+    # .. listener that stops its app ends the MQTT loop it runs in; what a later stop step spawns, as a cleanup, runs
+    tasks = list(self._background_tasks)
+    loop.call_soon_threadsafe(lambda: [task.cancel() for task in tasks])
 
   def _get_loop(self) -> asyncio.AbstractEventLoop:
     loop = self._loop
