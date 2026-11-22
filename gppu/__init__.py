@@ -61,9 +61,6 @@ from .gppu import (
 
     # .. Logger setup
 
-    # .. Async helpers
-    sync,
-
     # .. Global configuration
 
     # .. Configuration loading
@@ -148,9 +145,6 @@ __all__ = [
     'OSType', 'detect_os',
 
     # .. Logger setup
-
-    # .. Async helpers
-    'sync',
 
     # .. Configuration
     'dict_from_yml', 'dict_to_yml', 'dict_from_json', 'dict_to_json', 'dict_sanitize',

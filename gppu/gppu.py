@@ -27,7 +27,7 @@ from typing import Union, Any, List, Optional, Tuple, Dict, DefaultDict, Callabl
 from collections import defaultdict, UserDict, UserList
 from collections.abc import Mapping
 
-from functools import wraps, cache
+from functools import cache
 from datetime import datetime as dt, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -1008,18 +1008,18 @@ apply_template, jinja_template, jinja_fill = jinja.apply_template, jinja.jinja_t
 # endregion
 
 
-# region Async helpers
-def sync(func: Callable) -> Callable:
-  """Wrapper to call async functions without await from synchronous code."""
-  @wraps(func)
-  def wrapper(*args, **kwargs):
-    coro = func(*args, **kwargs)
-    try:
-      loop = asyncio.get_running_loop()
-    except RuntimeError:
-      return asyncio.run(coro)
-    return loop.create_task(coro)
-  return wrapper
+# region - // sync: a second way onto an event loop, its own; Logger.Dump, its one user, is a plain function (2025-11)
+# // def sync(func: Callable) -> Callable:
+# //   """Wrapper to call async functions without await from synchronous code."""
+# //   @wraps(func)
+# //   def wrapper(*args, **kwargs):
+# //     coro = func(*args, **kwargs)
+# //     try:
+# //       loop = asyncio.get_running_loop()
+# //     except RuntimeError:
+# //       return asyncio.run(coro)
+# //     return loop.create_task(coro)
+# //   return wrapper
 # endregion
 
 
@@ -1317,8 +1317,7 @@ class Logger:
   @staticmethod
   def Error(*a, **kw): Logger._log(logging.ERROR, a, kw)
   @staticmethod
-  @sync
-  async def Dump(filename: str, data: dict = {}, **kw) -> None:
+  def Dump(filename: str, data: dict = {}, **kw) -> None:
     """ Saves data object to yml file in trace folder """
     if '.' not in filename or not filename.endswith('.yml'): filename += '.yml'
     if Logger.trace_folder:
@@ -1341,34 +1340,35 @@ Dump = Logger.Dump
 # endregion
 
 
-_trace_mro = False
+# region - // the YMRO trace: a global flag set from an `args` no app has, and a printer nothing calls (Y2, Alex, 2023)
+# // _trace_mro = False
+# //
+# //   @property
+# //   def _trace_mro(self) -> bool:
+# //     result = getattr(self, 'args', {}).get('trace_mro', False)
+# //     global _trace_mro
+# //     _trace_mro = result
+# //     return result
+# //
+# //   def print_ymro(self):
+# //     Debug('BY', self.__class__.__qualname__)
+# //     siblings = [c for c in reversed(self.__class__.__mro__) if c != _YMRO and issubclass(c, _YMRO)]
+# //     step = 'init'
+# //     for sibling in siblings:
+# //       Debug('DG', f"  {sibling.__qualname__}")
+# //       qname = f"{sibling.__qualname__}__{step}"
+# //       if qname[0] != '_': qname = '_' + qname
+# //       method = getattr(self, qname, None)
+# //       if method:
+# //         Debug('INFO', f"  {method.__qualname__}")
+# //         initers = getattr(sibling, '_initers', [])
+# //         for initer in initers: Debug('DIM', f"     {initer.__qualname__}")
+# endregion
 
 
 # region YMRO lifecycle
 class _YMRO:
   POSSIBLE_STEPS = ['init', 'load', 'start', 'stop']
-
-  @property
-  def _trace_mro(self) -> bool:
-    result = getattr(self, 'args', {}).get('trace_mro', False)
-    global _trace_mro
-    _trace_mro = result
-    return result
-
-
-  def print_ymro(self):
-    Debug('BY', self.__class__.__qualname__)
-    siblings = [c for c in reversed(self.__class__.__mro__) if c != _YMRO and issubclass(c, _YMRO)]
-    step = 'init'
-    for sibling in siblings:
-      Debug('DG', f"  {sibling.__qualname__}")
-      qname = f"{sibling.__qualname__}__{step}"
-      if qname[0] != '_': qname = '_' + qname
-      method = getattr(self, qname, None)
-      if method:
-        Debug('INFO', f"  {method.__qualname__}")
-        initers = getattr(sibling, '_initers', [])
-        for initer in initers: Debug('DIM', f"     {initer.__qualname__}")
 
 
   def _ymros(self):
