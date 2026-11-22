@@ -8,17 +8,17 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [x] `pip show gppu` shows the time of the build's commit after a `+` (`setup.py`), Alex as author and gppu's GitHub repository; a plain `pip install -r requirements.txt` takes each new build
 - [x] The gppu wheel carries only the gppu package, and its source archive only the library and the files that build it; the next gppu build releases it
 
-## gppu's code, by Alex's marks
-- [ ] `Logger.enable_file_logging`: "Need justification for this to exist" (in progress)
-  - What it does: RAN's `config.yaml` has the line `log_file: ~/.cache/gppu/hosts.log`, so every program that loads RAN's configuration also writes every line it prints into that one file. Creekview's configuration has no such line
-  - The file's lines have no time, severity or caller. Preservator, the Hosts TUI, rewrite-commits and test runs all write into it. No program reads it
-  - Logging is set up in six places: the top of `gppu.py` makes the console output; the `Logger` class, far below, gives it colours and a filter; loading the configuration applies `trace_rules` and `log_file`; `init_logger(name)` renames the log, a name nothing prints; every class gets its own log when it is defined; the TUI launcher swaps the console output for its own panel while it runs
-  - The CRAP file indexer, Plaud and Transcriber scripts and RAN's md-indexer import `init_logger` from `gppu`, which no longer offers it, so they stop at import
-- [ ] `mixin_Config`: "It DOES not read the configuration ... self.my was initialized somewhere and needs a place, but not this complexity"
-- [ ] `App`: "Not human reviewed" and "Rewrote. folowing the architecture, not beside it"; an app declares RAN or IoT, which decides Env's environment, so a built app such as PC Control has its environment
-- [ ] The Jinja region: "AI, not human reviewed"
-- [ ] The old tracing block, commented out, with "Ignoring all python3 libraries"
-- [ ] `gppu/app.py`, once its edits are committed: `TimerHandle` ("Unjustified class"), `_Scheduler` ("Antipatterns"), `_Runtime` ("This is not runtime. It is bad code from y2"), `state_changed` ("This is state, not runtime"), `listen_topic_state` ("Topics do not have states")
+## Step 1: gppu reduced statically (in progress)
+- [x] Logging is one `Logger`: the console, its colours and filter, and the trace rules; the file logging and `init_logger` are gone
+- [x] `mixin_Config` is the four readers over the object's data, `my`, `my_int`, `my_list` and `my_dict`, each read by programs
+- [ ] `App`: an app is not made by passing it its own name; how a program's app finds its section without one is open
+- [x] The Jinja region: each public method has a user (`render_template`, `apply_template` and `jinja_template` in programs, `configuration` in Env and App, `jinja_fill` in the catalog)
+- [x] The old tracing block and `gppu/app.py`'s `TimerHandle`, `_Scheduler`, `_Runtime`, `state_changed` and `listen_topic_state` are gone
+- [x] `gppu` and `gppu.tui` export only what programs import from them; the rest stays in its module, unexported
+- [x] The cache fetchers and the heatmap, which no program imported, are gone; helpers only their own module calls are private
+- [x] A `TUIApp` has no constructor: Textual's construction is the last part of its init step (architecture notes, item 6)
+- [ ] The database bases made from their data, with an init step and a connection on first use (architecture notes, item 7)
+- [ ] Whether gppufs (`gppu.fs` with `gppu.ld`) stays inside gppu: the decision that sets gppu's size
 
 ## Independent, unscoped
 - Objects read their configuration as `self.name`
