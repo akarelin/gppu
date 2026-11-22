@@ -30,9 +30,14 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - UIs on gppu's Jinja
 
 ## Found outside this task
-- Programs still call `Env.from_env`, gone since 3.7.1, and stop at start: in RAN the Linked Data API and its tools, lake's m365, md-indexer, eMail-triage, coverage; in CRAP the admin UI, Transcriber, the file indexer, Plaud
+- Programs that loaded their own file through `Env.from_env`, gone since 3.7.1 (in progress)
+  - [x] Read their section of the environment, or the file they are given: the Linked Data API and its tools, YuE2, coverage, eMail-triage, ticktick-export, openapi_query, qdrant, the admin UI, the file indexer (`file_indexer`, its stores' `db` from it), neo-mqtt's rule generator and bridge
+  - [x] The lake holds the configuration it keeps in Everything and reads it through its own `section()`; the admin UI reads the lake's sections the same way
+  - [ ] Transcriber, Plaud, md-indexer, iot-monitor: their files move into RAN's `_config` once Alex approves the move table
+  - [ ] CCTV-detective and crop_possum2: their environment, and their table of moves
+  - [ ] Transcriber's recordings tool and lake's m365 read a `lake.yaml` that exists only in archives
 - The Hosts TUI's Configs browser reads `configs_config`, which RAN's configuration no longer has
-- The start page has no `start_page` configuration in RAN since 2026-11-13, and imports the sidecar loader gppu no longer has
+- The start page reads a `start_page` configuration that was archived and its include commented out on 2026-09-29, and imports the sidecar loader gppu no longer has
 - IoT: `_creekview.yaml` and `ui/editor.yaml` include `zwjs.yaml` and `z2.yaml` from `Insteon/`, which Alex moved back to `_devices/`; Creekview does not load from the checkout
 - IoT's any2mqtt image is `python:3.13-slim` and installs `gppu/latest`, which imports `uuid7` from Python 3.14
 
