@@ -218,10 +218,10 @@ class AsyncApp(App, YStart):
 
 # region MQTT: an async app's broker, the `mqtt` of its configuration
 class mixin_Mqtt(YStart):
-    """An async app's MQTT, two methods: ``mqtt_listen`` and ``mqtt_publish``. Its broker is the ``mqtt`` of its
-    configuration, which the client takes as it is, all but ``status_topic``: the app's will is ``offline`` there, and it
-    says ``online`` there as it connects. Its start step connects, on MQTT 5, and the client connects again 5 s after it
-    loses the broker."""
+    """An async app's MQTT, two methods: ``mqtt_listen`` and ``mqtt_publish``. Its broker is the connection in the ``mqtt``
+    of its configuration: ``hostname``, ``port``, ``username``, ``password`` and ``identifier``; its other keys are the
+    app's. Where it names a ``status_topic``, the app's will is ``offline`` there, and it says ``online`` there as it
+    connects. Its start step connects, on MQTT 5, and the client connects again 5 s after it loses the broker."""
 
     def __init(self) -> None:
         self._client: aiomqtt.Client | None = None
@@ -257,15 +257,15 @@ class mixin_Mqtt(YStart):
         await self._client.publish(str(topic), payload, qos=qos, retain=retain, properties=properties)
 
     async def _mqtt_loop(self) -> None:
-        options = dict(self.my_dict('mqtt'))
-        status = options.pop('status_topic')
+        mqtt = self.my_dict('mqtt')
+        will = aiomqtt.Will(mqtt['status_topic'], b'offline', qos=1, retain=True) if 'status_topic' in mqtt else None
         while True:
             try:
-                async with aiomqtt.Client(**options, protocol=aiomqtt.ProtocolVersion.V5, will=aiomqtt.Will(status, b'offline', qos=1, retain=True)) as self._client:
+                async with aiomqtt.Client(**{key: mqtt[key] for key in ('hostname', 'port', 'username', 'password', 'identifier') if key in mqtt}, protocol=aiomqtt.ProtocolVersion.V5, will=will) as self._client:
                     self.Info('connected to the broker')
                     self._retained.clear()   # .. a new connection sends every listener the retained messages again
                     for topic, qos in list(self._subscriptions.items()): await self._client.subscribe(str(topic), qos=qos)
-                    await self._client.publish(status, 'online', qos=1, retain=True)
+                    if will: await self._client.publish(will.topic, 'online', qos=1, retain=True)
                     async for message in self._client.messages: await self._mqtt_message(message)
             except aiomqtt.MqttError as error: self.Warn('lost the broker, connecting again in 5 s:', error)
             self._client = None
