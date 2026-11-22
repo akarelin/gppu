@@ -15,7 +15,7 @@ def output(monkeypatch, tmp_path):
     console = io.StringIO()
     original = core.Logger._console.setStream(console)
     Logger.init_logger('logging-verification', trace_rules={'all': True})
-    path = Logger.enable_file_logging('verification', log_dir=tmp_path)
+    path = Logger.enable_file_logging(str(tmp_path / 'verification.log'))
     yield core, console, path
     core.Logger._console.setStream(original)
     for handler in tuple(core.Logger._file_handlers.values()):

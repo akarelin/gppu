@@ -38,10 +38,12 @@ LAYOUT = {   # the Lake's lines: a session under timeseries, by its own start; a
 @pytest.fixture(autouse=True)
 def environment():
     """The Lake's lines where the Lake reads them, the environment's locations/lake/folders."""
-    previous = Env._my
-    Env._my = {'locations': {'lake': {'folders': LAYOUT}}}
+    previous, environment, initialized = Env.my_dict(''), Env.environment, Env.initialized
+    Env.reset()
+    Env.init(config={'locations': {'lake': {'folders': LAYOUT}}})
     yield
-    Env._my = previous
+    Env.reset()
+    if initialized: Env.init(environment=environment, config=previous)
 
 
 def lake_of(tmp_path, ld):

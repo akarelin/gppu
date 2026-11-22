@@ -23,11 +23,9 @@ Usage::
 from __future__ import annotations
 
 import argparse
-import ast
 import asyncio
 import logging
 import os
-import re
 import shlex
 import subprocess
 import sys
@@ -35,9 +33,7 @@ import webbrowser
 from pathlib import Path
 from typing import ClassVar
 
-import yaml
 from gppu import Env, App, AsyncApp, mixin_Config, dict_from_yml, glob, glob_dict, glob_list
-from gppu.gppu import YmlLoader
 from gppu.gppu import Logger, _EmptyMessageFilter, _LogColorizer
 from gppu.gppu import OSType
 from rich.text import Text
@@ -56,8 +52,6 @@ from textual.widgets import (
 from textual.widgets._header import HeaderIcon, HeaderTitle
 
 _log = logging.getLogger(__name__)
-
-INLINE_CONFIG = ('.py', '.cmd', '.ps1')   # the scripts that carry their configuration inline
 
 
 # ── StatusHeader ──────────────────────────────────────────────────────────────
@@ -272,51 +266,19 @@ def _absolute(base: Path, value):
     return value
 
 
-def inline_config(filename: Path) -> str:
-    """The YAML a script carries inline, read without running the script: in a .py the string its global MANIFEST is
-    assigned; in a .cmd the :: lines it opens with; in a .ps1 the .NOTES of the <# #> block it opens with, nothing
-    below either block read. A script with none raises.
-
-    It is the launcher's own and no export: SPEC has a TUI app carry its configuration and manifest inline, and the
-    Hosts launcher lists synology-mount.py, mapper.cmd and tray-control.ps1 by theirs. An app reads no file for its own
-    MANIFEST: it passes the global as its configuration."""
-    suffix = filename.suffix.lower()
-    with open(filename, encoding='utf-8-sig') as f:
-        if suffix == '.py':
-            for node in ast.parse(f.read(), str(filename)).body:
-                if (isinstance(node, ast.Assign) and [getattr(target, 'id', None) for target in node.targets] == ['MANIFEST']
-                        and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)): return node.value.value
-        elif suffix == '.cmd':
-            lines = []
-            for line in f:
-                if not line.startswith('::'): break
-                lines.append(line[2:])
-            if lines: return ''.join(lines)
-        elif suffix == '.ps1':
-            lines = iter(f)
-            if next((line for line in lines if line.strip()), '').strip() == '<#':
-                notes, keyword = [], None
-                for line in lines:
-                    if line.strip() == '#>': break
-                    if re.fullmatch(r'\.[A-Za-z]+', line.strip()): keyword = line.strip().upper()
-                    elif keyword == '.NOTES': notes.append(line)
-                if notes: return ''.join(notes)
-    raise ValueError(f'{filename}: no inline configuration')
-
-
 def read_manifest(app_dir: Path, config_file: str, nav: str | None = None) -> dict:
-    """One YAML config, or the inline config of a script, as a launcher item: its script and cwd resolved against the
-    manifest's own directory, so a launcher can list manifests that live anywhere, and the nav the launcher files it
-    under. A script's inline manifest that names no script or url launches the script itself. Empty when the config
-    holds no manifest."""
+    """One YAML config, or a script that carries its manifest, as a launcher item: its script and cwd resolved against
+    the manifest's own directory, so a launcher can list manifests that live anywhere, and the nav the launcher files
+    it under. The file is loaded as the item's own app loads it, by App: a YAML file, or the MANIFEST in a script's
+    first 4 KB. A script's manifest that names no script or url launches the script itself. Empty when the config holds
+    no manifest."""
     path = (app_dir / config_file).resolve()
-    if path.suffix.lower() in INLINE_CONFIG: cfg = dict(yaml.load(inline_config(path), Loader=YmlLoader))
-    else: cfg = dict_from_yml(path)
+    cfg = App(config=path)
     manifest = cfg.get('manifest', {})
     if not manifest:
         return {}
-    manifest['_config'] = {k: v for k, v in cfg.items() if k != 'manifest'}
-    if path.suffix.lower() in INLINE_CONFIG and not {'script', 'url'} & manifest.keys():
+    manifest['_config'] = {k: v for k, v in cfg.items() if k not in ('manifest', 'config', 'name')}   # its own keys, without what App was constructed with
+    if path.suffix.lower() not in ('.yaml', '.yml') and not {'script', 'url'} & manifest.keys():
         manifest['script'] = path.name
     for key in ('script', 'cwd'):
         if key in manifest:
@@ -613,8 +575,8 @@ class TUIApp(AsyncApp, TextualApp, metaclass=_TUIAppMeta):
 
   Subclass and define ``compose()`` for widgets and ``on_mount()`` for startup
   work; Textual owns the event loop. The environment is the one an App declares
-  before ``MyApp.main()``, read through ``glob(...)``. To use ``self.my(...)``, first give the app its own
-  configuration with ``self._config_load(glob_dict(key))`` or ``self._config_load(yaml_file)``.
+  before ``MyApp.main()``, read through ``glob(...)``. ``self.my(...)`` reads the app's own configuration, which
+  construction loads: the ``config`` it is given, or else its section of the environment.
 
   Works standalone (``app.run()``) or embedded in a TUILauncher via AppScreen.
   Use ``self.done(result)`` to finish — it calls ``exit()`` or ``dismiss()``

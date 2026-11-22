@@ -1309,7 +1309,7 @@ TRACE_RULES: dict = {}
 
 class Logger:
   """The program's log: the console the bootstrap started, with colours and trace rules, and the file mirror. Its
-  calls reconfigure it: ``Logger.init_logger(name, trace_rules)``, ``Logger.enable_file_logging(log_file=...)``.
+  calls reconfigure it: ``Logger.init_logger(name, trace_rules)``, ``Logger.enable_file_logging(log_file)``.
   A class logs with it through ``mixin_Logger``."""
 
   trace_folder: str = '.'
@@ -1333,29 +1333,20 @@ class Logger:
 
 
   @staticmethod
-  def enable_file_logging(name: str | None = None, log_dir: str | Path | None = None,
-                          level: int = logging.DEBUG, log_file: str | None = None) -> Path:
-    """ Need justification for this to exist """
-    """Mirror logs to an explicit `log_file`, or an explicit name + log_dir.
-
-    Env passes its `log_file` when YAML declares one. No directory
-    or filename is inferred. Creation errors propagate to the caller.
-    """
-    if log_dir is not None:
-      if not name: raise ValueError('File logging with log_dir requires a name')
-      path = full_path(Path(log_dir) / f'{name}.log')
-    else:
-      value = log_file
-      if not isinstance(value, str) or not value.strip():
-        raise ValueError('File logging requires an explicit log_file in configuration')
-      path = full_path(value)
+  def enable_file_logging(log_file: str) -> Path:
+    """The log mirrored to log_file, which rotates."""
+    # region - ^^ why enable_file_logging exists
+    # ^^ It is code for one configuration key: an environment declares `log_file` (RAN's config.yaml does) and Env.init
+    # ^^ applies it here, its only caller. The handler is the logger's, so it sits in Logger and not in Env.
+    # ^^ The file rotates at 4 MB and keeps 5 older files; both numbers are written here, not configured.
+    # endregion
+    if not isinstance(log_file, str) or not log_file.strip(): raise ValueError('File logging requires an explicit log_file in configuration')
+    path = full_path(log_file)
     path.parent.mkdir(parents=True, exist_ok=True)
     key = str(path)
-    if key in Logger._file_handlers:
-      return path
+    if key in Logger._file_handlers: return path
     from logging.handlers import RotatingFileHandler
     fh = RotatingFileHandler(path, maxBytes=4_000_000, backupCount=5, encoding='utf-8')
-    fh.setLevel(level)
     fh.setFormatter(_PlainFormatter())
     fh.addFilter(_EmptyMessageFilter())
     Logger._root.addHandler(fh)
@@ -1503,43 +1494,15 @@ class _DC(UserDict):
 
 # region Configuration mixins
 class mixin_Config(_mixin):
-  """ Very sus. Looks like slop """
-  _my: dict[str, Any] = {}
-
-
-  def _config_load(self, source: Mapping | str | Path, argv: list[str] = []) -> None:
-    """The one loader of Env and every app: a YAML file (a Path), YAML text (a str, as a script's MANIFEST is), or a
-    section already loaded becomes this object's own configuration, a copy of its source, with its templates applied. A
-    file's ``!include`` reads beside the file; text has no folder and includes nothing. A Jinja value that reads only ``glob``,
-    ``glob_int``, ``glob_list`` or ``glob_dict`` is filled here, each reading the environment filled; Jinja that reads
-    anything else, and ``$`` text, stay. The command line goes over it: ``--key value`` sets the key, a slash path a
-    nested one, to the string, ``--flag`` with no value after it sets it to True, and other arguments are the
-    program's own."""
-    if isinstance(source, Mapping): self._my = deepcopy(dict(source))
-    elif isinstance(source, str): self._my = dict(yaml.load(source, Loader=YmlLoader))
-    else: self._my = dict_from_yml(source)
-    jinja_configuration(self._my)
-    def read(path: str) -> Any: return jinja_fill(glob(path), **readers)
-    readers = {'glob': read,
-               'glob_int': lambda path: _ if isinstance(_ := read(path), int) else 0,
-               'glob_list': lambda path: _ if isinstance(_ := read(path), list) else [],
-               'glob_dict': lambda path: _ if isinstance(_ := read(path), dict) else {}}
-    self._my = jinja_fill(self._my, **readers)
-    self._my = apply_template(self._my, templates_of(self._my))
-    i = 0
-    while i < len(argv):
-      arg, i = argv[i], i + 1
-      if not arg.startswith('--') or len(arg) == 2: continue
-      value = True
-      if i < len(argv) and not argv[i].startswith('--'): value, i = argv[i], i + 1
-      deepset(arg[2:], self._my, value)
-
-
-  def my(self, path: str | y2path, default=None) -> Any: return deepget(path, self._my, default=default)
-  def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self._my, default=default)
-  def my_float(self, path: str | y2path, default: float = float('nan')) -> float: return deepget_float(path, self._my, default=default)
-  def my_list(self, path: str | y2path, default: list = []) -> list: return deepget_list(path, self._my, default=default or [])
-  def my_dict(self, path: str | y2path, default: dict = {}) -> dict: return deepget_dict(path, self._my, default=default or {})
+  # region - ^^ what is left of mixin_Config
+  # ^^ An app is assembled from mixins, and this one gives it the readers of its configuration. The configuration
+  # ^^ is the `_DC`'s data, where construction loads it: `_my`, the loader and the command line are no longer here.
+  # endregion
+  def my(self, path: str | y2path, default=None) -> Any: return deepget(path, self.data, default=default)
+  def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self.data, default=default)
+  def my_float(self, path: str | y2path, default: float = float('nan')) -> float: return deepget_float(path, self.data, default=default)
+  def my_list(self, path: str | y2path, default: list = []) -> list: return deepget_list(path, self.data, default=default or [])
+  def my_dict(self, path: str | y2path, default: dict = {}) -> dict: return deepget_dict(path, self.data, default=default or {})
 
 
 class _Base(mixin_Logger, mixin_Config): pass
@@ -1548,28 +1511,79 @@ class _Base(mixin_Logger, mixin_Config): pass
 
 # region App
 class App(_Base, _DC):
-  """ Not human reviewed """
-  name: str
-  def _init_config(self, environment: str | None = None, config: str | Path | None = None, argv: list[str] = [], **kw) -> None:
-    if not self.name: self.name = type(self).__name__.lower()
-    Env.init(environment=environment)
-    self._config_load(glob_dict(self.name) if config is None else config, argv)
+    """ Not human reviewed """
+    # region - ^^ why App exists, and what it holds
+    # ^^ SPEC: every app is a `_DC`, takes its environment at initialization, knows its own name, loads its own
+    # ^^ configuration through `_DC`'s init with no init of its own, and Env is the global singleton app.
+    # ^^ It is code about configuration and it is used by everything downstream: Fleet and the Hosts tools, the TUI
+    # ^^ apps, Y2's apps and Env are all Apps. It is `_Base`, the logger and the configuration's readers, on a `_DC`,
+    # ^^ and adds the one step that loads: the configuration goes into the `_DC`'s data, beside what the app was
+    # ^^ constructed with. Templates stay in the Jinja environment and YAML in YmlLoader: the step only calls them.
+    # endregion
+    name: str
 
-  _INIT_STEPS = _DC._INIT_STEPS + [_init_config]
+    def _config_load(self, source: Mapping | str | Path, argv: list[str] = []) -> None:
+        """The one loader of Env and every app. Its source goes into this object's data, a copy, over what the object was
+        constructed with: a section already loaded, a YAML file, or a script (.py, .cmd, .ps1, .sh), whose manifest is
+        the YAML assigned to MANIFEST within its first 4 kilobytes.
+
+        Jinja is resolved here only where it reads nothing but the configuration: a value that reads only ``glob``,
+        ``glob_int``, ``glob_list`` or ``glob_dict`` is filled now, each reading the environment filled. Jinja that
+        reads anything else, a row or a host, stays as written for the code that renders it with those values, and so
+        does ``$`` text. A row's ``template:`` is merged under the row here.
+
+        The command line goes over it: ``--key value`` sets the key, a slash path a nested one, to the string,
+        ``--flag`` with no value after it sets it to True, and other arguments are the program's own."""
+        if isinstance(source, Mapping): loaded = deepcopy(dict(source))
+        elif str(source).lower().endswith(('.py', '.cmd', '.ps1', '.sh')):
+            with open(full_path(source), encoding='utf-8-sig') as f: manifest = re.search(r'^MANIFEST = r?"""(.*?)"""', f.read(4096), re.M | re.S)
+            if not manifest: raise ValueError(f'{source}: no MANIFEST in its first 4 KB')
+            loaded = dict(yaml.load(manifest[1], Loader=YmlLoader))
+        else: loaded = dict_from_yml(source)
+        given, self.data = self.data, self.data | loaded   # .. glob reads Env's own configuration while Env fills it
+        jinja.jinja_configuration(loaded)
+        def read(path: str) -> Any: return jinja.jinja_fill(glob(path), **readers)
+        readers = {'glob': read,
+                   'glob_int': lambda path: _ if isinstance(_ := read(path), int) else 0,
+                   'glob_list': lambda path: _ if isinstance(_ := read(path), list) else [],
+                   'glob_dict': lambda path: _ if isinstance(_ := read(path), dict) else {}}
+        loaded = jinja.jinja_fill(loaded, **readers)
+        self.data = given | jinja.apply_template(loaded, jinja.templates_of(loaded))
+        i = 0
+        while i < len(argv):
+            arg, i = argv[i], i + 1
+            if not arg.startswith('--') or len(arg) == 2: continue
+            value = True
+            if i < len(argv) and not argv[i].startswith('--'): value, i = argv[i], i + 1
+            deepset(arg[2:], self.data, value)
+
+    def _init_config(self, environment: str | None = None, config: Mapping | str | Path | None = None, argv: list[str] = [], **kw) -> None:
+        if not self.name: self.name = type(self).__name__.lower()
+        Env.init(environment=environment)
+        self._config_load(glob_dict(self.name) if config is None else config, argv)
+
+    _INIT_STEPS = _DC._INIT_STEPS + [_init_config]
 # endregion
 
 
 # region Env: the configuration
-class _Env(_Base):
+class _Env(App):
   """The program's environment: singleton app object. It's my is glob"""
   home: Path
   user: str
   os: OSType
   host: str
   path: Path   # the environment's YAML file
-  environment: str   # the environment loaded: RAN or IoT
+  environment: str = ''   # the environment loaded: RAN or IoT
 
   _global_log = True
+  # region - Env as an app
+  # .. Its data is the environment alone, which glob reads: what Env finds out about the machine is no configuration,
+  # .. so those names are plain attributes. No configuration exists when Env is constructed: init loads it, as App's
+  # .. step loads an app.
+  # endregion
+  _DC_EXCLUDE_NAMES = ['user', 'host', 'environment']
+  _INIT_STEPS = _DC._INIT_STEPS
 
   @property
   def initialized(self) -> bool: return getattr(self, '_initialized', False)
@@ -1590,24 +1604,31 @@ class _Env(_Base):
     self.user = getpass.getuser()
     self.home = Path.home()
 
-    if environment in _ENV_PATHS:
+    # region - Env's configuration
+    # .. Env loads like any app: the environment's file, or the `config` it is given as an app is, a Path or a
+    # .. mapping already loaded, which is how the part read from MQTT and a copy of the file under validation come in
+    # endregion
+    config = kw.get('config')
+    if config is None and environment in _ENV_PATHS:
       if self.os == OSType.W11: path = Path("D:\\Dev")
       else: path = Path("~").expanduser()
       path /= Path(_ENV_PATHS[environment])
 
-      if path.exists():
-        self.path = path
-        self.environment = environment
-        self._config_load(path)
-        if 'log_file' in self._my: Logger.enable_file_logging(log_file=self._my['log_file'])
-        if 'trace_rules' in self._my: Logger.init_logger(trace_rules=self._my['trace_rules'])
-        self.initialized = True
+      if path.exists(): config = path
       else: raise FileNotFoundError(path)
-    elif environment: raise ValueError(f'Unknown environment {environment!r}: one of {", ".join(_ENV_PATHS)}')
+    elif config is None and environment: raise ValueError(f'Unknown environment {environment!r}: one of {", ".join(_ENV_PATHS)}')
+
+    if config is not None:
+      if isinstance(config, PurePath): self.path = config
+      self.environment = environment
+      self._config_load(config)
+      if 'log_file' in self.data: Logger.enable_file_logging(self.data['log_file'])
+      if 'trace_rules' in self.data: Logger.init_logger(trace_rules=self.data['trace_rules'])
+      self.initialized = True
 
 
   def reset(self) -> None:
-    self._my = {}
+    self.data = {}
     self.initialized = False
 
 

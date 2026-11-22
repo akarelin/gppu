@@ -84,7 +84,8 @@ def test_the_command_line_goes_over_the_apps_own_configuration_not_the_environme
 
 
 def test_an_app_without_an_environment_takes_the_command_line():
-    assert Example(argv=['--local', '--preview', '80']).my('') == {'local': True, 'preview': '80'}
+    app = Example(argv=['--local', '--preview', '80'])
+    assert (app.my('local'), app.my('preview')) == (True, '80')
 
 
 def test_reset_lets_the_next_app_load_another_environment():

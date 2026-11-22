@@ -20,7 +20,7 @@ class _PersistentBase(_Base):
 
   def __init__(self, **kw):
     super().__init__(**kw)
-    self.db_connection_string = glob('db') or self.my('db') or ''
+    self.db_connection_string = glob('db') or (self.my('db') if isinstance(self, _DC) else '')   # .. the environment's db, else the own configuration's of an app built on this
     if not self.db_connection_string:
       raise ValueError("Database connection string 'db' not found in config")
 

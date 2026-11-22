@@ -103,7 +103,7 @@ async def clean(fs: GppuFileSystem, base: str, keep: float) -> list[tuple[str, s
 
 
 def main() -> None:
-    app = App(config=MANIFEST, argv=sys.argv[1:])   # its own configuration is its MANIFEST, the command line over it
+    app = App(config=__file__, argv=sys.argv[1:])   # its own configuration is its MANIFEST, the command line over it
     run, keep = app.my('run') is True, float(app.my('keep_hours'))
     home, archive = Path(app.my('home')).expanduser(), Path(app.my('archive'))
     # The harnesses watch their folders and a sync client holds the archive's files: no index file in either.

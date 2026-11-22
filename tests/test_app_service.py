@@ -36,10 +36,12 @@ class Client:
 @pytest.fixture(autouse=True)
 def environment():
   """Each test starts from the Env it found, with one section of its own, and leaves it as it was."""
-  previous, initialized = Env._my, Env.initialized
-  Env._config_load({**previous, 'kept': {'by': 'test'}})
+  previous, environment, initialized = Env.my_dict(''), Env.environment, Env.initialized
+  Env.reset()
+  Env.init(environment=environment, config={**previous, 'kept': {'by': 'test'}})
   yield
-  Env._my, Env.initialized = previous, initialized
+  Env.reset()
+  if initialized: Env.init(environment=environment, config=previous)
 
 
 def mqtt_source(monkeypatch, retained, topics):
@@ -67,7 +69,7 @@ def test_mqtt_startup_loads_every_topic_into_env_and_disconnects(monkeypatch):
     assert glob_dict('display-control') == {'scene': 'pc'}
     assert glob('ov/server/url') == 'https://ov'
     assert glob_dict('kept') == {'by': 'test'}
-    assert app.my_dict('') == config
+    assert {key: app[key] for key in config} == config   # its data holds its configuration, beside what it was constructed with
     assert client.subscriptions == [('config/dc', 1), ('config/ov', 1)]
     assert client.closed
     assert client.connections == 1
@@ -111,7 +113,7 @@ def test_constructing_a_service_does_not_start_a_connection(monkeypatch):
     app = AppService(config=config)
     assert client.connections == 0
     assert app._mqtt_task is None
-    assert app.my_dict('') == config
+    assert {key: app[key] for key in config} == config   # its data holds its configuration, beside what it was constructed with
   asyncio.run(run())
 
 

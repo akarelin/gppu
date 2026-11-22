@@ -407,7 +407,7 @@ class mixin_Mqtt:
 class MqttApp(mixin_Mqtt, AsyncApp):
   """AsyncApp with one reconnecting MQTT client; import from ``gppu``.
 
-  Its broker mapping is the configuration's ``connection``; set ``self.connection`` in an ``__init`` part to change it.
+  Its broker mapping is the configuration's ``connection``, which its data holds.
   Override async ``subscribe()`` to ``await self.mqtt_listen(callback,
   topic)``; callbacks take ``(topic, payload)`` and may be sync or async.
 
@@ -417,9 +417,6 @@ class MqttApp(mixin_Mqtt, AsyncApp):
   return fresh coroutines for each connection. Publish with
   ``await self.mqtt_publish(topic, payload)``; disconnected publishes are discarded.
   """
-
-  def __init(self) -> None:
-    self.connection = self.my('connection')
 
   async def subscribe(self) -> None: pass
 
@@ -436,25 +433,26 @@ class AppService(MqttApp):
   then disconnects."""
 
   def __init(self) -> None:
-    self.topics = self.my_dict('config_mqtt/topics')
     self.until_loaded: set[str] | None = None   # from_mqtt: the topics still to arrive
 
   async def from_mqtt(self) -> None:
     """Each of its topics read once, then the connection closed."""
-    self.until_loaded = set(self.topics)
+    self.until_loaded = set(self.my_dict('config_mqtt/topics'))
     await self.run()
 
   async def __load(self) -> None:
-    if not self.topics or any('+' in topic or '#' in topic for topic in self.topics):
+    topics = self.my_dict('config_mqtt/topics')
+    if not topics or any('+' in topic or '#' in topic for topic in topics):
       raise ValueError('MQTT configuration topics must be exact topic names')
-    for topic in self.topics: await self.mqtt_listen(self._receive_config, topic, qos=1, raise_errors=True)
+    for topic in topics: await self.mqtt_listen(self._receive_config, topic, qos=1, raise_errors=True)
 
   async def _receive_config(self, topic: y2topic, payload: object) -> None:
     data = yaml.load(payload, Loader=YmlLoader) if isinstance(payload, str) else payload
     if not isinstance(data, dict): raise TypeError(f'MQTT configuration must be a mapping: {topic}')
-    configuration = deepcopy(Env.my_dict(''))
-    deepset(self.topics[str(topic)], configuration, data)
-    Env._config_load(configuration)
+    configuration, environment = deepcopy(Env.my_dict('')), Env.environment
+    deepset(self.my('config_mqtt/topics')[str(topic)], configuration, data)
+    Env.reset()   # new configuration is the same event as a reset: Env loads again, from what it held and the section that arrived
+    Env.init(environment=environment, config=configuration)
     if self.until_loaded is not None:
       self.until_loaded.discard(str(topic))
       if not self.until_loaded: self.stop()

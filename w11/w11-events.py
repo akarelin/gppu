@@ -1377,7 +1377,7 @@ def main():
 
     global APP_DIR
     APP_DIR = resolve_app_dir()   # .. the w11 folder: stats, error rules and exports
-    config = App(config=MANIFEST)
+    config = App(config=__file__)
 
     if args.all_logs:
         log_names = get_all_log_names()
