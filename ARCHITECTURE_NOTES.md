@@ -97,6 +97,12 @@ Notes of an agent session, 2026-11-21. The first part is what Alex said in that 
 - A conversion from domain to prefix is not used and not needed: it is declared differently. It is not a missing piece and is not to be required.
 - Care is needed with the words name, path and system.
 - A measure is attribute-only. It is the first use case not handled by the model: it works, but on the side. It is the first non-entity object, and it requires no decision.
+- Configuration is explicit and authored by Alex, and carries the systems' own IDs beside his own information. gppu and Y2 assume it matches the live systems: they keep no copies of live configuration, generate none and discover nothing.
+- Keeping those IDs in sync with the live systems is a prompt and a skill. Where configuration holds IDs that come from a live system, it carries a short prompt that says where they come from and points to the skill that brings them in sync.
+- There is one object for each thing: one light in the configuration and in the system for each light.
+- A light is configured the same way whatever drives it, Hue, Tuya, Insteon or any other: declaring a light, its behavior and its room is done for it as a light, so lights mix and match. Covers and groups work the same way.
+- An entity is generic, built from configuration that produces its dictionary. It speaks a system because its dictionary carries that system's ID: a cover whose row has a PowerView ID speaks PowerView, and has every generic feature besides.
+- PowerView's configuration is not generated: each cover's and each scene's PowerView ID is part of its declaration.
 
 ## UI
 - All objects are data classes with the same `self.data`, and state is lists and dicts of them, so any object can be displayed in a list by a UI that knows nothing about it.
