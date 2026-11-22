@@ -48,8 +48,6 @@ from .gppu import (
 
     # .. Human-readable formatters
     format_size,
-    format_duration,
-    format_since,
 
     # .. OS detection
     OSType,
@@ -150,7 +148,7 @@ __all__ = [
     'VaultProviderOSEnviron', 'VaultProviderAzure',
 
     # .. Human-readable formatters
-    'format_size', 'format_duration', 'format_since',
+    'format_size',
 
     # .. Env
     'Env',

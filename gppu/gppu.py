@@ -168,7 +168,7 @@ def safe_float(o, default: float = float("NaN")) -> float:
   except: result = default
   return result
 def safe_int(o, default: int = 0) -> int: return int(_) if (_ := safe_float(o, default)) else default
-def safe_datetime(o: object) -> dt | None:
+def _safe_datetime(o: object) -> dt | None:
   if isinstance(o, int | float): 
     try: result = dt.fromtimestamp(o, MY_TZ)
     except (OverflowError, OSError, ValueError): return None
@@ -202,61 +202,6 @@ def format_size(size: int | float) -> str:
   return f"{size / 1024 ** 4:.2f} TB"
 
 
-def format_duration(seconds: int | float) -> str:
-  """Format a duration as '0s' / '5s' / '12m 30s' / '2h 5m'.
-
-  Input is seconds (use ``ms / 1000`` for millisecond inputs).  Returns
-  ``'-'`` for negative values; ``0`` formats as ``'0s'`` so callers using
-  this for uptime get a legitimate zero rather than a placeholder.
-  """
-  seconds = float(seconds)
-  if seconds < 0: return "-"
-  if seconds < 60: return f"{seconds:.0f}s"
-  if seconds < 3600:
-    m, s = divmod(seconds, 60)
-    return f"{int(m)}m {int(s)}s"
-  h, rem = divmod(seconds, 3600)
-  m, _ = divmod(rem, 60)
-  return f"{int(h)}h {int(m)}m"
-
-
-def format_since(when) -> str:
-  """Compact "time since" — '5s', '5m', '2h', '3d', '4w', '6mo', '2y'.
-
-  Accepts ISO-8601 string, ``datetime``, or epoch seconds (int/float).
-  Returns empty string on parse failure.  Negative deltas (future timestamps)
-  return ``'0s'``.
-  """
-
-  moment = None
-  if isinstance(when, dt):
-    moment = when
-  elif isinstance(when, (int, float)):
-    moment = dt.fromtimestamp(float(when), tz=timezone.utc)
-  elif isinstance(when, str):
-    s = when.strip()
-    if not s: return ""
-    if s.endswith('Z'): s = s[:-1] + '+00:00'
-    try: moment = dt.fromisoformat(s)
-    except ValueError: return ""
-  else:
-    return ""
-
-  if moment.tzinfo is None:
-    moment = moment.replace(tzinfo=dt.now().astimezone().tzinfo)
-
-  secs = int((dt.now(timezone.utc) - moment).total_seconds())
-  if secs < 0:    return "0s"
-  if secs < 60:   return f"{secs}s"
-  mins = secs // 60
-  if mins < 60:   return f"{mins}m"
-  hrs = mins // 60
-  if hrs < 24:    return f"{hrs}h"
-  days = hrs // 24
-  if days < 7:    return f"{days}d"
-  if days < 30:   return f"{days // 7}w"
-  if days < 365:  return f"{days // 30}mo"
-  return f"{days // 365}y"
 # endregion
 
 
@@ -295,9 +240,9 @@ class TimeSpan(Span):
     if ts is not None: start, length, bounds = ts, timedelta(seconds=1), '[)'
     elif date is not None and duration is not None: start, length = date, duration if isinstance(duration, timedelta) else timedelta(seconds=duration)
     elif date is not None: start, length, bounds = date, timedelta(days=1), '[)'
-    self.start = safe_datetime(start)
+    self.start = _safe_datetime(start)
     if self.start is None: raise ValueError('TimeSpan requires a valid start')
-    self.end = self.start + length if length is not None else None if end is None else safe_datetime(end)
+    self.end = self.start + length if length is not None else None if end is None else _safe_datetime(end)
     if end is not None and self.end is None: raise ValueError('TimeSpan requires a valid end or none')
     if self.end is not None and self.end < self.start: raise ValueError('TimeSpan end precedes start')
     if bounds not in ('[]', '[)'): raise ValueError(f"TimeSpan bounds are '[]' or '[)', not {bounds!r}")
@@ -755,11 +700,11 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
 
     def __init__(self, **options):
         super().__init__(undefined=StrictUndefined, autoescape=False, **options)
-        self.filters.update(self.jinja_helpers())
-        self.globals.update(self.jinja_helpers())
+        self.filters.update(self._jinja_helpers())
+        self.globals.update(self._jinja_helpers())
 
     @staticmethod
-    def jinja_helpers() -> dict:
+    def _jinja_helpers() -> dict:
         """gppu's own filters, offered to every Jinja environment it builds."""
         return {
             'safe_int': safe_int, 'safe_float': safe_float, 'pfy': pfy, 'slugify': slugify,
@@ -776,7 +721,7 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
         if template in self.loader.mapping: return self.get_template(template).render(values)
         return self._jinja_compile(template).render(values)
 
-    def jinja_configuration(self, node: Any) -> None:
+    def _jinja_configuration(self, node: Any) -> None:
         """Every `macros:` block and every named template (a `*_templates` block) of a configuration,
         wherever it sits, added to this environment: a macro is then callable by its name from any template."""
         if not isinstance(node, dict): return
@@ -787,13 +732,13 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
             elif str(key).endswith('_templates') and isinstance(value, dict):
                 self.loader.mapping.update(value)
                 self.cache.clear()
-            else: self.jinja_configuration(value)
+            else: self._jinja_configuration(value)
 
-    def templates_of(self, node: Any, found: dict | None = None) -> dict:
+    def _templates_of(self, node: Any, found: dict | None = None) -> dict:
         """Every template of a configuration by its name: a mapping in a `templates:` block. A name is declared once."""
         found = {} if found is None else found
         if isinstance(node, list):
-            for value in node: self.templates_of(value, found)
+            for value in node: self._templates_of(value, found)
         if not isinstance(node, dict): return found
         for key, value in node.items():
             if key == 'templates' and isinstance(value, dict):
@@ -801,7 +746,7 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
                     if not isinstance(template, dict): continue
                     if name in found: raise ValueError(f'template {name!r} is declared twice')
                     found[name] = template
-            self.templates_of(value, found)
+            self._templates_of(value, found)
         return found
 
     def apply_template(self, node: Any, templates: dict) -> Any:
@@ -818,13 +763,13 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
         """A configuration as loaded: its macros and named templates added, its Jinja that reads only the configuration
         filled (``glob`` reads the value it fills, filled), and its `template:` rows merged over their templates. Env's
         configuration and an app's own both load through it."""
-        self.jinja_configuration(node)
+        self._jinja_configuration(node)
         def read(path: str) -> Any: return self.jinja_fill(glob(path), **readers)
         readers = {'glob': read,
                    'glob_int': lambda path: _ if isinstance(_ := read(path), int) else 0,
                    'glob_list': lambda path: _ if isinstance(_ := read(path), list) else [],
                    'glob_dict': lambda path: _ if isinstance(_ := read(path), dict) else {}}
-        return self.apply_template(self.jinja_fill(node, **readers), self.templates_of(node))
+        return self.apply_template(self.jinja_fill(node, **readers), self._templates_of(node))
 
     @cache
     def _jinja_compile(self, template: str):
