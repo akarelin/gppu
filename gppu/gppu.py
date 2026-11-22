@@ -1514,18 +1514,11 @@ class _DC(UserDict):
 # endregion
 
 
-# region Configuration mixins
+# region Configuration
 class mixin_Config(_mixin):
-# !!!  """ Very sus. Looks like slop. It DOES not read the configuration. Claude cannot understand this code and thinks its some "loader". self.my waws initialized somewhere and needs a place, but not this complexity. """
-
-  """ Very sus. Looks like slop. It DOES not read the configuration. Claude cannot understand this code and thinks its some "loader". self.my waws initialized somewhere and needs a place, but not this complexity. """
-  # region - // what is left of mixin_Config
-  # // An app is assembled from mixins, and this one gives it the readers of its configuration. The configuration
-  # // is the `_DC`'s data, where construction loads it: `_my`, the loader and the command line are no longer here.
-  # endregion
+  # // !!! Very sus. Looks like slop. It DOES not read the configuration. Claude cannot understand this code and thinks its some "loader". self.my waws initialized somewhere and needs a place, but not this complexity.
   def my(self, path: str | y2path, default=None) -> Any: return deepget(path, self.data, default=default)
   def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self.data, default=default)
-  def my_float(self, path: str | y2path, default: float = float('nan')) -> float: return deepget_float(path, self.data, default=default)
   def my_list(self, path: str | y2path, default: list = []) -> list: return deepget_list(path, self.data, default=default or [])
   def my_dict(self, path: str | y2path, default: dict = {}) -> dict: return deepget_dict(path, self.data, default=default or {})
 
@@ -1534,29 +1527,84 @@ class _Base(mixin_Logger, mixin_Config): pass
 # endregion
 
 
-# region App
-class App(YInit, _Base, _DC):
-# !!! Rewrote. folowing the architecture, not beside it
-    """ Not human reviewed """
-    # region - ^^ why App exists
-    # ^^ SPEC: every app is a `_DC`, takes its environment, knows its own name and loads its own configuration.
-    # ^^ It is code about configuration, used by everything downstream: Fleet and the Hosts tools, the TUI apps and Y2's
-    # ^^ apps are Apps. It adds one init step, which loads the configuration into the object's data.
-    # endregion
-    name: str
+# region State
+class _State(_DC):
+    """What the program preserves and restores: every notable object, found by its globally unique ID."""
+
+    def add(self, obj) -> None:
+        if obj['id'] in self.data: raise KeyError(f"{obj['id']} is already in State")
+        self.data[obj['id']] = obj
+
+
+State = _State()
+# endregion
+
+
+# region Runtime
+class _Runtime(YStart, mixin_Logger, _DC):
+    """Builds the objects and runs their steps, and has what State has not: the events and the actions."""
 
     def __init(self) -> None:
-        name = type(self).__name__.lower()   # .. its name, unless what it was made with or its configuration names it
-        if 'parent' not in self.data:   # .. a runtime made it from its row: the row is its configuration
-            # region - the program's app: its section of the environment, the one named as it is, or the configuration it
-            # .. was given (a YAML file, or a script's MANIFEST text), under what it was made with
-            # endregion
+        self.owners: dict[str, str] = {}     # .. a path that is one object's alone, an action or a topic: that object's ID
+        self.actions: dict[str, Any] = {}    # .. an action's name: the method it runs, or the actions it is a sequence of
+        self.listeners: dict[str, list] = {}
+
+    def build(self, cls: type, rows: list, parent=None) -> list:
+        """An object of `cls` from each row, in State, with the paths and the actions that are its own."""
+        objects = [cls(data=row, parent=parent) for row in rows]
+        for obj in objects:
+            State.add(obj)
+            for path in obj.get('paths', []): self.own(path, obj)
+            actions = obj.get('actions', [])
+            for verb in actions:
+                name = f"{obj['path']}/{verb}"
+                self.own(name, obj)
+                self.actions[name] = actions[verb] if isinstance(actions, dict) else getattr(obj, verb)
+        return objects
+
+    def own(self, path: str, obj) -> None:
+        if path in self.owners: raise KeyError(f"{path} is {self.owners[path]}'s: {obj['id']} cannot have it")
+        self.owners[path] = obj['id']
+
+    def who(self, path: str) -> tuple:
+        """The object a path is of, and whether it is started."""
+        obj = State[self.owners[path]]
+        return obj, obj.started
+
+    def run(self, name: str) -> None:
+        action = self.actions[name]
+        if callable(action): action()
+        else: [self.run(step) for step in action]
+
+    def listen(self, event: str, callback) -> None: self.listeners.setdefault(event, []).append(callback)
+    def fire(self, event: str, **data) -> None: [callback(**data) for callback in self.listeners.get(event, [])]
+
+    def __load(self) -> None: [obj.load() for obj in State.values() if isinstance(obj, YLoad)]
+    def __start(self) -> None: [obj.start() for obj in State.values() if isinstance(obj, YStart)]
+    def __stop(self) -> None: [obj.stop() for obj in State.values() if isinstance(obj, YStart)]
+
+
+Runtime = _Runtime()
+# endregion
+
+
+# region App
+class App(YInit, _Base, _DC):
+    # // !!! Rewrote. folowing the architecture, not beside it
+    """The program, or a part of it that the runtime built from its row. Its configuration is its data: the row, or
+    for the program its section of the environment under what it was made with, and the command line over both. Its
+    objects are the rows at its `key`, of its `_default` class, which the runtime builds."""
+    name: str
+    key: str
+
+    def __init(self) -> None:
+        name = type(self).__name__.lower()
+        if 'parent' not in self.data:
             own = self.data.pop('config') if 'config' in self.data else glob_dict(self.name or name)
             if isinstance(own, os.PathLike): own = dict_from_yml(own)
             elif isinstance(own, str): own = yaml.load(own, Loader=YmlLoader)
-            self.data = jinja.configuration(deepcopy(dict(own))) | self.data   # .. what it was made with stays: its configuration goes under it
-            # .. the command line over both: --key value sets a key, a slash path a nested one, to the value read as YAML, as
-            # .. configuration is (--days 30 is a number, --logs [System, Security] a list); --flag sets it to True
+            self.data = jinja.configuration(deepcopy(dict(own))) | self.data
+            # .. --key value sets a key, a slash path a nested one, the value read as YAML; --flag sets it to True
             argv, i = sys.argv[1:], 0
             while i < len(argv):
                 arg, i = argv[i], i + 1
@@ -1565,6 +1613,7 @@ class App(YInit, _Base, _DC):
                 if i < len(argv) and not argv[i].startswith('--'): value, i = yaml.load(argv[i], Loader=YmlLoader), i + 1
                 deepset(arg[2:], self.data, value)
         if not self.name: self.name = name
+        self.objects = Runtime.build(self._default, glob_list(self.key), parent=self) if self.key else []
 # endregion
 
 
