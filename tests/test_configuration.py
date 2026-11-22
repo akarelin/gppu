@@ -237,9 +237,9 @@ def test_own_configuration_fills_its_jinja_from_the_environment(home):
 
 
 def test_async_app_keeps_its_steps():
-    from gppu import AsyncApp, YStepper
+    from gppu import AsyncApp, YStart
 
-    assert AsyncApp.init is YStepper.init
+    assert AsyncApp.init is YStart.init
 
     class Example(AsyncApp):
         steps = []

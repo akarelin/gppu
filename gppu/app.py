@@ -1,7 +1,7 @@
 """gppu.app — the apps with steps. See docs/app.md.
 
 Env, ``_Base`` and ``App``, the regular app with no steps, are in gppu.gppu. Here is ``AsyncApp``, which composes # pyright: ignore[C0301:line-too-long]
-``App`` with ``mixin_Stepper``, the YMRO (Y2 Method Resolution Order) init, load and start steps; ``APIApp`` serves HTTP # type: ignore
+``App`` with ``YStart``, the YMRO (Y2 Method Resolution Order) init, load and start steps; ``APIApp`` serves HTTP # type: ignore
 on it. For Textual, use ``gppu.tui.TUIApp``; for MQTT, ``gppu.iot.MqttApp``.
 """
 from __future__ import annotations
@@ -20,7 +20,7 @@ from itertools import count
 from typing import Any, ClassVar, final
 
 from .gppu import App, Debug, Env, _Base, _DC, _mixin, glob, glob_list, now_ts, y2path
-from .gppu import _YMRO, _YInit, _YLoad, _YStart, YStepper, mixin_Stepper
+from .gppu import _YMRO, YInit, YLoad, YStart
 
 
 
@@ -154,7 +154,7 @@ _SCHEDULER = _Scheduler()
 
 
 
-class AsyncApp(App, mixin_Stepper, mixin_EventLoopBridge):
+class AsyncApp(App, YStart, mixin_EventLoopBridge):
   """Application base for long-lived asyncio services, on the YMRO steps.
 
   Construction runs init; ``run()`` runs init (light loading, with the configuration ready),

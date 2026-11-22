@@ -1459,7 +1459,7 @@ class _YMRO:
       if asyncio.iscoroutine(result): await result
 
 
-class _YInit(_YMRO):
+class YInit(_YMRO):
   @abstractmethod
   def __init(self): pass
 
@@ -1476,7 +1476,7 @@ class _YInit(_YMRO):
   def initialized(self, value: bool): self._initialized = value
 
 
-class _YLoad(_YInit):
+class YLoad(YInit):
   @abstractmethod
   def __load(self): pass
 
@@ -1494,7 +1494,7 @@ class _YLoad(_YInit):
   def loaded(self, value: bool): self._loaded = value
 
 
-class _YStart(_YLoad):
+class YStart(YLoad):
   @abstractmethod
   def __start(self): pass
 
@@ -1526,9 +1526,6 @@ class _YStart(_YLoad):
   @stopped.setter
   def stopped(self, value: bool): self._stopped = value
 
-
-YStepper = _YStart
-class mixin_Stepper(YStepper, _mixin): pass
 # endregion
 
 
@@ -1606,7 +1603,7 @@ class _Base(mixin_Logger, mixin_Config): pass
 
 
 # region App
-class App(_YInit, _Base, _DC):
+class App(YInit, _Base, _DC):
     """ Not human reviewed """
     # region - ^^ why App exists
     # ^^ SPEC: every app is a `_DC`, takes its environment, knows its own name and loads its own configuration.

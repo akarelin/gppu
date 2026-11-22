@@ -3,10 +3,10 @@ import asyncio
 
 import pytest
 
-from gppu import mixin_Stepper, sync
+from gppu import YStart, sync
 
 
-class Base(mixin_Stepper):
+class Base(YStart):
   def __init__(self): self.seen = []
   def __init(self): self.seen.append('base init')
   def __load(self): self.seen.append('base load')

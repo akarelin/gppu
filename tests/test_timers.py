@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from gppu import App, AsyncApp, TimerHandle
-from gppu.app import mixin_Stepper
+from gppu.app import YStart
 from gppu.gppu import _DC
 
 
@@ -66,7 +66,7 @@ def test_cancel_timers_cancels_every_timer_the_app_armed():
 def test_an_app_initializes_the_class_it_is_composed_with():
     """App's init is cooperative: a class composed after it, as Linked Data's API composes its database or Y2's State
     its entity, is initialized with what App does not take."""
-    class Entity(mixin_Stepper, _DC):
+    class Entity(YStart, _DC):
         def __init__(self, *, eid, **kw):
             super().__init__(**kw)
             self.eid = eid

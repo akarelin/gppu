@@ -54,7 +54,7 @@ The current `mixin_Mqtt.mqtt_listen(callback, topic, payload=None, ignore_retain
 
 ## Transformer
 
-`App + MqttMixin + mixin_Stepper` — a config-driven scalar transform service stage: subscribes to `connection.listen` patterns, applies `rules` (cascading sum/difference maps over topic groups, optional `sign_flip`), and republishes to `dest_prefix/<name>` topics, debounced (`DEBOUNCE` = 10s). Maintains a `status_topic` LWT (`online`/`no-data`/`offline`) with a no-data watchdog (`NODATA_TIMEOUT` = 60s).
+`App + MqttMixin + YStart` — a config-driven scalar transform service stage: subscribes to `connection.listen` patterns, applies `rules` (cascading sum/difference maps over topic groups, optional `sign_flip`), and republishes to `dest_prefix/<name>` topics, debounced (`DEBOUNCE` = 10s). Maintains a `status_topic` LWT (`online`/`no-data`/`offline`) with a no-data watchdog (`NODATA_TIMEOUT` = 60s).
 
 Config shape (one transformer per entry, e.g. `power/brultech/transforms` in the Creekview topology):
 
