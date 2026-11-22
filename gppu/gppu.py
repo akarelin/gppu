@@ -850,20 +850,22 @@ def _tuple_representer(dumper: Dumper, data: tuple) -> Node:
 def dict_from_yml(filename: str | Path) -> dict:
   """ yaml file to dictionary, resolving includes, but not templates"""
   filename = Path(filename)
-  dir_stack: list[Path] = [filename.parent]
+  # // dir_stack: list[Path] = [filename.parent]
+  root = filename.parent   # .. every include is named from the folder of the file loaded, the environment's configuration
 
   class Loader(YmlLoader): pass
 
   def yml_include(loader: FullLoader, node: Node) -> Any:
-    fn = dir_stack[-1] / loader.construct_scalar(node)
+    # // fn = dir_stack[-1] / loader.construct_scalar(node)
+    fn = root / loader.construct_scalar(node)
 
-    dir_stack.append(fn.parent)
+    # // dir_stack.append(fn.parent)
 
-    try:
-      with fn.open() as f:
-        if fn.suffix.lower().endswith('.json'): return json.load(f)                        
-        return yaml.load(f, Loader=Loader)
-    finally: dir_stack.pop()
+    # // try:
+    with fn.open() as f:
+      if fn.suffix.lower().endswith('.json'): return json.load(f)
+      return yaml.load(f, Loader=Loader)
+    # // finally: dir_stack.pop()
 
   Loader.add_constructor("!include", yml_include)
 
