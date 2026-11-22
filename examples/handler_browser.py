@@ -206,7 +206,7 @@ class HandlerBrowser(TUIApp):
 
 
 def main() -> None:
-  app = App(config=__file__)   # .. its own configuration is its MANIFEST
+  app = App(config=MANIFEST)   # .. its own configuration is its MANIFEST
   HandlerBrowser(GppuCatalog(app.my('catalog'))).run()
 
 

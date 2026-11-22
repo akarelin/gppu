@@ -102,29 +102,36 @@ async def clean(fs: GppuFileSystem, base: str, keep: float) -> list[tuple[str, s
     return moves
 
 
-def main() -> None:
-    app = App(config=MANIFEST)   # .. its own configuration is its MANIFEST, the command line over it
-    run, keep = app.my('run') is True, float(app.my('keep_hours'))
-    home, archive = Path(app.my('home')).expanduser(), Path(app.my('archive'))
-    # .. The harnesses watch their folders and a sync client holds the archive's files: no index file in either.
-    fs = GppuFileSystem(cache=[*((home / folder).as_posix() for folder in app.my('sessions')), archive.as_posix()])
-    print(legend_ansi(tuple(MARKS.values())) if COLOUR else '  '.join(f'{m.symbol}={m.label}' for m in MARKS.values()))
-    going = Counter()
-    for folder in app.my('sessions'):
-        base = (home / folder).as_posix()
-        print(paint('1', base), flush=True)
-        moves = asyncio.run(clean(fs, base, keep))
-        going.update(to for to, _ in moves)
-        if run:
-            for to, path in moves:
-                for entry in (path, str(PurePosixPath(path).with_suffix(''))):   # .. Claude Code keeps a session's other files in a folder by its uid
-                    if fs.exists(f'{base}/{entry}'):
-                        there = (archive / app.my(f'buckets/{to}') / folder / entry).as_posix()
-                        fs.makedirs(str(PurePosixPath(there).parent), exist_ok=True)
-                        fs.mv(f'{base}/{entry}', there, recursive=True)
-    summary = ' '.join(f'{to}={going[to]}' for to in ('human', 'orphan', 'damaged'))
-    print(paint('32', f'{summary}, moved into {archive}' if run else f'{summary}, nothing moved: --run moves them'))
+class SessionsClean(App):
+    """Its configuration is its MANIFEST, the command line over it."""
+    home: str
+    sessions: list
+    archive: str
+    buckets: dict
+    keep_hours: float
+    run: bool
+
+    def main(self) -> None:
+        home, archive = Path(self.home).expanduser(), Path(self.archive)
+        # .. The harnesses watch their folders and a sync client holds the archive's files: no index file in either.
+        fs = GppuFileSystem(cache=[*((home / folder).as_posix() for folder in self.sessions), archive.as_posix()])
+        print(legend_ansi(tuple(MARKS.values())) if COLOUR else '  '.join(f'{m.symbol}={m.label}' for m in MARKS.values()))
+        going = Counter()
+        for folder in self.sessions:
+            base = (home / folder).as_posix()
+            print(paint('1', base), flush=True)
+            moves = asyncio.run(clean(fs, base, float(self.keep_hours)))
+            going.update(to for to, _ in moves)
+            if self.run:
+                for to, path in moves:
+                    for entry in (path, str(PurePosixPath(path).with_suffix(''))):   # .. Claude Code keeps a session's other files in a folder by its uid
+                        if fs.exists(f'{base}/{entry}'):
+                            there = (archive / self.buckets[to] / folder / entry).as_posix()
+                            fs.makedirs(str(PurePosixPath(there).parent), exist_ok=True)
+                            fs.mv(f'{base}/{entry}', there, recursive=True)
+        summary = ' '.join(f'{to}={going[to]}' for to in ('human', 'orphan', 'damaged'))
+        print(paint('32', f'{summary}, moved into {archive}' if self.run else f'{summary}, nothing moved: --run moves them'))
 
 
 if __name__ == '__main__':
-    main()
+    SessionsClean(config=MANIFEST).main()
