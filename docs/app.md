@@ -41,7 +41,7 @@ Caching is the standard library's: gppu exports `cache`, `lru_cache` and `cached
   - Timers are only an async app's. `app.run_later(callback, delay=..., key=...)` fires the callback once after the delay; arming a key again cancels the timer armed under it. `app.run_every(callback, start=..., interval=...)` fires it at an interval, and a callback that raises still fires the next time. A callback is called with only the keywords it takes.
   - One thread holds every armed timer, and each due callback runs in a thread of its own. `app.timers` holds every armed timer by its id, `app.h_timeouts` those armed under a key. `app.cancel_timer(handle)` cancels one, and `app.cancel_timers()` cancels them all.
 
-An app gives its part of a step by overriding the regular `init`, `load` or `start` and calling super. The double-underscore parts, `__init`, `__load`, `__start` and `__stop`, which YMRO calls once for every class that defines one, are for rare cases: a mixin adding its part without knowing the other classes. A part may be `async def`; YMRO awaits it in an async app.
+An app gives its part of a step by overriding the regular `init`, `load` or `start` and calling super. The double-underscore parts, `__init`, `__load`, `__start` and `__stop`, which YMRO calls once for every class that defines one, are for rare cases: a mixin adding its part without knowing the other classes. A part that is `async def` takes `@sync`: from sync code it runs to the end, and on a running loop it runs as a task.
 
 ## Built on AsyncApp
 

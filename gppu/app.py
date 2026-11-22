@@ -26,7 +26,7 @@ import yaml
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.properties import Properties
 
-from .gppu import App, Debug, Env, YmlLoader, _Base, _DC, _mixin, deepset, glob, glob_list, now_ts, y2path, y2topic
+from .gppu import App, Debug, Env, YmlLoader, _Base, _DC, _mixin, deepset, glob, glob_list, now_ts, sync, y2path, y2topic
 from .gppu import _YMRO, YInit, YLoad, YStart
 
 
@@ -167,8 +167,8 @@ class AsyncApp(App, YStart, mixin_EventLoopBridge):
 
   Construction runs init; ``run()`` runs init (light loading, with the configuration ready),
   load (the heavy loading) and start, last, on the app's loop: ``asyncio.run(MyApp().run())``.
-  A class gives its part of a step as a private ``__init``, ``__load``, ``__start`` or ``__stop``, sync or
-  ``async def``, with no super: every class's part runs, base first.
+  A class gives its part of a step as a private ``__init``, ``__load``, ``__start`` or ``__stop``, an ``async def``
+  one with ``@sync``, with no super: every class's part runs, base first.
   A part adds concurrent work with ``self._spawn(coro)``; ``run()`` returns when all of it
   has finished, and ``app.stop()`` cancels it.
   The app is a ``mixin_EventLoopBridge`` onto its own running loop, so off-loop threads
@@ -421,6 +421,7 @@ class AppService(mixin_Mqtt, AsyncApp):
         self.until_loaded = set(self.my_dict('config_mqtt/topics'))
         await self.run()
 
+    @sync
     async def __load(self) -> None:
         for topic in self.my_dict('config_mqtt/topics'): await self.mqtt_listen(self._receive_config, topic, qos=1)
 

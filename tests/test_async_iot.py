@@ -20,7 +20,7 @@ class _FiniteApp(AsyncApp):
   def __init(self) -> None:
     self.seen = list(self.my('values'))
 
-  async def __start(self) -> None:
+  def __start(self) -> None:
     self._spawn(self._worker())
 
   async def _worker(self) -> None:
