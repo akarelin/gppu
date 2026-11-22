@@ -39,7 +39,7 @@ except ImportError:
 from .app import AsyncApp, AsyncSubmission, _callback_wrapper, mixin_EventLoopBridge
 import yaml
 
-from .gppu import Env, _DC, _DC_BASE_TYPE_MAP, deepset, y2list, y2path, y2topic, y2uri
+from .gppu import Env, YmlLoader, _DC, _DC_BASE_TYPE_MAP, deepset, y2list, y2path, y2topic, y2uri
 
 
 
@@ -450,7 +450,7 @@ class AppService(MqttApp):
     for topic in self.topics: await self.mqtt_listen(self._receive_config, topic, qos=1, raise_errors=True)
 
   async def _receive_config(self, topic: y2topic, payload: object) -> None:
-    data = yaml.safe_load(payload) if isinstance(payload, str) else payload
+    data = yaml.load(payload, Loader=YmlLoader) if isinstance(payload, str) else payload
     if not isinstance(data, dict): raise TypeError(f'MQTT configuration must be a mapping: {topic}')
     configuration = deepcopy(Env.my_dict(''))
     deepset(self.topics[str(topic)], configuration, data)

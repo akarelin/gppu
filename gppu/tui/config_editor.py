@@ -27,11 +27,13 @@ from typing import Iterable
 
 import yaml
 
+from gppu.gppu import YmlLoader
+
 INCLUDE_RE = re.compile(r"(?:^|:\s*)!include\s+(?P<path>[^#\n]+)")
 
 
-class LoaderWithInclude(yaml.SafeLoader):
-    """YAML loader that tolerates !include tags for syntax validation."""
+class LoaderWithInclude(YmlLoader):
+    """gppu's YAML loader, its !include tags named but not opened, for syntax validation."""
 
 
 def _load_include(loader: LoaderWithInclude, node: yaml.Node) -> str:

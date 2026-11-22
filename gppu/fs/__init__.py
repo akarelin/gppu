@@ -47,7 +47,7 @@ from fsspec.archive import AbstractArchiveFileSystem
 from fsspec.spec import AbstractFileSystem
 from jinja2 import DictLoader, UndefinedError
 
-from ..gppu import TimeSpan, OSType, detect_os, full_path, glob, jinja, jinja_template, y2path
+from ..gppu import TimeSpan, OSType, YmlLoader, detect_os, full_path, glob, jinja, jinja_template, y2path
 from .uri import y2uri
 from . import handlers
 
@@ -349,7 +349,7 @@ class Container:
         uri = self._uri(MERGE_RULES if at == '.' else f'{at}/{MERGE_RULES}')
         try:
           with self.provider.open(uri) as stream:
-            listed = yaml.safe_load(stream) or []
+            listed = yaml.load(stream, Loader=YmlLoader) or []
         except FileNotFoundError:
           listed = None
         if listed is not None and (not isinstance(listed, list) or any(operation not in OPERATIONS for operation in listed)):

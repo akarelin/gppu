@@ -29,7 +29,7 @@ from fsspec.core import split_protocol
 from fsspec.spec import AbstractFileSystem
 
 from ..gppu import glob
-from ..gppu import TimeSpan, apply_template, full_path, jinja_fill, render_template, uuid_create, y2path
+from ..gppu import TimeSpan, YmlLoader, apply_template, dict_from_yml, full_path, jinja_fill, render_template, uuid_create, y2path
 from .uri import y2uri
 from . import FileSystem, Location, Provider, _address, _below
 from .gppufs import GppuFileSystem
@@ -119,7 +119,7 @@ class GppuCatalog(AsyncFileSystem):
     if self.host.casefold() not in folders:
       raise ValueError(f'{catalog}: no folder for host {self.host}')
     self.folder = folders[self.host.casefold()]
-    self.sources: dict[str, dict] = {file.stem: yaml.safe_load(file.read_text(encoding='utf-8'))
+    self.sources: dict[str, dict] = {file.stem: dict_from_yml(file)
       for file in sorted(self.catalog.glob('*.yaml'))}
     canonical: dict[tuple[str, str], dict] = {}
     def walk(service: str, entries: list[dict], above: tuple[str, ...]) -> None:
@@ -133,7 +133,7 @@ class GppuCatalog(AsyncFileSystem):
       walk(service, source['locations'], ())
     replicas = self.folder / 'replicas.yaml'
     self._replicas: dict[str, dict] = {}
-    listed = yaml.safe_load(replicas.read_text(encoding='utf-8')) or {} if replicas.is_file() else {}
+    listed = dict_from_yml(replicas) if replicas.is_file() else {}
     for service, entries in listed.items():
       for replica in entries:
         location = canonical.get((service, replica['location']))
@@ -327,7 +327,7 @@ class GppuCatalog(AsyncFileSystem):
 
   def _load(self) -> None:
     """Read the host's ``locations.yaml``; a Location whose ``index`` is not where gppufs keeps it is an error, not a redirect."""
-    rows = yaml.safe_load((self.folder / 'locations.yaml').read_text(encoding='utf-8')) or []
+    rows = yaml.load((self.folder / 'locations.yaml').read_text(encoding='utf-8'), Loader=YmlLoader)
     locations: dict[str, dict] = {}
     for row in rows:
       root = self.files._key(row['root_path'])

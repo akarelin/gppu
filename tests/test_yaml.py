@@ -88,6 +88,6 @@ class TestDictSanitize:
 
     def test_keys_sorted_with_priority(self):
         data = {"z": 1, "name": "first", "a": 2}
-        result = dict_sanitize(data)
+        result = dict_sanitize(data, sort_keys=True)
         keys = list(result.keys())
         assert keys[0] == "name"  # KEYS_FIRST priority

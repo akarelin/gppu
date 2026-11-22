@@ -34,7 +34,7 @@ from uuid import UUID, uuid5
 
 import yaml
 
-from ..gppu import Path, TimeSpan, probe_path
+from ..gppu import Path, TimeSpan, YmlLoader, probe_path
 
 # Times tools write in place of a time: Windows FILETIME zero, Unix epoch zero, DOS zero, and the constant
 # Android build tools stamp on every APK member. Anything at or before DOS zero is not a time either.
@@ -422,12 +422,12 @@ class MarkdownHandler(FileHandler):
     mapping, {} when there is none; span from created to updated, or None.
     """
 
-    class _Loader(yaml.SafeLoader):
-        """Safe YAML that keeps timestamp scalars as written."""
+    class _Loader(YmlLoader):
+        """gppu's YAML that keeps timestamp scalars as written."""
 
     _Loader.yaml_implicit_resolvers = {
         first: [(tag, pattern) for tag, pattern in resolvers if tag != "tag:yaml.org,2002:timestamp"]
-        for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+        for first, resolvers in YmlLoader.yaml_implicit_resolvers.items()
     }
 
     @classmethod

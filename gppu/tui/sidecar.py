@@ -43,6 +43,7 @@ from pathlib import Path
 import yaml
 
 from gppu import Env, Warn
+from gppu.gppu import YmlLoader
 
 from .launcher import _tui_available, platform_ok, _platform_label
 
@@ -73,7 +74,7 @@ def read_sidecar(sidecar: Path) -> dict:
     match = FRONTMATTER.match(sidecar.read_text(encoding='utf-8-sig'))
     if not match:
         raise ValueError(f'{sidecar}: no YAML frontmatter')
-    manifest = yaml.safe_load(match.group('yaml'))
+    manifest = yaml.load(match.group('yaml'), Loader=YmlLoader)
     if not isinstance(manifest, dict):
         raise ValueError(f'{sidecar}: frontmatter must be a mapping')
 
