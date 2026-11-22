@@ -8,10 +8,6 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [x] `pip show gppu` shows the time of the build's commit after a `+` (`setup.py`), Alex as author and gppu's GitHub repository; a plain `pip install -r requirements.txt` takes each new build
 - [ ] The gppu wheel carries the `statusline` and `w11` packages, and its source archive every file in the repository
 
-## Callers of what gppu removed
-- [ ] Programs still call `Env.from_env`, gone since 3.7.1, and stop at start: in RAN the Linked Data API and its tools, lake's m365, md-indexer, eMail-triage, coverage; in CRAP the admin UI, Transcriber, the file indexer, Plaud
-- [ ] The Hosts TUI's Configs browser reads `configs_config`, which RAN's configuration no longer has
-
 ## gppu's code, by Alex's marks
 - [ ] `Logger.enable_file_logging`: "Need justification for this to exist" (in progress)
   - What it does: RAN's `config.yaml` has the line `log_file: ~/.cache/gppu/hosts.log`, so every program that loads RAN's configuration also writes every line it prints into that one file. Creekview's configuration has no such line
@@ -32,7 +28,9 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - UIs on gppu's Jinja
 
 ## Found outside this task
-- IoT: PC Control's PyInstaller build does not copy gppu's metadata (`--copy-metadata gppu`, as the status line and W11 do), and gppu reads its version from it at import
+- Programs still call `Env.from_env`, gone since 3.7.1, and stop at start: in RAN the Linked Data API and its tools, lake's m365, md-indexer, eMail-triage, coverage; in CRAP the admin UI, Transcriber, the file indexer, Plaud
+- The Hosts TUI's Configs browser reads `configs_config`, which RAN's configuration no longer has
+- The start page has no `start_page` configuration in RAN since 2026-11-13, and imports the sidecar loader gppu no longer has
 - IoT: `_creekview.yaml` and `ui/editor.yaml` include `zwjs.yaml` and `z2.yaml` from `Insteon/`, which Alex moved back to `_devices/`; Creekview does not load from the checkout
 - IoT's any2mqtt image is `python:3.13-slim` and installs `gppu/latest`, which imports `uuid7` from Python 3.14
 
