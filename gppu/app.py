@@ -87,7 +87,8 @@ class AsyncApp(App, YStart, mixin_EventLoopBridge):
   ``run_every`` fires it at an interval. ``timers`` holds every armed timer's row by its id (its callback's name, its
   kind, its interval and its next run in epoch seconds), ``h_timeouts`` those armed under a key.
 
-  Its objects are App's: the rows at its ``key``, which the runtime builds; its steps start and stop them. With a ``poll_interval`` and objects, it refreshes them
+  Its objects are the rows of the list at its ``key``, each ``_default(data=row, parent=self)``, of the one class it
+  makes them with; its steps start and stop them. With a ``poll_interval`` and objects, it refreshes them
   one at a time, each once per ``poll_interval``, starting ``poll_delay`` after it starts, in an order shuffled every
   round, passing the poller's keywords to each refresh.
   """
@@ -107,8 +108,12 @@ class AsyncApp(App, YStart, mixin_EventLoopBridge):
     self._loop = None
     self.timers: dict[int, dict] = {}
     self.h_timeouts: dict[str, dict] = {}
-    self._my_groups: list = self.objects   # .. the runtime built them, in App's part of init
+    self._my_groups: list = []
     self._polled: list = []
+    for data in glob_list(self.key): self._add_group(data)
+
+  def _add_group(self, data: dict) -> None:
+    self._my_groups.append(self._default(data=data, parent=self))
 
   def __start(self) -> None:
     for group in self._my_groups:
