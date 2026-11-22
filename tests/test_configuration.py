@@ -97,7 +97,7 @@ def test_reset_lets_the_next_app_load_another_environment():
 
 
 def test_unknown_environment_raises():
-    with pytest.raises(ValueError, match='Unknown environment'):
+    with pytest.raises(KeyError):   # a name that is neither of the two environments
         App(environment='Creekview')
     assert not Env.initialized
 

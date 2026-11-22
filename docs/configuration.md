@@ -15,11 +15,11 @@ glob('hosts')           # the rest of Hosts
 
 The app already has its identity: `Example` selects `example`, and `Fleet` selects `fleet`. An explicit name remains an override for existing callers. The app's section is its own copy.
 
-An app's own configuration is independent from the environment: `Example(config='example.yaml')` loads that YAML file as the app's own, whether or not it declares an environment. An app given no file loads its section of the environment.
+An app's own configuration is independent from the environment: `Example(config='example.yaml')` loads that YAML file as the app's own, whether or not it declares an environment. A script gives itself, `Example(config=__file__)`: its configuration is the YAML it assigns to `MANIFEST` within its first 4 kilobytes, taken by a regex and never by running the script. An app given no file loads its section of the environment. The configuration goes into the app's data, the `_DC`'s, over what the app was constructed with; `my(...)` and the class's annotated accessors read it there.
 
 The command line goes over the app's own configuration, never over the environment: `Example(environment='Hosts', argv=sys.argv[1:])`. `--key value` sets the key to the string, a slash path names a nested key, `--flag` with no value after it sets it to True, and other arguments are the program's own.
 
-Env and every app load through the same code, `_config_load(source)` on `mixin_Config`: a YAML file, or a section already loaded, becomes the object's own configuration as a copy.
+Env and every app load through the same step, App's: a YAML file, a script's manifest, or a section already loaded goes into the object's data as a copy. `mixin_Config` is the readers alone, `my`, `my_int`, `my_float`, `my_list` and `my_dict`.
 
 ## Env.init
 
@@ -27,7 +27,8 @@ App construction calls `Env.init(environment=...)`. Env is the global singleton 
 
 - It sets `host`, `os`, `user` and `home`, so an app without an environment has them too.
 - A declared name selects one YAML file: Hosts is `RAN/Hosts/_config/config.yaml`, IoT is `IoT/_Creekview/_creekview.yaml`. The path is under `D:\Dev` on Windows and under the home folder elsewhere. YAML `!include` paths are relative to the file that includes them.
-- `_config_load` reads the file into Env, so it becomes the configuration that `glob(...)` reads; its `log_file` and `trace_rules` then apply to gppu's logger.
+- The file loads into Env's data, so it becomes the configuration that `glob(...)` reads; its `log_file` and `trace_rules` then apply to gppu's logger.
+- Env takes `config=` as any app does: `Env.init(config=mapping)` loads a mapping already read, as the part read from MQTT is, and `Env.init(environment='IoT', config=path)` a copy of the file.
 - The environment loads once. Later apps share it, with or without a declaration, until `Env.reset()`.
 - An unknown name, a missing file and invalid YAML raise. Nothing searches folders or guesses a program's configuration.
 
@@ -39,4 +40,4 @@ An app without an environment, and none loaded, starts with empty configuration;
 
 `jinja_template(node, **values)` renders strings, lists and mappings, including mapping keys. Jinja expressions return native objects; plain strings keep their type. Empty rendered keys are omitted, supporting Fleet's conditional configuration keys. Missing Jinja inputs raise.
 
-Loading applies templates: `_config_load` fills every Jinja value, key or string, that reads only `glob`, `glob_int`, `glob_list` or `glob_dict`, and each of them there reads the environment already filled, so one filled value can read another. Hosts' `server_mounts` generates the S1 mounts from `locations`, and a server row's `mounts: "{{ glob_dict('server_mounts') }}"` reads them. Jinja that reads `host`, `platform`, `my` or any other name stays as written, so Fleet can render it with the selected host's values later. `$` text, such as a runbook's `$HOME`, stays as written.
+Loading applies templates: it fills every Jinja value, key or string, that reads only `glob`, `glob_int`, `glob_list` or `glob_dict`, and each of them there reads the environment already filled, so one filled value can read another. Hosts' `server_mounts` generates the S1 mounts from `locations`, and a server row's `mounts: "{{ glob_dict('server_mounts') }}"` reads them. Jinja that reads `host`, `platform`, `my` or any other name stays as written, so Fleet can render it with the selected host's values later. `$` text, such as a runbook's `$HOME`, stays as written.

@@ -1605,26 +1605,19 @@ class _Env(App):
     self.home = Path.home()
 
     # region - Env's configuration
-    # .. Env loads like any app: the environment's file, or the `config` it is given as an app is, a Path or a
-    # .. mapping already loaded, which is how the part read from MQTT and a copy of the file under validation come in
+    # .. Env loads like any app: the file its name selects, one of the two hard-coded here, or the `config` it is given
+    # .. as an app is, which is how the part read from MQTT and a copy of the file under validation come in
     # endregion
     config = kw.get('config')
-    if config is None and environment in _ENV_PATHS:
-      if self.os == OSType.W11: path = Path("D:\\Dev")
-      else: path = Path("~").expanduser()
-      path /= Path(_ENV_PATHS[environment])
+    if config is None and environment: config = Path("D:\\Dev" if self.os == OSType.W11 else "~").expanduser() / _ENV_PATHS[environment]
+    if config is None: return
 
-      if path.exists(): config = path
-      else: raise FileNotFoundError(path)
-    elif config is None and environment: raise ValueError(f'Unknown environment {environment!r}: one of {", ".join(_ENV_PATHS)}')
-
-    if config is not None:
-      if isinstance(config, PurePath): self.path = config
-      self.environment = environment
-      self._config_load(config)
-      if 'log_file' in self.data: Logger.enable_file_logging(self.data['log_file'])
-      if 'trace_rules' in self.data: Logger.init_logger(trace_rules=self.data['trace_rules'])
-      self.initialized = True
+    if isinstance(config, PurePath): self.path = config
+    self.environment = environment
+    self._config_load(config)
+    if 'log_file' in self.data: Logger.enable_file_logging(self.data['log_file'])
+    if 'trace_rules' in self.data: Logger.init_logger(trace_rules=self.data['trace_rules'])
+    self.initialized = True
 
 
   def reset(self) -> None:

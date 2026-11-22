@@ -21,4 +21,4 @@ Destination selection lives in `gppu.py`: `_sh` is the colored stderr handler, a
 
 While a Textual TUI is running, its debug panel receives console logs and the stderr handler is suspended. File logging continues, with the same trace rules. Exiting the TUI restores stderr. `file_log` remains available for panel messages that should only be mirrored to the file.
 
-Explicit `enable_file_logging(name, log_dir=...)` calls remain supported. Without `log_dir`, the function requires the configured `log_file`. The old environment-variable hooks and implicit cache-directory path have been removed.
+`enable_file_logging(log_file)` takes the one file the environment names; a value that is not a file name raises. The file rotates at 4 MB and keeps 5 older files. The old environment-variable hooks and implicit cache-directory path have been removed.

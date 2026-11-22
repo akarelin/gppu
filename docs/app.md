@@ -25,13 +25,13 @@ Caching is the standard library's: gppu exports `cache`, `lru_cache` and `cached
 
 ## The log
 
-`Logger` is the program's log: on the console from gppu's first line, with colours and trace rules, mirrored to a file once `Logger.enable_file_logging(log_file=...)` is called or the configuration names a `log_file`. `Logger.trace_rules` decides which `Debug` lines show; `{'all': True}` shows them all. A line names where it came from: `<module>` for a script, `Class.method` for a method.
+`Logger` is the program's log: on the console from gppu's first line, with colours and trace rules, mirrored to a file when the environment names a `log_file`, which Env applies with `Logger.enable_file_logging(log_file)`. `Logger.trace_rules` decides which `Debug` lines show; `{'all': True}` shows them all. A line names where it came from: `<module>` for a script, `Class.method` for a method.
 
 ## Objects that need more
 
-`_Base` is the parent the environment and the apps share: `mixin_Logger`, the log under the class's own name, with `mixin_Config`, the configuration. `_Base` has no body of its own. An object built on it reads the program's configuration only with `glob(...)`, `glob_int(...)`, `glob_list(...)` and `glob_dict(...)`, never Env's `_my`. Its own configuration, `_my`, starts empty: `self._config_load(source)`, the one loader Env and every app use, lays a YAML file or a loaded section into it, and `self.my(...)`, `self.my_int(...)`, `self.my_list(...)` and `self.my_dict(...)` read it.
+`_Base` is the parent the environment and the apps share: `mixin_Logger`, the log under the class's own name, with `mixin_Config`, the configuration. `_Base` has no body of its own. An object built on it reads the program's configuration only with `glob(...)`, `glob_int(...)`, `glob_list(...)` and `glob_dict(...)`. Its own configuration is its data, the `_DC`'s: `self.my(...)`, `self.my_int(...)`, `self.my_list(...)` and `self.my_dict(...)` read it by path, and an annotated name reads its key directly.
 
-- `App` is `_Base` with the data class `_DC`, for a program that is more than a script: what it is constructed with is its data. It has no init of its own: loading, its environment then its own configuration, is a step of `_DC`'s init (`_INIT_STEPS`), after the data. A class composed with it, as Linked Data's API composes its database or Y2's State its entity, runs its own init first.
+- `App` is `_Base` with the data class `_DC`, for a program that is more than a script: what it is constructed with is its data. It has no init of its own: loading, its environment then its own configuration, is a step of `_DC`'s init (`_INIT_STEPS`), after the data, and lays the configuration into the data. Env is an App too, the one whose data is the environment. A class composed with it, as Linked Data's API composes its database or Y2's State its entity, runs its own init first.
 - `AsyncApp` composes `App` with `mixin_Stepper`, the YMRO steps, and `mixin_EventLoopBridge`. Construction runs `init`; `await app.run()` runs `init`, `load` and `start` on the app's loop and returns when the work they spawned with `self._spawn(...)` has finished. `app.stop()` cancels it.
   - `init` does light loading, what can be loaded and parsed, as a constructor does.
   - `load` does the heavy loading of data.
