@@ -116,6 +116,8 @@ Notes of an agent session, 2026-11-21. The first part is what Alex said in that 
 - Templates, generators of API requests and formatters are the technical part a user does not look into. Big templates, such as Homebridge's, can be external files.
 - Nothing about how actions are performed is hard-coded in code. Everything about doing actions is in one kind of configuration, and the higher abstractions, such as groups, are in the other.
 - What is specific to a device moves into configuration even when it has only one or two uses, such as the matrix's: the user never has to open source code, because there is nothing for him there. The source code works and never changes, and the system works as its configuration declares.
+- Something stateless that has an ID and a direct API call, such as triggering a scene, is an action, not an entity: it needs no entity ID and no entity of its own, and it is never created as two actions.
+- A cover group that exposes several covers as one cover is its members and its scenes. It is declared directly, with its scenes' IDs, without declaring the scenes.
 - For a given task the user never has to leave a single configuration file. Today the configuration is all over the place: Hue in more than one place, Kasa scattered, Homebridge impossible to take apart. Consolidating it by these rules makes the topology readable.
 
 ## UI
