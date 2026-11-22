@@ -5,8 +5,6 @@ A comprehensive utility library providing configuration loading, logging,
 data manipulation, and type safety utilities.
 """
 
-from .fs import Container, DataObject, FileSystem, Location, Provider
-
 from .gppu import (
     # .. Env, its configuration mixins and the regular apps
     Env,
