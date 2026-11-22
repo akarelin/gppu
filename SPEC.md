@@ -41,6 +41,9 @@
 - AsyncApp does its own init and does not rely on `_Base`.
 - App has no init of its own: it loads through `_DC`'s init.
 - Timers exist only in AsyncApp.
+- gppu holds what a command-line app needs: it starts, does something and terminates, with no parameters. `gppu.app` holds what is more than that: async apps, timers, UIs, fleet management and the runtime Y2 runs on, shared by every app.
+- Every app works with no parameters: it knows enough about itself to log its output and know what it does. A navigator over gppufs from a root is a few lines.
+- A trivial utility stays trivial: a launcher, a TUI or fleet management runs it with one click, and no sidecar file sits beside it.
 - Apps initialize in steps with the tools gppu already has (init, load, start, stop). Construction decides where data is parsed from and in which step.
 - TUI apps support inline configs: a script carries its own configuration and manifest, as `examples/sessions_clean.py` does. A Python script assigns its manifest to a global variable.
 - Running processes in parallel is not part of a TUI, since a command-line app runs them too. It is an app's method, like its timers (run after, run in, run at).
