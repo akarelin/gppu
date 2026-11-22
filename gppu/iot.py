@@ -1,87 +1,20 @@
-"""IoT value types and serialized async controls: controls bridge synchronous callers to one dedicated event-loop
-thread and serialize each device instance. MQTT is an async app's, in gppu.app.
+"""Serialized async controls: they bridge synchronous callers to one dedicated event-loop thread and serialize each
+device instance; HTTP over aiohttp, the ``iot`` extra.
 """
 from __future__ import annotations
 
 import asyncio
 import json
-import re
 import ssl
 import threading
 
 from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
-from typing import Any, ClassVar, Optional
+from typing import Any, ClassVar
 
-try:
-  import aiohttp
-except ImportError:
-  aiohttp = None  # type: ignore[assignment]
+import aiohttp
+
 from .app import mixin_EventLoopBridge
-
-from .gppu import _DC, _DC_BASE_TYPE_MAP, y2list, y2path, y2topic, y2uri
-
-
-# region y2eid
-class y2slug(y2list):
-  def __init__(self, o):
-    self.token = '_'
-
-    if '@' in str(o): o = str(o).split('@')[0]
-    self.data = self._any2list(o)
-
-class y2eid:
-  ns: str
-  domain: str
-  slug: y2slug
-  default_ns: ClassVar[str] = 'yala'
-  default_domain: ClassVar[str] = 'entity'
-  _ready: bool = False
-
-  def __bool__(self) -> bool: return self._ready
-
-  def __init__(self, o: Any, ns: Optional[str] = None, **kw):
-    self._ready = False
-    if not o: raise ValueError("y2eid: empty input")
-    ns = ns or self.default_ns
-    if isinstance(o, y2eid): s = str(o)
-    elif isinstance(o, dict): s = str(o.get('entity_id', ""))
-    elif isinstance(o, str): s = o
-    elif hasattr(o, 'entity_id') and hasattr(o, 'namespace'): s = f"{o.entity_id}@{o.namespace}"
-    elif hasattr(o, 'entity_id') and hasattr(o, 'ns'): s = f"{o.entity_id}@{o.ns}"
-    elif hasattr(o, 'seid'): s = o.seid
-    else: raise ValueError
-    self.ns = ns
-    self.domain = ''
-    if '.' in s: self.domain, s = s.split('.', 1)
-    if '@' in s: s, self.ns = s.rsplit('@', 1)
-    self.ns = self.ns or self.default_ns
-    self.domain = self.domain or self.default_domain
-    self.slug = y2slug(s)
-    for k in ['tail', 'head']: setattr(self, k, getattr(self.slug, k))
-    self._ready = True
-
-  def __str__(self):
-    s = str(self.slug)
-    if self.domain: s = self.domain + '.' + s
-    if self.ns: s += '@' + self.ns
-    return s
-  def __repr__(self): return str(self)
-  def __hash__(self): return hash(str(self))
-  def __eq__(self, other): return str(self) == str(other)
-  def __lt__(self, other): return str(self) < str(other)
-
-  def endswith(self, ix) -> bool: return self.slug.endswith(ix)
-  def startswith(self, ix) -> bool: return self.slug.startswith(ix)
-  @property
-  def entity_id(self) -> str: return f"{self.domain}.{self.slug}" if self._ready else ""
-  @property
-  def seid(self): return str(self)
-# endregion
-
-
-_DC_BASE_TYPE_MAP |= {'y2eid': y2eid, 'y2topic': y2topic, 'y2path': y2path, 'y2uri': y2uri}
-_DC._DC_TYPE_MAP |= {'y2eid': y2eid, 'y2topic': y2topic, 'y2path': y2path, 'y2uri': y2uri}
 
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
@@ -158,7 +91,6 @@ class HTTPControl(SerializedControl):
     return self._control_call(self._http_request_async, method, url, body, headers)
 
   async def _http_request_async(self, method: str, url: str, body: HttpBody | None = None, headers: Mapping[str, str] | None = None) -> str | None:
-    if aiohttp is None: raise RuntimeError('aiohttp is required for HTTPControl')
     request_headers = {**(self._http_headers or {}), **(headers or {})} or None
     try:
       timeout = aiohttp.ClientTimeout(total=self._http_timeout)

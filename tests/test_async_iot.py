@@ -9,8 +9,8 @@ from contextlib import asynccontextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from gppu import AsyncApp, mixin_EventLoopBridge, HTTPControl, JSONHTTPControl, SerializedControl
-from gppu.iot import aiohttp
+from gppu import AsyncApp, mixin_EventLoopBridge
+from gppu.iot import HTTPControl, JSONHTTPControl, SerializedControl
 
 
 class _FiniteApp(AsyncApp):
@@ -128,7 +128,6 @@ class _TextControl(HTTPControl): pass
 class _JsonControl(JSONHTTPControl): pass
 
 
-@unittest.skipIf(aiohttp is None, 'aiohttp is not installed')
 class HTTPControlTests(unittest.TestCase):
   @classmethod
   def setUpClass(cls) -> None:

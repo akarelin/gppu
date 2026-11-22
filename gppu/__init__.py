@@ -27,6 +27,7 @@ from .app import (
     mixin_Rest,
     mixin_Mqtt,
     AppService,
+    mixin_EventLoopBridge,
 
     # .. sync lifecycle (AppDaemon / Y2)
     _YMRO,
@@ -119,18 +120,6 @@ from .gppu import (
     # .. Foundation classes
 )
 
-from .iot import (
-    # .. y2xxx classes
-    y2slug,
-    y2eid,
-
-    # .. device-control bridges
-    mixin_EventLoopBridge,
-    SerializedControl,
-    HTTPControl,
-    JSONHTTPControl,
-)
-
 
 __version__ = VER_GPPU
 __all__ = [
@@ -187,13 +176,13 @@ __all__ = [
     '_Base', 'App', '_callback_wrapper', 'AsyncApp', 'mixin_Rest',
 
     # .. y2xxx classes
-    'y2list', 'y2path', 'Path', 'y2uri', 'y2topic', 'y2slug', 'y2eid',
+    'y2list', 'y2path', 'Path', 'y2uri', 'y2topic',
 
     # .. mqtt library
     'mixin_Mqtt', 'AppService',
 
-    # .. event-loop and device-control bridges
-    'mixin_EventLoopBridge', 'SerializedControl', 'HTTPControl', 'JSONHTTPControl',
+    # .. event-loop bridge
+    'mixin_EventLoopBridge',
 
     # .. lifecycle: sync YMRO (AppDaemon/Y2)
     'YInit', 'YLoad', 'YStart',

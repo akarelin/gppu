@@ -1459,9 +1459,10 @@ class YStart(YLoad):
 
 
 # region DC - pseudo DataClass
-_DC_BASE_TYPE_MAP = {'str': str, 'list': list, 'dict': dict, 'set': set, 'int': int, 'float': float, 'bool': bool, 'None': type(None)}
+_DC_BASE_TYPE_MAP = {'str': str, 'list': list, 'dict': dict, 'set': set, 'int': int, 'float': float, 'bool': bool, 'None': type(None),
+                      'y2path': y2path, 'y2topic': y2topic, 'y2uri': y2uri}
 # from typing import Callable, Concatenate
-# .. Custom types register themselves here (e.g. iot.py adds y2eid/y2topic)
+# .. A program's own types register themselves in _DC._DC_TYPE_MAP (Y2 adds y2eid)
 
 
 class _DC(UserDict):

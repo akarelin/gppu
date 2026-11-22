@@ -5,7 +5,8 @@ import asyncio
 import unittest
 from pathlib import Path
 
-from gppu import APIApp, AsyncApp, mixin_Rest
+from gppu import AsyncApp, mixin_Rest
+from gppu.api import APIApp
 from gppu.gppu import _DC
 
 
