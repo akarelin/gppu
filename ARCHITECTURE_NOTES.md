@@ -125,6 +125,8 @@ Notes of an agent session, 2026-11-21. The first part is what Alex said in that 
 - Simple actions are not complicated with entities: an action can be triggered directly.
 - An action never triggers another action. A sequence is a list of actions, and an action is a straight shot: never a generic light action that works out what to do, publishes to a topic, and has something transform and republish it.
 - An entity with state is different: a change of its state is requested formally, through MQTT.
+- ESPHome devices listen on their `btn/` topics and publish their `ind/` topics straight on the bus, not through Y2 or IoT. That approach is embraced, inside the code too.
+- A service that talks to MQTT, such as zwave-js, Insteon's MQTT or Z2, is configured on its own side to speak Alex's path format natively: paths and sensor topics formatted exactly as he likes. Nothing republishes from one topic to another, as zwjs.py does today, so every path is uniform.
 - For a given task the user never has to leave a single configuration file. Today the configuration is all over the place: Hue in more than one place, Kasa scattered, Homebridge impossible to take apart. Consolidating it by these rules makes the topology readable.
 
 ## UI
