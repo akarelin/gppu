@@ -27,6 +27,7 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [ ] gppu reduced to what the programs that use it today need (waits on Alex's list of them)
   - Read from the deployments: Y2 and its UI, any2mqtt's utilities, PC Control, Plaud, MCP United, the Lake and the Session Manager through Dagster with the admin UI's shared code it mounts, the Hosts tools, gppu's W11 tools, status line and examples
   - None of those reaches `gppu.ld`, `gppu.ld.sessions`, `gppu.fs.files` or `gppu.chrome`: the Linked Data API uses the first three, Transcriber's annotation scripts the last
+  - The Linked Data API runs on five as stack linked-data, which trix's nginx serves at api.karel.in/ld/ since 10-22
   - gppu's examples use the TUI pieces and `gppu.fs.vfs`
 - [x] gppu's tests run on the environment gppu has and pass whole; those of removed behaviour are archived
 
