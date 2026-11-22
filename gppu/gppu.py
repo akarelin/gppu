@@ -27,7 +27,7 @@ from typing import Union, Any, List, Optional, Tuple, Dict, DefaultDict, Callabl
 from collections import defaultdict, UserDict, UserList
 from collections.abc import Mapping
 
-from functools import wraps, partial, cache
+from functools import wraps, cache
 from datetime import datetime as dt, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -46,10 +46,6 @@ from importlib.metadata import version
 VER_GPPU = version("gppu")
 
 MY_TZ = ZoneInfo("America/Los_Angeles")
-
-_log_root = logging.getLogger('gppu'); _log_root.setLevel(logging.DEBUG)
-_sh = logging.StreamHandler(sys.stderr); _log_root.addHandler(_sh)
-
 
 # region OS
 class OSType(Enum):
@@ -1285,28 +1281,23 @@ class _mixin: pass
 # region Logger
 # ^~            Logger
 class Logger:
-  """The program's log: the console the bootstrap started, with colours, and the trace rules the configuration sets
-  on top with ``Logger.init_logger(name, trace_rules)``. A class logs with it through ``mixin_Logger``."""
+  """The program's one log: the console from the moment gppu is imported, with colours, and the trace rules the
+  environment's configuration sets. Every class and script logs with it; a line names its class from the caller."""
 
   trace_folder: str = '.'
   trace_rules: dict = {}
 
-  _root = _logger = _log_root
-  _console = _sh
+  _root = logging.getLogger('gppu')
+  _console = logging.StreamHandler(sys.stderr)
   _console.setFormatter(_LogColorizer())
   _console.addFilter(_EmptyMessageFilter())
+  _root.setLevel(logging.DEBUG)
+  _root.addHandler(_console)
 
 
   @staticmethod
-  def init_logger(name: str = 'gppu', trace_rules: dict | None = None) -> None:
-    """Name the global logger, and optionally set the trace rules."""
-    if trace_rules is not None: Logger.trace_rules = dict(trace_rules)
-    Logger._logger = Logger._root if name == 'gppu' else Logger._root.getChild(name)
-
-
-  @staticmethod
-  def _log(level: int, args: tuple, logger, options: dict) -> None:
-    target = Logger._logger if logger is None else logger
+  def _log(level: int, args: tuple, options: dict) -> None:
+    target = Logger._root
     if not target.isEnabledFor(level): return
     frame = inspect.currentframe().f_back.f_back
     extra = dict(options.pop('extra')) if 'extra' in options else {}
@@ -1318,13 +1309,13 @@ class Logger:
 
 
   @staticmethod
-  def Debug(*a, logger=None, **kw): Logger._log(logging.DEBUG, a, logger, kw)
+  def Debug(*a, **kw): Logger._log(logging.DEBUG, a, kw)
   @staticmethod
-  def Info(*a, logger=None, **kw): Logger._log(logging.INFO, a, logger, kw)
+  def Info(*a, **kw): Logger._log(logging.INFO, a, kw)
   @staticmethod
-  def Warn(*a, logger=None, **kw): Logger._log(logging.WARNING, a, logger, kw)
+  def Warn(*a, **kw): Logger._log(logging.WARNING, a, kw)
   @staticmethod
-  def Error(*a, logger=None, **kw): Logger._log(logging.ERROR, a, logger, kw)
+  def Error(*a, **kw): Logger._log(logging.ERROR, a, kw)
   @staticmethod
   @sync
   async def Dump(filename: str, data: dict = {}, **kw) -> None:
@@ -1336,18 +1327,8 @@ class Logger:
 
 
 class mixin_Logger(_mixin):
-  """A class that has it logs with ``self.Info(...)`` under its own name, a child of the program's log; Env, whose
-  ``_global_log`` is set, logs as the program."""
-  _global_log = False
-
-  @classmethod
-  def __init_subclass__(cls, **kw):
-    super().__init_subclass__(**kw)
-    if cls.__dict__.get('_global_log'):
-      for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'): setattr(cls, name, Logger.__dict__[name])
-      return
-    cls._logger = Logger._logger.getChild(cls.__name__)
-    for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'): setattr(cls, name, staticmethod(partial(getattr(Logger, name), logger=cls._logger)))
+  """A class that has it logs with ``self.Info(...)``: the program's one log."""
+  Debug, Info, Warn, Error, Dump = (Logger.__dict__[name] for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'))
 
 
 Debug = Logger.Debug
@@ -1599,7 +1580,6 @@ class _Env(YLoad, _Base, _DC):
     os: OSType
     path: Path   # .. the environment's YAML file
 
-    _global_log = True
     # region - Env as an app
     # .. Its data is the environment's configuration, which glob reads. Made as gppu is imported, it finds out the machine
     # .. and the environment, which are no configuration and so plain attributes (host, user, environment); it loads
@@ -1625,7 +1605,7 @@ class _Env(YLoad, _Base, _DC):
         # .. covers and the devices, and RAN config.yaml's mounts; glob reads the value it fills, filled
         # endregion
         self.data = jinja.configuration(self.data)
-        if 'trace_rules' in self.data: Logger.init_logger(trace_rules=self.data['trace_rules'])
+        if 'trace_rules' in self.data: Logger.trace_rules = dict(self.data['trace_rules'])
 
 
 Env = _Env()
