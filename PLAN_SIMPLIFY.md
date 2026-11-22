@@ -16,6 +16,7 @@ Principles: no new verb or noun; gppu.py core shrinks; downstreams that never us
 - [x] `Logger.enable_file_logging` is the one form Env calls, and says in place why it exists
 - [x] Y2 on this gppu: it gives Env a whole configuration through Env's init, its tests reset Env before they load Creekview, and it no longer sets `Env.app_path`. Its dry runtime is identical (776 entities, 1812 actions, 18 buttons, 121 indicators), and its suite passes in one process as it does file by file: 480 passed, the 2 known failures, where one process failed 139 and errored 115
 - [x] RAN's `hosts` hold every row whole: a row names `template: ssh` and loading lays `ssh` under it, so `glob('hosts')` is what Fleet merged, identical on 3.7.9 and on master, and Fleet reads it with no merge of its own (RAN 7b038bc66). A row's platform is still `Fleet.platform(row)`, its tag that names an operating system
+- [x] Runtime, with its ListenerHandle, is in `gppu.app`, and so is the StateManager loader: `key` names a path into the configuration, each row there, of a list or of a dict by name, becomes `cls(data=row, parent=self)` by its `kind`, and its start step starts them (`test_the_loader_creates_the_objects_at_a_path_and_starts_them`). An app a loader made takes its row alone and loads no section by its name (gppu 6e860b2)
 - [ ] Y2's objects load through the state manager's key loader, natively by `_DC`, with no constructor of their own
   - Today they cannot: an entity given its row by `_DC`'s init alone holds its data and does not start (`native_load.py`: `'YGroup' object has no attribute '_eid'`). 14 classes initialize in `__init__` (YBasicEntity, YEntity, YGroup, YRoom, mixin_ColorLoop, HueScene, PowerViewHub, TuyaLight, SensiboAC, Insteon's IIndicator, IEntity and IDevice, and Y2's App and State), and 7 state managers loop over their own sections in place of the key loader (Hue, Z-Wave, Flume, ecobee, Nest, hosts, Insteon)
   - Y2's `DataObject` keeps a constructor of its own with its list of steps, in place of the list gppu no longer has, until its classes' constructors are steps
@@ -24,8 +25,7 @@ Principles: no new verb or noun; gppu.py core shrinks; downstreams that never us
 Independent and unscoped:
 - Y2's state managers read their rows through `_DC` accessors, with no `_key`, `poll_interval` or section copies
 - Swallowed exceptions in AI code
-- Runtime, with its ListenerHandle, moves from `gppu.iot` to `gppu.app`; what is Y2's in it stays in Y2
-- The StateManager loader (key, rows, `cls(data=row, parent=self)`, started in `__start`) in `gppu.app` beside Runtime, under its name; Y2's a thin subclass; hosts created by it. gppu master has no loader today: only Y2's StateManager creates objects from a list at a configuration path
+- Y2 onto gppu's loader: Y2's StateManager a thin subclass, its apps the rows of `y2/apps`, its `initialize`, `terminate`, `start` and `stop` overrides private steps, its mixins lifecycle members; `D:\Work	\y2-gppu-overlapeview.md` lists every place
 - Fleet in gppu under its own name, RAN's reduced to `expand` and `values`; a row's platform read from the environment
 - Objects read `self.name`, their annotated accessors, never `my('name')`
 - Y2's apps are the rows of `y2/apps` that Y2's loader creates, `cls(data=row)`; Y2's App stops passing `config=`. gppu's App would then load the section named as the app, and Creekview's `hue`, `av` and other sections carry the apps' names and a `name` key of their own
@@ -104,6 +104,14 @@ Independent and unscoped:
 - [x] TUI apps read inline configs through `dict_from_yml`: a `.py`'s global `MANIFEST`, a `.cmd`'s opening `::` lines, a `.ps1`'s opening `.NOTES`; each equals the YAML it replaced. The Hosts launcher lists `synology-mount.py`, `mapper.cmd` and `tray-control.ps1`, and w11's lists `w11-events.py` and `w11-onedrive.py`. A launcher's `apps:` and `utilities:` are its own configuration, an App given to `load_registry`, and Edit Config opens its `CONFIG`; the Hosts TUI, craptui and w11 construct it. `examples/sessions_clean.py` runs on master as an app whose own configuration is its `MANIFEST`, with the command line over it
 
 ## Switches at the next gppu release
+The release and the y2 deploy are one window. In order:
+1. gppu is released from master by its GitHub Action; alex-pc's `~/.venv` takes it, and the Hosts TUI is opened on it.
+2. y2's image is rebuilt on `gppu/latest`, its suite run, and y2 deployed, which restarts it in the house.
+3. In the same window, with that y2: Creekview's `ui/ui.yaml` loses its inner `ui:` level, the old block kept commented out, and `y2/ui/data.py` drops `self.data |= self.my('ui')`. Neither is written yet.
+4. RAN: the `::` lines of `Hosts/mapper.cmd` and the `.NOTES` of `Hosts/tray-control.ps1` go, their `MANIFEST` staying; Preservator and the Fleet grid switch, by the Preservator session.
+5. Every other host that runs a gppu tool takes the release before it runs one: the Mac, trix and five have 3.6, seven has none.
+What stops at the release until it is switched is listed below.
+
 These move in the same commit as the release. gppu 3.7.7 is released and alex-pc's `~/.venv` runs it, so the Hosts TUI opens there on the RAN environment; a program below that still calls `from_argv`, `from_env` or `from_dict` stops on alex-pc until it switches. Before 3.7.2, the Hosts tools that construct Fleet (Preservator, configs, list-sessions, list-sessions2, sessions-clean, start-page) ran on neither gppu. Still to switch:
 - Preservator: switched in RAN, and on 3.7.5 its steps run on alex-pc: it preserved alex-pc's LLM logs, browser history and shell history to the Lake on 2026-11-14. RAN `Hosts/preservator/preservator.py` is the one Preservator, reading the `preservator` section; its other versions are archived (RAN `archive/Hosts/preservator`, CRAP `archive/Processes/preservator`). It stores each file by `gppu.fs.file_path(type, name, ...)`, which reads where each type of file is stored from the Lake's row in RAN `_config/topology/locations.yaml` (`locations/lake/folders`), with no function per kind; on alex-pc's own files those lines place every file where the version before it did (`D:\Work\11\13\lake-templates`). Another host runs it there over ssh, which needs current gppu on that host: the Mac, trix and five have 3.6, seven has none, five has no Lake mount
 - display-control (`IoT/PCC`): `on_change` and `AppService.update_config`/`changed_paths` callers; MQTT configuration by topic prefix
