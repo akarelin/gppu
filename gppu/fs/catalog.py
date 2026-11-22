@@ -35,7 +35,7 @@ from . import FileSystem, Location, Provider, _address, _below
 from .gppufs import GppuFileSystem
 
 
-# region locations
+# region - locations
 
 def _resolve(row: dict, templates: dict, context: dict) -> dict:
   """row over the templates it names, one or a list stacked in order (each with apply_template), the row winning; each
@@ -462,7 +462,7 @@ class GppuCatalog(AsyncFileSystem):
       return result if detail else [row['name'] for row in result]
 
 # endregion
-# region Linked Data
+# region - Linked Data
 
 class Drives(FileSystem):
     """gppufs's FileSystem in a Windows host's WSL: a file uri naming a drive, file://alex-pc/D:/Dev, is that drive as WSL mounts it,
@@ -570,7 +570,7 @@ def resolve(folders: dict[str, dict[str, str]], address: str) -> str:
 
 
 # endregion
-# region what is in the locations
+# region - what is in the locations
 
 PAGE = 1000   # ^^ the records a listing asks Linked Data for at a time, so a folder of any size is never held whole
 DELETED = 0x04   # .. the flag deleted (Linked Data.md # Flags): a record kept, read only and out of sight until it is un-deleted

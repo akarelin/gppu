@@ -408,7 +408,7 @@ class Cache:
   def __exit__(self, *_): self.close()
 
 
-# region Persistence backends for _PersistentDC
+# region - Persistence backends for _PersistentDC
 #
 # region - backend interface
 # .. Backend interface (duck-typed):

@@ -52,7 +52,7 @@ from .uri import y2uri
 from . import handlers
 
 
-# region providers
+# region - providers
 
 # .. The file in a folder that says what a write may do to the files it holds: a list of update, upsert, delete.
 MERGE_RULES = '.merge.yaml'
@@ -780,7 +780,7 @@ def _updated(previous: dict[str, Any], incoming: dict[str, Any]) -> dict[str, An
   return result
 
 # endregion
-# region names
+# region - names
 
 # .. A name this host cannot spell is spelled with these replaced, and no longer than NAME_LIMIT.
 UNSAFE = '\\/:*?"<>|\r\n\t'
@@ -932,7 +932,7 @@ def _modified(native: dict) -> datetime | None:
 
 
 # endregion
-# region indexing
+# region - indexing
 
 LEVELS = ('refresh', 'files', 'handlers', 'archives')
 FOLDER_CLASSES = {'.git': '.git', '.svn': '.git', '__pycache__': 'py_cache',

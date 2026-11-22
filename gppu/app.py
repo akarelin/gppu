@@ -70,7 +70,7 @@ class mixin_EventLoopBridge(_mixin):
 
 
 # region async application
-# region Timers: an async app's, held by one thread
+# region - Timers: an async app's, held by one thread
 def _callback_wrapper(callback: Callable[..., Any]) -> Callable[..., Any]:
   """The callback called with only the keywords it takes."""
   signature = inspect.signature(callback)
@@ -330,7 +330,7 @@ class AsyncApp(App, YStart, mixin_EventLoopBridge):
 # endregion
 
 
-# region Runtime: Y2's, the program's apps and who listens to what
+# region - Runtime: Y2's, the program's apps and who listens to what
 @dataclass(frozen=True)
 class ListenerHandle:
   """A registered listener: its id, and the call that removes it."""
@@ -452,7 +452,7 @@ Runtime = _Runtime()
 
 
 
-# region REST surface
+# region - REST surface
 class mixin_Rest:
   """Every public member of the application's own classes, over HTTP, and nothing
   declared. A field or property reads; a method is called with the JSON body as

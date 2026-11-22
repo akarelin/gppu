@@ -1657,7 +1657,7 @@ class App(YInit, _Base, _DC):
 # endregion
 
 
-# region Env: the configuration
+# region - Env: the configuration
 class _Env(App):
   """The program's environment: singleton app object. It's my is glob"""
   home: Path
