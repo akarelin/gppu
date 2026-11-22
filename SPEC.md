@@ -24,7 +24,8 @@
 - YAML anchors are YAML, resolved by the YAML standard. They are not Jinja.
 - Configuration has no repeats where a for loop can produce them.
 - The YAML reader reads YAML. Reading a script's inline configuration is not a feature of its own and has no export.
-- A script's manifest is read from its source file with a simple regex: a line or two, not pages of parsing code.
+- A script's manifest is read from its source file with a simple regex: a line or two, not pages of parsing code. The manifest sits within the first 4 kilobytes of a known executable file.
+- Loading scripts as menu items from the file system is a simple loader, as State's managers load a bunch of objects from a YAML list or from a folder. The manifest tells the loader how to list, execute or instantiate the script.
 - Every use of YAML goes through the same parsing process, whatever the text comes from: a file, an include, a script's inline configuration, MQTT.
 
 ## State
@@ -40,6 +41,8 @@
 - TUI apps support inline configs: a script carries its own configuration and manifest, as `examples/sessions_clean.py` does. A Python script assigns its manifest to a global variable.
 - Running processes in parallel is not part of a TUI, since a command-line app runs them too. It is an app's method, like its timers (run after, run in, run at).
 - Every TUI app is an async app. Every app is a `_DC`, whose data holds everything the app is given, so no app sets its own attributes from it again.
+- Configuration is done natively by `_DC`. `_my`, an alternative dictionary on every object, is never used.
+- An app does not figure out where its own configuration is. When none is passed to it, gppu finds where it should have been from the app's caller; none of that code is specific to any other code.
 
 ## Y2
 - Y2 only creates apps, and they share one State and one Env.
