@@ -106,10 +106,10 @@ Independent and unscoped:
 
 ## Switches at the next gppu release
 The release and the y2 deploy are one window. In order:
-1. gppu is released from master by its GitHub Action; alex-pc's `~/.venv` takes it, and the Hosts TUI is opened on it.
+1. [x] gppu is released from master by its GitHub Action; alex-pc's `~/.venv` takes it, and the Hosts TUI is opened on it: 3.7.10 and 3.7.11 on 2026-11-21, alex-pc's `~/.venv` on 3.7.11 from `gppu/latest` through RAN `Hosts/requirements.txt`, whose ssh URL lacked `git@`.
 2. y2's image is rebuilt on `gppu/latest`, its suite run, and y2 deployed, which restarts it in the house.
 3. In the same window, with that y2: Creekview's `ui/ui.yaml` loses its inner `ui:` level, the old block kept commented out, and `y2/ui/data.py` drops `self.data |= self.my('ui')`. Neither is written yet.
-4. RAN: the `::` lines of `Hosts/mapper.cmd` and the `.NOTES` of `Hosts/tray-control.ps1` and `Hosts/tui/all-all.ps1` go, their `MANIFEST` staying; the Hosts TUI's `tui.py` calls `launcher_main` and `load_app_registry` in place of `sidecar_main` and `load_registry`, and its `tests/test_tui.py` stops importing `sidecar_command` and `load_registry`; Preservator and the Fleet grid switch by applying `D:\Work\11\21\preservator-switch\switch.claude.patch`, written and proven on master (RAN `Hosts/preservator/PLAN_PRESERVATOR.md`).
+4. [x] Done in RAN dff46914f, tested on the installed 3.7.11. RAN: the `::` lines of `Hosts/mapper.cmd` and the `.NOTES` of `Hosts/tray-control.ps1` and `Hosts/tui/all-all.ps1` go, their `MANIFEST` staying; the Hosts TUI's `tui.py` calls `launcher_main` and `load_app_registry` in place of `sidecar_main` and `load_registry`, and its `tests/test_tui.py` stops importing `sidecar_command` and `load_registry`; Preservator and the Fleet grid switch by applying `D:\Work\11\21\preservator-switch\switch.claude.patch`, written and proven on master (RAN `Hosts/preservator/PLAN_PRESERVATOR.md`).
 5. Every other host that runs a gppu tool takes the release before it runs one. On 2026-11-21: alex-laptop has 3.6.22 and trix 3.6.23, neither with `gppu.fs`; seven has none; alex-mac has 3.7.9, five 3.7.9.dev2 and iot 3.7.10.dev69; alex-laptop's WSL does not answer ssh.
 What stops at the release until it is switched is listed below.
 
@@ -127,6 +127,10 @@ These move in the same commit as the release. gppu 3.7.7 is released and alex-pc
 - A caller of `Logger.enable_file_logging(name, log_dir=...)`, of `mixin_Config._config_load` or of `Env._my`: none is left in gppu, y2 or RAN/Hosts
 
 ## Found outside this task
+- gppu tests: `test_gppufs.py::test_ls_drops_from_the_index_what_is_gone` failed once on the Linux runner and passed on its rerun, with no change between
+- Hosts TUI: configs-web's review needs the Node package `jsonc-parser`, which alex-pc does not have; `tui/tests/test_start_page.py` looks for `start-page.py` beside itself, which lives in `Systems/static_sites`
+- CRAP `Systems/craptui/requirements.txt` installs gppu at `gppu/3.3.1`, a tag gppu does not have; RAN `Services/github-build.sh` names gppu's workflows `release.yml`, `w11-release.yml` and `statusline-release.yml`, which are `gppu.yml`, `w11.yml` and `statusline.yml`
+- Kuma: `test_cctv_repair.py` imports `fcntl`, so it runs only on Linux
 - Linked Data's API (`api.karel.in/ld/v1`) and CCTV-detective (`detective.karel.in`) answer 502; both programs call the removed `Env.from_env`
 - RAN `Systems/static_sites/start-page.py` reads the Hosts sidecars through `load_sidecar_registry`, which gppu no longer has
 - Hosts: `configs.py`'s and `start-page.py`'s `load_config` read `fleet.platforms`, which Fleet has not had since 2026-09-30
