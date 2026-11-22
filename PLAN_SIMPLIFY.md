@@ -24,6 +24,11 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [ ] The database bases made from their data, with an init step and a connection on first use (architecture notes, item 7)
   - Waits on which programs use gppu today: a base made from its data needs each live subclass to give it data and move its constructor into an init step
 - [x] gppufs (`gppu.fs` with `gppu.ld`) is a submodule of gppu, reduced as the rest
+- [ ] gppu reduced to what the programs that use it today need (waits on Alex's list of them)
+  - Read from the deployments: Y2 and its UI, any2mqtt's utilities, PC Control, Plaud, MCP United, the Lake through Dagster, the Hosts tools, gppu's W11 tools and status line
+  - None of those reaches `gppu.ld`, `gppu.ld.sessions`, `gppu.fs.files`, `gppu.fs.vfs` or `gppu.chrome`
+  - In gppu.tui only programs not deployed use the selectors, `TickProgress`, `ConfirmScreen`, the tree entries and `TreeTable`, and `launch_app`
+  - gppu.fs beyond the handlers and `probe` is reached only through the Lake
 - [x] gppu's tests run on the environment gppu has and pass whole; those of removed behaviour are archived
 
 ## Independent, unscoped
