@@ -1676,7 +1676,9 @@ class App(_YInit, _Base, _DC):
     def __init(self) -> None:
         if not self.name: self.name = type(self).__name__.lower()
         Env.init(environment=self.environment)
-        self._config_load(self.data['config'] if 'config' in self.data else glob_dict(self.name), self.data['argv'] if 'argv' in self.data else sys.argv[1:])
+        # .. its own configuration: what it is given; nothing more when a loader made it from its row; else its section, named as it is
+        own = self.data['config'] if 'config' in self.data else {} if 'parent' in self.data else glob_dict(self.name)
+        self._config_load(own, self.data['argv'] if 'argv' in self.data else sys.argv[1:])
 # endregion
 
 

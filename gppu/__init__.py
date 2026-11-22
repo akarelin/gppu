@@ -28,6 +28,11 @@ from .app import (
     APIApp,
     mixin_Rest,
 
+    # .. the program's apps and their listeners
+    Runtime,
+    ListenerHandle,
+    StateManager,
+
     # sync lifecycle (AppDaemon / Y2)
     _YMRO,
     YStepper,
@@ -129,10 +134,6 @@ from .iot import (
     y2slug,
     y2eid,
 
-    # .. the program's apps and their listeners
-    Runtime,
-    ListenerHandle,
-
     # mqtt library (aiomqtt optional — gppu[mqtt])
     mixin_Mqtt,
     MqttApp,
@@ -208,7 +209,7 @@ __all__ = [
     '_Base', 'App', 'TimerHandle', '_callback_wrapper', 'AsyncApp', 'APIApp', 'mixin_Rest',
 
     # y2xxx classes
-    'y2list', 'y2path', 'y2uri', 'y2topic', 'y2slug', 'y2eid', 'Runtime', 'ListenerHandle',
+    'y2list', 'y2path', 'y2uri', 'y2topic', 'y2slug', 'y2eid', 'Runtime', 'ListenerHandle', 'StateManager',
 
     # mqtt library
     'mixin_Mqtt', 'MqttApp', 'AppService',
