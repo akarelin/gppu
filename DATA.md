@@ -110,7 +110,7 @@ postgres:
 
 ## Cache - Multi-Backend Key/Value Cache
 
-Standalone cache with TTL support, multiple backends, and environment variable bypass. Does **not** require `Env` or config initialization.
+Standalone cache with TTL support and three backends. Does **not** require `Env` or config initialization.
 
 ```python
 from gppu.data import Cache
@@ -142,15 +142,14 @@ expensive_computation(5)  # served from cache
 ### Constructor
 
 ```python
-Cache(directory, ttl=86400, *, backend='sqlite', skip_env='SKIP_CACHE')
+Cache(directory, ttl=86400, *, backend='sqlite')
 ```
 
 | Parameter   | Default        | Description |
 |-------------|----------------|-------------|
-| `directory` | *(required)*   | Cache path (file/dir) or DB URL for `db` backend |
+| `directory` | *(required)*   | Cache path (file/dir) |
 | `ttl`       | `86400` (24h)  | Default TTL in seconds |
 | `backend`   | `'sqlite'`     | Storage backend (see below) |
-| `skip_env`  | `'SKIP_CACHE'` | Env var name that bypasses caching when set to `true`/`1`/`yes`. Empty string disables this check |
 
 ### Backends
 
@@ -159,8 +158,6 @@ Cache(directory, ttl=86400, *, backend='sqlite', skip_env='SKIP_CACHE')
 | `json`      | File path     | None (stdlib) |
 | `pickle`    | File path     | None (stdlib) |
 | `sqlite`    | File/dir path | None (stdlib) |
-| `diskcache` | Directory     | `pip install gppu[cache]` |
-| `db`        | SQLAlchemy URL | `pip install gppu[sql]` |
 
 ### Methods
 
@@ -170,17 +167,8 @@ Cache(directory, ttl=86400, *, backend='sqlite', skip_env='SKIP_CACHE')
 | `set(key, value, ttl=None)` | Store value. Uses instance TTL if `ttl` is `None`; `ttl=0` means no expiration |
 | `delete(key)` | Remove a key |
 | `close()` | Close the cache |
-| `skip` (property) | `True` if caching is bypassed via env var |
 
 Supports context manager protocol and `@cache` decorator for function memoization.
-
-### Env-Var Bypass
-
-Set the environment variable named in `skip_env` to `true`, `1`, or `yes` to disable all caching (reads return `default`, writes are no-ops, decorator passes through). Useful for testing or debugging.
-
-```bash
-SKIP_CACHE=true python my_script.py  # all cache reads return default
-```
 
 ## _PersistentDC + Persistence - Persisted Pseudo-Dataclasses
 
@@ -211,6 +199,5 @@ Unbound (`bind_db` never called) or keyless (`data[_persist_key]` missing) insta
 | `json` | file path (or dir → `_persist.json`) | none |
 | `pickle` | file path | none |
 | `sqlite` (default) | file path | stdlib |
-| `postgres` | DSN connection string | psycopg2 (`pg` extra), JSONB |
 
 Backend protocol (duck-typed — anything with these methods can be bound): `upsert(cls, key, data)`, `load(cls, key)`, `iter(cls)`, `delete(cls, key)`, `close()`. `Persistence` is also a context manager (`with` closes on exit).

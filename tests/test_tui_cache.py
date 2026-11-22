@@ -14,8 +14,7 @@ from gppu.tui.cache import CachedFetcher, PaginatedFetcher
 class _FakeCache:
     """Minimal in-memory cache mimicking gppu.data.Cache's public surface."""
 
-    def __init__(self, skip: bool = False):
-        self.skip = skip
+    def __init__(self):
         self._d: dict = {}
 
     def get(self, key, default=None):
@@ -52,17 +51,6 @@ class TestCachedFetcher:
         f(1)
         f(1, use_cache=False)
         assert len(calls) == 2
-
-    def test_skip_env_disables_cache(self):
-        """When the Cache reports skip=True, bypass is automatic."""
-        calls = []
-        f = CachedFetcher(
-            cache=_FakeCache(skip=True),
-            fetch=lambda x: (calls.append(x), 1)[1],
-            key_fn=lambda x: f'k:{x}',
-        )
-        f(42); f(42); f(42)
-        assert len(calls) == 3
 
     def test_default_key_fn_when_omitted(self):
         f = CachedFetcher(cache=_FakeCache(),

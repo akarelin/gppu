@@ -15,7 +15,7 @@ CACHE_DIR = Path(tempfile.gettempdir()) / "claude_statusline_cache"
 # endregion
 SCHEMA = "v6"
 
-_dc = Cache(str(CACHE_DIR), ttl=86400, backend='sqlite', skip_env='')
+_dc = Cache(str(CACHE_DIR), ttl=86400, backend='sqlite')
 
 
 def cached(key, ttl, fn):

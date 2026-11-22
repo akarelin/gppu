@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import asyncio, functools, hashlib, json, os, pickle, sqlite3, threading, time
+import asyncio, functools, hashlib, json, pickle, sqlite3, threading, time
 
 from typing import Any, ClassVar, Optional
 from contextlib import asynccontextmanager, contextmanager
 
-from .gppu import Env, Path, _Base
+from .gppu import Path, _Base
 from .gppu import glob
 from .gppu import _DC
 
@@ -148,7 +148,7 @@ class _PersistentDC(_DC):
   Subclasses wanting custom storage override _do_persist() / load().
 
   Backend protocol (duck-typed; see `gppu.data.Persistence` for the standard
-  factory and built-in backends: json, pickle, sqlite, postgres):
+  factory and built-in backends: json, pickle, sqlite):
     upsert(cls: str, key: str, data: dict) -> None
     load(cls: str, key: str)   -> dict | None
     delete(cls: str, key: str) -> None
@@ -259,75 +259,15 @@ class _SqliteBackend:
     if self._conn: self._conn.close(); self._conn = None
 
 
-class _DiskcacheBackend:
-  """diskcache backend. Requires: pip install diskcache"""
-
-  def __init__(self, path: str):
-    from diskcache import Cache
-    self._cache = Cache(str(Path(path)))
-
-  def get(self, key: str, default=None): return self._cache.get(key, default)
-  def set(self, key: str, value, expire=None): self._cache.set(key, value, expire=expire)
-  def delete(self, key: str): self._cache.delete(key)
-  def close(self): self._cache.close(); self._cache = None
-
-
-class _DbBackend:
-  """SQLAlchemy-based cache backend for any remote database."""
-
-  def __init__(self, url: str):
-    from sqlalchemy import create_engine, text
-    self._engine = create_engine(url)
-    with self._engine.connect() as conn:
-      conn.execute(text(
-        'CREATE TABLE IF NOT EXISTS cache (key VARCHAR(512) PRIMARY KEY, value BYTEA, expire FLOAT)'))
-      conn.commit()
-
-  def get(self, key: str, default=None):
-    from sqlalchemy import text
-    with self._engine.connect() as conn:
-      row = conn.execute(text('SELECT value, expire FROM cache WHERE key=:k'), {'k': key}).fetchone()
-    if row is None: return default
-    if row[1] is not None and time.time() >= row[1]:
-      self.delete(key)
-      return default
-    return pickle.loads(row[0])
-
-  def set(self, key: str, value, expire=None):
-    from sqlalchemy import text
-    exp = (time.time() + expire) if expire else None
-    blob = pickle.dumps(value)
-    with self._engine.connect() as conn:
-      conn.execute(text(
-        'INSERT INTO cache (key, value, expire) VALUES (:k, :v, :e) '
-        'ON CONFLICT (key) DO UPDATE SET value=:v, expire=:e'),
-        {'k': key, 'v': blob, 'e': exp})
-      conn.commit()
-
-  def delete(self, key: str):
-    from sqlalchemy import text
-    with self._engine.connect() as conn:
-      conn.execute(text('DELETE FROM cache WHERE key=:k'), {'k': key})
-      conn.commit()
-
-  def close(self):
-    if self._engine: self._engine.dispose(); self._engine = None
-
-
 _BACKENDS = {
   'json': lambda path: _FileBackend(path, json, '_cache.json'),
   'pickle': lambda path: _FileBackend(path, pickle, '_cache.pkl'),
   'sqlite': _SqliteBackend,
-  'diskcache': _DiskcacheBackend,
-  'db': _DbBackend,
 }
 
 
-DiskCache = None  # .. removed, use Cache
-
-
 class Cache:
-  """Key/value cache with TTL and env-var bypass.
+  """Key/value cache with TTL.
 
   Standalone utility -- does not require Env or config initialization.
 
@@ -335,44 +275,32 @@ class Cache:
     json      — JSON file, no deps
     pickle    — pickle file, no deps
     sqlite    — stdlib sqlite3
-    diskcache — pip install diskcache
-    db        — any SQLAlchemy URL (postgres, mysql, etc.)
   """
   _cache: Any
   _ttl: int
-  _skip: bool
 
-  def __init__(self, directory: str, ttl: int = 86400, *,
-               backend: str = 'sqlite', skip_env: str = 'SKIP_CACHE'):
+  def __init__(self, directory: str, ttl: int = 86400, *, backend: str = 'sqlite'):
     """
     Args:
-      directory:  Cache path (file/dir) or DB URL for 'db' backend.
+      directory:  Cache path (file/dir).
       ttl:        Default TTL in seconds (default: 86400 = 24h).
-      backend:    'json', 'pickle', 'sqlite', 'diskcache', or 'db'.
-      skip_env:   Env var name to check for bypass (empty string disables).
+      backend:    'json', 'pickle' or 'sqlite'.
     """
     self._ttl = ttl
-    self._skip = bool(skip_env and os.getenv(skip_env, '').lower() in ('true', '1', 'yes'))
     if backend not in _BACKENDS:
       raise ValueError(f"Unknown backend {backend!r}, expected one of: {', '.join(_BACKENDS)}")
     self._cache = _BACKENDS[backend](directory)
 
-  @property
-  def skip(self) -> bool: return self._skip
-
   def get(self, key: str, default: Any = None) -> Any:
-    if self._skip: return default
     return self._cache.get(key, default)
 
   def set(self, key: str, value: Any, ttl: int | None = None) -> None:
-    if self._skip: return
     self._cache.set(key, value, expire=self._ttl if ttl is None else (ttl or None))
 
   def delete(self, key: str) -> None: self._cache.delete(key)
 
   def __call__(self, fn):
     """Use as @cache decorator for automatic memoization."""
-    if self._skip: return fn
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
       k = f'memo:{fn.__module__}.{fn.__qualname__}:{hashlib.md5(repr((args, kwargs)).encode()).hexdigest()}'
@@ -474,60 +402,10 @@ class _SqlitePersistBackend:
     if self._conn: self._conn.close(); self._conn = None  # type: ignore[assignment]
 
 
-class _PgPersistBackend(_PGBase):
-  """Postgres backend (psycopg2). Table `persistent_dc(cls, key, data JSONB, updated_at)`."""
-
-  SCHEMA_DDL = """
-  CREATE TABLE IF NOT EXISTS persistent_dc (
-    cls         TEXT NOT NULL,
-    key         TEXT NOT NULL,
-    data        JSONB NOT NULL DEFAULT '{}'::jsonb,
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (cls, key)
-  );
-  CREATE INDEX IF NOT EXISTS persistent_dc_cls_idx ON persistent_dc (cls);
-  """
-
-  def __init__(self, **kw):
-    super().__init__(**kw)
-    self._lock = threading.Lock()
-    with self._lock, self.cursor(dict_cursor=False) as cur:
-      cur.execute(self.SCHEMA_DDL)
-
-  def upsert(self, cls: str, key: str, data: dict) -> None:
-    from psycopg2.extras import Json
-    with self._lock, self.cursor(dict_cursor=False) as cur:
-      cur.execute(
-        "INSERT INTO persistent_dc (cls, key, data, updated_at) "
-        "VALUES (%s, %s, %s, now()) "
-        "ON CONFLICT (cls, key) DO UPDATE SET "
-        "  data=EXCLUDED.data, updated_at=now()",
-        (cls, key, Json(data)))
-
-  def load(self, cls: str, key: str) -> Optional[dict]:
-    with self._lock, self.cursor() as cur:
-      cur.execute(
-        "SELECT data FROM persistent_dc WHERE cls=%s AND key=%s", (cls, key))
-      row = cur.fetchone()
-    return dict(row['data']) if row else None
-
-  def iter(self, cls: str):
-    with self._lock, self.cursor() as cur:
-      cur.execute(
-        "SELECT key, data FROM persistent_dc WHERE cls=%s ORDER BY key", (cls,))
-      rows = cur.fetchall()
-    for r in rows: yield r['key'], dict(r['data'])
-
-  def delete(self, cls: str, key: str) -> None:
-    with self._lock, self.cursor(dict_cursor=False) as cur:
-      cur.execute("DELETE FROM persistent_dc WHERE cls=%s AND key=%s", (cls, key))
-
-
 _PERSIST_BACKENDS = {
   'json':     lambda path: _FilePersistBackend(path, json, '_persist.json'),
   'pickle':   lambda path: _FilePersistBackend(path, pickle, '_persist.pkl'),
   'sqlite':   _SqlitePersistBackend,
-  'postgres': _PgPersistBackend,
 }
 
 
@@ -540,11 +418,9 @@ class Persistence:
     json      — JSON file, no deps
     pickle    — pickle file, no deps
     sqlite    — stdlib sqlite3
-    postgres  — psycopg2 + JSONB; takes a connection string (db kwarg)
 
   Usage:
     p = Persistence('/var/lib/y2/persist.db', backend='sqlite')
-    p = Persistence('postgresql://...', backend='postgres')   # target is the DSN
 
     _PersistentDC.bind_db(p)
   """
@@ -552,10 +428,7 @@ class Persistence:
   def __init__(self, target: str, *, backend: str = 'sqlite'):
     if backend not in _PERSIST_BACKENDS:
       raise ValueError(f"Unknown backend {backend!r}, expected one of: {', '.join(_PERSIST_BACKENDS)}")
-    if backend == 'postgres':
-      self._b = _PgPersistBackend(db=target)
-    else:
-      self._b = _PERSIST_BACKENDS[backend](target)
+    self._b = _PERSIST_BACKENDS[backend](target)
 
   def upsert(self, cls: str, key: str, data: dict) -> None: self._b.upsert(cls, key, data)
   def load(self, cls: str, key: str) -> Optional[dict]: return self._b.load(cls, key)

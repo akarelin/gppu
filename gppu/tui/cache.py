@@ -54,8 +54,7 @@ class CachedFetcher:
     """Read-through wrapper: cache.get → fetch → cache.set.
 
     The wrapped ``fetch`` callable is invoked **only on miss or when the
-    caller sets** ``use_cache=False``.  Bypass is also automatic when the
-    underlying ``Cache.skip`` is True (e.g. ``SKIP_CACHE=1`` env var set).
+    caller sets** ``use_cache=False``.
 
     ``key_fn`` must return a stable string for each unique param set.  If
     omitted, a deterministic tuple-based key is used — sufficient for
@@ -68,15 +67,12 @@ class CachedFetcher:
 
     def __call__(self, *args: Any, use_cache: bool = True, **kwargs: Any) -> Any:
         key = self._key(args, kwargs)
-        if use_cache and not self.cache.skip:
+        if use_cache:
             cached = self.cache.get(key)
             if cached is not None:
                 return cached
-        try:
-            value = self.fetch(*args, **kwargs)
-        except Exception:
-            raise
-        if use_cache and not self.cache.skip and value is not None:
+        value = self.fetch(*args, **kwargs)
+        if use_cache and value is not None:
             self.cache.set(key, value, ttl=self.ttl)
         return value
 
@@ -118,11 +114,11 @@ class PaginatedFetcher:
         for page in range(1, self.max_pages + 1):
             key = self.key_fn(page=page, limit=self.limit, **params)
             data: dict | None = None
-            if use_cache and not self.cache.skip:
+            if use_cache:
                 data = self.cache.get(key)
             if data is None:
                 data = self.fetch_page(page=page, limit=self.limit, **params) or {}
-                if use_cache and not self.cache.skip:
+                if use_cache:
                     self.cache.set(key, data)
             rows = data.get('data', []) or []
             if not rows:
