@@ -1497,18 +1497,19 @@ class _Env(YLoad, _Base, _DC):
 
     def __init(self) -> None:
         _ENV_PATHS = {"RAN": "RAN/_config/config.yaml", "IoT": "IoT/_Creekview/_creekview.yaml"}
-        self.os, self.home = detect_os(), Path.home()
-        self.host, self.user = socket.gethostname().split('.')[0].lower(), getpass.getuser()
-        root = Path('D:/Dev') if self.os == OSType.W11 else self.home
+
+        self.os =, self.home = detect_os(), Path.home() # !!!  Rewrite
+        self.host, self.user = socket.gethostname().split('.')[0].lower(), getpass.getuser() # !!!  Rewrite
+        root = Path('D:/Dev') if self.os == OSType.W11 else self.home # !!!  Rewrite
         # .. apps share RAN; Y2's and IoT's programs share Creekview, and so does a host without RAN's repository, as Y2's
         # .. containers are; a host with neither, as PC Control's, is given its configuration over MQTT
-        self.environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (root / _ENV_PATHS['RAN']).exists() else 'RAN'
-        self.path = root / _ENV_PATHS[self.environment]
+        self.environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (root / _ENV_PATHS['RAN']).exists() else 'RAN' # !!!  Rewrite
+        self.path = root / _ENV_PATHS[self.environment] # !!!  Rewrite
 
-    def __load(self) -> None:
+    def __load(self) -> None: # !!!  LOAD, are you crazxy!!!???
         # .. one YAML load of its file; a configuration given whole (MQTT's, Y2's configure) is its data already, and a
         # .. host without its repository has no file until MQTT gives it one
-        if not self.data and self.path.exists(): self.data = dict_from_yml(self.path)
+        if not self.data and self.path.exists(): self.data = dict_from_yml(self.path) # !!!  Rewrite
         # region - the configuration's macros, named templates, `template:` rows and the Jinja that reads only the configuration
         # .. Creekview and RAN use all four: _creekview.yaml's macros, the *_templates and templates blocks of groups, Insteon,
         # .. covers and the devices, and RAN config.yaml's mounts; glob reads the value it fills, filled

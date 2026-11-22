@@ -103,6 +103,16 @@ Notes of an agent session, 2026-11-21. The first part is what Alex said in that 
 - Well-designed objects have HTML that remains. The defect is the model being in many places at once.
 - UI templates do not move into `gppu.py`; they play nicely together with it.
 
+## The model breaks — decisions the structural rewrite needs (surfaced 2026-11-22, by the static reduction)
+These are where the one-shot stops because the architecture as stated does not yet say what to do. The safe reduction (dead code, Path fix) is applied without them; the structural rewrite waits for each.
+1. **Env without `path`.** Y2 reads the generated files beside the configuration through `Env.path.parent` (`ecobee/__init__.py:83`, `covers.py:227`, `creekview.py:45/53/73`, `ui/creekview.py:44/50`), and `creekview_validate.py:65` sets `Env.path`. If the environment carries no `path`, where do they find the configuration's folder? (Env is reserved to Alex.)
+2. **Choosing an object's class without `kind`.** Y2's GSM, HueSM, AV, zwjs and unifi pick a row's class by its `kind` (`_supported_types[data['kind']]`), and `y2/__main__.py` builds every app from `y2/apps` by `kind`. What names the class an object is built from instead?
+3. **The two relations between an object and its runtime** (Tuya light vs Insteon light): what the runtime does for an object made from configuration — refresh it, or route its events to it. Answered so far only on connections (one per Tuya light, one per Hue hub; queues and rate limits per connection).
+4. **Timers: one Runtime's or each app's.** Y2's Supervisor finds a leaking app by counting that app's own timers (`app.timers`, `app.h_timeouts`). If one Runtime holds every timer, whose is whose?
+5. **`mixin_Rest` removed.** Y2's UI API serves its object pages and entity command buttons through it (`y2/ui.py`, `y2/api.py`), and CRAP `admin_ui/shared/layer.py` uses it. What serves them when it is gone?
+6. **TUI as a mixin.** `TUIApp` subclasses Textual's `App`, whose `__init__` must run, but `_DC.__init__` is final. How does a Textual app reconcile with "objects need no constructor"? (7 gppu/tui modules, w11, several CRAP/RAN TUIs depend on it.)
+7. **The DB bases' constructors.** `_PGBase`/`_SQABase` are built by their users with arguments (CRAP `db.py`, `plaud_sinks`, `registry`; RAN `ld` api). If objects are not constructed by passing arguments, how is a database connection made?
+
 ## How the work is done
 - The job of the supervising session: look at gppu, understand the changes that need to be made, then dispatch agents to make those changes.
 - The base class structure and the module structure are the basic architectural work, done before any code is written. No session changes code without knowing the base classes and what is in which submodule.
