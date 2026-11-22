@@ -32,12 +32,11 @@ import shlex
 import subprocess
 import sys
 import webbrowser
-from pathlib import Path
 from typing import ClassVar
 
 from gppu import Env, App, AsyncApp, mixin_Config, dict_from_yml, glob, glob_dict, glob_list
 from gppu.gppu import Logger, _EmptyMessageFilter, _LogColorizer
-from gppu.gppu import OSType, YmlLoader, jinja
+from gppu.gppu import OSType, Path, YmlLoader, full_path, jinja
 import yaml
 from rich.text import Text
 from textual.app import App as TextualApp, ComposeResult
@@ -185,8 +184,8 @@ def resolve_cwd(app_dir: Path, app_def: dict) -> Path:
     to the parent directory of the script.
     """
     if 'cwd' in app_def:
-        return (app_dir / app_def['cwd']).resolve()
-    return (app_dir / _script_for_os(app_def)).resolve().parent
+        return full_path(app_def['cwd'], app_dir)
+    return full_path(_script_for_os(app_def), app_dir).parent
 
 
 def _resolve_cmd(app_dir: Path, app_def: dict) -> list[str]:
@@ -199,7 +198,7 @@ def _resolve_cmd(app_dir: Path, app_def: dict) -> list[str]:
             print(f'Executable not found: {exe}')
             sys.exit(1)
         return [str(exe)]
-    script = (app_dir / script_str).resolve()
+    script = full_path(script_str, app_dir)
     if not script.exists():
         print(f'Script not found: {script}')
         sys.exit(1)
@@ -267,8 +266,7 @@ def _absolute(base: Path, value):
     """A manifest path made absolute against the manifest's own directory; an absolute path is left as it is."""
     if isinstance(value, dict):
         return {key: _absolute(base, item) for key, item in value.items()}
-    if isinstance(value, str) and not value.startswith(('/', '\\')) and not Path(value).is_absolute():
-        return str((base / value).resolve())
+    if isinstance(value, str) and not value.startswith(('/', '\\')): return str(full_path(value, base))
     return value
 
 
@@ -278,7 +276,7 @@ def read_manifest(app_dir: Path, config_file: str, nav: str | None = None) -> di
     it under. The file is a YAML file, or a script that carries its configuration as MANIFEST in its first 4 KB. A
     script's manifest that names no script or url launches the script itself. Empty when the config holds no
     manifest."""
-    path = (app_dir / config_file).resolve()
+    path = full_path(config_file, app_dir)
     if path.suffix.lower() in ('.yaml', '.yml'): cfg = dict_from_yml(path)
     else:
         with path.open(encoding='utf-8-sig') as f: script = re.search(r'^MANIFEST = r?"""(.*?)"""', f.read(4096), re.M | re.S)

@@ -22,12 +22,11 @@ import os
 import re
 import subprocess
 import sys
-from pathlib import Path
 from typing import Iterable
 
 import yaml
 
-from gppu.gppu import YmlLoader
+from gppu.gppu import Path, YmlLoader, full_path
 
 INCLUDE_RE = re.compile(r"(?:^|:\s*)!include\s+(?P<path>[^#\n]+)")
 
@@ -53,11 +52,7 @@ def find_direct_includes(yaml_path: Path) -> list[Path]:
         match = INCLUDE_RE.search(line)
         if not match:
             continue
-        raw_path = match.group('path').strip().strip('"\'')
-        include_path = Path(raw_path)
-        if not include_path.is_absolute():
-            include_path = (base_dir / include_path).resolve()
-        includes.append(include_path)
+        includes.append(full_path(match.group('path').strip().strip('"\''), base_dir))   # .. relative to the file that holds it, as dict_from_yml reads it
     return includes
 
 
@@ -67,7 +62,7 @@ def walk_includes(root_yaml: Path) -> list[Path]:
     seen: set[Path] = set()
 
     def visit(path: Path) -> None:
-        resolved = path.resolve()
+        resolved = Path(path).resolve()
         if resolved in seen:
             return
         seen.add(resolved)
