@@ -7,13 +7,13 @@ Supports multiple accounts/tenants with tabbed view.
 Its configuration is its MANIFEST, read as a gppu App's own.
 
 Usage:
-    python w11-onedrive.py                     # interactive mode selector
-    python w11-onedrive.py diag                # sync diagnostics
-    python w11-onedrive.py diag --watch        # auto-refresh
-    python w11-onedrive.py conflicts           # conflict analysis
-    python w11-onedrive.py conflicts --hostname Mailstore
-    python w11-onedrive.py dbexplore           # explore sync DB, dump report
-    python w11-onedrive.py dbexplore --output . # save report to current dir
+    python w11-onedrive.py                              # sync diagnostics
+    python w11-onedrive.py --watch                      # auto-refresh
+    python w11-onedrive.py --mode conflicts             # conflict analysis
+    python w11-onedrive.py --mode conflicts --hostname Mailstore
+    python w11-onedrive.py --mode dbexplore             # explore sync DB, dump report
+    python w11-onedrive.py --mode dbexplore --output .  # save report to current dir
+    python w11-onedrive.py --mode reset                 # reset OneDrive
 """
 
 from __future__ import annotations
@@ -27,22 +27,24 @@ MANIFEST = """
     modes:
       diag:
         name: Sync Diagnostics
-        args: [diag]
+        args: [--mode, diag]
       diag-watch:
         name: Sync Diagnostics (live)
-        args: [diag, --watch]
+        args: [--mode, diag, --watch]
       dbexplore:
         name: DB Explorer (report)
-        args: [dbexplore]
+        args: [--mode, dbexplore]
       reset:
         name: Reset OneDrive
-        args: [reset]
+        args: [--mode, reset]
       conflicts:
         name: Conflict Analysis
-        args: [conflicts]
+        args: [--mode, conflicts]
         ask_for:
           - name: account
             options: accounts  # resolved from config key below
+
+  mode: diag
 
   accounts:
     - Business1
@@ -1873,72 +1875,27 @@ def db_explore(accounts: list[str], output_dir: str | None = None) -> str | None
         return None
 
 
-# .. ── CLI ──────────────────────────────────────────────────────────────────────
+# .. ── The program ──────────────────────────────────────────────────────────────
 
-def main():
-    import argparse
+class OneDrive(gppu.App):
+    """The program. Its configuration is its MANIFEST, the command line over it: --mode diag (the default), conflicts,
+    dbexplore or reset; --accounts [..] the accounts, --hostname one conflict suffix, --watch auto-refresh, --output the
+    folder of the dbexplore report."""
+    mode: str
+    accounts: list
+    hostname: str
+    hostnames: list
+    hostname_stopwords: list
+    conflict_scan_exclude: list
+    watch_interval: int
+    watch: bool
+    output: str
 
-    config = gppu.App(config=MANIFEST)   # .. gppu's App: textual's App is this module's App
+    def main(self) -> None:
+        {'diag': self.diag, 'conflicts': self.conflicts, 'dbexplore': self.dbexplore, 'reset': self.reset}[self.mode]()
 
-    parser = argparse.ArgumentParser(description='OneDrive Sync Diagnostics TUI')
-    parser.add_argument('mode', nargs='?',
-                        choices=['diag', 'conflicts', 'reset', 'dbexplore'],
-                        help='Mode: diag, conflicts, or reset')
-    parser.add_argument('--account', action='append', default=None,
-                        help='Account folder name(s). Repeatable. Default: all detected.')
-    parser.add_argument('--hostname', default=None,
-                        help='Hostname suffix to analyze conflicts for (e.g., Mailstore)')
-    parser.add_argument('--watch', action='store_true',
-                        help='Auto-refresh health every 10s')
-    parser.add_argument('--output', default=None,
-                        help='Output directory for report files (dbexplore mode)')
-    args = parser.parse_args()
-
-    # .. Config values
-    cfg_accounts = config.my_list('accounts')
-    cfg_hostnames = config.my_list('hostnames')
-    cfg_stopwords = config.my_list('hostname_stopwords')
-    cfg_exclude = config.my_list('conflict_scan_exclude')
-    cfg_watch_interval = config.my_int('watch_interval')
-
-    # .. Read manifest modes from config for interactive menu
-    manifest = config.my_dict('manifest')
-    modes = manifest.get('modes') or {}
-
-    mode = args.mode or config.my('mode')
-    if not mode:
-        app_name = manifest.get('name', 'OneDrive Diagnostics')
-        icon = manifest.get('icon', '')
-        print(f'{icon}  {app_name}' if icon else app_name)
-        print('')
-        mode_keys = list(modes.keys()) if modes else ['diag', 'conflicts']
-        for i, key in enumerate(mode_keys, 1):
-            info = modes.get(key, {})
-            name = info.get('name', key) if isinstance(info, dict) else key
-            print(f'  {i}. {name}')
-        print('')
-        try:
-            idx = int(input(f'Select mode [1-{len(mode_keys)}]: ').strip()) - 1
-            selected_key = mode_keys[idx]
-        except (ValueError, IndexError):
-            selected_key = mode_keys[0]
-
-        # .. Apply manifest args for the selected mode
-        info = modes.get(selected_key, {})
-        manifest_args = info.get('args', []) if isinstance(info, dict) else []
-        if manifest_args:
-            # .. Re-parse with manifest args prepended
-            args = parser.parse_args(manifest_args)
-        mode = args.mode or selected_key.split('-')[0]  # .. "diag-watch" -> "diag"
-
-    if mode == 'diag':
-        if args.account:
-            accounts = args.account
-        elif cfg_accounts:
-            accounts = cfg_accounts
-        else:
-            accounts = discover_accounts()
-
+    def diag(self) -> None:
+        accounts = self.accounts or discover_accounts()
         if not accounts:
             print('No OneDrive accounts found with SyncDiagnostics.log.')
             logs = od_base() / 'logs'
@@ -1946,84 +1903,60 @@ def main():
                 available = [p.name for p in logs.iterdir() if p.is_dir()]
                 print(f'Log directories found: {", ".join(available)}')
             return
-
         for acc in accounts:
             if not logs_dir(acc).exists():
                 available = [p.name for p in (od_base() / 'logs').iterdir() if p.is_dir()]
                 print(f'Account "{acc}" not found. Available: {", ".join(available)}')
                 return
+        OneDriveDiagApp(accounts=accounts, watch=self.watch or self.watch_interval > 0).run()
 
-        watch = args.watch or cfg_watch_interval > 0
-        app = OneDriveDiagApp(accounts=accounts, watch=watch)
-        app.run()
-
-    elif mode == 'conflicts':
-        accounts = args.account or cfg_accounts or discover_accounts()
+    def conflicts(self) -> None:
+        accounts = self.accounts or discover_accounts()
         if not accounts:
             print('No OneDrive accounts found.')
             return
-
         if len(accounts) == 1:
             od_folder = user_folder(accounts[0])
         else:
             print('')
             print('Select account to scan for conflicts:')
             for i, acc in enumerate(accounts, 1):
-                folder = user_folder(acc)
-                email = user_email(acc) or ''
-                print(f'  {i}. {acc} ({email}) — {folder}')
+                print(f'  {i}. {acc} ({user_email(acc) or ""}) — {user_folder(acc)}')
             print('')
             try:
                 idx = int(input(f'Select [1-{len(accounts)}]: ').strip()) - 1
                 od_folder = user_folder(accounts[idx])
             except (ValueError, IndexError):
                 od_folder = user_folder(accounts[0])
-
         if not od_folder or not os.path.isdir(od_folder):
             print(f'OneDrive folder not found: {od_folder}')
             return
-
-        if args.hostname:
-            hostnames = [args.hostname]
-        elif cfg_hostnames:
-            # .. Config hostnames exist — use them, discover extras
-            discovered = discover_hostnames(od_folder,
-                                            extra_stopwords=cfg_stopwords,
-                                            exclude_dirs=cfg_exclude)
-            picker = HostnamePicker(cfg_hostnames, discovered)
-            hostnames = picker.run()
-            if not hostnames:
-                return
+        if self.hostname:
+            hostnames = [self.hostname]
         else:
-            # .. No config, no CLI flag — discover and pick
-            discovered = discover_hostnames(od_folder,
-                                            extra_stopwords=cfg_stopwords,
-                                            exclude_dirs=cfg_exclude)
-            if not discovered:
+            # .. the configured hostnames, and those found in the folder's conflict copies, to pick from
+            discovered = discover_hostnames(od_folder, extra_stopwords=self.hostname_stopwords, exclude_dirs=self.conflict_scan_exclude)
+            if not self.hostnames and not discovered:
                 print('No conflict hostname patterns detected.')
                 return
-            picker = HostnamePicker([], discovered)
-            hostnames = picker.run()
+            hostnames = HostnamePicker(self.hostnames, discovered).run()
             if not hostnames:
                 return
-        app = ConflictApp(od_folder=od_folder, hostnames=hostnames,
-                          exclude_dirs=cfg_exclude)
-        app.run()
+        ConflictApp(od_folder=od_folder, hostnames=hostnames, exclude_dirs=self.conflict_scan_exclude).run()
 
-    elif mode == 'dbexplore':
-        accounts = args.account or cfg_accounts or discover_accounts()
+    def dbexplore(self) -> None:
+        accounts = self.accounts or discover_accounts()
         if not accounts:
             print('No OneDrive accounts found.')
             return
-        db_explore(accounts, output_dir=args.output)
+        db_explore(accounts, output_dir=self.output or None)
 
-    elif mode == 'reset':
+    def reset(self) -> None:
         exe = onedrive_exe_path()
         if not exe:
             print('OneDrive.exe not found.')
-            print('Check registry HKCU\\Software\\Microsoft\\OneDrive\\OneDriveTrigger')
+            print(r'Check registry HKCU\Software\Microsoft\OneDrive\OneDriveTrigger')
             return
-
         print(f'OneDrive executable: {exe}')
         print('')
         print('This will:')
@@ -2032,16 +1965,12 @@ def main():
         print('  - Re-enumerate all files (may take minutes)')
         print('  - NOT delete any files')
         print('')
-        confirm = input('Proceed with reset? [y/N]: ').strip().lower()
-        if confirm != 'y':
+        if input('Proceed with reset? [y/N]: ').strip().lower() != 'y':
             print('Cancelled.')
             return
-
         print(f'Running: {exe} /reset')
         try:
-            subprocess.run([exe, '/reset'], timeout=30,
-                           capture_output=True, text=True,
-                           encoding='utf-8', errors='replace')
+            subprocess.run([exe, '/reset'], timeout=30, capture_output=True, text=True, encoding='utf-8', errors='replace')
             print('Reset command sent. OneDrive will relaunch automatically.')
         except subprocess.TimeoutExpired:
             print('Reset in progress (process is restarting).')
@@ -2050,4 +1979,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    OneDrive(config=MANIFEST).main()
