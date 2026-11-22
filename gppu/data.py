@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json, pickle
+
 from typing import Any, ClassVar, Optional
 from contextlib import asynccontextmanager, contextmanager
 
@@ -189,24 +191,24 @@ class _PersistentDC(_DC):
 # endregion
 
 
-class _JsonBackend:
-  """JSON-file cache backend. No dependencies."""
+class _FileBackend:
+  """File cache backend: one file, json or pickle as its serializer. No dependencies."""
 
-  def __init__(self, path: str):
-    import os, json
+  def __init__(self, path: str, serializer, name: str):
+    import os
+    self._serializer, self._binary = serializer, serializer is pickle
     self._path = path
     self._data: dict = {}
     os.makedirs(os.path.dirname(path) if not os.path.isdir(path) else path, exist_ok=True)
     if os.path.isdir(path):
-      self._path = os.path.join(path, '_cache.json')
+      self._path = os.path.join(path, name)
     try:
-      with open(self._path) as f: self._data = json.load(f)
+      with open(self._path, 'rb' if self._binary else 'r') as f: self._data = self._serializer.load(f)
     except Exception: pass
 
   def _flush(self):
-    import json
     try:
-      with open(self._path, 'w') as f: json.dump(self._data, f)
+      with open(self._path, 'wb' if self._binary else 'w') as f: self._serializer.dump(self._data, f)
     except Exception: pass
 
   def _alive(self, entry: dict) -> bool:
@@ -270,50 +272,6 @@ class _SqliteBackend:
     if self._conn: self._conn.close(); self._conn = None
 
 
-class _PickleBackend:
-  """Pickle-file cache backend. No external dependencies."""
-
-  def __init__(self, path: str):
-    import os, pickle
-    self._path = path
-    self._data: dict = {}
-    os.makedirs(os.path.dirname(path) if not os.path.isdir(path) else path, exist_ok=True)
-    if os.path.isdir(path):
-      self._path = os.path.join(path, '_cache.pkl')
-    try:
-      with open(self._path, 'rb') as f: self._data = pickle.load(f)
-    except Exception: pass
-
-  def _flush(self):
-    import pickle
-    try:
-      with open(self._path, 'wb') as f: pickle.dump(self._data, f)
-    except Exception: pass
-
-  def _alive(self, entry: dict) -> bool:
-    import time
-    exp = entry.get('_exp')
-    return exp is None or time.time() < exp
-
-  def get(self, key: str, default=None):
-    entry = self._data.get(key)
-    if entry is None or not self._alive(entry): return default
-    return entry.get('v', default)
-
-  def set(self, key: str, value, expire=None):
-    import time
-    entry: dict = {'v': value}
-    if expire is not None: entry['_exp'] = time.time() + expire
-    self._data[key] = entry
-    self._flush()
-
-  def delete(self, key: str):
-    self._data.pop(key, None)
-    self._flush()
-
-  def close(self): self._flush()
-
-
 class _DiskcacheBackend:
   """diskcache backend. Requires: pip install diskcache"""
 
@@ -372,8 +330,8 @@ class _DbBackend:
 
 
 _BACKENDS = {
-  'json': _JsonBackend,
-  'pickle': _PickleBackend,
+  'json': lambda path: _FileBackend(path, json, '_cache.json'),
+  'pickle': lambda path: _FileBackend(path, pickle, '_cache.pkl'),
   'sqlite': _SqliteBackend,
   'diskcache': _DiskcacheBackend,
   'db': _DbBackend,
@@ -466,55 +424,22 @@ class Cache:
 # .. All backends namespace storage by (cls, key) pair.
 # endregion
 
-class _JsonPersistBackend:
-  """JSON-file backend. One file, nested dict {cls: {key: data}}. No deps."""
+class _FilePersistBackend:
+  """File backend: one file, nested dict {cls: {key: data}}, json or pickle as its serializer. No deps."""
 
-  def __init__(self, path: str):
-    import os, json
+  def __init__(self, path: str, serializer, name: str):
+    import os
+    self._serializer, self._binary = serializer, serializer is pickle
     self._path = path
     os.makedirs(os.path.dirname(path) if not os.path.isdir(path) else path, exist_ok=True)
-    if os.path.isdir(path): self._path = os.path.join(path, '_persist.json')
+    if os.path.isdir(path): self._path = os.path.join(path, name)
     self._data: dict[str, dict[str, dict]] = {}
     try:
-      with open(self._path) as f: self._data = json.load(f)
+      with open(self._path, 'rb' if self._binary else 'r') as f: self._data = self._serializer.load(f)
     except Exception: pass
 
   def _flush(self):
-    import json
-    with open(self._path, 'w') as f: json.dump(self._data, f)
-
-  def upsert(self, cls: str, key: str, data: dict) -> None:
-    self._data.setdefault(cls, {})[key] = data
-    self._flush()
-
-  def load(self, cls: str, key: str) -> Optional[dict]:
-    return self._data.get(cls, {}).get(key)
-
-  def iter(self, cls: str):
-    for k, v in self._data.get(cls, {}).items(): yield k, dict(v)
-
-  def delete(self, cls: str, key: str) -> None:
-    if self._data.get(cls, {}).pop(key, None) is not None: self._flush()
-
-  def close(self): self._flush()
-
-
-class _PicklePersistBackend:
-  """Pickle-file backend. Same shape as _JsonPersistBackend. No deps."""
-
-  def __init__(self, path: str):
-    import os, pickle
-    self._path = path
-    os.makedirs(os.path.dirname(path) if not os.path.isdir(path) else path, exist_ok=True)
-    if os.path.isdir(path): self._path = os.path.join(path, '_persist.pkl')
-    self._data: dict[str, dict[str, dict]] = {}
-    try:
-      with open(self._path, 'rb') as f: self._data = pickle.load(f)
-    except Exception: pass
-
-  def _flush(self):
-    import pickle
-    with open(self._path, 'wb') as f: pickle.dump(self._data, f)
+    with open(self._path, 'wb' if self._binary else 'w') as f: self._serializer.dump(self._data, f)
 
   def upsert(self, cls: str, key: str, data: dict) -> None:
     self._data.setdefault(cls, {})[key] = data
@@ -629,8 +554,8 @@ class _PgPersistBackend(_PGBase):
 
 
 _PERSIST_BACKENDS = {
-  'json':     _JsonPersistBackend,
-  'pickle':   _PicklePersistBackend,
+  'json':     lambda path: _FilePersistBackend(path, json, '_persist.json'),
+  'pickle':   lambda path: _FilePersistBackend(path, pickle, '_persist.pkl'),
   'sqlite':   _SqlitePersistBackend,
   'postgres': _PgPersistBackend,
 }
