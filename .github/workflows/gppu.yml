@@ -11,10 +11,11 @@ on:
           - none
           - patch
           - minor
-      beta:
-        description: 'Beta release — produces bN suffix and marks as pre-release'
-        type: boolean
-        default: false
+      # .. betas are disabled
+      # beta:
+      #   description: 'Beta release — produces bN suffix and marks as pre-release'
+      #   type: boolean
+      #   default: false
       run_tests:
         description: 'Run tests before release'
         type: boolean
@@ -187,7 +188,7 @@ jobs:
               write("TAG", new)
               write("TAG_EXISTS", "false")
           else:
-              # bump=none → rebuild latest tag, no new tag created
+              # bump=none → the latest version tag moves to this commit, which is built as that version
               if not tags:
                   raise SystemExit("No existing tag to rebuild and bump=none")
               write("TAG", tags[0])
@@ -204,9 +205,11 @@ jobs:
           git tag "${TAG}"
           git push origin "${TAG}"
 
-      - name: Checkout tag
+      - name: Move tag
         if: env.TAG_EXISTS == 'true'
-        run: git checkout "${TAG}"
+        run: |
+          git tag -f "${TAG}"
+          git push -f origin "${TAG}"
 
       - uses: astral-sh/setup-uv@v7
 
@@ -236,7 +239,7 @@ jobs:
           # Bound notes to the preceding gppu build instead of GitHub's inferred release.
           if [[ -n "${PREVIOUS_TAG}" ]]; then FLAGS+=(--notes-start-tag "${PREVIOUS_TAG}"); fi
           if [[ "${IS_PRE}" == "true" ]]; then FLAGS+=(--prerelease); fi
-          # .. bump=none rebuilds the latest tag, whose release exists: its assets are replaced by this build's
+          # .. bump=none builds this commit as the latest version, whose release exists: its assets are replaced by this build's
           if [[ "${TAG_EXISTS}" == "true" ]]; then gh release upload "${TAG}" dist/* --clobber; else gh release create "${TAG}" dist/* "${FLAGS[@]}"; fi
 
       - name: Update gppu/latest tag and Release assets
