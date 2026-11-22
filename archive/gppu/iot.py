@@ -1,0 +1,333 @@
+# .. archived 2026-11-22: what gppu's reduction removed from gppu/iot.py, as it was last
+
+
+# .. from fec31bb
+class mixin_Mqtt:
+  """MQTT for a host that owns its lifecycle and loop, as Y2 does.
+
+  Supply ``connection``, ``Info``/``Warn`` and ``_spawn(coro)`` to schedule and
+  track work on that loop. Call ``_start_mqtt()`` there at startup, then cancel
+  and await the host's tasks at shutdown. Use the same subscription, publishing
+  and connected-work hooks described on ``MqttApp``.
+  """
+
+  _CLIENT_KEYS = ('hostname', 'port', 'username', 'password', 'identifier')
+  MQTT_RECONNECT_DELAY = 5
+
+  connection: dict[str, Any]
+  MQTT_PROTOCOL: Any = None
+  _client: Any = None
+  _mqtt_task: Any = None
+  _callbacks: dict[y2topic, list[tuple[MqttCallback, object, bool, bool]]]
+  _subscriptions: dict[y2topic, int]
+  _mqtt_lock: asyncio.Lock
+  _callback_lock: asyncio.Lock
+
+  def _start_mqtt(self):
+    task = self._mqtt_task
+    if task is not None and not task.done(): return task
+
+    coroutine = self._mqtt_loop()
+    try: task = self._spawn(coroutine)
+    except BaseException:
+      coroutine.close()
+      raise
+    self._mqtt_task = task
+    return task
+
+  def _ensure_mqtt_state(self) -> None:
+    if getattr(self, '_mqtt_lock', None) is not None: return
+    self._callbacks = {}
+    self._subscriptions = {}
+    self._mqtt_lock = asyncio.Lock()
+    self._callback_lock = asyncio.Lock()
+
+  async def mqtt_listen(self, callback: MqttCallback, topic: y2topic | str, payload: object = None, *, ignore_retained: bool = False, raise_errors: bool = False, **data: Any) -> None:
+    self._ensure_mqtt_state()
+    topic = y2topic(topic)
+    qos = int(data.get('qos', 0))
+
+    async with self._mqtt_lock:
+      callbacks = self._callbacks.setdefault(topic, [])
+      entry = (callback, payload, ignore_retained, raise_errors)
+      if entry not in callbacks: callbacks.append(entry)
+
+      old_qos = self._subscriptions.get(topic, -1)
+      qos = max(old_qos, qos)
+      self._subscriptions[topic] = qos
+      client = self._client if qos != old_qos else None
+
+    if client is not None: await client.subscribe(str(topic), qos=qos)
+
+  async def mqtt_publish(self, topic: y2topic | str, payload: MqttPayload = '', **data: Any) -> None:
+    client = self._client
+    if client is None: return
+
+    if isinstance(payload, (dict, list)): wire_payload = json.dumps(payload)
+    elif isinstance(payload, bytes): wire_payload = payload
+    else: wire_payload = str(payload)
+    retain = bool(data.pop('retain', False))
+    qos = int(data.pop('qos', 0))
+    expiry = data.pop('expiry', None)
+    properties = None
+
+    if expiry is not None or data:
+      properties = Properties(PacketTypes.PUBLISH)
+      if expiry is not None: properties.MessageExpiryInterval = int(expiry)
+      if data: properties.UserProperty = [(key, str(value)) for key, value in data.items()]
+
+    await client.publish(str(topic), wire_payload, qos=qos, retain=retain, properties=properties)
+
+  @property
+  def _status_topic(self) -> y2topic:
+    return y2topic(self.connection.get('status_topic', ''))
+
+  def _mqtt_client(self):
+    if aiomqtt is None: raise RuntimeError('aiomqtt is required for mixin_Mqtt')
+    options = {key: self.connection[key] for key in self._CLIENT_KEYS if key in self.connection}
+    if self.MQTT_PROTOCOL is not None: options['protocol'] = self.MQTT_PROTOCOL
+    if self._status_topic: options['will'] = aiomqtt.Will(topic=str(self._status_topic), payload=b'offline', qos=1, retain=True)
+    return aiomqtt.Client(**options)
+
+  def _mqtt_tasks(self) -> Iterable[Coroutine[Any, Any, object]]: return ()
+
+  async def _mqtt_loop(self) -> None:
+    self._ensure_mqtt_state()
+    while True:
+      try:
+        async with self._mqtt_client() as client:
+          self._client = client
+          try:
+            self.Info('connected:', self.connection.get('hostname'), self.connection.get('port'))
+            await self._mqtt_replay(client)
+            if self._status_topic: await client.publish(str(self._status_topic), 'online', qos=1, retain=True)
+
+            async with asyncio.TaskGroup() as tasks:
+              dispatch = tasks.create_task(self._mqtt_dispatch(client))
+              extras = [tasks.create_task(coroutine) for coroutine in self._mqtt_tasks()]
+              await dispatch
+              for task in extras: task.cancel()
+          finally:
+            self._client = None
+            if self._status_topic:
+              try: await client.publish(str(self._status_topic), 'offline', qos=1, retain=True)
+              except _MqttError: pass
+      except _MqttError as error:
+        self.Warn(f'mqtt error, reconnect in {self.MQTT_RECONNECT_DELAY}s:', error)
+      except BaseExceptionGroup as group:
+        # ^^ TaskGroup wraps task failures in a group; peel off MqttError, re-raise the rest. (Avoid `except*` syntax: debugpy's source scanner crashes on TryStar nodes.)
+        mqtt_errors, other = group.split(_MqttError)
+        if mqtt_errors is not None:
+          self.Warn(f'mqtt error, reconnect in {self.MQTT_RECONNECT_DELAY}s:', *mqtt_errors.exceptions)
+        if other is not None: raise other
+      finally:
+        self._client = None
+
+      await asyncio.sleep(self.MQTT_RECONNECT_DELAY)
+
+  async def _mqtt_replay(self, client: Any) -> None:
+    async with self._mqtt_lock: subscriptions = tuple(self._subscriptions.items())
+    for topic, qos in subscriptions: await client.subscribe(str(topic), qos=qos)
+
+  async def _mqtt_dispatch(self, client: Any) -> None:
+    async for message in client.messages:
+      topic = str(message.topic)
+      raw = message.payload.decode(errors='replace') if isinstance(message.payload, bytes) else str(message.payload)
+      payload: object = raw
+      structured = raw.lstrip()
+      if structured[:1] in '[{':
+        try: payload = json.loads(structured)
+        except json.JSONDecodeError: pass
+
+      async with self._mqtt_lock:
+        callbacks = [(callback, raise_errors) for pattern, entries in self._callbacks.items()
+                     if self._topic_matches(topic, str(pattern))
+                     for callback, expected, ignore_retained, raise_errors in entries
+                     if not (ignore_retained and message.retain) and (expected is None or expected == payload)]
+
+      for callback, raise_errors in callbacks:
+        self._spawn(self._mqtt_callback(callback, y2topic(topic), payload, raise_errors=raise_errors))
+
+  async def _mqtt_callback(self, callback: MqttCallback, topic: y2topic, payload: object, *, raise_errors: bool = False) -> None:
+    async with self._callback_lock:
+      try:
+        result = callback(topic, payload)
+        if inspect.isawaitable(result): await result
+      except Exception as error:
+        if raise_errors: raise
+        self.Warn('callback error:', topic, error)
+
+  @staticmethod
+  def _topic_matches(topic: str, pattern: str) -> bool:
+    if topic.startswith('$') and not pattern.startswith('$'): return False
+    topic_parts = topic.split('/')
+    pattern_parts = pattern.split('/')
+    for index, expected in enumerate(pattern_parts):
+      if expected == '#': return index == len(pattern_parts) - 1
+      if index == len(topic_parts) or expected not in ('+', topic_parts[index]): return False
+    return len(topic_parts) == len(pattern_parts)
+
+
+# .. from fec31bb
+class MqttApp(mixin_Mqtt, AsyncApp):
+  """AsyncApp with one reconnecting MQTT client; import from ``gppu``.
+
+  Its broker mapping is the configuration's ``connection``, which its data holds.
+  Override async ``subscribe()`` to ``await self.mqtt_listen(callback,
+  topic)``; callbacks take ``(topic, payload)`` and may be sync or async.
+
+  Run with ``asyncio.run(MyApp().run())`` and stop as for ``AsyncApp``; its
+  ``__start`` subscribes and connects. Subscriptions register
+  before connection; for work needing a connection, have ``_mqtt_tasks()``
+  return fresh coroutines for each connection. Publish with
+  ``await self.mqtt_publish(topic, payload)``; disconnected publishes are discarded.
+  """
+
+  async def subscribe(self) -> None: pass
+
+  async def __start(self) -> None:
+    await self.subscribe()
+    self._start_mqtt()
+
+
+# .. from fec31bb
+class AppService(MqttApp):
+  """An MqttApp whose part of Env arrives over MQTT: ``config_mqtt/topics`` in its own configuration maps each
+  retained topic to the path in Env that its payload replaces, the same as loading it again, so ``glob`` reads it as
+  it reads the rest of Env. The app's own configuration stays its own. An app that acts on new configuration listens
+  to the same topic: its listener runs after the section is loaded. ``await app.from_mqtt()`` reads every topic once,
+  then disconnects."""
+
+  def __init(self) -> None:
+    self.until_loaded: set[str] | None = None   # .. from_mqtt: the topics still to arrive
+
+  async def from_mqtt(self) -> None:
+    """Each of its topics read once, then the connection closed."""
+    self.until_loaded = set(self.my_dict('config_mqtt/topics'))
+    await self.run()
+
+  async def __load(self) -> None:
+    topics = self.my_dict('config_mqtt/topics')
+    if not topics or any('+' in topic or '#' in topic for topic in topics):
+      raise ValueError('MQTT configuration topics must be exact topic names')
+    for topic in topics: await self.mqtt_listen(self._receive_config, topic, qos=1, raise_errors=True)
+
+  async def _receive_config(self, topic: y2topic, payload: object) -> None:
+    data = yaml.load(payload, Loader=YmlLoader) if isinstance(payload, str) else payload
+    if not isinstance(data, dict): raise TypeError(f'MQTT configuration must be a mapping: {topic}')
+    configuration, environment = deepcopy(Env.my_dict('')), Env.environment
+    deepset(self.my('config_mqtt/topics')[str(topic)], configuration, data)
+    Env.reset()   # .. new configuration is the same event as a reset: Env loads again, from what it held and the section that arrived
+    Env.init(environment=environment, config=configuration)
+    if self.until_loaded is not None:
+      self.until_loaded.discard(str(topic))
+      if not self.until_loaded: self.stop()
+
+
+# .. from gppu/v3.7.9
+class _Runtime:
+  """The program's apps, which all share it: ``apps`` by name, the registries they fill (``actions``, ``buttons``,
+  ``indicators``), and the listeners to events, to entity states and to topics. ``Runtime`` is its one instance. A
+  callback is called with only the keywords it takes."""
+
+  def __init__(self) -> None:
+    self._init_runtime()
+
+  def _init_runtime(self) -> None:
+    self.apps: dict[str, Any] = {}
+    self.actions: dict[str, Any] = {}
+    self.buttons: dict[str, Any] = {}
+    self.indicators: dict[str, Any] = {}
+    self.event_listeners: dict[int, tuple[str | None, Callable[..., Any], dict[str, Any]]] = {}
+    self.state_listeners: dict[int, tuple[y2eid | None, str | None, Callable[..., Any], dict[str, Any]]] = {}
+    self.topic_listeners: dict[int, tuple[y2path | None, Callable[..., Any], dict[str, Any]]] = {}
+    self._listener_ids = count(1)
+    self.data = {
+      'apps': self.apps,
+      'actions': self.actions,
+      'buttons': self.buttons,
+      'indicators': self.indicators,
+    }
+
+  def reset(self) -> None:
+    """Every app's timers cancelled, and the apps, the registries and the listeners empty."""
+    for app in self.apps.values():
+      app.cancel_timers()
+    self._init_runtime()
+
+  def register_app(self, app: Any) -> None:
+    self.apps[app.name] = app
+
+  def restart_app(self, name: str) -> Any:
+    """Stop one app, discard it, and start a fresh instance of the same class with the same name, which reads its own
+    configuration again. Raises for an unknown or non-restartable name."""
+    app = self.apps.get(name)
+    if app is None:
+      raise ValueError(f"Unknown app: {name}")
+    if not app.restartable:
+      raise ValueError(f"App is not restartable: {name}")
+    cls = type(app)
+    app.stop()
+    self.apps.pop(name, None)
+    new_app = cls(name=name)
+    new_app.start()
+    return new_app
+
+  def listen_event(self, callback: Callable[..., Any], *, event: str | None = None, **data: Any) -> ListenerHandle:
+    callback = _callback_wrapper(callback)
+    key = next(self._listener_ids)
+    self.event_listeners[key] = (event, callback, dict(data))
+
+    def cancel() -> None:
+      self.event_listeners.pop(key, None)
+
+    return ListenerHandle(id=key, cancel=cancel)
+
+  def fire_event(self, event: str, **data: Any) -> None:
+    for expected, callback, listener_data in tuple(self.event_listeners.values()):
+      if expected is not None and expected != event: continue
+      callback(event=event, data=dict(data), **listener_data)
+
+  def listen_state(self, callback: Callable[..., Any], *, eid: str | y2eid | None = None, attribute: str | None = None,
+                   **data: Any) -> ListenerHandle:
+    parsed = y2eid(eid) if eid else None
+    callback = _callback_wrapper(callback)
+    key = next(self._listener_ids)
+    self.state_listeners[key] = (parsed, attribute, callback, dict(data))
+
+    def cancel() -> None:
+      self.state_listeners.pop(key, None)
+
+    return ListenerHandle(id=key, cancel=cancel)
+
+  def state_changed(self, entity: Any, *, old_state: Any, old_attrs: Mapping[str, Any]) -> None:
+    changes: list[tuple[str | None, Any, Any]] = []
+    if old_state != entity.state:
+      changes.append((None, old_state, entity.state))
+    for attr in sorted(set(old_attrs) | set(entity.attributes)):
+      old = old_attrs.get(attr)
+      new = entity.attributes.get(attr)
+      if old != new:
+        changes.append((attr, old, new))
+    for attribute, old, new in changes:
+      for expected_eid, expected_attr, callback, data in tuple(self.state_listeners.values()):
+        if expected_eid is not None and expected_eid != entity.eid: continue
+        if expected_attr != '*' and expected_attr != attribute: continue
+        callback(entity=entity, attribute=attribute, old=old, new=new, **data)
+
+  def listen_topic_state(self, callback: Callable[..., Any], *, path: str | y2path | None = None, **data: Any) -> ListenerHandle:
+    parsed = y2path(path) if path else None
+    callback = _callback_wrapper(callback)
+    key = next(self._listener_ids)
+    self.topic_listeners[key] = (parsed, callback, dict(data))
+
+    def cancel() -> None:
+      self.topic_listeners.pop(key, None)
+
+    return ListenerHandle(id=key, cancel=cancel)
+
+  def topic_changed(self, path: y2path, *, old: Any, new: Any) -> None:
+    if old == new: return
+    for expected_path, callback, data in tuple(self.topic_listeners.values()):
+      if expected_path is not None and expected_path != path: continue
+      callback(path=path, old=old, new=new, **data)

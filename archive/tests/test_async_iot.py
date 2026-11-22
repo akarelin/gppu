@@ -161,3 +161,204 @@ class HTTPControlTests(unittest.TestCase):
 
 if __name__ == '__main__':
   unittest.main()
+
+
+# .. from fec31bb
+class _Grid(TUIApp):
+  def __start(self) -> None: self.steps = ['start']
+
+
+# .. from fec31bb
+class RunParallelTests(unittest.IsolatedAsyncioTestCase):
+  async def test_launch_hands_each_line_and_reports_the_exit(self) -> None:
+    app, lines = AsyncApp(name='parallel'), []
+    self.assertIsNone(await app.launch([sys.executable, '-c', "print('one'); print('two')"], lines.append, '.', dict(os.environ)))
+    self.assertEqual(lines, ['one', 'two'])
+    self.assertEqual(await app.launch([sys.executable, '-c', 'raise SystemExit(3)'], lines.append, '.', dict(os.environ)),
+                     'process exited with 3')
+
+  async def test_run_parallel_starts_every_unit_and_holds_back_a_clash(self) -> None:
+    app, started, ended, failures = AsyncApp(name='parallel'), [], [], []
+
+    async def run(unit: str) -> None:
+      started.append(unit)
+      if unit == 'b': raise ValueError(unit)
+      for _ in range(3): await asyncio.sleep(0)
+      ended.append(unit)
+
+    await app.run_parallel(['a', 'b', 'c'], run, lambda unit, running: unit == 'c' and 'a' in running,
+                           lambda unit, error: failures.append((unit, str(error))))
+    self.assertEqual(started, ['a', 'b', 'c'])
+    self.assertEqual(ended, ['a', 'c'])
+    self.assertEqual(failures, [('b', 'b')])
+
+  async def test_a_tui_app_is_an_async_app_and_launches_on_itself(self) -> None:
+    app, lines = _Grid(), []
+    self.assertIsInstance(app, AsyncApp)
+    self.assertEqual(app.name, '_grid')
+    async with app.run_test():
+      self.assertIsNotNone(app._task_group)
+      self.assertEqual(app.steps, ['start'])
+      self.assertIsNone(await app.launch([sys.executable, '-c', "print('one')"], lines.append, '.', dict(os.environ)))
+    self.assertEqual(lines, ['one'])
+    self.assertIsNone(app._task_group)
+
+
+# .. from fec31bb
+class _FakeClient:
+  def __init__(self, messages=()):
+    self.messages = messages
+    self.subscriptions: list[tuple[str, int]] = []
+    self.published: list[tuple[str, Any, dict[str, Any]]] = []
+
+  async def subscribe(self, topic: str, qos: int = 0) -> None:
+    self.subscriptions.append((topic, qos))
+
+  async def publish(self, topic: str, payload: Any, **data: Any) -> None:
+    self.published.append((topic, payload, data))
+
+
+# .. from fec31bb
+class _Message:
+  def __init__(self, topic: str, payload: str | bytes, retain: bool = False):
+    self.topic = topic
+    self.payload = payload
+    self.retain = retain
+
+
+# .. from fec31bb
+class _Messages:
+  def __init__(self, messages: list[_Message]): self.messages = messages
+  def __aiter__(self): return self._iterate()
+
+  async def _iterate(self):
+    for message in self.messages: yield message
+
+
+# .. from fec31bb
+class _MqttHost(mixin_Mqtt):
+  def __init__(self):
+    self.connection = {}
+    self.tasks: set[asyncio.Task[Any]] = set()
+    self.warnings: list[tuple[Any, ...]] = []
+
+  def _spawn(self, coroutine):
+    task = asyncio.create_task(coroutine)
+    self.tasks.add(task)
+    task.add_done_callback(self.tasks.discard)
+    return task
+
+  def Info(self, *args: Any) -> None: pass
+  def Warn(self, *args: Any) -> None: self.warnings.append(args)
+
+
+# .. from fec31bb
+class _ReconnectHost(_MqttHost):
+  MQTT_RECONNECT_DELAY = 0
+
+  def __init__(self):
+    super().__init__()
+    self.connections = 0
+    self.extra_started = 0
+    self.extra_stopped = 0
+
+  @asynccontextmanager
+  async def _mqtt_client(self):
+    self.connections += 1
+    yield _FakeClient(_Messages([]))
+
+  def _mqtt_tasks(self): return [self._extra()]
+
+  async def _extra(self):
+    self.extra_started += 1
+    try: await asyncio.Event().wait()
+    finally: self.extra_stopped += 1
+
+
+# .. from fec31bb
+class MqttMixinTests(unittest.IsolatedAsyncioTestCase):
+  async def test_retained_filter_is_per_listener_and_survives_reconnect(self) -> None:
+    host = _MqttHost()
+    states, commands = [], []
+
+    async def state(topic, payload): states.append((str(topic), payload))
+    async def command(topic, payload): commands.append((str(topic), payload))
+
+    await host.mqtt_listen(state, 'test/#')
+    await host.mqtt_listen(command, 'test/time', payload='Day', ignore_retained=True)
+    for _ in range(2):
+      client = _FakeClient(_Messages([
+        _Message('test/time', b'Day', retain=True),
+        _Message('test/time', b'Day'),
+        _Message('test/time', b'Day'),
+        _Message('test/time', b'Evening'),
+      ]))
+      await host._mqtt_replay(client)
+      await host._mqtt_dispatch(client)
+      if host.tasks: await asyncio.gather(*host.tasks)
+      self.assertEqual(client.subscriptions, [('test/#', 0), ('test/time', 0)])
+
+    self.assertEqual(states, [('test/time', name) for name in ('Day', 'Day', 'Day', 'Evening')] * 2)
+    self.assertEqual(commands, [('test/time', 'Day')] * 4)
+    self.assertEqual(host.warnings, [])
+
+  async def test_registration_qos_publish_dispatch_and_wildcards(self) -> None:
+    host = _MqttHost()
+    host._ensure_mqtt_state()
+    client = _FakeClient()
+    host._client = client
+    seen: list[tuple[str, Any]] = []
+
+    async def callback(topic, payload): seen.append((str(topic), payload))
+
+    await host.mqtt_listen(callback, 'a/+/c', qos=0)
+    await host.mqtt_listen(callback, 'a/+/c', qos=1)
+    await host.mqtt_listen(callback, 'a/+/c', qos=0)
+    self.assertEqual(client.subscriptions, [('a/+/c', 0), ('a/+/c', 1)])
+
+    await host.mqtt_publish('out', {'x': 1}, retain=True, qos=1)
+    self.assertEqual(client.published[-1], ('out', '{"x": 1}', {'qos': 1, 'retain': True, 'properties': None}))
+
+    client.messages = _Messages([
+      _Message('a/b/c', b'  {"value": 2}'),
+      _Message('a/b/d', b'ignored'),
+    ])
+    await host._mqtt_dispatch(client)
+    if host.tasks: await asyncio.gather(*host.tasks)
+    self.assertEqual(seen, [('a/b/c', {'value': 2})])
+
+    matches = host._topic_matches
+    self.assertTrue(matches('a', 'a/#'))
+    self.assertTrue(matches('a/b/c', 'a/+/c'))
+    self.assertFalse(matches('a/b/c', 'a/+/d'))
+    self.assertFalse(matches('a/b', 'a/#/b'))
+    self.assertFalse(matches('$SYS/broker', '#'))
+    self.assertTrue(matches('$SYS/broker', '$SYS/#'))
+
+  async def test_connection_tasks_are_recreated_and_cleaned_up(self) -> None:
+    host = _ReconnectHost()
+    task = asyncio.create_task(host._mqtt_loop())
+    try:
+      while host.connections < 3: await asyncio.sleep(0)
+    finally:
+      task.cancel()
+      with self.assertRaises(asyncio.CancelledError): await task
+
+    self.assertGreaterEqual(host.extra_started, 2)
+    self.assertEqual(host.extra_stopped, host.extra_started)
+
+
+class EventLoopBridgeTests:
+  # .. from fec31bb
+  async def test_submit_call_and_reentrancy_guard(self) -> None:
+    bridge = _ExternalLoop(asyncio.get_running_loop())
+
+    async def add(left: int, right: int) -> int:
+      await asyncio.sleep(0)
+      return left + right
+
+    task = bridge.submit(add, 2, 3)
+    self.assertIsInstance(task, asyncio.Task)
+    self.assertEqual(await task, 5)
+    self.assertEqual(await asyncio.to_thread(bridge.call, add, 4, 5), 9)
+    with self.assertRaisesRegex(RuntimeError, 'cannot block'): bridge.call(add, 1, 1)
