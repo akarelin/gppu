@@ -41,17 +41,16 @@ def api():
     """The core, the fs API and the sessions API, and a session's messages in order, on a database made from gppu.ld's SQL (ld.sql)."""
     with psycopg.connect(DSN, autocommit=True) as server:
         server.execute(f'CREATE DATABASE {DB}')
-    previous, initialized = Env._my, Env.initialized
     try:
         with psycopg.connect(STORE, autocommit=True) as db:
             db.execute((Path(__file__).parent / 'ld.sql').read_text(encoding='utf-8'))
-        Env._load_dict({'db': STORE})   # .. the store's `db`, as an app's configuration gives it
+        Env.reset()
+        Env.init(config={'db': STORE})   # .. the store's `db`, as an app's configuration gives it
         apis = {'/fs': files.app, '/sessions': sessions.app, '/ordered': api_at('/ordered', 'ordered', "A session's messages in order.", ordered)}
         with TestClient(serve(apis, _SQABase()), backend_options={'loop_factory': asyncio.SelectorEventLoop}) as client:   # .. psycopg's async connections need the selector loop on Windows, as RAN's api.py runs it
             yield client
     finally:
         Env.reset()
-        Env._my, Env.initialized = previous, initialized
         with psycopg.connect(DSN, autocommit=True) as server:
             server.execute(f'DROP DATABASE {DB} WITH (FORCE)')
 

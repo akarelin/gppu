@@ -8,6 +8,7 @@ import pathlib
 
 import inspect
 import logging
+from logging.handlers import RotatingFileHandler
 import sys
 import platform
 import asyncio
@@ -1316,7 +1317,6 @@ class Logger:
     path.parent.mkdir(parents=True, exist_ok=True)
     key = str(path)
     if key in Logger._file_handlers: return path
-    from logging.handlers import RotatingFileHandler
     fh = RotatingFileHandler(path, maxBytes=4_000_000, backupCount=5, encoding='utf-8')
     fh.setFormatter(_PlainFormatter())
     fh.addFilter(_EmptyMessageFilter())
