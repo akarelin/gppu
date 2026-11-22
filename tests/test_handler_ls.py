@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml
 
 from examples import handler_ls
-from examples.handler_ls import listing, main
+from examples.handler_ls import HandlerLs, listing
 from gppu.fs.catalog import GppuCatalog
 
 EXAMPLES = Path(__file__).resolve().parents[1] / 'examples'
@@ -50,15 +50,14 @@ def test_main_lists_the_catalog_and_one_location_with_an_argument(tmp_path, monk
   location.mkdir()
   (location / 'plain.txt').write_text('plain', encoding='utf-8')
   catalog = catalog_for(tmp_path, location)
-  monkeypatch.setattr(handler_ls, '__file__', str(script_for(tmp_path, catalog)))   # .. its MANIFEST names the test's catalog
   monkeypatch.setattr(sys, 'argv', ['handler_ls.py'])
-  main()
+  HandlerLs(config={'catalog': str(catalog)}).main()   # .. its configuration names the test's catalog
   rows = json.loads(capsys.readouterr().out)
   assert [row['gppu']['name'] for row in rows] == ['.catalog', 'loc']
   assert rows[1]['gppu']['location']['id'] == 1
   assert not (location / '.loc.gppufs.sqlite').exists()
   monkeypatch.setattr(sys, 'argv', ['handler_ls.py', str(location)])
-  main()
+  HandlerLs(config={'catalog': str(catalog)}).main()
   rows = json.loads(capsys.readouterr().out)
   assert [row['gppu']['name'] for row in rows] == ['loc', 'plain.txt']
   assert rows[0]['gppu']['parent'] == GppuCatalog(catalog).root

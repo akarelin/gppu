@@ -1,12 +1,9 @@
-"""Tests for gppu.tui.icons — state glyphs + spinner frames."""
+"""Tests for gppu.tui.icons: the state glyphs."""
 from __future__ import annotations
 
 import pytest
 
-from gppu.tui.icons import (
-    STATE_GLYPHS, SPINNERS, Glyph,
-    glyph_rich, glyph_ansi, spinner_frames,
-)
+from gppu.tui.icons import STATE_GLYPHS, Glyph, glyph_rich
 
 
 class TestStateGlyphs:
@@ -32,23 +29,3 @@ class TestRichAndAnsiHelpers:
 
     def test_unknown_key_falls_back(self):
         assert glyph_rich('not_a_state') == '[dim]?[/]'
-        assert glyph_ansi('not_a_state') == '?'
-
-    def test_ansi_includes_escape(self):
-        out = glyph_ansi('running')
-        assert out.startswith('\x1b[') and out.endswith('\x1b[0m')
-
-
-class TestSpinners:
-    def test_all_named_sets_non_empty(self):
-        for name, frames in SPINNERS.items():
-            assert len(frames) >= 2, f'{name}: needs at least 2 frames'
-
-    def test_lookup_and_fallback(self):
-        assert spinner_frames('dots') == SPINNERS['dots']
-        # .. unknown falls back to dots
-        assert spinner_frames('nonexistent-spinner') == SPINNERS['dots']
-
-    def test_required_sets_present(self):
-        for required in ('dots', 'line', 'arc', 'pulse'):
-            assert required in SPINNERS

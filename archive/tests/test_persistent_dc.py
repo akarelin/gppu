@@ -1,3 +1,4 @@
+# .. archived 2026-11-22: tests/test_persistent_dc.py as it was before gppu's static reduction took out the whole file: it tests _PersistentDC and Persistence, which gppu.data no longer has; no program used it
 """Tests for _PersistentDC and the Persistence factory (gppu.data)."""
 import pytest
 

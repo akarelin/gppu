@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from gppu import AsyncApp, mixin_EventLoopBridge
+from gppu import AsyncApp
 from gppu.iot import HTTPControl, JSONHTTPControl, SerializedControl
 
 
@@ -23,11 +23,7 @@ class _FiniteApp(AsyncApp):
   async def _worker(self) -> None:
     await asyncio.sleep(0)
     self.seen.append(3)
-
-
-class _ExternalLoop(mixin_EventLoopBridge):
-  def __init__(self, loop: asyncio.AbstractEventLoop): self.loop = loop
-  def _get_loop(self) -> asyncio.AbstractEventLoop: return self.loop
+    self.stop()   # .. a started app runs until it is stopped
 
 
 class AsyncAppTests(unittest.IsolatedAsyncioTestCase):
@@ -41,20 +37,7 @@ class AsyncAppTests(unittest.IsolatedAsyncioTestCase):
     app = _FiniteApp(config={'values': []})
     coroutine = asyncio.sleep(0)
     with self.assertRaises(RuntimeError): app._spawn(coroutine)
-    self.assertEqual(coroutine.cr_frame, None)
-
-
-class EventLoopBridgeTests(unittest.IsolatedAsyncioTestCase):
-  async def test_schedule_call_and_reentrancy_guard(self) -> None:
-    bridge = _ExternalLoop(asyncio.get_running_loop())
-
-    async def add(left: int, right: int) -> int:
-      await asyncio.sleep(0)
-      return left + right
-
-    self.assertEqual(await asyncio.wrap_future(bridge.schedule(add(2, 3))), 5)
-    self.assertEqual(await asyncio.to_thread(bridge.call, add, 4, 5), 9)
-    with self.assertRaisesRegex(RuntimeError, 'cannot block'): bridge.call(add, 1, 1)
+    coroutine.close()
 
 
 class _Control(SerializedControl):
