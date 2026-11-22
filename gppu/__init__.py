@@ -68,8 +68,6 @@ from .gppu import (
     # .. Configuration loading
     dict_from_yml,
     dict_to_yml,
-    dict_from_json,
-    dict_sanitize,
     jinja_template,
     jinja,
     render_template,
@@ -125,7 +123,7 @@ __all__ = [
     'sync',
 
     # .. Configuration
-    'dict_from_yml', 'dict_to_yml', 'dict_from_json', 'dict_sanitize',
+    'dict_from_yml', 'dict_to_yml',
     'jinja_template', 'jinja', 'render_template', 'apply_template',
 
     # .. Dictionary utilities

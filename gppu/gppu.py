@@ -444,10 +444,6 @@ class Path(y2path, pathlib.Path):
 
   def copy(self, *args, **kwargs): return y2path.copy(self) if not args and not kwargs else pathlib.Path.copy(self, *args, **kwargs)
 
-  def probe(self) -> dict:
-    """Filesystem attributes and content handler without reading contents."""
-    return probe_path(self)
-
 
 class y2uri:
   """
@@ -648,7 +644,7 @@ KEYS_DROP = ['api', 'context', 'hide_attributes']
 KEYS_FIRST = ['name', 'seid', 'path']
 
 
-def dict_sanitize(data: dict | list, sort_keys: bool = False) -> dict | list:
+def _dict_sanitize(data: dict | list, sort_keys: bool = False) -> dict | list:
   """Convert nested complex data types for json.dumps or yaml.dumps"""
   def _sanitize_list(o) -> list:
     result = []
@@ -706,7 +702,7 @@ def dict_to_yml(filename: str | Path, data=None, sort_keys=False):
 
   assert filename
   if not data: return
-  redata = dict_sanitize(data, sort_keys=sort_keys)
+  redata = _dict_sanitize(data, sort_keys=sort_keys)
 
   yaml.add_representer(defaultdict, SafeRepresenter.represent_dict)
   yaml.add_representer(UserDict, SafeRepresenter.represent_dict)
@@ -748,9 +744,6 @@ def dict_from_yml(filename: str | Path) -> dict:
 
   with filename.open() as f: return dict(yaml.load(f, Loader=Loader))
 
-
-def dict_from_json(filename: str | Path):
-  with Path(filename).open() as f: return json.load(f)
 # endregion
 
 
@@ -769,7 +762,7 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
     def jinja_helpers() -> dict:
         """gppu's own filters, offered to every Jinja environment it builds."""
         return {
-            'safe_int': safe_int, 'safe_float': safe_float, 'dict_sanitize': dict_sanitize, 'pfy': pfy, 'slugify': slugify,
+            'safe_int': safe_int, 'safe_float': safe_float, 'pfy': pfy, 'slugify': slugify,
         }
 
     @pass_context
