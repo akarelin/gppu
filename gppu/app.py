@@ -304,7 +304,10 @@ class AppService(mixin_Mqtt, AsyncApp):
 
 # region REST surface
 class mixin_Rest:
-  """Every public member of the application's own classes, over HTTP, and nothing
+  """Deprecated: it does not work and gets in the way. Its one user is Y2's UI API, whose object pages and entity
+  command buttons go through it, so it stays until they move off it.
+
+  Every public member of the application's own classes, over HTTP, and nothing
   declared. A field or property reads; a method is called with the JSON body as
   its keyword arguments; a synchronous method needing none answers a GET as well.
   A name is the application's when a class born in the application's folder, the
