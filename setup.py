@@ -9,6 +9,8 @@ from setuptools import setup
 
 
 def committed(version) -> str:
+    if version.node is None:   # .. built from the source archive: no git, and the version it carries has its label
+        return ''
     seconds = int(subprocess.check_output(['git', 'log', '-1', '--format=%ct'], text=True))
     return '+' + datetime.fromtimestamp(seconds, ZoneInfo('America/Los_Angeles')).strftime('%Y%m%d%H%M')
 
