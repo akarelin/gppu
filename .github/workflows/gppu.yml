@@ -255,10 +255,12 @@ jobs:
           #   releases/download/gppu/latest/gppu-latest-py3-none-any.whl
           # GitHub does not auto-refresh Release assets when the tag moves, so we
           # must clobber-upload here or consumers pinned to the URL get the stale wheel.
+          # .. the built files carry the version with its label (3.7.11+YYYYMMDDHHMM, setup.py); latest's names carry neither
+          BUILT="$(basename dist/*.whl | cut -d- -f2)"
           mkdir -p dist-latest
           for f in dist/*; do
             base="$(basename "$f")"
-            cp "$f" "dist-latest/${base/${VERSION}/latest}"
+            cp "$f" "dist-latest/${base/${BUILT}/latest}"
           done
 
           if ! gh release view gppu/latest >/dev/null 2>&1; then

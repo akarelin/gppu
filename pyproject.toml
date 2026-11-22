@@ -1,11 +1,12 @@
 [build-system]
-requires = ["setuptools>=64", "setuptools-scm>=8"]
+requires = ["setuptools>=64", "setuptools-scm>=8", "tzdata; platform_system == 'Windows'"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "gppu"
 dynamic = ["version"]
 description = "General Purpose Python Utilities"
+authors = [{name = "Alex Karelin"}, {email = "alex@karelin.com"}]   # .. the identity on gppu's commits; one entry with both fills only Author-email
 requires-python = ">=3.14"
 dependencies = [
     "tzdata; platform_system == 'Windows'",
@@ -13,6 +14,9 @@ dependencies = [
     "fsspec",
     "Jinja2",
 ]
+
+[project.urls]
+Homepage = "https://github.com/akarelin/gppu"
 
 [project.optional-dependencies]
 m365 = ["requests"]
