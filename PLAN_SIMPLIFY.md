@@ -4,10 +4,8 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 
 ## Release
 - [x] The status line released: statusline 0.7.6
-- [ ] gppu stays on 3.7.11: a build with no bump moves the 3.7.11 tag to master and builds it, and betas are off the menu (2716f70) (in progress)
-  - The first build of master failed its tests and published nothing: `Env.init` returned before loading a configuration it was given without an environment, as MQTT gives it, and an app's own configuration was no longer filled. Both load through `jinja.configuration` now, and the suite passes from the checkout
-  - The second failed on the gppufs test that failed in the 3.7.11 build too: an index written again within one Linux clock tick, at the same size, kept its signature, so gppufs read its own stale copy. The signature now carries SQLite's change counter
-  - Then: one build, `~/.venv` on alex-pc installs it from the Hosts requirements, and the Hosts TUI starts on it
+- [x] gppu stays on 3.7.11: a build with no bump moves the 3.7.11 tag to master and builds it, and betas are off the menu (2716f70). `gppu/latest` and 3.7.11 are master (c027cac), and `~/.venv` on alex-pc runs it: the Hosts TUI starts and draws its menu, and the TUI's, Preservator's and the Fleet grid's tests pass on it
+  - `pip install -r requirements.txt` keeps an installed 3.7.11 as it is; the build goes in with `--force-reinstall`
 - [ ] The gppu wheel carries the `statusline` and `w11` packages, and its source archive every file in the repository
 
 ## gppu's code, by Alex's marks
