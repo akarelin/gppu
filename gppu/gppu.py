@@ -1327,25 +1327,25 @@ class App(YInit, _Base, _DC):
     name: str
 
     def __init(self) -> None:
-        name = type(self).__name__.lower()   # .. its name, unless what it was made with or its configuration names it
-        if 'parent' not in self.data:   # .. a runtime made it from its row: the row is its configuration
-            # region - the program's app: its section of the environment, the one named as it is, or the configuration it
-            # .. was given (a YAML file, or a script's MANIFEST text), under what it was made with
-            # endregion
-            own = self.data.pop('config') if 'config' in self.data else glob_dict(self.name or name)
-            if isinstance(own, os.PathLike): own = dict_from_yml(own)
-            elif isinstance(own, str): own = yaml.load(own, Loader=YmlLoader)
-            self.data = jinja.configuration(deepcopy(dict(own))) | self.data   # .. what it was made with stays: its configuration goes under it
-            # .. the command line over both: --key value sets a key, a slash path a nested one, to the value read as YAML, as
-            # .. configuration is (--days 30 is a number, --logs [System, Security] a list); --flag sets it to True
-            argv, i = sys.argv[1:], 0
-            while i < len(argv):
-                arg, i = argv[i], i + 1
-                if not arg.startswith('--') or len(arg) == 2: continue
-                value = True
-                if i < len(argv) and not argv[i].startswith('--'): value, i = yaml.load(argv[i], Loader=YmlLoader), i + 1
-                deepset(arg[2:], self.data, value)
-        if not self.name: self.name = name
+        if not self.name: self.name = type(self).__name__.lower()   # .. named as its class, unless made with a name
+        if 'parent' in self.data: return   # .. a runtime made it from its row: the row is its configuration
+        # region - the program's app: its section of the environment, the one named as it is, or the configuration it was
+        # .. given (a YAML file, or a script's MANIFEST text), goes in under what it was made with. The data it was made
+        # .. with is kept: no value in it is replaced, and the data itself is never replaced
+        # endregion
+        own = self.data.pop('config') if 'config' in self.data else glob_dict(self.name)
+        if isinstance(own, os.PathLike): own = dict_from_yml(own)
+        elif isinstance(own, str): own = yaml.load(own, Loader=YmlLoader)
+        self.data |= {key: value for key, value in jinja.configuration(deepcopy(dict(own))).items() if key not in self.data}
+        # .. the command line over both: --key value sets a key, a slash path a nested one, to the value read as YAML, as
+        # .. configuration is (--days 30 is a number, --logs [System, Security] a list); --flag sets it to True
+        argv, i = sys.argv[1:], 0
+        while i < len(argv):
+            arg, i = argv[i], i + 1
+            if not arg.startswith('--') or len(arg) == 2: continue
+            value = True
+            if i < len(argv) and not argv[i].startswith('--'): value, i = yaml.load(argv[i], Loader=YmlLoader), i + 1
+            deepset(arg[2:], self.data, value)
 # endregion
 
 
