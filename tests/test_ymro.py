@@ -3,7 +3,8 @@ import asyncio
 
 import pytest
 
-from gppu import YStart, sync
+from gppu import sync
+from gppu.gppu import YStart
 
 
 class Base(YStart):

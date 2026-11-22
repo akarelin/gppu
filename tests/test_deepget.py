@@ -1,7 +1,6 @@
 """Tests for dict utilities: deepget, deepget_int, deepget_list, deepget_dict."""
-from gppu import (
-    deepget, deepget_int, deepget_list, deepget_dict,
-)
+from gppu import deepget, deepget_list
+from gppu.gppu import deepget_dict, deepget_int
 from gppu import glob
 
 

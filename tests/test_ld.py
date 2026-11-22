@@ -17,7 +17,8 @@ from pathlib import Path
 from fastapi import APIRouter, Depends
 from fastapi.testclient import TestClient
 
-from gppu import Env, uuid_create
+from gppu import Env
+from gppu.gppu import uuid_create
 from gppu.data import _SQABase
 from gppu.fs import catalog as locations
 from gppu.fs import files

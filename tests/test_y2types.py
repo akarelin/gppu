@@ -109,7 +109,8 @@ class TestY2PathDeepget:
         assert deepget(y2path('a/b'), {'a': {'b': 1}}) == 1
 
     def test_nested_falsy_value(self):
-        from gppu import deepget, deepget_int
+        from gppu import deepget
+        from gppu.gppu import deepget_int
         assert deepget(y2path('a/b'), {'a': {'b': 0}}, 'missing') == 0
         assert deepget(y2path('a/b'), {'a': {'b': False}}, 'missing') is False
         assert deepget_int(y2path('a/b'), {'a': {'b': 0}}, 7) == 0

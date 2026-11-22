@@ -34,7 +34,7 @@ import sys
 import webbrowser
 from typing import ClassVar
 
-from gppu import Env, App, AsyncApp, mixin_Config, dict_from_yml, glob, glob_dict, glob_list
+from gppu import Env, App, AsyncApp, dict_from_yml, glob, glob_dict, glob_list
 from gppu.gppu import Logger, _EmptyMessageFilter, _LogColorizer
 from gppu.gppu import OSType, Path, YmlLoader, full_path, jinja
 import yaml

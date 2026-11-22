@@ -1,7 +1,8 @@
 """An app declares its environment, RAN or IoT; Env loads it once. An app given its own configuration file reads that, independent from the environment; one given none reads its own section of the environment."""
 import pytest
 
-from gppu import App, AsyncApp, Env, Logger, OSType, glob, jinja_template
+from gppu import App, AsyncApp, Env, OSType, glob, jinja_template
+from gppu.gppu import Logger
 
 
 @pytest.fixture(autouse=True)
@@ -237,7 +238,8 @@ def test_own_configuration_fills_its_jinja_from_the_environment(home):
 
 
 def test_async_app_keeps_its_steps():
-    from gppu import AsyncApp, YStart
+    from gppu import AsyncApp
+    from gppu.gppu import YStart
 
     assert AsyncApp.init is YStart.init
 

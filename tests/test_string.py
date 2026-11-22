@@ -1,5 +1,6 @@
 """Tests for string utilities: pfy, slugify."""
-from gppu import pfy, slugify
+from gppu import pfy
+from gppu.gppu import slugify
 
 
 class TestPfy:

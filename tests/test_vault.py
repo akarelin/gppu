@@ -4,13 +4,8 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from gppu import (
-    Vault,
-    VaultProvider,
-    VaultProviderOSEnviron,
-    VaultProviderAzure,
-    dict_from_yml,
-)
+from gppu import Vault, VaultProviderAzure, dict_from_yml
+from gppu.vault import VaultProvider, VaultProviderOSEnviron
 
 
 @pytest.fixture(autouse=True)

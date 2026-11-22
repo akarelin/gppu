@@ -11,7 +11,7 @@ from uuid import UUID
 
 import pytest
 import gppu.fs.handlers as handlers_module
-from gppu import TimeSpan
+from gppu.gppu import TimeSpan
 
 from gppu.fs.handlers import (
   HANDLERS,

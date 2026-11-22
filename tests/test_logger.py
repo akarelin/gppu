@@ -5,7 +5,8 @@ import io
 
 import pytest
 from gppu import TRACE_RULES
-from gppu import Env, Logger, mixin_Logger
+from gppu import Env, mixin_Logger
+from gppu.gppu import Logger
 
 
 @pytest.fixture

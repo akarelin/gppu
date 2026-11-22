@@ -6,16 +6,14 @@ data manipulation, and type safety utilities.
 """
 
 from .gppu import (
-    # .. Env, its configuration mixins and the regular apps
+    # .. Env, its configuration readers and the regular apps
     Env,
     glob,
     glob_int,
     glob_list,
     glob_dict,
-    mixin_Config,
     _Base,
     App,
-
 )
 
 from .app import (
@@ -28,17 +26,6 @@ from .app import (
 )
 
 from .gppu import (
-    # .. sync lifecycle (AppDaemon / Y2)
-    _YMRO,
-    YInit,
-    YLoad,
-    YStart,
-)
-
-from .gppu import (
-    Span,
-    TimeSpan,
-    uuid_create,
     y2list,
     y2path,
     Path,
@@ -53,12 +40,8 @@ from .gppu import (
     OSType,
     detect_os,
 
-    # .. Logger setup
-
     # .. Async helpers
     sync,
-
-    # .. Global configuration
 
     # .. Configuration loading
     dict_from_yml,
@@ -70,9 +53,6 @@ from .gppu import (
 
     # .. Dictionary utilities
     deepget,
-    deepget_dict,
-    deepget_int,
-    deepget_float,
     deepget_list,
 
     # .. Type safety and coercion
@@ -84,7 +64,6 @@ from .gppu import (
 
     # .. String utilities
     pfy,
-    slugify,
 
     # .. Colored printing
     pcp,
@@ -95,24 +74,19 @@ from .gppu import (
     Info,
     Warn,
     Error,
-    Dump,
 
     # .. Mixins
     _mixin,
-    Logger,
     mixin_Logger,
-
-    # .. Foundation classes
 )
 
 
 __version__ = VER_GPPU
+# .. what programs import from gppu, and nothing else: a name no program uses stays where it is defined, unexported
 __all__ = [
-    'Span', 'TimeSpan', 'uuid_create', 'VER_GPPU', '__version__',
+    '__version__',
     # .. OS detection
     'OSType', 'detect_os',
-
-    # .. Logger setup
 
     # .. Async helpers
     'sync',
@@ -122,7 +96,7 @@ __all__ = [
     'jinja_template', 'jinja', 'render_template', 'apply_template',
 
     # .. Dictionary utilities
-    'deepget', 'deepget_dict', 'deepget_float', 'deepget_int', 'deepget_list',
+    'deepget', 'deepget_list',
 
     # .. Type utilities
     'safe_int', 'safe_float',
@@ -131,21 +105,19 @@ __all__ = [
     'now_ts',
 
     # .. String utilities
-    'pfy', 'slugify',
+    'pfy',
 
     # .. Colored printing
     'pcp', 'TColor',
 
     # .. Logging
-    'Debug', 'Info', 'Warn', 'Error', 'Dump',
+    'Debug', 'Info', 'Warn', 'Error',
 
     # .. Mixins
-    '_mixin', 'mixin_Config',
-    'Logger', 'mixin_Logger',
+    '_mixin', 'mixin_Logger',
 
     # .. Vault / Secrets
-    'Vault', 'VaultProvider',
-    'VaultProviderOSEnviron', 'VaultProviderAzure',
+    'Vault', 'VaultProviderAzure',
 
     # .. Human-readable formatters
     'format_size',
@@ -164,16 +136,12 @@ __all__ = [
 
     # .. mqtt library
     'mixin_Mqtt', 'AppService',
-
-
-    # .. lifecycle: sync YMRO (AppDaemon/Y2)
-    'YInit', 'YLoad', 'YStart',
 ]
 
 
 def __getattr__(name: str):
   """The Vault names import gppu.vault on first use, which gives dict_from_yml ``!secret``."""
-  if name in ('Vault', 'VaultProvider', 'VaultProviderOSEnviron', 'VaultProviderAzure'):
+  if name in ('Vault', 'VaultProviderAzure'):
     from . import vault
     return getattr(vault, name)
   raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
