@@ -35,18 +35,8 @@ from .launcher import (
     resolve_cwd,
     launch_app,
     load_app_registry,
-    load_registry,
     read_manifest,
     launcher_main,
-)
-
-from .sidecar import (
-    inject_source,
-    load_sidecar_registry,
-    read_sidecar,
-    run_sidecar,
-    sidecar_command,
-    sidecar_main,
 )
 
 from .config_editor import ConfigEditorApp
@@ -121,16 +111,8 @@ __all__ = [
     'resolve_cwd',
     'launch_app',
     'load_app_registry',
-    'load_registry',
     'read_manifest',
     'launcher_main',
-    # .. Sidecar manifests
-    'inject_source',
-    'load_sidecar_registry',
-    'read_sidecar',
-    'run_sidecar',
-    'sidecar_command',
-    'sidecar_main',
     # .. Config editor
     'ConfigEditorApp',
     # .. Selector widgets

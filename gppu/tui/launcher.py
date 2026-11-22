@@ -2,12 +2,12 @@
 
 Provides a Textual-based menu for launching sub-apps defined via YAML manifests.
 Each consumer creates a thin wrapper with its own configuration and branding: an App whose own configuration is the
-launcher's YAML, naming its ``apps:`` and ``utilities:``.
+launcher's YAML, naming its ``apps:``.
 
 Usage::
 
     from gppu import App
-    from gppu.tui import TUILauncher, launcher_main, load_registry
+    from gppu.tui import TUILauncher, launcher_main, load_app_registry
 
     class MyApp(TUILauncher):
         TITLE = 'My Tools'
@@ -15,7 +15,7 @@ Usage::
 
     def main():
         launcher = App(environment='RAN', config=APP_DIR / 'myapp.yaml')
-        launcher_main(load_registry(APP_DIR, launcher), MyApp, APP_DIR, 'My Tools — launcher')
+        launcher_main(load_app_registry(APP_DIR, launcher), MyApp, APP_DIR, 'My Tools — launcher')
 
     # Serve as a web app:  python myapp.py --serve [--port 8566] [--host localhost]
 """
@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib
 import logging
 import os
 import shlex
@@ -200,8 +201,11 @@ def _resolve_cmd(app_dir: Path, app_def: dict) -> list[str]:
     if not script.exists():
         print(f'Script not found: {script}')
         sys.exit(1)
-    if script.suffix.lower() == '.exe':
-        return [str(script)]
+    suffix = script.suffix.lower()
+    if suffix == '.exe': return [str(script)]
+    if suffix == '.ps1': return ['pwsh', '-NoProfile', '-File', str(script)]
+    if suffix == '.cmd': return [os.environ['COMSPEC'], '/d', '/c', str(script)]
+    if suffix == '.sh': return ['bash', str(script)]
     return [sys.executable, str(script)]
 
 
@@ -284,7 +288,7 @@ def read_manifest(app_dir: Path, config_file: str, nav: str | None = None) -> di
         if key in manifest:
             manifest[key] = _absolute(path.parent, manifest[key])
     if isinstance(manifest.get('script'), str):
-        manifest.setdefault('cwd', str(Path(manifest['script']).parent))   # .. as a sidecar carries it: the item runs where it lives
+        manifest.setdefault('cwd', str(Path(manifest['script']).parent))   # .. the item runs where it lives
     if nav:
         manifest['nav'] = nav
     return manifest
@@ -303,14 +307,6 @@ def load_app_registry(app_dir: Path, launcher: App) -> dict[str, dict]:
             if manifest := read_manifest(app_dir, config_file, key if isinstance(entry, dict) else None):
                 apps[item_key] = manifest
     return apps
-
-
-def load_registry(app_dir: Path, launcher: App) -> dict[str, dict]:
-    """Everything one launcher offers: the manifests named in the launcher's own ``apps:``, then the sidecars in every
-    directory named in its ``utilities:``. Both are read relative to app_dir. This is what a launcher calls."""
-    from .sidecar import load_sidecar_registry
-    directories = [(app_dir / directory).resolve() for directory in launcher.my_list('utilities')]
-    return load_app_registry(app_dir, launcher) | (load_sidecar_registry(*directories) if directories else {})
 
 
 # .. ── Widgets ──────────────────────────────────────────────────────────────────
@@ -939,7 +935,6 @@ class TUILauncher(TUIApp):
                 self._show_apps()
                 return
             self._selected_app = item.app_def
-            self._mode_inject = {}
             modes = item.app_def.get('modes')
             if not modes:
                 self.exit(result={'app': item.app_def, 'args': []})
@@ -967,7 +962,6 @@ class TUILauncher(TUIApp):
     def _resolve_mode(self, mode_key: str, mode_def: dict | None) -> None:
         mode_def = mode_def or {}
         base_args = build_args(mode_def)
-        self._mode_inject = dict(mode_def.get('inject') or {})
         ask_for = mode_def.get('ask_for')
         # .. Check mode-level then app-level for module/class
         tui_module = mode_def.get('module') or self._selected_app.get('module')
@@ -985,15 +979,10 @@ class TUILauncher(TUIApp):
 
     def _run_suspended(self, cli_args: list[str]) -> None:
         """Exit TUI, run subprocess with full terminal access, then re-enter."""
-        self.exit(result={
-            'app': self._selected_app,
-            'args': cli_args,
-            'inject': getattr(self, '_mode_inject', {}),
-        })
+        self.exit(result={'app': self._selected_app, 'args': cli_args})
 
     def _launch_tui_app(self, app_def: dict, cli_args: list[str]) -> None:
         """Import a TUIApp class and push it as a screen."""
-        import importlib
         module_name = app_def['module']
         class_name = app_def['class']
         app_name = app_def.get('name', class_name)
@@ -1250,7 +1239,6 @@ class TUILauncher(TUIApp):
         if self._phase != 'ask':
             return
         args: list[str] = list(self._base_args)
-        inject: dict = dict(getattr(self, '_mode_inject', {}))
         for field_spec in self._ask_fields:
             fname = field_spec['name']
             widget = self.query_one(f'#ask-{fname}')
@@ -1261,10 +1249,7 @@ class TUILauncher(TUIApp):
                 val = widget.value.strip()
             if not val:
                 continue
-            if field_spec.get('inject'):
-                inject[fname] = val
-            else:
-                args.extend([f'--{fname}', val])
+            args.extend([f'--{fname}', val])
 
         app_def = self._selected_app
         mode_def = self._ask_mode_def
@@ -1275,7 +1260,7 @@ class TUILauncher(TUIApp):
             self._run_inline_with_app(app_def, args)
         else:
             # .. Exit TUI, run subprocess
-            self.exit(result={'app': app_def, 'args': args, 'inject': inject})
+            self.exit(result={'app': app_def, 'args': args})
 
     def _cleanup_ask_form(self) -> None:
         """Remove ask form widgets and return to app list."""

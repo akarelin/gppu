@@ -173,15 +173,15 @@ A sub-app can instead be a script that carries this config inline, listed by its
 
 ```python
 from gppu import App
-from gppu.tui import TUILauncher, launcher_main, load_registry
+from gppu.tui import TUILauncher, launcher_main, load_app_registry
 
 APP_DIR = Path(__file__).parent
 
 class MyLauncher(TUILauncher):
     TITLE = 'My Tools'
 
-launcher = App(environment='Hosts', config=APP_DIR / 'launcher.yaml')   # its own apps: and utilities:
-launcher_main(load_registry(APP_DIR, launcher), MyLauncher, APP_DIR, 'My Tools')
+launcher = App(environment='RAN', config=APP_DIR / 'launcher.yaml')   # its own apps:
+launcher_main(load_app_registry(APP_DIR, launcher), MyLauncher, APP_DIR, 'My Tools')
 ```
 
 See [w11/app.py](w11/app.py) for a real example.
