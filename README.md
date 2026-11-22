@@ -33,7 +33,7 @@ Documentation from the code's docstrings, with this README and the documents bes
 | Module | Purpose |
 |--------|---------|
 | `gppu` (core) | [`Env`](docs/configuration.md), the environment, and its readers `glob`, `glob_int`, `glob_list`, `glob_dict`; `Logger` (`Info`, `Warn`, `Error`, `Debug`, `Dump`); the YMRO steps (`YInit`, `YLoad`, `YStart`) and `@sync`; `_DC`; [`App`](docs/app.md); `Path`, `y2path`, `y2topic`, `y2uri`.<br>Plus: type coercion, dict utilities, YAML/JSON I/O, Jinja templates, time helpers, OS detection |
-| [`gppu.app`](gppu/app.py) | [`AsyncApp`](docs/app.md): its loop, its timers (`run_later`, `run_every`) and its spawned work; `mixin_Mqtt` (`mqtt_listen`, `mqtt_publish`); `AppService`; `mixin_Rest`; the event-loop bridge (`schedule`, `call`) |
+| [`gppu.app`](gppu/app.py) | [`AsyncApp`](docs/app.md): its loop, its timers (`run_later`, `run_every`) and its spawned work; `mixin_Mqtt` (`mqtt_listen`, `mqtt_publish`); `AppService`; `mixin_Rest`; `schedule`, for a coroutine from another thread |
 | [`gppu.api`](gppu/api.py) | `APIApp`, an async app serving FastAPI apps on uvicorn. Requires the `ld` extra |
 | [`gppu.fs.handlers`](https://kb.karel.in/gppu/v3/handlers.html) | Generated handler API and supported-format reference. |
 | [`gppu.data`](DATA.md) | `Cache` unified caching (JSON/pickle/sqlite/diskcache/DB backends), <br>database base classes: `_PGBase` (psycopg2) and `_SQABase` (SQLAlchemy),<br>`_PersistentDC` persisted pseudo-dataclasses with `Persistence` multi-backend storage (json/pickle/sqlite/postgres) |

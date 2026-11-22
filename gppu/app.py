@@ -202,26 +202,32 @@ class mixin_Mqtt(YStart):
         self._client: aiomqtt.Client | None = None
         self._callbacks: dict[y2topic, list[tuple[Callable[..., Any], Any, bool]]] = {}   # .. a topic's listeners: callback, payload, ignore_retained
         self._subscriptions: dict[y2topic, int] = {}                                    # .. a topic's QoS
+        self._retained: set[tuple] = set()   # .. (topic, listener, the message's topic): the retained messages each listener got on this connection
 
     def __start(self) -> None: self._spawn(self._mqtt_loop())
 
     async def mqtt_listen(self, callback: Callable[..., Any], topic: y2topic | str, payload: Any = None, *, ignore_retained: bool = False, qos: int = 0) -> None:
         """``callback(topic, payload)``, sync or async, on each message at ``topic`` (MQTT's wildcards match), or only on
-        those whose payload is ``payload``; with ``ignore_retained``, not on a message the broker kept."""
+        those whose payload is ``payload``; with ``ignore_retained``, not on a message the broker kept. A callback that
+        takes ``retained`` or ``sent`` is also told whether the broker kept the message and when it was sent, in epoch
+        seconds (None where its publisher did not say; ``mqtt_publish`` always does). Each listener gets a topic's retained
+        messages once, however many listeners the topic had before it."""
         topic = y2topic(topic)
+        listener = (callback, payload, ignore_retained)
         listeners = self._callbacks.setdefault(topic, [])
-        if (callback, payload, ignore_retained) not in listeners: listeners.append((callback, payload, ignore_retained))
-        if self._subscriptions.get(topic, -1) >= qos: return
-        self._subscriptions[topic] = qos
-        if self._client is not None: await self._client.subscribe(str(topic), qos=qos)
+        if listener in listeners and self._subscriptions[topic] >= qos: return
+        if listener not in listeners: listeners.append(listener)
+        self._subscriptions[topic] = max(qos, self._subscriptions.get(topic, 0))
+        # .. every subscribe has the broker send the topic's retained messages again, and they reach only the listeners they have not reached
+        if self._client is not None: await self._client.subscribe(str(topic), qos=self._subscriptions[topic])
 
     async def mqtt_publish(self, topic: y2topic | str, payload: Any = '', *, retain: bool = False, qos: int = 0, expiry: int | None = None, **data: Any) -> None:
         """``payload`` at ``topic``, a dict or a list as JSON; ``expiry`` is MQTT 5's message expiry in seconds, and the
-        other keywords its user properties. While the broker is lost, nothing is sent."""
+        other keywords its user properties, after ``sent``, the time it is sent. While the broker is lost, nothing is sent."""
         if self._client is None: return
-        properties = Properties(PacketTypes.PUBLISH) if expiry is not None or data else None
+        properties = Properties(PacketTypes.PUBLISH)
+        properties.UserProperty = [('sent', str(now_ts())), *((key, str(value)) for key, value in data.items())]
         if expiry is not None: properties.MessageExpiryInterval = int(expiry)
-        if data: properties.UserProperty = [(key, str(value)) for key, value in data.items()]
         payload = json.dumps(payload) if isinstance(payload, (dict, list)) else payload if isinstance(payload, bytes) else str(payload)
         await self._client.publish(str(topic), payload, qos=qos, retain=retain, properties=properties)
 
@@ -232,6 +238,7 @@ class mixin_Mqtt(YStart):
             try:
                 async with aiomqtt.Client(**options, protocol=aiomqtt.ProtocolVersion.V5, will=aiomqtt.Will(status, b'offline', qos=1, retain=True)) as self._client:
                     self.Info('connected to the broker')
+                    self._retained.clear()   # .. a new connection sends every listener the retained messages again
                     for topic, qos in list(self._subscriptions.items()): await self._client.subscribe(str(topic), qos=qos)
                     await self._client.publish(status, 'online', qos=1, retain=True)
                     async for message in self._client.messages: await self._mqtt_message(message)
@@ -244,12 +251,18 @@ class mixin_Mqtt(YStart):
         if isinstance(payload, str) and payload[:1] in ('{', '['):
             try: payload = json.loads(payload)
             except json.JSONDecodeError: pass   # .. not JSON after all: the text is the payload
+        sent = next((float(value) for key, value in getattr(message.properties, 'UserProperty', None) or [] if key == 'sent'), None)
         for topic, listeners in list(self._callbacks.items()):
             if not message.topic.matches(str(topic)): continue
-            for callback, expected, ignore_retained in list(listeners):
-                if (ignore_retained and message.retain) or expected not in (None, payload): continue
+            for listener in list(listeners):
+                callback, expected, ignore_retained = listener
+                if expected not in (None, payload): continue
+                if message.retain:
+                    got = (topic, listener, str(message.topic))
+                    if ignore_retained or got in self._retained: continue
+                    self._retained.add(got)
                 try:
-                    if inspect.isawaitable(result := callback(y2topic(str(message.topic)), payload)): await result
+                    if inspect.isawaitable(result := _callback_wrapper(callback)(y2topic(str(message.topic)), payload, retained=message.retain, sent=sent)): await result
                 except Exception as error: self.Error('listener failed:', message.topic, error)   # .. one listener's failure stops neither the others nor the app
 
 
