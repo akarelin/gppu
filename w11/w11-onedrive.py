@@ -82,7 +82,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import gppu
-from gppu import format_size, format_duration
+from gppu import format_size
 from gppu.tui import TUIApp, StatusHeader
 from rich.markup import escape
 from textual import work
@@ -96,6 +96,19 @@ from textual.widgets import (
 
 
 # .. ── Paths ────────────────────────────────────────────────────────────────────
+
+def format_duration(seconds: int | float) -> str:
+    """A duration as '0s' / '5s' / '12m 30s' / '2h 5m'; '-' for a negative one."""
+    seconds = float(seconds)
+    if seconds < 0: return "-"
+    if seconds < 60: return f"{seconds:.0f}s"
+    if seconds < 3600:
+        m, s = divmod(seconds, 60)
+        return f"{int(m)}m {int(s)}s"
+    h, rem = divmod(seconds, 3600)
+    m, _ = divmod(rem, 60)
+    return f"{int(h)}h {int(m)}m"
+
 
 def od_base() -> Path:
     return Path(os.environ['LOCALAPPDATA']) / 'Microsoft' / 'OneDrive'

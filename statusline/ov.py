@@ -4,12 +4,13 @@ Health is a TTL-cached GET /health; recall and capture come from the JSON
 snapshots the OV hooks write under $OPENVIKING_HOME/state/.
 """
 
+import json
 import os
 import time
 import urllib.request
 
 from gppu import Env, Warn
-from gppu.gppu import Path, dict_from_json
+from gppu.gppu import Path
 
 from statusline.cache import cached
 
@@ -32,7 +33,7 @@ def _read_json(path):
     if not Path(path).is_file():
         return None
     try:
-        return dict_from_json(path)
+        return json.loads(Path(path).read_text())
     except ValueError as e:
         Warn("unreadable OpenViking file", path, e)
         return None

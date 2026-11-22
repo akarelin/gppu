@@ -76,11 +76,11 @@ import subprocess
 import sys
 import tempfile
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from gppu import dict_from_yml, dict_to_yml, format_since
+from gppu import dict_from_yml, dict_to_yml
 from gppu.tui import TUIApp, StatusHeader
 from w11 import resolve_app_dir
 APP_DIR = resolve_app_dir()   # .. the w11 folder: stats, error rules and exports
@@ -104,6 +104,21 @@ LEVEL_STYLES = {
 }
 LEVEL_NUMS = {'Critical': 1, 'Error': 2, 'Warning': 3, 'Information': 4, 'Verbose': 5, 'All': 99}
 SEVERITY_ORDER = ['CRT', 'ERR', 'WRN', 'INF', 'VRB']
+
+
+def format_since(moment: datetime) -> str:
+    """Compact time since a moment: '5s', '5m', '2h', '3d', '4w', '6mo', '2y'; a moment with no zone is local."""
+    secs = max(0, int((datetime.now(timezone.utc) - moment.astimezone()).total_seconds()))
+    if secs < 60: return f"{secs}s"
+    mins = secs // 60
+    if mins < 60: return f"{mins}m"
+    hrs = mins // 60
+    if hrs < 24: return f"{hrs}h"
+    days = hrs // 24
+    if days < 7: return f"{days}d"
+    if days < 30: return f"{days // 7}w"
+    if days < 365: return f"{days // 30}mo"
+    return f"{days // 365}y"
 
 
 def dedup_key(evt: dict) -> str:
