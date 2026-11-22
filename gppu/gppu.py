@@ -1431,6 +1431,18 @@ class _DC(UserDict):
 # endregion
 
 
+# region State
+class State(_DC):
+  """What an app preserves across a restart, by globally unique id: a DC, so the app keeps a quick lookup of its own
+  data and does not redo init and load every time. No events. Persisting it is its data, dumped to and read from YAML."""
+
+  def save(self, path: str | Path) -> None: dict_to_yml(path, dict(self.data))
+
+  def load(self, path: str | Path) -> None:
+    if Path(path).exists(): self.data |= dict_from_yml(path)
+# endregion
+
+
 # region Configuration mixins
 class mixin_Config(_mixin):
 # !!!  """ Very sus. Looks like slop. It DOES not read the configuration. Claude cannot understand this code and thinks its some "loader". self.my waws initialized somewhere and needs a place, but not this complexity. """
