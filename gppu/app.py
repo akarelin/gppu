@@ -65,8 +65,9 @@ class AsyncApp(App, YStart):
   ``run_every`` fires it at an interval. ``timers`` holds every armed timer's row by its id (its callback's name, its
   kind, its interval and its next run in epoch seconds), ``h_timeouts`` those armed under a key.
 
-  Its objects are the rows of the list at its ``key``, each ``_default(data=row, parent=self)``, of the one class it
-  makes them with; its steps start and stop them. With a ``poll_interval`` and objects, it refreshes them one at a
+  Its objects are the rows of the list at its ``key``, each made as ``cls(data=row, parent=self)``: ``cls`` is the class
+  the row names in ``class``, ``_default`` or one of its subclasses, and ``_default`` for a row that names none; its
+  steps start and stop them. With a ``poll_interval`` and objects, it refreshes them one at a
   time, the one whose next poll comes first, from the moment it starts: their first polls are spread over one
   interval, in shuffled order, and after a poll an object's next is ``poll_interval`` later, never more than an hour.
   ``poll(obj, delay)`` sets an object's next poll, 0 putting it first in the queue. Each refresh gets the poller's
@@ -93,7 +94,15 @@ class AsyncApp(App, YStart):
     for data in glob_list(self.key): self._add_group(data)
 
   def _add_group(self, data: dict) -> None:
-    self._my_groups.append(self._default(data=data, parent=self))
+    cls = self._default
+    if 'class' in data:   # .. the class it names exactly, among the default class and its subclasses
+      family, classes = [self._default], {}
+      while family:
+        named = family.pop()
+        classes[named.__name__] = named
+        family += named.__subclasses__()
+      cls = classes[data['class']]
+    self._my_groups.append(cls(data=data, parent=self))
 
   def __start(self) -> None:
     for group in self._my_groups:

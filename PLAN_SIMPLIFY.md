@@ -33,6 +33,7 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [x] MQTT 5 on gppu's own MQTT: a listener knows whether a message is retained and when it was sent, and each listener gets a topic's retained state, however many listeners came before it (architecture notes, State)
 - [x] The poller: no startup delay, each object polled by its own next poll time, at least once an hour, and `poll(obj, delay)` puts a device first or soon when its state, an event or a command calls for it (architecture notes, State and Presses and indicators)
 - [ ] `poll_delay` goes from AsyncApp once Y2's UI stops reading it
+- [x] A row names its class in `class`, exactly, among the app's default class and its subclasses; a row without it gets the default class (architecture notes, the model breaks, item 2)
 
 ## Independent, unscoped
 - Objects read their configuration as `self.name`
