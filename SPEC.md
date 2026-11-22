@@ -107,7 +107,8 @@
 - gppufs can have its own uri where it needs to extend y2uri.
 
 ## Release
-- gppu stays on 3.7.11; 3.8.0 is far on the horizon. A build builds the current code under that version, with no increments and no build numbers, so `pip install -r requirements` gets the one latest.
+- gppu stays on 3.7.11; 3.8.0 is far on the horizon. A build builds the current code under that version, with no increments, so `pip install -r requirements` gets the one latest.
+- `pip show gppu` shows when the build was made and Alex's information from GitHub.
 - Betas are disabled.
 
 ## Identity
