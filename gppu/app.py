@@ -98,7 +98,7 @@ class TimerHandle:
   interval: float | None = None
   next_run: float = 0.0
   _cancelled: bool = False
-  _spent: bool = False          # a one-shot that has fired
+  _spent: bool = False          # .. a one-shot that has fired
 
   def cancel(self) -> None:
     self._cancelled = True
@@ -142,7 +142,7 @@ class _Scheduler:
         due, _, handle, fire = self._heap[0]
         remaining = due - time.monotonic()
         if remaining > 0:
-          self._wake.wait(remaining)      # a nearer arm notifies; re-read the head
+          self._wake.wait(remaining)      # .. a nearer arm notifies; re-read the head
           continue
         heapq.heappop(self._heap)
       if handle._cancelled: continue
@@ -175,7 +175,7 @@ class AsyncApp(App, mixin_Stepper, mixin_EventLoopBridge):
   _background_tasks: set[asyncio.Task[Any]]
   _loop: asyncio.AbstractEventLoop | None
   _timer_ids = count(1)
-  restartable: ClassVar[bool] = True   # whether Runtime.restart_app may stop, reconstruct and start it
+  restartable: ClassVar[bool] = True   # .. whether Runtime.restart_app may stop, reconstruct and start it
 
   def __init(self) -> None:
     self._task_group = None
@@ -195,7 +195,7 @@ class AsyncApp(App, mixin_Stepper, mixin_EventLoopBridge):
     handle = TimerHandle(id=next(self._timer_ids), name=name, kind='once', next_run=now_ts() + float(delay))
 
     def wrapped() -> None:
-      handle._spent = True                  # a one-shot is spent once it fires, and so is its slot under the key
+      handle._spent = True                  # .. a one-shot is spent once it fires, and so is its slot under the key
       self.timers.pop(handle.id, None)
       if self.h_timeouts.get(key) is handle: del self.h_timeouts[key]
       if handle._cancelled: return
@@ -242,10 +242,10 @@ class AsyncApp(App, mixin_Stepper, mixin_EventLoopBridge):
 
   def __stop(self) -> None:
     loop = self._loop
-    if loop is None: return                    # not running: nothing it spawned is left to cancel
+    if loop is None: return                    # .. not running: nothing it spawned is left to cancel
     try: on_loop = asyncio.get_running_loop() is loop
     except RuntimeError: on_loop = False
-    if not on_loop:                            # stopped from another thread: the loop cancels its own tasks
+    if not on_loop:                            # .. stopped from another thread: the loop cancels its own tasks
       loop.call_soon_threadsafe(lambda: [task.cancel() for task in list(self._background_tasks) if not task.done()])
       return
     current = asyncio.current_task()
