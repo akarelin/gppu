@@ -33,7 +33,6 @@ Independent and unscoped:
 - Y2's apps are the rows of `y2/apps` that Y2's loader creates, `cls(data=row)`; Y2's App stops passing `config=`. gppu's App would then load the section named as the app, and Creekview's `hue`, `av` and other sections carry the apps' names and a `name` key of their own
 - Creekview's `ui/ui.yaml` loses its inner `ui:` level, so `y2/ui/data.py` reads its own data: with y2's next release, because the y2 running in the house reads `ui/ui` from the IoT checkout it syncs
 - Creekview and RAN repeats, by named templates and the loader's key and parameters, not loops
-- Error handling around logging goes: `dict_to_yml`'s and `dict_to_json`'s error files, which `Logger.Dump` reaches
 - One MQTT connection: MqttApp's own `connection` key, and Creekview's seven repeated `connection:` blocks
 
 ## Env
