@@ -28,26 +28,6 @@ from .gppu import _YMRO, YStart
 
 
 
-# region event-loop bridge
-class mixin_EventLoopBridge(_mixin):
-  """Another thread's way onto the loop: ``schedule(coroutine)`` runs a coroutine there and returns its future, and
-  ``call(function, *args)`` runs one there and waits for its result, which a thread other than the loop's does."""
-
-  def schedule[T](self, coroutine: Coroutine[Any, Any, T], /) -> Future[T]:
-    return asyncio.run_coroutine_threadsafe(coroutine, self._get_loop())
-
-  def call[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> T:
-    loop = self._get_loop()
-    try: on_loop = asyncio.get_running_loop() is loop
-    except RuntimeError: on_loop = False   # .. no loop runs on this thread
-    if on_loop: raise RuntimeError('cannot block the target event-loop thread')
-    return asyncio.run_coroutine_threadsafe(function(*args, **kwargs), loop).result()
-
-  def _get_loop(self) -> asyncio.AbstractEventLoop:
-    raise NotImplementedError
-# endregion
-
-
 # region async application
 # region - a callback, called with only the keywords it takes
 def _callback_wrapper(callback: Callable[..., Any]) -> Callable[..., Any]:
@@ -71,17 +51,15 @@ def _callback_wrapper(callback: Callable[..., Any]) -> Callable[..., Any]:
 
 
 
-class AsyncApp(App, YStart, mixin_EventLoopBridge):
+class AsyncApp(App, YStart):
   """Application base for long-lived asyncio services, on the YMRO steps.
 
   Construction runs init; ``run()`` runs init (light loading, with the configuration ready),
   load (the heavy loading) and start, last, on the app's loop: ``asyncio.run(MyApp().run())``.
   A class gives its part of a step as a private ``__init``, ``__load``, ``__start`` or ``__stop``, an ``async def``
   one with ``@sync``, with no super: every class's part runs, base first.
-  A part adds concurrent work with ``self._spawn(coro)``; ``run()`` returns when all of it
-  has finished, and ``app.stop()`` cancels it.
-  The app is a ``mixin_EventLoopBridge`` onto its own running loop, so off-loop threads
-  ``schedule`` or ``call`` work onto it.
+  A part adds concurrent work with ``self._spawn(coro)``. A started app runs until it is stopped: ``app.stop()`` cancels
+  its work and its timers, and ``run()`` returns. Another thread runs a coroutine on the app's loop with ``schedule``.
 
   Its timers: ``run_later`` fires a callback once after a delay, and arming it again under the same key replaces it;
   ``run_every`` fires it at an interval. ``timers`` holds every armed timer's row by its id (its callback's name, its
@@ -180,13 +158,17 @@ class AsyncApp(App, YStart, mixin_EventLoopBridge):
     tasks = list(self._background_tasks)
     loop.call_soon_threadsafe(lambda: [task.cancel() for task in tasks])
 
+  def schedule[T](self, coroutine: Coroutine[Any, Any, T], /) -> Future[T]:
+    """``coroutine`` on the app's loop, from any thread; its standard future."""
+    return asyncio.run_coroutine_threadsafe(coroutine, self._get_loop())
+
   def _get_loop(self) -> asyncio.AbstractEventLoop:
     loop = self._loop
     if loop is None: raise RuntimeError(f'{self!r} is not running')
     return loop
 
   async def run(self) -> None:
-    """init, load and start on this loop; returns when the work they spawned has finished."""
+    """init, load and start on this loop; returns when the app is stopped."""
     if self._task_group is not None: raise RuntimeError(f'{self!r} is already running')
     try:
       self._loop = asyncio.get_running_loop()
@@ -194,6 +176,7 @@ class AsyncApp(App, YStart, mixin_EventLoopBridge):
         self._task_group = tasks
         for step in (self.init, self.load, self.start):
           if result := step(): await result
+        if not self.stopped: self._spawn(asyncio.Event().wait())   # .. started, it runs until its stop step cancels what it spawned
     finally:
       self._task_group = None
       self._loop = None

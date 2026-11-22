@@ -27,7 +27,6 @@ from .app import (
     mixin_Rest,
     mixin_Mqtt,
     AppService,
-    mixin_EventLoopBridge,
 )
 
 from .gppu import (
@@ -170,8 +169,6 @@ __all__ = [
     # .. mqtt library
     'mixin_Mqtt', 'AppService',
 
-    # .. event-loop bridge
-    'mixin_EventLoopBridge',
 
     # .. lifecycle: sync YMRO (AppDaemon/Y2)
     'YInit', 'YLoad', 'YStart',

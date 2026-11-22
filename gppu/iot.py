@@ -14,16 +14,16 @@ from typing import Any, ClassVar
 
 import aiohttp
 
-from .app import mixin_EventLoopBridge
+from .gppu import _mixin
 
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 
 
 # $$
-# $$        Serialized controls (mixin_EventLoopBridge lives in gppu.app)
+# $$        Serialized controls
 # $$
-class SerializedControl(mixin_EventLoopBridge):
+class SerializedControl(_mixin):
   """Runs controls on one daemon loop, serialized by a per-instance lock."""
 
   _control_loop: ClassVar[asyncio.AbstractEventLoop | None] = None
@@ -54,10 +54,15 @@ class SerializedControl(mixin_EventLoopBridge):
       ready.set_exception(error)
 
   def _control_call[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> T:
-    return self.call(self._control_run, function, *args, **kwargs)
+    """The control run on the controls' loop, waited for: a caller on that loop's own thread would block it."""
+    loop = self._get_loop()
+    try: on_loop = asyncio.get_running_loop() is loop
+    except RuntimeError: on_loop = False   # .. no loop runs on this thread
+    if on_loop: raise RuntimeError('cannot block the target event-loop thread')
+    return asyncio.run_coroutine_threadsafe(self._control_run(function, *args, **kwargs), loop).result()
 
   def _control_submit[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> Future[T]:
-    return self.schedule(self._control_run(function, *args, **kwargs))
+    return asyncio.run_coroutine_threadsafe(self._control_run(function, *args, **kwargs), self._get_loop())
 
   async def _control_run[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> T:
     lock = self._control_lock
