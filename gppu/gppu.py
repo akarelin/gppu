@@ -1343,33 +1343,45 @@ class App(YInit, _Base, _DC):
 
 
 # region - Env: the configuration
-_ENV_ROOT = Path('D:/Dev' if detect_os() == OSType.W11 else '~')   # .. where the repositories are
-_ENV_PATHS = {'RAN': 'RAN/_config/config.yaml', 'IoT': 'IoT/_Creekview/_creekview.yaml'}   # .. the two environments
-
-
 class _Env(YLoad, _Base, _DC):
+# !!! Rewrute!
     """The program's environment: singleton app object. Its my is glob"""
-    # region - what Env knows that is not configuration
-    # .. The machine and the environment are found as gppu is imported, before Env is made, so they are plain class
-    # .. attributes and never its data. Y2's and IoT's programs share Creekview, and so does a host without RAN's
-    # .. repository, as Y2's containers are; any other program shares RAN. A host with neither, as PC Control's, has no
-    # .. file: it is given its configuration over MQTT
-    # endregion
-    os, home, user = detect_os(), Path.home(), getpass.getuser()
-    host = socket.gethostname().split('.')[0].lower()
-    environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (_ENV_ROOT / _ENV_PATHS['RAN']).exists() else 'RAN'
-    config_file = _ENV_ROOT / _ENV_PATHS[environment]   # .. the environment's YAML file
+    home: Path
+    os: OSType
+    path: Path   # .. the environment's YAML file
 
-    def __load(self) -> None:
-        # region - its data is the configuration it was made with, or the one MQTT or Y2's configure gave it
-        # .. Loading fills the configuration's macros, named templates, `template:` rows and the Jinja that reads only the
-        # .. configuration: Creekview and RAN use all four, and glob reads the value it fills, filled
+    # region - Env as an app
+    # .. Its data is the environment's configuration, which glob reads. Made as gppu is imported, it finds out the machine
+    # .. and the environment, which are no configuration and so plain attributes (host, user, environment); it loads
+    # .. once glob reads it.
+    # endregion
+
+    def __init(self) -> None:
+        _ENV_PATHS = {"RAN": "RAN/_config/config.yaml", "IoT": "IoT/_Creekview/_creekview.yaml"}
+
+        self.os, self.home = detect_os(), Path.home() # !!!  Rewrite
+        self.host, self.user = socket.gethostname().split('.')[0].lower(), getpass.getuser() # !!!  Rewrite
+        root = Path('D:/Dev') if self.os == OSType.W11 else self.home # !!!  Rewrite
+        # .. apps share RAN; Y2's and IoT's programs share Creekview, and so does a host without RAN's repository, as Y2's
+        # .. containers are; a host with neither, as PC Control's, is given its configuration over MQTT
+        self.environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (root / _ENV_PATHS['RAN']).exists() else 'RAN' # !!!  Rewrite
+        self.path = root / _ENV_PATHS[self.environment] # !!!  Rewrite
+
+    def __load(self) -> None: # !!!  LOAD, are you crazxy!!!???
+        # .. one YAML load of its file; a configuration given whole (MQTT's, Y2's configure) is its data already, and a
+        # .. host without its repository has no file until MQTT gives it one
+        if not self.data and self.path.exists(): self.data = dict_from_yml(self.path) # !!!  Rewrite
+        # region - the configuration's macros, named templates, `template:` rows and the Jinja that reads only the configuration
+        # .. Creekview and RAN use all four: _creekview.yaml's macros, the *_templates and templates blocks of groups, Insteon,
+        # .. covers and the devices, and RAN config.yaml's mounts; glob reads the value it fills, filled
         # endregion
         self.data = jinja.configuration(self.data)
         if 'trace_rules' in self.data: Logger.trace_rules = dict(self.data['trace_rules'])
 
 
-Env = _Env(data=dict_from_yml(_Env.config_file) if _Env.config_file.exists() else {})
-glob, glob_int, glob_list, glob_dict = Env.my, Env.my_int, Env.my_list, Env.my_dict   # .. the configuration's readers: Env's my
+Env = _Env()
+
+# .. the configuration's readers are globals: Env's my readers
+glob, glob_int, glob_list, glob_dict = Env.my, Env.my_int, Env.my_list, Env.my_dict
 Env.load()
 # endregion
