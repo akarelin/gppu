@@ -1549,13 +1549,14 @@ class App(YInit, _Base, _DC):
         if not self.name: self.name = type(self).__name__.lower()
         if 'parent' in self.data: return   # .. a runtime made it from its row: the row is its configuration
         # region - the program's app: its section of the environment, the one named as it is, or the configuration it
-        # .. was given (a YAML file, or a script's MANIFEST text), over what it was made with
+        # .. was given (a YAML file, or a script's MANIFEST text), under what it was made with
         # endregion
         own = self.data.pop('config') if 'config' in self.data else glob_dict(self.name)
         if isinstance(own, os.PathLike): own = dict_from_yml(own)
-        elif isinstance(own, str): own = dict(yaml.load(own, Loader=YmlLoader))
-        self.data |= jinja.configuration(deepcopy(dict(own)))
-        # .. the command line over it: --key value sets a key, a slash path a nested one, to the value read as YAML, as
+        elif isinstance(own, str): own = yaml.load(own, Loader=YmlLoader)
+        # // self.data |= jinja.configuration(deepcopy(dict(own)))
+        self.data = jinja.configuration(deepcopy(dict(own))) | self.data   # .. what it was made with stays: its configuration goes under it
+        # .. the command line over both: --key value sets a key, a slash path a nested one, to the value read as YAML, as
         # .. configuration is (--days 30 is a number, --logs [System, Security] a list); --flag sets it to True
         argv, i = sys.argv[1:], 0
         while i < len(argv):
