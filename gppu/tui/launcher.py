@@ -23,9 +23,11 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import ast
 import asyncio
 import logging
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -33,7 +35,9 @@ import webbrowser
 from pathlib import Path
 from typing import ClassVar
 
+import yaml
 from gppu import Env, App, AsyncApp, mixin_Config, dict_from_yml, glob, glob_dict, glob_list
+from gppu.gppu import YmlLoader
 from gppu.gppu import Logger, _EmptyMessageFilter, _LogColorizer
 from gppu.gppu import OSType
 from rich.text import Text
@@ -268,13 +272,46 @@ def _absolute(base: Path, value):
     return value
 
 
+def inline_config(filename: Path) -> str:
+    """The YAML a script carries inline, read without running the script: in a .py the string its global MANIFEST is
+    assigned; in a .cmd the :: lines it opens with; in a .ps1 the .NOTES of the <# #> block it opens with, nothing
+    below either block read. A script with none raises.
+
+    It is the launcher's own and no export: SPEC has a TUI app carry its configuration and manifest inline, and the
+    Hosts launcher lists synology-mount.py, mapper.cmd and tray-control.ps1 by theirs. An app reads no file for its own
+    MANIFEST: it passes the global as its configuration."""
+    suffix = filename.suffix.lower()
+    with open(filename, encoding='utf-8-sig') as f:
+        if suffix == '.py':
+            for node in ast.parse(f.read(), str(filename)).body:
+                if (isinstance(node, ast.Assign) and [getattr(target, 'id', None) for target in node.targets] == ['MANIFEST']
+                        and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)): return node.value.value
+        elif suffix == '.cmd':
+            lines = []
+            for line in f:
+                if not line.startswith('::'): break
+                lines.append(line[2:])
+            if lines: return ''.join(lines)
+        elif suffix == '.ps1':
+            lines = iter(f)
+            if next((line for line in lines if line.strip()), '').strip() == '<#':
+                notes, keyword = [], None
+                for line in lines:
+                    if line.strip() == '#>': break
+                    if re.fullmatch(r'\.[A-Za-z]+', line.strip()): keyword = line.strip().upper()
+                    elif keyword == '.NOTES': notes.append(line)
+                if notes: return ''.join(notes)
+    raise ValueError(f'{filename}: no inline configuration')
+
+
 def read_manifest(app_dir: Path, config_file: str, nav: str | None = None) -> dict:
     """One YAML config, or the inline config of a script, as a launcher item: its script and cwd resolved against the
     manifest's own directory, so a launcher can list manifests that live anywhere, and the nav the launcher files it
     under. A script's inline manifest that names no script or url launches the script itself. Empty when the config
     holds no manifest."""
     path = (app_dir / config_file).resolve()
-    cfg = dict_from_yml(path)
+    if path.suffix.lower() in INLINE_CONFIG: cfg = dict(yaml.load(inline_config(path), Loader=YmlLoader))
+    else: cfg = dict_from_yml(path)
     manifest = cfg.get('manifest', {})
     if not manifest:
         return {}

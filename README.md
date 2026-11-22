@@ -175,7 +175,7 @@ A sub-app can instead be a script that carries this config inline, listed by its
 - **`.cmd`:** opens with the YAML as `::` lines.
 - **`.ps1`:** holds the YAML in the `.NOTES` of the `<# #>` block it opens with.
 
-Its manifest launches the script itself unless it names a `script:` or `url:`. An app given the script, `App(config=__file__)`, reads the same config.
+Its manifest launches the script itself unless it names a `script:` or `url:`. The launcher reads it without running the script; the script itself passes its global as its own configuration, `App(config=MANIFEST)`.
 
 ```python
 from gppu import App

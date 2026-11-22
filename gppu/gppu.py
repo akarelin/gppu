@@ -4,7 +4,6 @@ import pprint
 
 import re
 import os
-import ast
 import pathlib
 
 import inspect
@@ -893,37 +892,6 @@ def dict_from_json(filename: str | Path):
 
 
 # region Jinja (AI, not human reviewed)
-def inline_config(filename: str | Path) -> str:
-  """ Not human reviewed. This method was found in the middle of yaml code that it has not business be a part of  """
-  """The YAML a script carries inline: in a .py the string its global MANIFEST is assigned, read without running
-  the script; in a .cmd the :: lines it opens with; in a .ps1 the .NOTES of the <# #> block it opens with, nothing
-  below either block read. A script with none raises."""
-  filename = full_path(filename)
-  suffix = filename.suffix.lower()
-  with open(filename, encoding='utf-8-sig') as f:
-    if suffix == '.py':
-      for node in ast.parse(f.read(), str(filename)).body:
-        if (isinstance(node, ast.Assign) and [getattr(target, 'id', None) for target in node.targets] == ['MANIFEST']
-            and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)): return node.value.value
-    elif suffix == '.cmd':
-      lines = []
-      for line in f:
-        if not line.startswith('::'): break
-        lines.append(line[2:])
-      if lines: return ''.join(lines)
-    elif suffix == '.ps1':
-      lines = iter(f)
-      if next((line for line in lines if line.strip()), '').strip() == '<#':
-        notes, keyword = [], None
-        for line in lines:
-          if line.strip() == '#>': break
-          if re.fullmatch(r'\.[A-Za-z]+', line.strip()): keyword = line.strip().upper()
-          elif keyword == '.NOTES': notes.append(line)
-        if notes: return ''.join(notes)
-  raise ValueError(f'{filename}: no inline configuration')
-
-
-
 def jinja_helpers() -> dict:
   """gppu's own filters, offered to every Jinja environment it builds."""
   return {
@@ -1542,13 +1510,16 @@ class mixin_Config(_mixin):
 
 
   def _config_load(self, source: Mapping | str | Path, argv: list[str] = []) -> None:
-    """The one loader of Env and every app: a YAML file, or a section already loaded, becomes this object's own
-    configuration, a copy of its source, with its templates applied. A Jinja value that reads only ``glob``,
+    """The one loader of Env and every app: a YAML file (a Path), YAML text (a str, as a script's MANIFEST is), or a
+    section already loaded becomes this object's own configuration, a copy of its source, with its templates applied. A
+    file's ``!include`` reads beside the file; text has no folder and includes nothing. A Jinja value that reads only ``glob``,
     ``glob_int``, ``glob_list`` or ``glob_dict`` is filled here, each reading the environment filled; Jinja that reads
     anything else, and ``$`` text, stay. The command line goes over it: ``--key value`` sets the key, a slash path a
     nested one, to the string, ``--flag`` with no value after it sets it to True, and other arguments are the
     program's own."""
-    self._my = deepcopy(dict(source)) if isinstance(source, Mapping) else dict_from_yml(source)
+    if isinstance(source, Mapping): self._my = deepcopy(dict(source))
+    elif isinstance(source, str): self._my = dict(yaml.load(source, Loader=YmlLoader))
+    else: self._my = dict_from_yml(source)
     jinja_configuration(self._my)
     def read(path: str) -> Any: return jinja_fill(glob(path), **readers)
     readers = {'glob': read,

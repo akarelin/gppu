@@ -32,4 +32,4 @@ class Desktop(App):
 
 
 if __name__ == '__main__':
-    Desktop(config=__file__).run()   # its own configuration is its MANIFEST
+    Desktop(config=MANIFEST).run()   # its own configuration is its MANIFEST

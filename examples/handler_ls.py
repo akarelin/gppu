@@ -20,7 +20,7 @@ def listing(gppufs: GppuCatalog, path: str | None = None) -> str:
 
 
 def main() -> None:
-  app = App(config=__file__)   # its own configuration is its MANIFEST
+  app = App(config=MANIFEST)   # its own configuration is its MANIFEST
   print(listing(GppuCatalog(app.my('catalog')), *sys.argv[1:2]))
 
 

@@ -62,8 +62,6 @@ MANIFEST = """
       icon: "\U0001FA9F"
     security:
       icon: "\U0001F512"
-  error_rules: !include error_rules.yaml
-
 """
 
 
@@ -1401,7 +1399,7 @@ def main():
 
     global APP_DIR
     APP_DIR = resolve_app_dir()   # .. the w11 folder: stats, error rules and exports
-    config = App(config=__file__)
+    config = App(config=MANIFEST)
 
     if args.all_logs:
         log_names = get_all_log_names()
@@ -1417,8 +1415,7 @@ def main():
     export_path = args.export
     hostname = socket.gethostname()
 
-    # .. Common errors patterns (resolved via !include in YAML)
-    error_tracker = CommonErrorTracker(config.my_dict('error_rules'),
+    error_tracker = CommonErrorTracker(dict_from_yml(APP_DIR / 'error_rules.yaml'),
                                        categories=config.my_dict('event_categories'))
 
     if args.clear_logs:

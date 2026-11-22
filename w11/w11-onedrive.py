@@ -1882,7 +1882,7 @@ def db_explore(accounts: list[str], output_dir: str | None = None) -> str | None
 def main():
     import argparse
 
-    config = gppu.App(config=__file__)   # .. gppu's App: textual's App is this module's App
+    config = gppu.App(config=MANIFEST)   # .. gppu's App: textual's App is this module's App
 
     parser = argparse.ArgumentParser(description='OneDrive Sync Diagnostics TUI')
     parser.add_argument('mode', nargs='?',
