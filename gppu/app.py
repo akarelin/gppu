@@ -462,7 +462,7 @@ Runtime = _Runtime()
 
 
 
-# region - REST surface
+# region REST surface
 class mixin_Rest:
   """Every public member of the application's own classes, over HTTP, and nothing
   declared. A field or property reads; a method is called with the JSON body as
