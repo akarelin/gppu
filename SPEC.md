@@ -75,3 +75,10 @@
 - Some objects have a default path that is not stored but can be generated.
 - y2uri is a foundation, as `_DC` is: features beyond it come into y2uri or as mixins that a derivative picks.
 - Code uses public methods, never protected members.
+- A limited set of cases is hard-coded: two cases in two lines, and a third is decided when it appears. Nothing universal is built for them. Dicts and lists are handled specifically, which is why there are `my_int` and `my_float` and nothing more; there is no recursion, no self-reference and no passing objects back and forth.
+- The command line is not a separate kind of app. Every app takes the command line, which always works by default and is never suppressed.
+- An app run with no parameters does something useful; it is not a dry run, and nobody needs to know which parameters to pass.
+- A Python script runs from the host's one `.venv`. A script that imports gppu has everything it needs and always starts.
+- Logging works without special error handling around it: no code logs an error outside the logger, and tracing and object dumping carry no error handling of their own.
+- An object does not need a configuration key of its own for MQTT.
+- Preservator is the use case of a small CLI app that works trivially.
