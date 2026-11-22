@@ -487,9 +487,7 @@ class Path(y2path, pathlib.Path):
       args = (os.path.expanduser(raw) if raw == '~' or raw.startswith(('~/', '~\\')) else raw, *args[1:])
     y2path.__init__(self, *args)
 
-  def __truediv__(self, other: str | y2path) -> Path:
-    other = Path(other)
-    return other if other.is_absolute() else Path(self, other)   # .. an absolute right side wins, as in pathlib
+  def __truediv__(self, other: str | y2path) -> Path: return Path(self, other)
 
   def open(self, mode: str = 'r', buffering: int = -1, encoding: str | None = None, *args, **kwargs):
     # .. text is UTF-8 unless a caller names another encoding (pathlib's read_text and write_text pass 'locale', Windows'
