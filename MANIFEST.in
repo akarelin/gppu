@@ -1,0 +1,7 @@
+# .. The source archive holds what builds the wheel, not the repository: setuptools-scm adds every file git tracks, so
+# .. everything is taken out and the library and the files that build it are put back.
+global-exclude *
+graft gppu
+graft gppu.egg-info
+include pyproject.toml setup.py README.md
+global-exclude *.py[cod]
