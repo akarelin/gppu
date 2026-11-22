@@ -158,8 +158,11 @@ Notes of an agent session, 2026-11-21. The first part is what Alex said in that 
 - All that is needed is callbacks and polls, trusted. Code that adds timeouts, retries, fallbacks and the like around them is a hack and is removed.
 - No individual step is forced to succeed: no repeats, retries or fallbacks. Things are done gently, knowing that a step that failed, say in a broadcast storm, is picked up by a poll.
 - A device is polled again soon after a command to it, as AV devices are 30 seconds after one. A device whose state change did not arrive in real time, or within a few seconds of it, is first in the queue to be polled again. Every device is polled at least once an hour.
+- Said of the backyard colorloop's `off_verify`: retries and delays tell when a device has finished its state transition and its state is final; a final state that does not match what the command expected is changed. This keeps a partial state change from being reacted to while the transition runs.
+- That is general functionality of gppu, for all the entities and pollers, set by configuration and working with default values. No class gets a mechanism of its own for it, because the existing one does the same.
+- A retry, a stagger or a startup delay is justified by the last time it was used. Code for a use case that never happens is removed.
 - Keeping buttons matching their indicator is not about catching every case. After a press the keypad in front of the user is probably already right; what matters is that the entity's next refresh comes soon, in a queue. Flapping is not removed by manipulating how the system works: a longer delay is allowed, because a more thorough round follows.
-- A command to an indicator is sent to every button of the indicator.
+- Said of Insteon keypads, the garage door sensor's indicator: a command to change an indicator is sent to every button of the indicator. Sonos does not work this way.
 - A change of a source's state triggers a state refresh, and the refresh sends every notification due, one of them to the indicator. Whether a button needs a command is decided by that button's own state, not by the indicator's group state.
 
 ## UI
