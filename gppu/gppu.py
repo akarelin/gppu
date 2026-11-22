@@ -74,28 +74,13 @@ def detect_os() -> OSType:
 
 
 def full_path(path: str | Path, base_dir: str | Path | None = None, *, strict: bool = False) -> Path:
-  """
-    Resolve a user-supplied path to a local Path suitable for open()/read/write.
-
-    Expands environment variables and ~. Leaves native absolute paths absolute.
-    Resolves relative paths against base_dir, or cwd when base_dir is None.
-    On Windows, maps WSL-style drive paths like /mnt/d/x to D:\\x.
-
-    If strict=True, requires the resolved path to exist.
-  """
-  raw = os.path.expandvars(str(path))
-
-  if detect_os() == OSType.W11 and len(raw) >= 7 and raw.startswith('/mnt/') and raw[5].isalpha() and raw[6] == '/': result = Path(f'{raw[5].upper()}:\\') / raw[7:]
-  else: result = Path(raw)
-  result = result.expanduser()
-
-  if not result.is_absolute(): result = (Path.cwd() if base_dir is None else full_path(base_dir)) / result
-  
-  return result.resolve(strict=strict)
+  """gppu.fs's and the Lake's, out of scope for now: the path against base_dir or the current folder, resolved."""
+  return ((Path(base_dir) if base_dir is not None else Path.cwd()) / path).resolve(strict=strict)
 
 
 def probe_path(path: str | Path) -> dict:
-  """Filesystem attributes and content handler without reading contents."""
+  """ Known and approved to be a hack
+  Filesystem attributes and content handler without reading contents."""
   _CONFIG = {
     "ignored_suffixes": (".tmp", ".bak", ".swp"),
     "ignored_prefixes": ("~$",),
@@ -495,8 +480,26 @@ class Path(y2path, pathlib.Path):
   _root = property(lambda self: pathlib.PurePath(self).root, lambda self, value: None)
   _tail_cached = property(lambda self: pathlib.PurePath(self)._tail, lambda self, value: None)
 
-  def __truediv__(self, other: str | y2path) -> Path: return type(self)(self, other)
-  def __eq__(self, other): return str(self) == str(type(self)(other)) if isinstance(other, PurePath) else y2path.__eq__(self, other)
+  def __init__(self, *args):
+    # .. a path given as text is the user's: its variables, its leading ~, and on Windows a WSL drive (/mnt/d/x) are expanded, the two things pathlib does not do
+    if args and isinstance(args[0], (str, os.PathLike)) and not isinstance(args[0], y2path):
+      raw = os.path.expandvars(os.fspath(args[0]))
+      if detect_os() == OSType.W11 and re.match(r'/mnt/[a-zA-Z]/', raw): raw = f'{raw[5].upper()}:/{raw[7:]}'
+      args = (os.path.expanduser(raw) if raw == '~' or raw.startswith(('~/', '~\\')) else raw, *args[1:])
+    y2path.__init__(self, *args)
+
+  def __truediv__(self, other: str | y2path) -> Path:
+    other = Path(other)
+    return other if other.is_absolute() else Path(self, other)   # .. an absolute right side wins, as in pathlib
+
+  def open(self, mode: str = 'r', buffering: int = -1, encoding: str | None = None, *args, **kwargs):
+    # .. the one place a file is opened: a written file's folder is made, and text is UTF-8 unless a caller names another
+    # .. encoding (pathlib's read_text and write_text pass 'locale', Windows' code page before Python 3.15)
+    if mode[0] in 'wax': self.parent.mkdir(parents=True, exist_ok=True)
+    if 'b' not in mode and encoding in (None, 'locale'): encoding = 'utf-8'
+    return pathlib.Path.open(self, mode, buffering, encoding, *args, **kwargs)
+
+  def __eq__(self, other): return str(self) == str(Path(other)) if isinstance(other, PurePath) else y2path.__eq__(self, other)
   __hash__ = y2path.__hash__
 
   def copy(self, *args, **kwargs): return y2path.copy(self) if not args and not kwargs else pathlib.Path.copy(self, *args, **kwargs)
@@ -833,11 +836,11 @@ def dict_to_yml(filename: str | Path, data=None, sort_keys=False):
   yaml.add_representer(set, SafeRepresenter.represent_list)
   yaml.add_representer(tuple, _tuple_representer)
 
-  with open(filename,'w+', encoding='utf-8') as f:
+  with Path(filename).open('w+') as f:
     try: yaml.dump(redata, f, indent=2, Dumper=IndentedListDumper, sort_keys=sort_keys, width=2147483647)
     except Exception as err:
       error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(redata)}\n\n"
-      with open(str(filename) + '_error.txt', 'w+', encoding='utf-8') as ferr: ferr.write(error)
+      with Path(f'{filename}_error.txt').open('w+') as ferr: ferr.write(error)
 
 
 class YmlLoader(FullLoader):
@@ -850,39 +853,39 @@ def _tuple_representer(dumper: Dumper, data: tuple) -> Node:
 
 def dict_from_yml(filename: str | Path) -> dict:
   """ yaml file to dictionary, resolving includes, but not templates"""
-  filename = full_path(filename)
+  filename = Path(filename)
   dir_stack: list[Path] = [filename.parent]
 
   class Loader(YmlLoader): pass
 
   def yml_include(loader: FullLoader, node: Node) -> Any:
-    fn = full_path(loader.construct_scalar(node), dir_stack[-1])
+    fn = dir_stack[-1] / loader.construct_scalar(node)
 
     dir_stack.append(fn.parent)
 
     try:
-      with open(fn, "r", encoding='utf-8') as f:
+      with fn.open() as f:
         if fn.suffix.lower().endswith('.json'): return json.load(f)                        
         return yaml.load(f, Loader=Loader)
     finally: dir_stack.pop()
 
   Loader.add_constructor("!include", yml_include)
 
-  with open(filename, encoding='utf-8') as f: return dict(yaml.load(f, Loader=Loader))
+  with filename.open() as f: return dict(yaml.load(f, Loader=Loader))
 
 
 def dict_to_json(filename: str | Path, data=None, indent=2):
   assert filename
   if not data: return
-  with open(filename, 'w', encoding='utf-8') as f:
+  with Path(filename).open('w') as f:
     try: json.dump(data, f, indent=indent, ensure_ascii=False, default=str)
     except Exception as err:
       error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(data)}\n\n"
-      with open(str(filename)+'_error.txt', 'w', encoding='utf-8') as ferr: ferr.write(error)
+      with Path(f'{filename}_error.txt').open('w') as ferr: ferr.write(error)
 
 
 def dict_from_json(filename: str | Path):
-  with open(filename, encoding='utf-8') as f: return json.load(f)
+  with Path(filename).open() as f: return json.load(f)
 # endregion
 
 
@@ -1325,7 +1328,7 @@ class Logger:
     # ^^ The file rotates at 4 MB and keeps 5 older files; both numbers are written here, not configured.
     # endregion
     if not isinstance(log_file, str) or not log_file.strip(): raise ValueError('File logging requires an explicit log_file in configuration')
-    path = full_path(log_file)
+    path = Path(log_file)
     path.parent.mkdir(parents=True, exist_ok=True)
     key = str(path)
     if key in Logger._file_handlers: return path
@@ -1624,7 +1627,7 @@ class App(YInit, _Base, _DC):
         the command line over it: ``--key value`` sets a key, a slash path a nested one, ``--flag`` sets it to True."""
         if isinstance(source, Mapping): loaded = deepcopy(dict(source))
         elif str(source).lower().endswith(('.py', '.cmd', '.ps1', '.sh')):
-            with open(full_path(source), encoding='utf-8-sig') as f: manifest = re.search(r'^MANIFEST = r?"""(.*?)"""', f.read(4096), re.M | re.S)
+            with Path(source).open(encoding='utf-8-sig') as f: manifest = re.search(r'^MANIFEST = r?"""(.*?)"""', f.read(4096), re.M | re.S)
             if not manifest: raise ValueError(f'{source}: no MANIFEST in its first 4 KB')
             loaded = dict(yaml.load(manifest[1], Loader=YmlLoader))
         else: loaded = dict_from_yml(source)

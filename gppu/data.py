@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json, pickle
+import asyncio, functools, hashlib, json, os, pickle, sqlite3, threading, time
 
 from typing import Any, ClassVar, Optional
 from contextlib import asynccontextmanager, contextmanager
 
-from .gppu import Env, _Base
+from .gppu import Env, Path, _Base
 from .gppu import glob
 from .gppu import _DC
 
@@ -111,7 +111,6 @@ class _SQABase(_PersistentBase):
   def scoped_session(self):
     """The session of the asyncio task calling, one per task (SQLAlchemy's async_scoped_session); made on first use."""
     if self._scoped is None:
-      import asyncio
       from sqlalchemy.ext.asyncio import async_scoped_session, async_sessionmaker
       from sqlmodel.ext.asyncio.session import AsyncSession
       self._scoped = async_scoped_session(async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False), scopefunc=asyncio.current_task)
@@ -195,24 +194,16 @@ class _FileBackend:
   """File cache backend: one file, json or pickle as its serializer. No dependencies."""
 
   def __init__(self, path: str, serializer, name: str):
-    import os
     self._serializer, self._binary = serializer, serializer is pickle
-    self._path = path
+    self._path = Path(path) / name if Path(path).is_dir() else Path(path)
     self._data: dict = {}
-    os.makedirs(os.path.dirname(path) if not os.path.isdir(path) else path, exist_ok=True)
-    if os.path.isdir(path):
-      self._path = os.path.join(path, name)
-    try:
-      with open(self._path, 'rb' if self._binary else 'r') as f: self._data = self._serializer.load(f)
-    except Exception: pass
+    if self._path.exists():
+      with self._path.open('rb' if self._binary else 'r') as f: self._data = self._serializer.load(f)
 
   def _flush(self):
-    try:
-      with open(self._path, 'wb' if self._binary else 'w') as f: self._serializer.dump(self._data, f)
-    except Exception: pass
+    with self._path.open('wb' if self._binary else 'w') as f: self._serializer.dump(self._data, f)
 
   def _alive(self, entry: dict) -> bool:
-    import time
     exp = entry.get('_exp')
     return exp is None or time.time() < exp
 
@@ -222,7 +213,6 @@ class _FileBackend:
     return entry.get('v', default)
 
   def set(self, key: str, value, expire=None):
-    import time
     entry: dict = {'v': value}
     if expire is not None: entry['_exp'] = time.time() + expire
     self._data[key] = entry
@@ -239,16 +229,13 @@ class _SqliteBackend:
   """SQLite cache backend. No external dependencies (stdlib sqlite3)."""
 
   def __init__(self, path: str):
-    import os, sqlite3
-    os.makedirs(os.path.dirname(path) if not os.path.isdir(path) else path, exist_ok=True)
-    if os.path.isdir(path):
-      path = os.path.join(path, '_cache.db')
+    path = Path(path) / '_cache.db' if Path(path).is_dir() else Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     self._conn = sqlite3.connect(path)
     self._conn.execute(
       'CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value BLOB, expire REAL)')
 
   def get(self, key: str, default=None):
-    import pickle, time
     row = self._conn.execute('SELECT value, expire FROM cache WHERE key=?', (key,)).fetchone()
     if row is None: return default
     if row[1] is not None and time.time() >= row[1]:
@@ -258,7 +245,6 @@ class _SqliteBackend:
     return pickle.loads(row[0])
 
   def set(self, key: str, value, expire=None):
-    import pickle, time
     exp = (time.time() + expire) if expire else None
     self._conn.execute('INSERT OR REPLACE INTO cache (key, value, expire) VALUES (?, ?, ?)',
                        (key, pickle.dumps(value), exp))
@@ -297,7 +283,6 @@ class _DbBackend:
       conn.commit()
 
   def get(self, key: str, default=None):
-    import pickle, time
     from sqlalchemy import text
     with self._engine.connect() as conn:
       row = conn.execute(text('SELECT value, expire FROM cache WHERE key=:k'), {'k': key}).fetchone()
@@ -308,7 +293,6 @@ class _DbBackend:
     return pickle.loads(row[0])
 
   def set(self, key: str, value, expire=None):
-    import pickle, time
     from sqlalchemy import text
     exp = (time.time() + expire) if expire else None
     blob = pickle.dumps(value)
@@ -366,13 +350,11 @@ class Cache:
       backend:    'json', 'pickle', 'sqlite', 'diskcache', or 'db'.
       skip_env:   Env var name to check for bypass (empty string disables).
     """
-    import os
     self._ttl = ttl
     self._skip = bool(skip_env and os.getenv(skip_env, '').lower() in ('true', '1', 'yes'))
     if backend not in _BACKENDS:
       raise ValueError(f"Unknown backend {backend!r}, expected one of: {', '.join(_BACKENDS)}")
-    path = directory if backend == 'db' else os.path.expanduser(directory)
-    self._cache = _BACKENDS[backend](path)
+    self._cache = _BACKENDS[backend](directory)
 
   @property
   def skip(self) -> bool: return self._skip
@@ -390,7 +372,6 @@ class Cache:
   def __call__(self, fn):
     """Use as @cache decorator for automatic memoization."""
     if self._skip: return fn
-    import functools, hashlib
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
       k = f'memo:{fn.__module__}.{fn.__qualname__}:{hashlib.md5(repr((args, kwargs)).encode()).hexdigest()}'
@@ -424,18 +405,14 @@ class _FilePersistBackend:
   """File backend: one file, nested dict {cls: {key: data}}, json or pickle as its serializer. No deps."""
 
   def __init__(self, path: str, serializer, name: str):
-    import os
     self._serializer, self._binary = serializer, serializer is pickle
-    self._path = path
-    os.makedirs(os.path.dirname(path) if not os.path.isdir(path) else path, exist_ok=True)
-    if os.path.isdir(path): self._path = os.path.join(path, name)
+    self._path = Path(path) / name if Path(path).is_dir() else Path(path)
     self._data: dict[str, dict[str, dict]] = {}
-    try:
-      with open(self._path, 'rb' if self._binary else 'r') as f: self._data = self._serializer.load(f)
-    except Exception: pass
+    if self._path.exists():
+      with self._path.open('rb' if self._binary else 'r') as f: self._data = self._serializer.load(f)
 
   def _flush(self):
-    with open(self._path, 'wb' if self._binary else 'w') as f: self._serializer.dump(self._data, f)
+    with self._path.open('wb' if self._binary else 'w') as f: self._serializer.dump(self._data, f)
 
   def upsert(self, cls: str, key: str, data: dict) -> None:
     self._data.setdefault(cls, {})[key] = data
@@ -457,9 +434,8 @@ class _SqlitePersistBackend:
   """SQLite backend. One file, one table `persistent_dc(cls, key, data)`. Stdlib only."""
 
   def __init__(self, path: str):
-    import os, sqlite3, threading
-    os.makedirs(os.path.dirname(path) if not os.path.isdir(path) else path, exist_ok=True)
-    if os.path.isdir(path): path = os.path.join(path, '_persist.db')
+    path = Path(path) / '_persist.db' if Path(path).is_dir() else Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     self._conn = sqlite3.connect(path, check_same_thread=False)
     self._lock = threading.Lock()
     self._conn.execute(
@@ -469,7 +445,6 @@ class _SqlitePersistBackend:
     self._conn.commit()
 
   def upsert(self, cls: str, key: str, data: dict) -> None:
-    import json, time
     with self._lock:
       self._conn.execute(
         'INSERT OR REPLACE INTO persistent_dc (cls, key, data, updated_at) VALUES (?, ?, ?, ?)',
@@ -477,14 +452,12 @@ class _SqlitePersistBackend:
       self._conn.commit()
 
   def load(self, cls: str, key: str) -> Optional[dict]:
-    import json
     with self._lock:
       row = self._conn.execute(
         'SELECT data FROM persistent_dc WHERE cls=? AND key=?', (cls, key)).fetchone()
     return json.loads(row[0]) if row else None
 
   def iter(self, cls: str):
-    import json
     with self._lock:
       rows = self._conn.execute(
         'SELECT key, data FROM persistent_dc WHERE cls=? ORDER BY key', (cls,)).fetchall()
@@ -515,7 +488,6 @@ class _PgPersistBackend(_PGBase):
 
   def __init__(self, **kw):
     super().__init__(**kw)
-    import threading
     self._lock = threading.Lock()
     with self._lock, self.cursor(dict_cursor=False) as cur:
       cur.execute(self.SCHEMA_DDL)
@@ -576,13 +548,12 @@ class Persistence:
   """
 
   def __init__(self, target: str, *, backend: str = 'sqlite'):
-    import os
     if backend not in _PERSIST_BACKENDS:
       raise ValueError(f"Unknown backend {backend!r}, expected one of: {', '.join(_PERSIST_BACKENDS)}")
     if backend == 'postgres':
       self._b = _PgPersistBackend(db=target)
     else:
-      self._b = _PERSIST_BACKENDS[backend](os.path.expanduser(target))
+      self._b = _PERSIST_BACKENDS[backend](target)
 
   def upsert(self, cls: str, key: str, data: dict) -> None: self._b.upsert(cls, key, data)
   def load(self, cls: str, key: str) -> Optional[dict]: return self._b.load(cls, key)
