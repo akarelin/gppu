@@ -77,6 +77,14 @@
 - Y2 uses Env; it has no environment of its own.
 - Y2's entity is part of gppu.
 - Y2 was originally part of gppu. Only entity support, the Y2 entity and below, is specific to Y2; everything else is generic and is gppu's, so Y2's own code is slim.
+- Y2's state manager, Y2 entity and Y2 group are one step on top of gppu, and they are correct. A class full of special cases, such as an AV device, stays a valid Y2 entity or group and never does what gppu does.
+
+## Library and periphery
+- No functionality has two implementations. It is either gppu's, and every app uses it, or an app's own. An app that does its own thing is named and known, to be refactored later.
+- An app with a unique mechanism that does one thing differently, such as W11 or the status line, is not refactored just for that.
+- An unfinished migration between gppu and the periphery is settled in one direction: into gppu, staying in gppu, or staying with the app. The downstream users decide it, and Alex decides where he has an opinion.
+- An app is not universal: it reads its own configuration well, not any configuration. A simple app is half a page of code, a complex one a full page.
+- Refactoring goes top down and in passes, deciding for each piece whether it belongs in code, in a template or in configuration, and at which level.
 
 ## Code
 - Simplify. Legacy approaches are not kept for backwards compatibility.
