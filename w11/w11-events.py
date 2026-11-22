@@ -4,12 +4,14 @@ Its configuration is its MANIFEST, read as a gppu App's own.
 
 Usage:
     python w11-events.py                    # configured logs
-    python w11-events.py --all-logs         # all available logs
+    python w11-events.py --all_logs         # all available logs
     python w11-events.py --days 30
     python w11-events.py --level Error
+    python w11-events.py --dedup false
     python w11-events.py --export events.json
-    python w11-events.py --logs System "Microsoft-Windows-Kernel-PnP/Configuration"
+    python w11-events.py --logs "[System, Microsoft-Windows-Kernel-PnP/Configuration]"
     python w11-events.py --stats            # recalculate stats and exit
+    python w11-events.py --clear_logs       # clear the logs (needs admin) and exit
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ MANIFEST = """
         inline: true
       clear-logs:
         name: Clear logs
-        args: [--clear-logs]
+        args: [--clear_logs]
         inline: true
       ask:
         name: Custom...
@@ -65,7 +67,6 @@ MANIFEST = """
 """
 
 
-import argparse
 import ctypes
 import json
 import os
@@ -79,10 +80,10 @@ from datetime import datetime
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from gppu import App, dict_from_yml, dict_to_yml, format_since
+from gppu import dict_from_yml, dict_to_yml, format_since
 from gppu.tui import TUIApp, StatusHeader
 from w11 import resolve_app_dir
-APP_DIR: Path   # .. the w11 folder, which main resolves
+APP_DIR = resolve_app_dir()   # .. the w11 folder: stats, error rules and exports
 from rich.markup import escape
 from textual import work
 from textual.app import ComposeResult
@@ -831,18 +832,24 @@ class EventLogApp(TUIApp):
         ('escape', 'clear_detail', 'Clear Detail'),
     ]
 
-    def __init__(self, log_names, level, days, do_dedup, max_msg_len, export_path,
-                 hostname, error_tracker: CommonErrorTracker):
-        super().__init__()
-        self.log_names = log_names
-        self.level = level
-        self.days = days
-        self.do_dedup = do_dedup
-        self.max_msg_len = max_msg_len
-        self.export_path = export_path
-        self.hostname = hostname
-        self.stats_file = stats_path_for_host(hostname)
-        self.error_tracker = error_tracker
+    TITLE = 'Event Log Watcher'
+    # .. its configuration is its MANIFEST, the command line over it
+    logs: list
+    all_logs: bool
+    level: str
+    days: int
+    dedup: bool
+    max_message_length: int
+    event_categories: dict
+    export: str
+    stats: bool
+    clear_logs: bool
+
+    def __init(self) -> None:
+        self.log_names = get_all_log_names() if self.all_logs else self.logs
+        self.hostname = socket.gethostname()
+        self.stats_file = stats_path_for_host(self.hostname)
+        self.error_tracker = CommonErrorTracker(dict_from_yml(APP_DIR / 'error_rules.yaml'), categories=self.event_categories)
         self._export_fh = None
         self._all_events: list[dict] = []
         self._display_events: list[dict] = []
@@ -866,8 +873,9 @@ class EventLogApp(TUIApp):
     def on_mount(self) -> None:
         table = self.query_one('#history-table', DataTable)
         table.add_columns('Since', 'Lvl', 'Log', 'Source', 'Provider', 'ID', 'Message', 'x')
-        if self.export_path:
-            self._export_fh = open(self.export_path, 'a', encoding='utf-8')
+        self.sub_title = f'{self.hostname} | {self.level}+ | {self.days}d | {len(self.log_names)} logs'
+        if self.export:
+            self._export_fh = open(self.export, 'a', encoding='utf-8')
         self.load_history()
 
     def _refresh_errors_display(self) -> None:
@@ -1209,7 +1217,7 @@ class EventLogApp(TUIApp):
         for i, log_name in enumerate(self.log_names):
             short = log_name.split('/')[-1] if '/' in log_name else log_name
             progress(f'Loading [{i + 1}/{total}] {short}')
-            events = query_events(log_name, self.level, self.days, self.max_msg_len)
+            events = query_events(log_name, self.level, self.days, self.max_message_length)
             if events:
                 logs_with_events += 1
             all_events.extend(events)
@@ -1235,7 +1243,7 @@ class EventLogApp(TUIApp):
             self.call_from_thread(self._refresh_errors_display)
 
         progress(f'Deduplicating {raw_count:,} events')
-        if self.do_dedup:
+        if self.dedup:
             display_events = deduplicate(all_events)
         else:
             display_events = all_events
@@ -1305,7 +1313,7 @@ class EventLogApp(TUIApp):
             self.call_from_thread(detail_label.update, msg)
 
         path = recalculate_stats(
-            self.log_names, self.level, self.days, self.max_msg_len,
+            self.log_names, self.level, self.days, self.max_message_length,
             self.stats_file, self.hostname,
             error_tracker=self.error_tracker, progress_cb=progress,
         )
@@ -1343,75 +1351,22 @@ class EventLogApp(TUIApp):
     def action_toggle_dark(self) -> None:
         self.theme = 'textual-light' if self.theme == 'textual-dark' else 'textual-dark'
 
-
-# .. ── CLI stats mode ───────────────────────────────────────────────────────────
-
-def run_stats_cli(log_names, level, days, max_msg_len, hostname, error_tracker):
-    stats_file = stats_path_for_host(hostname)
-    print(f'Recalculating stats for {hostname} -> {stats_file}')
-    def progress(msg):
-        print(f'  {msg}')
-    path = recalculate_stats(log_names, level, days, max_msg_len, stats_file, hostname,
-                             error_tracker=error_tracker, progress_cb=progress)
-    print(f'\nSaved: {path}')
-    data = dict_from_yml(path)
-    for log_name, severities in data.get('logs', {}).items():
-        short = log_name.split('/')[-1] if '/' in log_name else log_name
-        parts = [f'{sev}:{info["count"]}' for sev, info in severities.items()]
-        print(f'  {short}: {", ".join(parts)}')
-
-
-# .. ── Main ─────────────────────────────────────────────────────────────────────
-
-def main():
-    parser = argparse.ArgumentParser(description='Watch Windows Event Logs with TUI')
-    parser.add_argument('--days', type=int, help='Override days from config')
-    parser.add_argument('--level', help='Override level from config')
-    parser.add_argument('--export', help='Export events to file (JSON)')
-    parser.add_argument('--no-dedup', action='store_true', help='Disable deduplication')
-    parser.add_argument('--all-logs', action='store_true', help='Watch ALL available event logs')
-    parser.add_argument('--logs', nargs='+', help='Specific log names to watch')
-    parser.add_argument('--stats', action='store_true', help='Recalculate host stats and exit')
-    parser.add_argument('--clear-logs', action='store_true', help='Clear all configured event logs (needs admin)')
-    args = parser.parse_args()
-
-    global APP_DIR
-    APP_DIR = resolve_app_dir()   # .. the w11 folder: stats, error rules and exports
-    config = App(config=MANIFEST)
-
-    if args.all_logs:
-        log_names = get_all_log_names()
-    elif args.logs:
-        log_names = args.logs
-    else:
-        log_names = config.my_list('logs')
-
-    level = args.level or config.my('level')
-    days = args.days or config.my_int('days')
-    do_dedup = not args.no_dedup and config.my('dedup')
-    max_msg_len = config.my_int('max_message_length')
-    export_path = args.export
-    hostname = socket.gethostname()
-
-    error_tracker = CommonErrorTracker(dict_from_yml(APP_DIR / 'error_rules.yaml'),
-                                       categories=config.my_dict('event_categories'))
-
-    if args.clear_logs:
-        print(f'Clearing {len(log_names)} logs (requires admin)...')
-        cleared, failed = clear_event_logs(log_names, progress_cb=lambda m: print(f'  {m}'))
-        print(f'Done: {cleared} cleared, {failed} failed')
-        return
-
-    if args.stats:
-        run_stats_cli(log_names, level, days, max_msg_len, hostname, error_tracker)
-        return
-
-    app = EventLogApp(log_names, level, days, do_dedup, max_msg_len, export_path,
-                      hostname, error_tracker)
-    app.title = 'Event Log Watcher'
-    app.sub_title = f'{hostname} | {level}+ | {days}d | {len(log_names)} logs'
-    app.run()
+    def run(self, *args, **kwargs):
+        """The TUI; with --clear_logs it clears the logs, and with --stats it recalculates the host's stats, printed."""
+        if self.clear_logs:
+            print(f'Clearing {len(self.log_names)} logs (requires admin)...')
+            cleared, failed = clear_event_logs(self.log_names, progress_cb=lambda m: print(f'  {m}'))
+            return print(f'Done: {cleared} cleared, {failed} failed')
+        if self.stats:
+            print(f'Recalculating stats for {self.hostname} -> {self.stats_file}')
+            path = recalculate_stats(self.log_names, self.level, self.days, self.max_message_length, self.stats_file, self.hostname,
+                                     error_tracker=self.error_tracker, progress_cb=lambda m: print(f'  {m}'))
+            print(f'\nSaved: {path}')
+            for log_name, severities in dict_from_yml(path).get('logs', {}).items():
+                print(f"  {log_name.split('/')[-1]}: {', '.join(f'{sev}:{info['count']}' for sev, info in severities.items())}")
+            return None
+        return super().run(*args, **kwargs)
 
 
 if __name__ == '__main__':
-    main()
+    EventLogApp(config=MANIFEST).run()

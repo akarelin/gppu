@@ -1580,13 +1580,14 @@ class App(YInit, _Base, _DC):
         if isinstance(own, os.PathLike): own = dict_from_yml(own)
         elif isinstance(own, str): own = dict(yaml.load(own, Loader=YmlLoader))
         self.data |= jinja.configuration(deepcopy(dict(own)))
-        # .. the command line over it: --key value sets a key, a slash path a nested one, --flag sets it to True
+        # .. the command line over it: --key value sets a key, a slash path a nested one, to the value read as YAML, as
+        # .. configuration is (--days 30 is a number, --logs [System, Security] a list); --flag sets it to True
         argv, i = sys.argv[1:], 0
         while i < len(argv):
             arg, i = argv[i], i + 1
             if not arg.startswith('--') or len(arg) == 2: continue
             value = True
-            if i < len(argv) and not argv[i].startswith('--'): value, i = argv[i], i + 1
+            if i < len(argv) and not argv[i].startswith('--'): value, i = yaml.load(argv[i], Loader=YmlLoader), i + 1
             deepset(arg[2:], self.data, value)
 # endregion
 
