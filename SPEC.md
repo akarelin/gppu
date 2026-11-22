@@ -45,7 +45,7 @@
 - The code distinguishes when Jinja is resolved, and with which values.
 - The YAML reader reads YAML. Reading a script's inline configuration is not a feature of its own and has no export.
 - A script's manifest is read from its source file with a simple regex: a line or two, not pages of parsing code. The manifest sits within the first 4 kilobytes of a known executable file.
-- Loading scripts as menu items from the file system is a simple loader, as State's managers load a bunch of objects from a YAML list or from a folder. The manifest tells the loader how to list, execute or instantiate the script.
+- Loading scripts as menu items from the file system is a simple loader, as the runtime loads a bunch of objects from a YAML list or from a folder. The manifest tells the loader how to list, execute or instantiate the script.
 - Every use of YAML goes through the same parsing process, whatever the text comes from: a file, an include, a script's inline configuration, MQTT.
 
 ## State
