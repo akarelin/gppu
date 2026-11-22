@@ -172,8 +172,9 @@ class AsyncApp(App, YStart, mixin_EventLoopBridge):
   a key.
 
   Its objects are the rows of the list at its ``key``, each ``cls(data=row, parent=self)`` of the class its ``kind``
-  names in ``_supported_types``; its steps start and stop them. With a ``poll_interval`` it refreshes them one at a
-  time, each once per ``poll_interval``, starting ``poll_delay`` after it starts, in an order shuffled every round.
+  names in ``_supported_types``; its steps start and stop them. With a ``poll_interval`` and objects, it refreshes them
+  one at a time, each once per ``poll_interval``, starting ``poll_delay`` after it starts, in an order shuffled every
+  round, passing the poller's keywords to each refresh.
   """
   key: str
   poll_interval: int
@@ -200,12 +201,14 @@ class AsyncApp(App, YStart, mixin_EventLoopBridge):
     self._my_groups.append(self._supported_types[data['kind']](data=data, parent=self))
 
   def __start(self) -> None:
-    for group in self._my_groups: group.start()
-    if self.poll_interval: self.run_every(self._cb_poll, start=self.poll_delay, interval=self.poll_interval / len(self._my_groups))
+    for group in self._my_groups:
+      if isinstance(group, AsyncApp): self._spawn(group.run())   # .. a row that is an app runs as one, on this app's loop
+      else: group.start()
+    if self.poll_interval and self._my_groups: self.run_every(self._cb_poller, start=self.poll_delay, interval=self.poll_interval / len(self._my_groups))
 
-  def _cb_poll(self) -> None:
+  def _cb_poller(self, **data: Any) -> None:
     if not self._polled: self._polled = random.sample(self._my_groups, len(self._my_groups))
-    self._polled.pop().refresh()
+    self._polled.pop().refresh(**data)
 
   def run_later(self, callback: Callable[..., Any], *, delay: int | float, key: str | None = None, **data: Any) -> TimerHandle:
     if key is not None:
