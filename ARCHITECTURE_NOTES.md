@@ -141,6 +141,16 @@ Notes of an agent session, 2026-11-21. The first part is what Alex said in that 
 - A service that talks to MQTT, such as zwave-js, Insteon's MQTT or Z2, is configured on its own side to speak Alex's path format natively: paths and sensor topics formatted exactly as he likes. Nothing republishes from one topic to another, as zwjs.py does today, so every path is uniform.
 - For a given task the user never has to leave a single configuration file. Today the configuration is all over the place: Hue in more than one place, Kasa scattered, Homebridge impossible to take apart. Consolidating it by these rules makes the topology readable.
 
+## Presses and indicators
+- Incorrect triggering comes from code added to work around cases that the correct sequence of polls and callbacks would never produce. It is fixed by following that sequence and removing the workaround.
+- A press of a keypad button triggers its action exactly once. A button in the device's hardware scene already sends the command over the wire, and Y2 sends none for it.
+- An indicator shows its source: when the garage door sensor shows open, every button of its indicator is on. No button stays in the wrong position, because the system knows each button's state.
+- An indicator's state is retained like any other state, and a mechanism keeps the state of every button of an indicator matching the indicator.
+- A pressed button may be out of sync with the rest of its indicator for a few seconds: the action the press triggered takes time, and its feedback may come by a completely different path, such as power consumption. That is fine: the user pressed the button and sees it in the state he pressed it to.
+- That is what the poll is for: a button that stays out of sync after that time is brought back to its indicator.
+- A command to an indicator is sent to every button of the indicator.
+- A change of a source's state triggers a state refresh, and the refresh sends every notification due, one of them to the indicator. Whether a button needs a command is decided by that button's own state, not by the indicator's group state.
+
 ## UI
 - All objects are data classes with the same `self.data`, and state is lists and dicts of them, so any object can be displayed in a list by a UI that knows nothing about it.
 - A UI adds a layer: how to lay the elements out nicely for a given type of data class.
@@ -152,7 +162,7 @@ Notes of an agent session, 2026-11-21. The first part is what Alex said in that 
 ## The model breaks — decisions the structural rewrite needs (surfaced 2026-11-22, by the static reduction)
 These are where the one-shot stopped because the architecture as stated did not yet say what to do. Each is answered from what Alex said: items 1 and 8–11 from the environment, items 2–7 from runtime, objects and actions.
 1. **Env without `path`.** A program never reads the environment's file or folder. A folder a program writes to is named in configuration the way `Path` opens it, as Alex writes them (`trace_folder: /home/alex/IoT/_Creekview/generated`), and the program opens it with `Path`: Ecobee's and covers' generated folders are `Path(<configured value>)`.
-2. **Choosing an object's class without `kind`.** The section decides. An app makes the rows at its key with its one class (`AsyncApp._default`), so a row does not name its class. Where one manager holds two kinds today (Hue's lights and scenes; a GSM's groups, rooms and entities, picked by `_supported_types[data['kind']]`), each kind is a section of its own.
+2. **Choosing an object's class.** A row names its class in `class`, standardized from `kind`; a row without it gets the app's default class (`AsyncApp._default`).
 3. **The two relations between an object and its runtime.** The runtime either refreshes the object or routes events to it. A Tuya light is refreshed: it has its own connection and is polled on its app's `poll_interval`. An Insteon light gets its events routed to it: its hub reports, and a listener passes the message on. `AsyncApp` already has both, its poller and its listeners.
 4. **Timers: one Runtime's or each app's.** Each app's. Runtime is not a class, and an `AsyncApp` holds its own timers (`timers`, `h_timeouts`), which is what Y2's Supervisor counts.
 5. **`mixin_Rest` removed.** It is not removed: it is declared deprecated, and it stays until Y2's UI and the admin UI serve their objects through actions, which are what give a UI.
