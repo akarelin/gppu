@@ -11,7 +11,7 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 ## Step 1: gppu reduced statically (in progress)
 - [x] Logging is one `Logger`: the console, its colours and filter, and the trace rules; the file logging and `init_logger` are gone
 - [x] `mixin_Config` is the four readers over the object's data, `my`, `my_int`, `my_list` and `my_dict`, each read by programs
-- [x] `App`: an app's name is its class's; given no configuration it reads the section of the environment named as it is (Preservator), and an app with its own configuration is given its file or MANIFEST
+- [ ] `App`: an app is not made by passing it its own name. Its name is its class's, and given no configuration it reads the section named as it is (Preservator); App still takes a name passed to it, and the lake's and the Linked Data API's servers pass one
 - [x] The Jinja region: each public method has a user (`render_template`, `apply_template` and `jinja_template` in programs, `configuration` in Env and App, `jinja_fill` in the catalog)
 - [x] The old tracing block and `gppu/app.py`'s `TimerHandle`, `_Scheduler`, `_Runtime`, `state_changed` and `listen_topic_state` are gone
 - [x] `gppu` and `gppu.tui` export only what programs import from them; the rest stays in its module, unexported
