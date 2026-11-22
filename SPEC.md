@@ -69,7 +69,7 @@
 - An app is an assembly of mixins: `_Base` puts the basic two together, and an app picks async, TUI or whatever else it needs.
 - A simple CLI app has no code to find where it was started or where its configuration is, and invents no command line of its own; it is aware of the topology. Nothing passes paths to construct something, and nothing needs the user's home.
 - Every object is a `_DC`, and everything happens in its initialization lifecycle. Lifecycles interlock through a correct sequence of small, one-line initialization steps, and that sequence creates the whole functionality of the system; neither code nor configuration spells it out. The object hierarchy is shallow, from simplest to most complex, and each initialization sequence is short.
-- An object's `__init__` is final and no class overrides it: it takes the object's data and runs its lifecycle. A class adds its own private steps (`__init`, `__load`, `__start`, `__refresh`, `__publish`), a line or two each, and each step runs for every class from base to most specific, once. This is Y2's `YData` and `_YMRO` (`y2core.py` at `bd717a3`).
+- An object's `__init__` is final and no class overrides it: it takes the object's data and runs its lifecycle. A class adds its own private steps (`__init`, `__load`, `__start`, `__refresh`, `__publish`), a line or two each, and each step runs for every class from base to most specific, once. This is Y2's `YData` and `_YMRO` (`y2core.py` at `bd717a3`). The lifecycle classes keep their names there, `YInit`, `YLoad` and `YStart`, and no level of inheritance is added to them.
 - An object reads its configuration as `self.name`, never as `self.my('name')`. No app parses YAML text or reads a configuration it declared for itself, and no YAML file beside the code duplicates or contradicts it.
 - A list of objects, such as the hosts, is created by a loader from the environment, where it already is.
 - Configuration is done natively by `_DC`. `_my`, an alternative dictionary on every object, is never used.
@@ -81,7 +81,7 @@
 - Y2 uses Env; it has no environment of its own.
 - Y2's entity is part of gppu.
 - Y2 was originally part of gppu. Only entity support, the Y2 entity and below, is specific to Y2; everything else is generic and is gppu's, so Y2's own code is slim.
-- Y2's state manager, Y2 entity and Y2 group are one step on top of gppu, and they are correct. A class full of special cases, such as an AV device, stays a valid Y2 entity or group and never does what gppu does.
+- Y2's state manager, Y2 entity and Y2 group are one step on top of gppu, and they are correct. The state manager is one class, in `gppu.app`; nothing derives a second state manager from it. A class full of special cases, such as an AV device, stays a valid Y2 entity or group and never does what gppu does.
 
 ## Library and periphery
 - No functionality has two implementations. It is either gppu's, and every app uses it, or an app's own. An app that does its own thing is named and known, to be refactored later.
@@ -95,6 +95,7 @@
 - Code stays simple and clearly different from configuration.
 - Static code analysis works without observing a running app.
 - Exceptions are not swallowed.
+- Imports sit at the top of a module; no module is imported inside a function.
 - gppu is a class hierarchy of objects with all functionality in methods; it rarely exports standalone functions. A new standalone function needs significant justification.
 - Every new method or class is justified.
 - gppufs can have its own uri where it needs to extend y2uri.
