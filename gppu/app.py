@@ -10,6 +10,7 @@ import asyncio
 import heapq
 import inspect
 import os
+import random
 import threading
 import time
 from abc import abstractmethod
@@ -171,9 +172,12 @@ class AsyncApp(App, YStart, mixin_EventLoopBridge):
   a key.
 
   Its objects are the rows of the list at its ``key``, each ``cls(data=row, parent=self)`` of the class its ``kind``
-  names in ``_supported_types``; its steps start and stop them.
+  names in ``_supported_types``; its steps start and stop them. With a ``poll_interval`` it refreshes them one at a
+  time, each once per ``poll_interval``, starting ``poll_delay`` after it starts, in an order shuffled every round.
   """
   key: str
+  poll_interval: int
+  poll_delay: int
 
   _task_group: asyncio.TaskGroup | None
   _background_tasks: set[asyncio.Task[Any]]
@@ -189,6 +193,7 @@ class AsyncApp(App, YStart, mixin_EventLoopBridge):
     self.timers: dict[int, TimerHandle] = {}
     self.h_timeouts: dict[str, TimerHandle] = {}
     self._my_groups: list = []
+    self._polled: list = []
     for data in glob_list(self.key): self._add_group(data)
 
   def _add_group(self, data: dict) -> None:
@@ -196,6 +201,11 @@ class AsyncApp(App, YStart, mixin_EventLoopBridge):
 
   def __start(self) -> None:
     for group in self._my_groups: group.start()
+    if self.poll_interval: self.run_every(self._cb_poll, start=self.poll_delay, interval=self.poll_interval / len(self._my_groups))
+
+  def _cb_poll(self) -> None:
+    if not self._polled: self._polled = random.sample(self._my_groups, len(self._my_groups))
+    self._polled.pop().refresh()
 
   def run_later(self, callback: Callable[..., Any], *, delay: int | float, key: str | None = None, **data: Any) -> TimerHandle:
     if key is not None:
