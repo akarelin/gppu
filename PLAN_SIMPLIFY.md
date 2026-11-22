@@ -3,16 +3,27 @@
 Goal: gppu provides Env, State and Runtime, so Y2 only creates apps that share one State and one Env. Env is the global singleton app; it loads like any app and never initializes from itself. Alex's instructions are in [SPEC.md](SPEC.md).
 
 ## Construction and configuration (2026-11-21, in progress)
-Principles: no new verb or noun; gppu.py core shrinks; downstreams that never used gppu right shrink most; every feature rests on SPEC, not on a caller.
-- [ ] gppu master imports and its suite collects; baselines recorded for gppu, y2 and RAN/Hosts against this checkout
-- [ ] One YAML parsing process: every gppu parse goes through `YmlLoader`; `dict_from_yml` reads YAML only
-- [ ] A script's inline configuration: the app passes its `MANIFEST`; reading other scripts' manifests is the launcher's, unexported
-- [ ] App holds Env's and every app's loading; `mixin_Config` and `_Base` fold into it; Env is an App
-- [ ] Jinja region functions become methods of gppu's Jinja environment, under their present names
-- [ ] Swallowed exceptions in AI code removed
-- [ ] Y2: construction reads configuration through App and gppu templates; its own copies and base-object code shrink
-- [ ] Fleet and the Hosts tools read configuration through App
-- [ ] Creekview and RAN: repeats a loop or a named template produces; the loaded configuration is identical before and after
+Principles: no new verb or noun; gppu.py core shrinks; downstreams that never used gppu right shrink most; every feature rests on SPEC, not on a caller. Baselines, dumps and the checks' output are in `D:\Work\11\21\gppu-construction`.
+- [x] gppu master imports and its suite collects; baselines recorded for gppu, y2, IoT's TOD test and RAN/Hosts against this checkout and against 3.7.9: gppu 815 passed and none failing, where 3 failed and 12 files did not collect
+- [x] One YAML parsing process in gppu's core: AppService's MQTT payload, a sidecar's manifest, the config editor's validation and a script's manifest parse with `YmlLoader`, and `dict_from_yml` reads YAML only. gppufs's parses wait with gppufs
+- [x] A script's manifest is the YAML assigned to `MANIFEST` in its first 4 KB, taken by a regex in the one place where App loads a path: an app gives itself, `App(config=__file__)`, and the launcher loads each item through App. The launcher's parser for `.py`, `.cmd` and `.ps1` is gone (`test_inline_config`)
+- [x] Configuration is the `_DC`'s data and `_my` is gone: `mixin_Config` is the readers and `_Base` the assembly; App adds the one step that loads; Env is an App whose data is the environment, and takes `config=` as an app does. Creekview and RAN load identically before and after, and identically on 3.7.9
+- [x] `Env.init` is the two hard-coded environment paths and the load
+- [x] The Jinja region's functions are methods of gppu's Jinja environment under their present names; the exported names are bound to the one environment, as `glob` is to Env
+- [x] `Logger.enable_file_logging` is the one form Env calls, and says in place why it exists
+- [x] Y2 on this gppu: it gives Env a whole configuration through Env's init, its tests reset Env before they load Creekview, and it no longer sets `Env.app_path`. Its dry runtime is identical (776 entities, 1812 actions, 18 buttons, 121 indicators), and its suite passes in one process as it does file by file: 480 passed, the 2 known failures, where one process failed 139 and errored 115
+- [ ] Y2's objects load through the state manager's key loader, natively by `_DC`, with no constructor of their own
+  - Today they cannot: an entity given its row by `_DC`'s init alone holds its data and does not start (`native_load.py`: `'YGroup' object has no attribute '_eid'`). 14 classes initialize in `__init__` (YBasicEntity, YEntity, YGroup, YRoom, mixin_ColorLoop, HueScene, PowerViewHub, TuyaLight, SensiboAC, Insteon's IIndicator, IEntity and IDevice, and Y2's App and State), and 7 state managers loop over their own sections in place of the key loader (Hue, Z-Wave, Flume, ecobee, Nest, hosts, Insteon)
+  - Next: each constructor's body becomes its class's `__init` step, run at construction as AsyncApp runs it, checked against the dry runtime dump
+
+Independent and unscoped:
+- Y2's state managers read their rows through `_DC` accessors, with no `_key`, `poll_interval` or section copies
+- Swallowed exceptions in AI code
+- Fleet and the Hosts tools: what Fleet copies from the environment (`hosts` over `ssh`), and `Fleet.values`
+- Creekview and RAN repeats, by named templates and the loader's key and parameters, not loops
+- Every app takes the command line by default: App takes `argv` only when it is given
+- Error handling around logging goes: `dict_to_yml`'s and `dict_to_json`'s error files, which `Logger.Dump` reaches
+- One MQTT connection: MqttApp's own `connection` key, and Creekview's seven repeated `connection:` blocks
 
 ## Env
 - [x] App declares `environment='Hosts'` or `environment='IoT'`; `Env.init` selects the corresponding YAML file under `D:\Dev` on Windows and the home folder elsewhere. Basic runs with Hosts
@@ -91,6 +102,10 @@ These move in the same commit as the release. gppu 3.7.7 is released and alex-pc
 - Every `Env.from_env` caller in RAN, CRAP, IoT and Y2, and the "Configuration without an app" line in the global CLAUDE.md that names `Env.from_env`
 - Every reader of `Env.data`, which is `Env._my` now, reads `glob_dict('')`: lake's `graph_configuration.py` and `m365/config.py`, display-control and its Intune scripts, and the Preservator, Session Manager and FileIndexer tests
 
+- The Hosts launcher: `mapper.cmd` and `tray-control.ps1` carry their manifest as `::` lines and as `.NOTES`, which gppu master does not read, so on the next release the Hosts TUI stops at `mapper.cmd: no MANIFEST in its first 4 KB` and RAN's `test_tui` fails as it does on master today. They need a manifest the regex reads, or a sidecar, before that release; which one is Alex's to decide
+- y2 main needs the gppu after 3.7.9 (`y2/NOTE_gppu-rebuild-261121.md`)
+- A caller of `Logger.enable_file_logging(name, log_dir=...)`, of `mixin_Config._config_load` or of `Env._my`: none is left in gppu, y2 or RAN/Hosts
+
 ## Found outside this task
 - Hosts: `configs.py`'s and `start-page.py`'s `load_config` read `fleet.platforms`, which Fleet has not had since 2026-09-30
 - Hosts: `hosts.yaml` lost s1's, s9's and yellow's `mount` in the move to `RAN/_config`, so `server_mounts` rendered `None/Lake` and the like; the three lines are back (RAN b071600bb)
@@ -106,3 +121,10 @@ These move in the same commit as the release. gppu 3.7.7 is released and alex-pc
 - IoT: Creekview's `generated/i1-scenes.yaml` still links the AO lamps to AO Pendant, which Creekview's scenes dropped on 2026-11-01; that day's commit edited the file by hand rather than compiling it
 - gppu examples: their `MANIFEST` names `D:/TextLake/.catalog`, which has no host folder, so `handler_ls` and the handler browser stop there
 - w11: with `W11_APP_DIR` unset, the launcher reads its 2026-03-16 copies in `~/.gppu/w11`, not the repository's scripts; `w11/default_config/w11.yaml`, which seeds them, still names the deleted `w11-events.yaml` and `w11-onedrive.yaml`
+- gppufs: its YAML does not go through the one parsing process: `fs/catalog.py` reads the catalog's sources, a host's `replicas.yaml` and its `locations.yaml` with `yaml.safe_load`, `fs/__init__.py` a container's merge rules, and `fs/handlers.py` Markdown frontmatter with a loader of its own
+- Linked Data's tests: `tests/test_ld.py` and conftest's `ld` fixture read `Env._my` and call the removed `Env._load_dict`; RAN `Systems/ld/fileindexer/tests` set `Env._my`
+- Y2: `news/news.py` reads its configuration in `setup`, which no step calls, and Creekview has no `news` section
+- Y2: `ui/data.py` copies `ui/ui` into its own data, because `ui.yaml` nests a `ui:` key inside the `ui` section
+- RAN: `_config/config.yaml`'s `server_mounts` is statement Jinja, a `{% for %}` over six locations, and `topology/locations.yaml`'s `sessionfolder` opens with a `{% set %}`
+- gppu: handlers that turn a failure into a value, none changed: `mixin_Rest._born` (TypeError to an empty string), `mixin_Mqtt`'s offline publish on disconnect and its JSON decode of a payload, `HTTPControl` and `JSONHTTPControl` (a failed request or a body that is not JSON to None, which Y2's callers branch on), `Vault`'s provider probe
+- The scripts that still call the removed `Env.from_env`, `Env.from_dict`, `Env._load_dict` or read `Env.data`, about 110 in CRAP, IoT's CCTV-detective and RAN's Systems and Skills; CRAP's `prior/` trees; CRAP's `_Base` and `_PGBase` users, which keep both
