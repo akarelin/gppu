@@ -456,13 +456,15 @@ class Cache:
 
 # region Persistence backends for _PersistentDC
 #
-# Backend interface (duck-typed):
-#   upsert(cls: str, key: str, data: dict) -> None
-#   load(cls: str, key: str) -> dict | None
-#   delete(cls: str, key: str) -> None
-#   close() -> None
-#
-# All backends namespace storage by (cls, key) pair.
+# region - backend interface
+# .. Backend interface (duck-typed):
+# ..   upsert(cls: str, key: str, data: dict) -> None
+# ..   load(cls: str, key: str) -> dict | None
+# ..   delete(cls: str, key: str) -> None
+# ..   close() -> None
+# ..
+# .. All backends namespace storage by (cls, key) pair.
+# endregion
 
 class _JsonPersistBackend:
   """JSON-file backend. One file, nested dict {cls: {key: data}}. No deps."""

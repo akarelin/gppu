@@ -42,12 +42,14 @@ class GppuIndexedFileSystem(AbstractFileSystem):
     def __init__(self, index: str | Path):
         super().__init__()
         self.index = Path(index)
-        # A colocated index moves or syncs with its folder. A provenance-named
-        # snapshot is only an index; its parent is not the original data root.
+        # region - colocated index
+        # .. A colocated index moves or syncs with its folder. A provenance-named
+        # .. snapshot is only an index; its parent is not the original data root.
+        # endregion
         self.source = GppuFileSystem() if self.index.name.startswith('.') else None
-        self.root = self.index.parent.as_posix()   # the folder the index is beside, which its paths are below
-        self._paths: dict[str, str] = {}  # display name -> original relative path; metadata stays in SQLite
-        self._stamp, self._aliases = None, {}   # the index file's modified time and size when its names were read
+        self.root = self.index.parent.as_posix()   # .. the folder the index is beside, which its paths are below
+        self._paths: dict[str, str] = {}  # .. display name -> original relative path; metadata stays in SQLite
+        self._stamp, self._aliases = None, {}   # .. the index file's modified time and size when its names were read
         self._uri = self.index.as_uri()
         if self.index.anchor.startswith('\\\\'):
             self._uri = self._uri.replace('file://', 'file:////', 1)
@@ -61,16 +63,16 @@ class GppuIndexedFileSystem(AbstractFileSystem):
 
     def _names(self, database):
         stamp = self.index.stat()
-        if (stamp.st_mtime_ns, stamp.st_size) == self._stamp:   # the index has not changed since its names were read
+        if (stamp.st_mtime_ns, stamp.st_size) == self._stamp:   # .. the index has not changed since its names were read
             return self._aliases
-        # what the handlers call ignored is not listed, as gppufs lists it nowhere; an index written before that still holds it
+        # .. what the handlers call ignored is not listed, as gppufs lists it nowhere; an index written before that still holds it
         paths = [path for path, handlers in database.execute(
             "SELECT path, json_extract(metadata, '$.gppu.handlers') FROM gppufs_entries"
             " WHERE json_extract(metadata, '$.type') = 'file' ORDER BY path")
             if not set(json.loads(handlers or '[]')) & set(IGNORED)]
         paths = [path for path in paths if not path.endswith(('.gppufs.sqlite', '.gppufs.sqlite-wal', '.gppufs.sqlite-shm'))]
         parts = {path: self._parts(path) for path in paths}
-        # a file is named by the fewest folders nearest it that tell it apart from every other, ignoring case as Windows does
+        # .. a file is named by the fewest folders nearest it that tell it apart from every other, ignoring case as Windows does
         named, pending, depth = {}, paths, 1
         while pending:
             tails = Counter(tuple(part.casefold() for part in parts[path][-depth:]) for path in pending)
@@ -84,7 +86,7 @@ class GppuIndexedFileSystem(AbstractFileSystem):
         aliases = {}
         for path in paths:
             name = named[path]
-            if len(name) > 255:   # a Windows name holds 255 characters: the end nearest the file is kept
+            if len(name) > 255:   # .. a Windows name holds 255 characters: the end nearest the file is kept
                 name = '…' + name[-254:]
             if name.casefold() in aliases:
                 raise ValueError(f'{self.index}: indexed names collide on Windows: {name}')
@@ -144,9 +146,9 @@ class GppuIndexedFileSystem(AbstractFileSystem):
         if self.source is None:
             raise FileNotFoundError(f'{self.index}: this index snapshot has no bound original source for {path}')
         member, _, archive = self._relative(path).partition('::')
-        if archive:   # the member, read from its archive in the location; an archive that is not there is not found
+        if archive:   # .. the member, read from its archive in the location; an archive that is not there is not found
             files, inside = fsspec.core.url_to_fs(f"{member}::{self.root.rstrip('/')}/{archive}")
-            return io.BytesIO(files.cat_file(inside))   # whole: the archive closes when its filesystem goes
+            return io.BytesIO(files.cat_file(inside))   # .. whole: the archive closes when its filesystem goes
         return self.source.open(self.root.rstrip('/') + '/' + member, mode=mode, **kwargs)
 
 
@@ -155,7 +157,7 @@ def indexes(files: GppuFileSystem, folder: str):
     try:
         rows = files.fs.ls(folder, detail=True)
     except PermissionError:
-        return   # a folder this account cannot list holds no index it could read, as gppufs's _index_at says
+        return   # .. a folder this account cannot list holds no index it could read, as gppufs's _index_at says
     for row in rows:
         if row['type'] == 'file' and row['name'].endswith('.gppufs.sqlite'):
             yield Path(row['name'])
@@ -187,12 +189,12 @@ class DesktopFileSystem(AbstractFileSystem):
         if len({name.casefold() for name in sources}) != len(sources):
             raise ValueError('desktop source names must be distinct on Windows')
         self.sources = {name: fsspec.core.url_to_fs(source) if isinstance(source, str) else (source, '')
-                        for name, source in sources.items()}   # each its filesystem and the folder shown
+                        for name, source in sources.items()}   # .. each its filesystem and the folder shown
         self.indexed: dict[str, GppuIndexedFileSystem] = {}
         self._index_paths: set[str] = set()
-        # a listed folder, as shown -> each name shown in it -> the real path it stands for, or the thing it is
+        # .. a listed folder, as shown -> each name shown in it -> the real path it stands for, or the thing it is
         self._shown_as: dict[str, dict[str, str | Thing]] = {}
-        self._rows: dict[str, dict] = {}   # an entry a partitioned folder or a thing shows, as shown -> its row as listed
+        self._rows: dict[str, dict] = {}   # .. an entry a partitioned folder or a thing shows, as shown -> its row as listed
 
     def _discover(self, fs, folder, name):
         if not fs.fs.isdir(folder):
@@ -211,7 +213,7 @@ class DesktopFileSystem(AbstractFileSystem):
             if not isinstance(fs, GppuFileSystem):
                 continue
             self._discover(fs, root, name)
-            for row in fs.ls(root):   # gppufs's listing: an ignored folder, a junction or a link is not entered
+            for row in fs.ls(root):   # .. gppufs's listing: an ignored folder, a junction or a link is not entered
                 if row['gppu']['type'] == 'folder' and not set(row['gppu']['handlers']) & set(IGNORED):
                     child = PurePosixPath(row['gppu']['path'].replace('\\', '/')).name
                     self._discover(fs, posixpath.join(root, child), name + ' › ' + child)
@@ -242,7 +244,7 @@ class DesktopFileSystem(AbstractFileSystem):
         if name is None:
             raise FileNotFoundError(path)
         fs, root = self.sources[name]
-        if not isinstance(fs, GppuFileSystem):   # a source served by an API: its paths are its own
+        if not isinstance(fs, GppuFileSystem):   # .. a source served by an API: its paths are its own
             return fs, '/'.join(parts[1:])
         if len(parts) == 1:
             return fs, root
@@ -341,7 +343,7 @@ class DesktopFileSystem(AbstractFileSystem):
         """The row as Windows is given it: its times in seconds, as gppufs reads a row's time. An archive member's index row
         holds it as text, which fusepy cannot give Windows, and Windows leaves out the entry. An entry whose handler read its
         span, such as a session, is created at its start and modified at its end, so Windows' date columns show its span."""
-        span = GppuFileSystem._span(row.get('gppu', {}).get('record', {}).get('span'))   # an older index's row has no gppu
+        span = GppuFileSystem._span(row.get('gppu', {}).get('record', {}).get('span'))   # .. an older index's row has no gppu
         modified = span.end if span else _modified(row)
         created = span.start.timestamp() if span else row.get('created')
         result = {key: value for key, value in row.items() if key not in ('mtime', 'created')} | {'name': name}
@@ -350,7 +352,7 @@ class DesktopFileSystem(AbstractFileSystem):
 
     @classmethod
     def _row(cls, row, name):
-        # Archive bytes are files to fsspec, but gppufs declares them navigable.
+        # .. Archive bytes are files to fsspec, but gppufs declares them navigable.
         result = cls._seconds(row, name)
         if row['gppu']['is_container']:
             result.update(type='directory', size=0)
@@ -368,7 +370,7 @@ class DesktopFileSystem(AbstractFileSystem):
         fs, real = self._real(path)
         if not isinstance(fs, GppuFileSystem):
             return fs.info(real) | {'name': '/' + '/'.join(parts)}
-        if (listed := self._rows.get(('/' + '/'.join(parts)).casefold())) is not None:   # as the folder's listing showed it
+        if (listed := self._rows.get(('/' + '/'.join(parts)).casefold())) is not None:   # .. as the folder's listing showed it
             return listed | {'name': '/' + '/'.join(parts)}
         return self._row(fs.info(real), '/' + '/'.join(parts))
 
@@ -382,7 +384,7 @@ class DesktopFileSystem(AbstractFileSystem):
                 rows = [self.info('/Indexed/' + name) for name in self.indexed]
             else:
                 fs, relative = self._index_view(parts)
-                if not detail:   # names alone, as Windows asks a listing: no row's metadata is read for it
+                if not detail:   # .. names alone, as Windows asks a listing: no row's metadata is read for it
                     return ['/Indexed/' + parts[1] + name for name in fs.ls(relative, detail=False)]
                 rows = [self._seconds(row, '/Indexed/' + parts[1] + row['name']) for row in fs.ls(relative)]
         elif not isinstance((found := self._real(path))[0], GppuFileSystem):

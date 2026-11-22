@@ -33,26 +33,32 @@ from ..gppu import TimeSpan, full_path, uuid_create, Warn
 from . import handlers, CACHE, UNSAFE, _display_order, _metadata_text, _modified, _probe_name, _scratch
 
 
-# The most an index holds before the folder below it holding the most of it gets an index of its own (Alex's proposal of
-# 2026-10-21, D:\Work\10\21\gppufs-index-size): about 28,000 entries at the 2.3 KB each D:'s index measured (419,042 entries
-# in 958 MB), well above every other index on alex-pc, the largest of which held 27 MB.
+# region - ^^ index size
+# ^^ The most an index holds before the folder below it holding the most of it gets an index of its own (Alex's proposal of
+# ^^ 2026-10-21, D:\Work\10\21\gppufs-index-size): about 28,000 entries at the 2.3 KB each D:'s index measured (419,042 entries
+# ^^ in 958 MB), well above every other index on alex-pc, the largest of which held 27 MB.
+# endregion
 INDEX_LIMIT = 64 * 2**20
 
-# The rows a refresh writes at a time: what it holds in memory beside the folder it is reading. At about 2.3 KB a row, as D:'s
-# index measured, a batch is a few megabytes.
+# region - refresh batch
+# .. The rows a refresh writes at a time: what it holds in memory beside the folder it is reading. At about 2.3 KB a row, as D:'s
+# .. index measured, a batch is a few megabytes.
+# endregion
 BATCH = 1000
 
-# The filesystems a Linux host mounts another host's folders with: such a folder is not this host's to write an index in.
+# .. The filesystems a Linux host mounts another host's folders with: such a folder is not this host's to write an index in.
 NETWORK_FILESYSTEMS = ('cifs', 'smb3', 'smbfs', 'nfs', 'nfs4', 'afpfs', 'fuse.sshfs')
 
 
-# A folder's address -> the index it holds, asked of its store once in this process: every gppufs here reads it, and
-# records the index it makes, moves or removes.
+# region - indexes held
+# .. A folder's address -> the index it holds, asked of its store once in this process: every gppufs here reads it, and
+# .. records the index it makes, moves or removes.
+# endregion
 _INDEXES: dict[str, str | None] = {}
 
-# What git leaves out of a repository an index is written in: gppufs's index files and SQLite's companions to them.
+# .. What git leaves out of a repository an index is written in: gppufs's index files and SQLite's companions to them.
 GIT_EXCLUDE = '*.gppufs.sqlite*'
-_EXCLUDED: set[str] = set()   # the folders whose indexes this process has seen to, in a repository or in none
+_EXCLUDED: set[str] = set()   # .. the folders whose indexes this process has seen to, in a repository or in none
 
 
 def _excluded_from_git(folder: str) -> None:
@@ -85,7 +91,7 @@ def _remote(root: str) -> bool:
     return True
   if os.name == 'nt':
     drive = PureWindowsPath(root).drive
-    return bool(drive) and ctypes.windll.kernel32.GetDriveTypeW(drive + '\\') == 4   # DRIVE_REMOTE
+    return bool(drive) and ctypes.windll.kernel32.GetDriveTypeW(drive + '\\') == 4   # .. DRIVE_REMOTE
   mounts = Path('/proc/self/mounts')
   if not mounts.exists():
     return False
@@ -157,14 +163,16 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
   """
 
   protocol = 'gppu'
-  cachable = False   # one gppufs for each filesystem it wraps, kept by __new__, whatever spelling asks for it
+  cachable = False   # .. one gppufs for each filesystem it wraps, kept by __new__, whatever spelling asks for it
   _index_name = re.compile(r'^\..+\.gppufs\.sqlite(?:-(?:journal|wal|shm))?$')
-  # The folders directly below an index's own, the one holding the most of it first: what a split moves (`_bound`).
+  # .. The folders directly below an index's own, the one holding the most of it first: what a split moves (`_bound`).
   _largest = '''SELECT top FROM (SELECT substr(path, 1, instr(path, '/') - 1) AS top,
         sum(length(metadata) + coalesce(length(children), 0)) AS held FROM gppufs_entries WHERE instr(path, '/') > 0 GROUP BY top)
     WHERE top NOT IN (SELECT path FROM gppufs_entries WHERE metadata->>'$.type' <> 'directory') ORDER BY held DESC LIMIT 1'''
-  # A folder's rows moved from the owner's index into the folder's own, their paths and the paths in their listings made
-  # relative to the folder (`_split`).
+  # region - split
+  # .. A folder's rows moved from the owner's index into the folder's own, their paths and the paths in their listings made
+  # .. relative to the folder (`_split`).
+  # endregion
   _moved = '''INSERT INTO gppufs_entries SELECT at, json_set(metadata, '$.name', at, '$.gppu.path', at),
       CASE WHEN children IS NULL THEN NULL ELSE (SELECT json_group_array(json(json_set(value, '$.path',
         CASE WHEN value->>'$.path' = :here THEN '.' ELSE substr(value->>'$.path', :cut) END)))
@@ -172,10 +180,10 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
     FROM (SELECT CASE WHEN path = :here THEN '.' ELSE substr(path, :cut) END AS at, metadata, children
       FROM owner.gppufs_entries WHERE path = :here OR substr(path, 1, :cut - 1) = :prefix) WHERE true
     ON CONFLICT(path) DO UPDATE SET metadata=excluded.metadata, children=excluded.children'''
-  # A row written again keeps the id its file was given when it was first written.
+  # .. A row written again keeps the id its file was given when it was first written.
   _upsert = '''INSERT INTO gppufs_entries VALUES (?, ?, ?) ON CONFLICT(path) DO UPDATE SET metadata=json_set(excluded.metadata,
     '$.gppu.id', coalesce(gppufs_entries.metadata->>'$.gppu.id', excluded.metadata->>'$.gppu.id')), children=excluded.children'''
-  # The folders below that hold an index of their own: a listing here names them, and their rows are in their own index.
+  # .. The folders below that hold an index of their own: a listing here names them, and their rows are in their own index.
   _nested = '''SELECT DISTINCT child.value->>'$.path' FROM gppufs_entries, json_each(gppufs_entries.children) AS child
     WHERE child.value->>'$.type' = 'directory' AND child.value->>'$.path' NOT IN (SELECT path FROM gppufs_entries)'''
   _aggregate = f'''SELECT count(*) FILTER (WHERE kind='folder'), count(*) FILTER (WHERE kind='file'),
@@ -204,7 +212,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
     """cache: folders whose index is kept in the cache, not beside them. A folder is kept there whoever names it: the one gppufs
     keeps every folder any of its users names, its index found anew under the cache. catalog: the address of the catalog's API,
     set by whoever names it first; another address for the one gppufs raises."""
-    if self._cached:   # the one gppufs, made already
+    if self._cached:   # .. the one gppufs, made already
       with self._lock:
         self._reach(catalog)
         for folder in [self._key(folder) for folder in cache or ()]:
@@ -216,24 +224,26 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
     super().__init__(**kwargs)
     self.fs = fs if fs is not None else filesystem(target_protocol or 'file', **(target_options or {}))
     self._lock = RLock()
-    # Only the host a folder belongs to writes its index: an index file is written only on this host's own disk. Another
-    # host's share and every other store hold theirs in memory, read from the store and never written back.
+    # region - who writes an index
+    # .. Only the host a folder belongs to writes its index: an index file is written only on this host's own disk. Another
+    # .. host's share and every other store hold theirs in memory, read from the store and never written back.
+    # endregion
     self._cache = [self._key(folder) for folder in cache or ()]
-    self._cache_held: dict[str, bool] = {}   # whether the cache holds the index of a folder kept there, asked once
-    self._memory: dict[str, sqlite3.Connection] = {}   # an index held in memory or in the cache, by its folder
-    self._tabled: set[str] = set()   # the held indexes known to have their tables, asked of each once
-    self._working: dict[str, list] = {}   # an index's path -> [its copy in the cache, the file it was copied from, changed]
-    self._scratch: tempfile.TemporaryDirectory | None = None   # where the copies are, made at the first write
-    self._copies = 0                 # how many copies were made there
-    self._running = 0                # how many runs are open: their writes reach the folders when the last one ends
-    self.catalog: AbstractFileSystem | None = None   # the catalog's file system, with its address
+    self._cache_held: dict[str, bool] = {}   # .. whether the cache holds the index of a folder kept there, asked once
+    self._memory: dict[str, sqlite3.Connection] = {}   # .. an index held in memory or in the cache, by its folder
+    self._tabled: set[str] = set()   # .. the held indexes known to have their tables, asked of each once
+    self._working: dict[str, list] = {}   # .. an index's path -> [its copy in the cache, the file it was copied from, changed]
+    self._scratch: tempfile.TemporaryDirectory | None = None   # .. where the copies are, made at the first write
+    self._copies = 0                 # .. how many copies were made there
+    self._running = 0                # .. how many runs are open: their writes reach the folders when the last one ends
+    self.catalog: AbstractFileSystem | None = None   # .. the catalog's file system, with its address
     self._reach(catalog)
 
   def _reach(self, catalog: str | None) -> None:
     if catalog is None:
       return
     if self.catalog is None:
-      from .catalog import CatalogFileSystem   # the catalog's module imports gppufs
+      from .catalog import CatalogFileSystem   # .. the catalog's module imports gppufs
       self.catalog = CatalogFileSystem(catalog)
       self._catalog = catalog
     elif catalog != self._catalog:
@@ -279,24 +289,26 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
 
   def _index_at(self, folder: str) -> str | None:
     expected = self._database_path(folder)
-    if self.fs.isfile(expected) and self.fs.size(expected):   # an empty file is what an open the store refused leaves
+    if self.fs.isfile(expected) and self.fs.size(expected):   # .. an empty file is what an open the store refused leaves
       if isinstance(self.fs, LocalFileSystem) and os.name == 'nt':
         actual_name = Path(expected).resolve(strict=True).name
         if actual_name != PurePosixPath(expected).name:
           self.fs.mv(str(PurePosixPath(folder) / actual_name), expected)
       return expected
     if not isinstance(self.fs, LocalFileSystem):
-      # Recovering an index that was renamed means renaming it back, which a store gppufs cannot
-      # write to will not do. There the index is the file named for the folder or nothing at all:
-      # a synced OneDrive carries the index files of the host that syncs it, and those belong to
-      # that host's Locations rather than to this one.
+      # region - renamed index on a store gppufs cannot write
+      # .. Recovering an index that was renamed means renaming it back, which a store gppufs cannot
+      # .. write to will not do. There the index is the file named for the folder or nothing at all:
+      # .. a synced OneDrive carries the index files of the host that syncs it, and those belong to
+      # .. that host's Locations rather than to this one.
+      # endregion
       return None
     if not self.fs.isdir(folder):
       return None
     try:
       entries = self.fs.ls(folder, detail=True)
     except PermissionError:
-      return None  # A folder this account cannot list holds no index it could read.
+      return None  # .. A folder this account cannot list holds no index it could read.
     candidates = [item['name'] for item in entries
       if item['type'] == 'file' and item['size'] and item['name'].endswith('.gppufs.sqlite')
       and self._index_name.fullmatch(PurePosixPath(item['name']).name)]
@@ -308,7 +320,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
       local = isinstance(self.fs, LocalFileSystem)
       uri = Path(path).as_uri() if local else ':memory:'
       if local and Path(path).anchor.startswith('\\\\'):
-        uri = uri.replace('file://', 'file:////', 1)  # SQLite requires an empty authority for a UNC path.
+        uri = uri.replace('file://', 'file:////', 1)  # .. SQLite requires an empty authority for a UNC path.
       with closing(sqlite3.connect(uri + '?mode=ro' if local else uri, uri=local)) as database:
         if not isinstance(self.fs, LocalFileSystem):
           database.deserialize(self.fs.cat_file(path))
@@ -316,7 +328,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
       if row is not None and (identity is None or row[0] == identity):
         matches.append(path)
     if not matches:
-      return None  # A copied index belongs to its original folder, not this folder's inode.
+      return None  # .. A copied index belongs to its original folder, not this folder's inode.
     if len(matches) != 1:
       raise ValueError(f'{folder}: cannot identify a unique index after rename')
     self.fs.mv(matches[0], expected)
@@ -438,7 +450,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
       database.execute('INSERT INTO gppufs_index VALUES (?)', (self.fs.info(self._path(owner)).get('ino'),))
     database.execute('CREATE TABLE IF NOT EXISTS gppufs_entries ('
       'path TEXT PRIMARY KEY, metadata TEXT NOT NULL, children TEXT)')
-    if database.execute('PRAGMA user_version').fetchone()[0] < 2:   # a row is an instance: one without its id, or with a file's, is given an instance's
+    if database.execute('PRAGMA user_version').fetchone()[0] < 2:   # .. a row is an instance: one without its id, or with a file's, is given an instance's
       database.create_function('instance_id', 0, lambda: str(uuid_create(0x1003)))
       database.execute("UPDATE gppufs_entries SET metadata=json_set(metadata, '$.gppu.id', instance_id()) WHERE coalesce(metadata->>'$.gppu.id', '') NOT LIKE '1003%'")
       database.execute('PRAGMA user_version = 2')
@@ -526,7 +538,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
     if seen is not None:
       shutil.copyfile(held, copy)
     self._working[path] = [copy, seen, False, owner]
-    _INDEXES[self.fs.unstrip_protocol(self._path(owner))] = path   # gppufs holds it: known without asking the store
+    _INDEXES[self.fs.unstrip_protocol(self._path(owner))] = path   # .. gppufs holds it: known without asking the store
     return copy
 
   def _fresh(self) -> str:
@@ -543,14 +555,14 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
     if not changed:
       return
     if os.path.lexists(path) and not os.path.isfile(path):
-      return self._hold(path)   # something else is where the index would go
+      return self._hold(path)   # .. something else is where the index would go
     if _signature(path) != taken:
       raise RuntimeError(f'{path}: changed in its folder while this instance held writes to put into it')
     folder = os.path.dirname(path)
     try:
       staged = tempfile.NamedTemporaryFile(dir=folder, prefix='.', suffix='.pending', delete=False)
     except PermissionError:
-      return self._hold(path)   # a folder this account cannot write
+      return self._hold(path)   # .. a folder this account cannot write
     _excluded_from_git(folder)
     with staged:
       pending = Path(staged.name)
@@ -580,7 +592,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
     with closing(sqlite3.connect(copy)) as written:
       written.backup(database)
     self._memory[owner] = database
-    _INDEXES[self.fs.unstrip_protocol(self._path(owner))] = None   # the folder holds none: no other instance takes it to own what is below
+    _INDEXES[self.fs.unstrip_protocol(self._path(owner))] = None   # .. the folder holds none: no other instance takes it to own what is below
 
   def _put_all(self, key: str | None = None) -> None:
     """Every index this instance wrote at and below key, or every one, put into its folder, the deepest first: an index is
@@ -641,7 +653,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
     index of its own (`_split`), and the same holds again in that one, so however large a folder, an index is larger
     than the limit only by one folder's own entries. Only an index this host writes is bounded."""
     if self._database_path(self._path(owner)) not in self._working:
-      return   # an index this instance holds in memory, or has not written
+      return   # .. an index this instance holds in memory, or has not written
     while True:
       with self._database(owner) as database:
         if database is None:
@@ -661,7 +673,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
     so owner's copies of them, which nothing reads, are dropped and not moved again."""
     here = self._relative(folder, owner)
     with self._database(owner, write=True):
-      pass   # owner's copy in the cache, which the rows move from inside SQLite, none of them read into memory
+      pass   # .. owner's copy in the cache, which the rows move from inside SQLite, none of them read into memory
     if self._existing_index(self._path(folder)) is None:
       with self._database(folder, write=True) as database:
         database.commit()
@@ -674,7 +686,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
     with self._database(owner, write=True) as database:
       database.execute('DELETE FROM gppufs_entries WHERE path=? OR substr(path,1,?)=?', (here, len(here) + 1, here + '/'))
       database.commit()
-      database.execute('VACUUM INTO ?', (compact,))   # the file is then the size of what it holds, not of what it held
+      database.execute('VACUUM INTO ?', (compact,))   # .. the file is then the size of what it holds, not of what it held
     os.remove(self._working[index][0])
     self._working[index][0] = compact
 
@@ -735,7 +747,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
         if database is None:
           continue
         paths = list(relative)
-        for start in range(0, len(paths), 900):   # SQLite takes at most 999 parameters in one statement
+        for start in range(0, len(paths), 900):   # .. SQLite takes at most 999 parameters in one statement
           chunk = paths[start:start + 900]
           for path, *row in database.execute('SELECT path, metadata, children FROM gppufs_entries WHERE path IN '
                                              f'({",".join("?" * len(chunk))})', chunk):
@@ -759,8 +771,10 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
         raise FileNotFoundError(key)
       return cached[0]
 
-    # Keep ancestor totals consistent with the refreshed subtree and cached siblings.
-    # Archive members do not change their physical archive's byte count, and an ignored file parses to nothing.
+    # region - totals
+    # .. Keep ancestor totals consistent with the refreshed subtree and cached siblings.
+    # .. Archive members do not change their physical archive's byte count, and an ignored file parses to nothing.
+    # endregion
     if not in_archive and scope in rows:
       child = scope
       key = scope
@@ -792,7 +806,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
       grouped[owner].append((self._relative(key, owner), json.dumps(value, default=_metadata_text),
         None if listing is None else json.dumps([
           {**child, 'path': self._relative(child['path'], owner)} for child in listing])))
-    # Publish descendant databases before the listing which references them.
+    # .. Publish descendant databases before the listing which references them.
     with self.run():
       for owner in sorted(grouped, key=lambda item: len(PurePosixPath(item).parts), reverse=True):
         with self._database(owner, write=True) as database:
@@ -817,9 +831,11 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
     if not folders:
       return False
     listed = [row for row in self.fs.ls(self._path(key), detail=True) if row['type'] == 'directory']
-    # A local directory scan reports no inode on Windows and rename recovery needs one, so each
-    # folder is asked about; a store that lists enough already said it, and asking again is a round
-    # trip per folder per listing.
+    # region - inode on Windows
+    # .. A local directory scan reports no inode on Windows and rename recovery needs one, so each
+    # .. folder is asked about; a store that lists enough already said it, and asking again is a round
+    # .. trip per folder per listing.
+    # endregion
     live = listed if not isinstance(self.fs, LocalFileSystem) else [self.fs.info(row['name']) for row in listed]
     changed = False
     owner = self._owner(key)
@@ -852,11 +868,11 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
     return changed
 
   def _inventory(self, fs: AbstractFileSystem, root: str) -> dict[str, dict]:
-    # fsspec's archive info omits an empty archive root; it is still listable.
+    # .. fsspec's archive info omits an empty archive root; it is still listable.
     native = {root: {'name': root, 'type': 'directory', 'size': 0}
       if isinstance(fs, AbstractArchiveFileSystem) and root in ('', '/') else fs.info(root)}
     local = isinstance(fs, LocalFileSystem)
-    linked = lambda item: item.get('islink') or (local and os.path.isjunction(item['name']))   # a junction is a link fsspec does not see
+    linked = lambda item: item.get('islink') or (local and os.path.isjunction(item['name']))   # .. a junction is a link fsspec does not see
     if native[root]['type'] != 'directory' or linked(native[root]):
       return native
     if _probe_name(PurePosixPath(root).name, True).type == 'ignored':
@@ -867,7 +883,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
           native[item['name'].rstrip('/')] = fs.info(item['name'])
       for name in tuple(directories):
         if _probe_name(PurePosixPath(name).name, True).type == 'ignored' or linked(directories[name]):
-          del directories[name]   # listed, never entered: a link or a junction is not followed
+          del directories[name]   # .. listed, never entered: a link or a junction is not followed
     return native
 
   def _live(self, key: str, *, container: bool = False) -> None:
@@ -909,7 +925,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
             fs.get_file(name, str(copy))
             record = handler.parse(copy)
             record.meta['size'] = int(item.get('size') or 0)
-          except Exception as error:   # the parse records what it could not read and goes on
+          except Exception as error:   # .. the parse records what it could not read and goes on
             unread = f'{handler.__name__}: {type(error).__name__}: {error}'
             Warn(f'{address}: {unread}')
       children = [found for child in sorted(below.get(name, ()), key=lambda child: (
@@ -940,10 +956,10 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
       if not archive.casefold().endswith(handlers.ARCHIVES):
         continue
       if self._stored(archive) is None and self._archive_parent(archive) is None:
-        self._identify_entry(archive)   # the physical archive, on the store itself
+        self._identify_entry(archive)   # .. the physical archive, on the store itself
       stored = self._stored(archive)
       if stored is None or 'archive' not in stored[0]['gppu']['handlers']:
-        return   # a folder named like an archive, or nothing there; the lookup answers that
+        return   # .. a folder named like an archive, or nothing there; the lookup answers that
       if stored[1] is None:
         self._identify_members(archive)
 
@@ -995,7 +1011,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
       if item['type'] != 'directory' and stored is not None:
         row = stored[0]
         if row['gppu']['probed'] and (row.get('mtime'), row.get('size')) == (item.get('mtime'), item.get('size')):
-          return row   # a file its handler read as it is now is not read again
+          return row   # .. a file its handler read as it is now is not read again
       record, unread = handlers.probe(path), None
       if self._unindexed(record, item['type'] == 'directory'):
         return None
@@ -1003,7 +1019,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
       if handler is not None and handler is not handlers.FolderHandler:
         try:
           record = handler.parse(path)
-        except Exception as error:   # the walk records what it could not read and goes on
+        except Exception as error:   # .. the walk records what it could not read and goes on
           unread = f'{handler.__name__}: {type(error).__name__}: {error}'
           Warn(f'{path}: {unread}')
       children, listing = [], None
@@ -1030,7 +1046,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
         write()
       return row
 
-    with self.run():   # the indexes reach their folders whole when the refresh ends, however it ends
+    with self.run():   # .. the indexes reach their folders whole when the refresh ends, however it ends
       read(local, key, top, self._stored(key))
       write()
       self._total_above(key)
@@ -1080,9 +1096,9 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
       metadata, members = cached
       held = self._stored_many(list(dict.fromkeys([*(item['path'] for item in members), child])))
       if child in rows:
-        held[child] = rows[child]   # the level below as this refresh totalled it, not yet written
+        held[child] = rows[child]   # .. the level below as this refresh totalled it, not yet written
       if child not in held:
-        break   # an ignored file parses to nothing, and leaves the totals above it as they are
+        break   # .. an ignored file parses to nothing, and leaves the totals above it as they are
       paths = sorted(held, key=lambda item: (held[item][0]['type'] != 'directory', item.casefold()))
       metadata['gppu'].update(json.loads(json.dumps(
         self._totals(metadata['gppu'], [held[path][0] for path in paths]), default=_metadata_text)))
@@ -1134,7 +1150,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
     modified = gppu['modified_at'] and datetime.fromisoformat(str(gppu['modified_at']))
     spans = [span for span in (self._own_span(gppu),) if span]
     if gppu['record']['type'] in handlers.IGNORED:
-      return {'files': 0, 'folders': 0, 'bytes': 0, 'span': None}   # counted as ignored: never counted
+      return {'files': 0, 'folders': 0, 'bytes': 0, 'span': None}   # .. counted as ignored: never counted
     if children is None:
       totals = {'files': 1, 'folders': 0, 'bytes': gppu['size']}
     elif any(child['gppu']['files'] is None for child in children):
@@ -1244,18 +1260,18 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
       child_key = self._key(name)
       stored = held.get(child_key)
       if stored is not None and stored[0]['type'] != 'directory' and 'ignored' in stored[0]['gppu']['handlers']:
-        self._forget(child_key)   # an ignored file an earlier listing indexed
+        self._forget(child_key)   # .. an ignored file an earlier listing indexed
         continue
       if child_key in known and self._misread(child_key, entry, stored):
-        self._forget(child_key)   # the stored row predates the folder's handler; an insert alone would keep it
+        self._forget(child_key)   # .. the stored row predates the folder's handler; an insert alone would keep it
       elif child_key in known:
         listing.append(known[child_key])
         continue
       if local:
-        item = self.fs.info(name)  # A directory scan reports no inode on Windows; rename recovery needs it.
+        item = self.fs.info(name)  # .. A directory scan reports no inode on Windows; rename recovery needs it.
         record = handlers.probe(Path(self._path(child_key)))
       else:
-        item = entry            # a store that lists enough said it all once; asking again is a call per entry
+        item = entry            # .. a store that lists enough said it all once; asking again is a call per entry
         record = self._listed(child_key, item)
       if self._unindexed(record, item['type'] == 'directory'):
         continue
@@ -1367,7 +1383,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
       if folder in apart or (key is not None and (folder == key or not self._within(folder, key))):
         continue
       below = self._aggregated(folder, apart)
-      below[0] += 1   # the folder itself, whose row is its own index's root
+      below[0] += 1   # .. the folder itself, whose row is its own index's root
       for i, combined in ((0, sum), (1, sum), (2, sum), (3, min), (4, max), (5, max), (6, sum), (7, sum)):
         held[i] = combined(value for value in (held[i], below[i]) if value is not None) if any(
           value is not None for value in (held[i], below[i])) else None
@@ -1386,9 +1402,9 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
         if row['type'] != 'directory' and row['gppu']['probed'] and os.path.isfile(self._path(key)):
           stat = os.stat(self._path(key), follow_symlinks=False)
           if (row.get('mtime'), row.get('size')) == (stat.st_mtime, stat.st_size):
-            return row   # its handler read it as it is now
+            return row   # .. its handler read it as it is now
       if cached is None and (owner := self._owner(key)) is not None:
-        above, parent_key = [], key   # the folders from the index's own down to the entry's, where a rename is found
+        above, parent_key = [], key   # .. the folders from the index's own down to the entry's, where a rename is found
         while (parent_key := self._parent_key(parent_key)) is not None and self._within(parent_key, owner):
           above.append(parent_key)
         for parent_key in reversed(above):
@@ -1400,13 +1416,13 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
       if cached is None and not refresh and self._identifiable(key):
         cached = self._identify_entry(key)
       elif cached is None and not refresh:
-        self._identify_inside(key)   # a member is known from its archives' listings
+        self._identify_inside(key)   # .. a member is known from its archives' listings
         cached = self._stored(key)
       if cached is None and refresh:
         self._live(key)
         cached = self._stored(key)
         if cached is None and self._identifiable(key):
-          cached = self._identify_entry(key)   # an ignored file: nothing is parsed or indexed of it, it is what probe says
+          cached = self._identify_entry(key)   # .. an ignored file: nothing is parsed or indexed of it, it is what probe says
       if cached is None:
         raise FileNotFoundError(key)
       return cached[0]
@@ -1441,7 +1457,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
       key = self._key(path)
       if recurse and live and not refresh and self._walkable(key):
         below = dict(self._walking(key))
-        def flat(folder: str) -> Iterator[dict]:   # each entry, then what is in it
+        def flat(folder: str) -> Iterator[dict]:   # .. each entry, then what is in it
           for row in below[folder]:
             yield row
             if row['name'] in below:
@@ -1457,20 +1473,20 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
       cached = self._stored(key)
       if cached is None:
         if not live:
-          return []                                   # the index has never seen it
+          return []                                   # .. the index has never seen it
         raise FileNotFoundError(key)
       current, children = cached
       archive = 'archive' in current['gppu']['handlers']
       if current['type'] != 'directory' and not archive:
         return [current] if detail else [current['name']]
       if not live:
-        children = children or []                   # the index alone; the folder is not read
+        children = children or []                   # .. the index alone; the folder is not read
       elif not archive and self._identifiable(key):
         if children is not None and self._folder_renames(key, children):
           current, children = self._stored(key)
         children = self._reconcile(key, children or [])
       elif children is None:
-        self._identify_inside(key)   # a folder in an archive is known from its archives' listings
+        self._identify_inside(key)   # .. a folder in an archive is known from its archives' listings
         current, children = self._stored(key)
       elif not archive and self._folder_renames(key, children):
         current, children = self._stored(key)
@@ -1482,10 +1498,12 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
           continue
         row = cached[0]
         if recurse and (row['gppu']['type'] == 'folder' or (row['gppu']['is_container'] and cached[1] is not None)):
-          # a recursion enters folders, and an archive only when the index holds its listing: it never opens one
-          # a refresh here read everything below already: the folders below are listed from what it wrote, not read again
+          # region - recursion
+          # .. a recursion enters folders, and an archive only when the index holds its listing: it never opens one
+          # .. a refresh here read everything below already: the folders below are listed from what it wrote, not read again
+          # endregion
           below = self._listing(row['name'], recurse=True, live=live and not refresh)
-          result.append(self._stored(child['path'])[0])   # the folder as reading it left it
+          result.append(self._stored(child['path'])[0])   # .. the folder as reading it left it
           result.extend(below)
         else:
           result.append(row)
@@ -1511,9 +1529,9 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
       async for found in super()._walk(path, maxdepth, topdown, on_error, **kwargs):
         yield found
       return
-    detail, folders = kwargs.get('detail', False), self._walking(key, on_error or 'omit')   # fsspec omits for any other value
+    detail, folders = kwargs.get('detail', False), self._walking(key, on_error or 'omit')   # .. fsspec omits for any other value
 
-    def step(kept: list[str] | None) -> tuple[str, list[dict]] | None:   # the next folder, given those kept of the last
+    def step(kept: list[str] | None) -> tuple[str, list[dict]] | None:   # .. the next folder, given those kept of the last
       try:
         return folders.send(kept)
       except StopIteration:
@@ -1525,7 +1543,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
       files = {PurePosixPath(row['name']).name: row for row in rows if row['type'] != 'directory'}
       below = below if detail else list(below)
       yield folder, below, files if detail else list(files)
-      kept = list(below)   # as the caller left them
+      kept = list(below)   # .. as the caller left them
 
   @staticmethod
   def _folders(top: str, rows: list[dict]) -> Iterator[tuple[str, list[dict]]]:
@@ -1550,7 +1568,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
     given empty, passed to on_error or raised, as on_error says. A folder holding an index of its own is walked with that
     index. What changed is written when the walk ends, however it ends."""
     with self._lock:
-      self._entry(key)   # the folder itself, identified once
+      self._entry(key)   # .. the folder itself, identified once
       owner = self._owner(key)
       here = self._relative(key, owner)
       relative = lambda child: self._relative(child, owner)
@@ -1572,14 +1590,14 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
         for entry in entries:
           if self._index_name.fullmatch(entry.name):
             if folder != owner and not self._kept_in_cache(owner):
-              return None   # a folder holding an index of its own; one opened without a cache keeps one index
+              return None   # .. a folder holding an index of its own; one opened without a cache keeps one index
             continue
           child = posixpath.join(folder, entry.name)
           stat = entry.stat(follow_symlinks=False)
           if child in stored:
             row = json.loads(stored[child][0])
           elif entry.is_dir(follow_symlinks=False) and (own := self._stored(child)) is not None:
-            row = own[0]   # a folder whose row is in the index it holds of its own
+            row = own[0]   # .. a folder whose row is in the index it holds of its own
           else:
             row = None
           if row is None or (row['type'] != 'directory' and (row.get('mtime'), row.get('size')) != (stat.st_mtime, stat.st_size)):
@@ -1600,7 +1618,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
       if (any(entry['type'] == 'directory' and entry['path'] not in now for entry in before or ())
           and any(entry['type'] == 'directory' and entry['path'] not in stored for entry in listing)
           and self._folder_renames(folder, before)):
-        stored = held()   # a folder renamed: its rows carried over by its inode, and the folder read again
+        stored = held()   # .. a folder renamed: its rows carried over by its inode, and the folder read again
         return read(folder)
       if before != listing:
         children.append((json.dumps([{**entry, 'path': relative(entry['path'])} for entry in listing]), relative(folder)))
@@ -1620,13 +1638,13 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
 
     def below_rows(folder: str, rows: list[tuple[str, dict]]) -> Generator[tuple[str, list[dict]], list[str] | None]:
       kept = yield folder, [self._addressed(child, row) for child, row in rows]
-      if kept is not None:   # fsspec's walk enters the folders its caller kept, in the caller's order
+      if kept is not None:   # .. fsspec's walk enters the folders its caller kept, in the caller's order
         named = {PurePosixPath(child).name: (child, row) for child, row in rows}
         rows = [named[name] for name in kept if name in named]
       for child, row in rows:
         if (row['gppu']['type'] == 'folder') if on_error is None else (row['type'] == 'directory'):
           if (inside := readable(child)) is None:
-            yield from self._walking(child, on_error)   # a folder with an index of its own
+            yield from self._walking(child, on_error)   # .. a folder with an index of its own
             continue
           yield from below_rows(child, inside)
         elif on_error is None and row['gppu']['is_container'] and child in stored and stored[child][1] is not None:
@@ -1679,9 +1697,9 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
                  maxdepth=maxdepth, **kwargs)
       self._moved_indexes(source, destination)
       if owner is not None and not self._within(owner, source) and owner == self._owner(destination):
-        self._move_rows(source, destination)   # one index holds both places: its rows are rewritten, not read again
+        self._move_rows(source, destination)   # .. one index holds both places: its rows are rewritten, not read again
       else:
-        self._forget_below(source)   # the index moved with the folder, or another index holds where it went
+        self._forget_below(source)   # .. the index moved with the folder, or another index holds where it went
 
   def _moved_indexes(self, source: str, destination: str) -> None:
     """What this process knows of the indexes at and below a folder that moved, dropped at both places: the indexes went
@@ -1732,7 +1750,7 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
     kept = Path(folder) / f'{datetime.now().strftime("%y%m%d")} {socket.gethostname().casefold()} {here.name.lstrip(".")}'
     kept.parent.mkdir(parents=True, exist_ok=True)
     kept.write_bytes(here.read_bytes())
-    if kept.read_bytes() != here.read_bytes():                 # compared by content, never by checksum
+    if kept.read_bytes() != here.read_bytes():                 # .. compared by content, never by checksum
       raise OSError(f'{kept}: the preserved copy does not match {here}')
     here.unlink()
     with self._lock:
@@ -1809,8 +1827,10 @@ class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):
     with self._filesystem(key) as (fs, source):
       return io.BytesIO(fs.cat_file(source))
 
-  # fsspec's async base reads, writes, copies and removes through these; each is what gppufs did before it, the base
-  # class's own through `_open` and gppufs's `cp_file` and `rm_file`, run off the event loop.
+  # region - fsspec's async base
+  # .. fsspec's async base reads, writes, copies and removes through these; each is what gppufs did before it, the base
+  # .. class's own through `_open` and gppufs's `cp_file` and `rm_file`, run off the event loop.
+  # endregion
   async def _cat_file(self, path: str | Path, start: int | None = None, end: int | None = None, **kwargs: Any) -> bytes:
     return await asyncio.to_thread(AbstractFileSystem.cat_file, self, path, start, end, **kwargs)
 
@@ -1864,28 +1884,33 @@ class PostgresFileSystem(AbstractFileSystem):
   KINDS = {'r': 'table', 'v': 'view', 'm': 'materialized view', 'p': 'partitioned table',
            'f': 'foreign table'}
 
-  # -- when a table's records happened ---------------------------------------------------------
-  # Alex, 2026-09-17: "Every entity has a date. It can be called date_sent or date_created, but
-  # every entity has a date. Timestamps of systems that process entities should never be used."
-  #
-  # So a table's span is the range its own records cover, read from the entity's own date and never
-  # from the stamp a loader left. `loaded_at`, `indexed_at`, `read_at` say when something read the
-  # row, not when the thing happened, and a span read off one of those says every table covers the
-  # hour the loader ran. They are left out by name; what remains is judged by what it holds, and the
-  # widest real range wins, because a record's own date spreads over the life of the data while a
-  # processing stamp collapses into the run that wrote it.
+  # region - ^^ when a table's records happened
+  # ^^ Alex, 2026-09-17: "Every entity has a date. It can be called date_sent or date_created, but
+  # ^^ every entity has a date. Timestamps of systems that process entities should never be used."
+  # ^^
+  # ^^ So a table's span is the range its own records cover, read from the entity's own date and never
+  # ^^ from the stamp a loader left. `loaded_at`, `indexed_at`, `read_at` say when something read the
+  # ^^ row, not when the thing happened, and a span read off one of those says every table covers the
+  # ^^ hour the loader ran. They are left out by name; what remains is judged by what it holds, and the
+  # ^^ widest real range wins, because a record's own date spreads over the life of the data while a
+  # ^^ processing stamp collapses into the run that wrote it.
+  # endregion
   PROCESSED = ('loaded', 'indexed', 'read', 'seen', 'gone', 'ingested', 'imported', 'synced',
                'probed', 'analysed', 'analyzed', 'refreshed', 'fetched', 'crawled', 'scanned',
                'exported', 'processed', 'harvested', 'dumped', 'etl')
-  # A bare verb and `_at` is the stamp on the row, written when the row was written: an index's
-  # `created_at` is when it indexed the thing, not when the thing was created. A date of the thing
-  # says so in its name — `date_created`, `date_sent`, `changed_at` for a file's own mtime — which
-  # is the difference between his two examples. A table whose only date is a row stamp has no date
-  # of its own and gets no span, which is truer than a span of when the loader ran.
+  # region - ^^ row stamps
+  # ^^ A bare verb and `_at` is the stamp on the row, written when the row was written: an index's
+  # ^^ `created_at` is when it indexed the thing, not when the thing was created. A date of the thing
+  # ^^ says so in its name — `date_created`, `date_sent`, `changed_at` for a file's own mtime — which
+  # ^^ is the difference between his two examples. A table whose only date is a row stamp has no date
+  # ^^ of its own and gets no span, which is truer than a span of when the loader ran.
+  # endregion
   STAMPS = ('created_at', 'updated_at', 'inserted_at', 'written_at', 'recorded_at', 'stored_at')
-  # The day each system's clock starts from, which is what it writes where a date is unknown. Read
-  # off his own databases: .NET's minimum, Excel and OLE's zero, SQL Server's, and Unix's in both
-  # the spellings a stored value takes here.
+  # region - ^^ clock zeros
+  # ^^ The day each system's clock starts from, which is what it writes where a date is unknown. Read
+  # ^^ off his own databases: .NET's minimum, Excel and OLE's zero, SQL Server's, and Unix's in both
+  # ^^ the spellings a stored value takes here.
+  # endregion
   ZEROS = ('0001-01-01', '0001-12-31', '1899-12-30', '1899-12-31', '1900-01-01',
            '1969-12-31', '1970-01-01')
   DATED = ("select a.attname from pg_attribute a join pg_class c on c.oid = a.attrelid"
@@ -2040,12 +2065,12 @@ class SharePointFileSystem(AbstractFileSystem):
   listing_is_enough = True
 
   GRAPH = 'https://graph.microsoft.com/v1.0'
-  # The content type and every custom column arrive with the item; this is the whole of the metadata.
+  # .. The content type and every custom column arrive with the item; this is the whole of the metadata.
   EXPAND = 'listItem($expand=fields)'
   PAGE = 200
-  DEADLINE = (10, 120)          # seconds to reach Graph, and to wait for it to answer
-  PATIENCE = 6                  # how many times a throttled call is asked again before it is raised
-  LONGEST_WAIT = 120            # seconds, whatever Retry-After says
+  DEADLINE = (10, 120)          # .. seconds to reach Graph, and to wait for it to answer
+  PATIENCE = 6                  # .. how many times a throttled call is asked again before it is raised
+  LONGEST_WAIT = 120            # .. seconds, whatever Retry-After says
 
   def __init__(self, tenant: str, service: str, site: str, drive: str,
                token: Callable[[], str] | None = None, **storage_options: Any) -> None:
@@ -2058,7 +2083,7 @@ class SharePointFileSystem(AbstractFileSystem):
     self.location = f'm365://{self.root}'
     self.host = f'{tenant}-my.sharepoint.com' if service == 'onedrive' else f'{tenant}.sharepoint.com'
     self._drive_id: str | None = None
-    self._asked = None               # one pooled connection: a walk is thousands of calls to one host
+    self._asked = None               # .. one pooled connection: a walk is thousands of calls to one host
 
   @classmethod
   def _get_kwargs_from_urls(cls, path: str) -> dict[str, str]:
@@ -2143,7 +2168,7 @@ class SharePointFileSystem(AbstractFileSystem):
     found = []
     while url:
       page = self._asking(url, params).json()
-      params = None                       # the next link carries the query it was made with
+      params = None                       # .. the next link carries the query it was made with
       for item in page.get('value', []):
         found.append(self._entry(item, f'{under}/{item["name"]}'.lstrip('/')))
       url = page.get('@odata.nextLink')

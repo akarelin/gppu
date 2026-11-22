@@ -52,7 +52,7 @@ class Link(_Link, table=True):
 
 
 app = api_at('/sessions', 'sessions', 'The sessions of every harness, their messages and their links.',
-             operations('/sessions/types', _Type, 'session type', Type),   # before /sessions, whose /{id} would take their word
+             operations('/sessions/types', _Type, 'session type', Type),   # .. before /sessions, whose /{id} would take their word
              operations('/sessions/messages', _Record, 'session message', Message),
              operations('/sessions/links', _Link, 'session link', Link),
              operations('/sessions', _Record, 'session', Session))

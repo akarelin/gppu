@@ -21,11 +21,11 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi_pagination import add_pagination, create_page
-from fastapi_pagination.cursor import CursorPage   # a page carries the cursor of the next one (sqlakeyset reads after the last row)
+from fastapi_pagination.cursor import CursorPage   # .. a page carries the cursor of the next one (sqlakeyset reads after the last row)
 from fastapi_pagination.customization import (CustomizedPage, UseExcludedFields, UseFieldsAliases, UseIncludeTotal, UseName,
                                               UseOptionalParams, UseParamsFields)
 from fastapi_pagination.ext.sqlalchemy import apaginate
-from fastapi_querybuilder import QueryParams   # a search's filters, sort and search, and their operators
+from fastapi_querybuilder import QueryParams   # .. a search's filters, sort and search, and their operators
 from fastapi_querybuilder.core import parse_filter_query
 from fastapi_querybuilder.operators import LOGICAL_OPERATORS, get_comparison_operators
 from psycopg.errors import UndefinedFunction
@@ -45,10 +45,10 @@ from ..gppu import TimeSpan
 
 T = TypeVar('T')
 
-LIST = 1000   # the most records a list sends: the older data's largest list of like records is a folder's 585 files (work 15, a location's runs 16, 2026-10-17)
-LIST_BYTES = 1_000_000   # and the most data it sends, `data` and `meta` as Postgres stores them: that folder's are 187 kB (work 45 kB; a session's messages up to 145 MB, so they are read a page at a time)
+LIST = 1000   # ^^ the most records a list sends: the older data's largest list of like records is a folder's 585 files (work 15, a location's runs 16, 2026-10-17)
+LIST_BYTES = 1_000_000   # ^^ and the most data it sends, `data` and `meta` as Postgres stores them: that folder's are 187 kB (work 45 kB; a session's messages up to 145 MB, so they are read a page at a time)
 DATETIME, DURATION = TypeAdapter(datetime), TypeAdapter(timedelta)
-STORE = ('id', 'status', 'kind', 'ts', 'created', 'updated')   # the columns Postgres fills: a caller does not send them
+STORE = ('id', 'status', 'kind', 'ts', 'created', 'updated')   # .. the columns Postgres fills: a caller does not send them
 
 
 async def transaction():
@@ -68,7 +68,7 @@ async def transaction():
 Page = CustomizedPage[CursorPage[T], UseName('Page'), UseIncludeTotal(True), UseOptionalParams(),
                       UseParamsFields(size=Query(None, ge=1, alias='limit', description='How many records a page holds.')),
                       UseExcludedFields('current_page', 'current_page_backwards'),
-                      UseFieldsAliases(next_page='next', previous_page='previous')]   # `limit` records after `cursor`, the total, and `next`
+                      UseFieldsAliases(next_page='next', previous_page='previous')]   # .. `limit` records after `cursor`, the total, and `next`
 Params = Page.__params_type__
 
 
@@ -86,7 +86,7 @@ class Flags(IntFlag):
 READ_ONLY = Flags.RO | Flags.SYSTEM | Flags.DELETED | Flags.ARCHIVED
 UNSEEN = Flags.SYSTEM | Flags.DELETED | Flags.HIDDEN | Flags.ARCHIVED
 NONE_SET = {Flags.DELETED: 'delete', Flags.ARCHIVED: 'archive', Flags.HIDDEN: 'toggle hidden', Flags.RO: 'toggle ro'}
-OWN = {Flags.RO: 'toggle ro', Flags.DELETED: 'un-delete', Flags.HIDDEN: 'toggle hidden', Flags.ARCHIVED: 'un-archive'}   # system has none
+OWN = {Flags.RO: 'toggle ro', Flags.DELETED: 'un-delete', Flags.HIDDEN: 'toggle hidden', Flags.ARCHIVED: 'un-archive'}   # .. system has none
 
 
 def transitions(flags: int) -> dict[Flags, str]:
@@ -122,7 +122,7 @@ class Span(TimeSpan):
 
     @classmethod
     def __get_pydantic_core_schema__(cls, source: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
-        def read(v: Any) -> 'Span':   # a span, or the fields of one; what TimeSpan refuses pydantic answers 422 with
+        def read(v: Any) -> 'Span':   # .. a span, or the fields of one; what TimeSpan refuses pydantic answers 422 with
             if isinstance(v, cls):
                 return v
             if not isinstance(v, dict):
@@ -162,9 +162,9 @@ class SpanColumn(TypeDecorator):
         return None if value is None else Span(start=value.lower, end=value.upper, bounds=value.bounds)
 
 
-custom_bookmark_type(Span, 'span', deserializer=SPAN.validate_json, serializer=lambda s: SPAN.dump_json(s).decode())   # a page sorted by span carries one in its cursor
-LEAST = {str: '', int: 0, float: -1e308, UUID: UUID(int=0), datetime: datetime.min.replace(tzinfo=ZoneInfo('UTC'))}   # what an empty column is sorted as
-LEAST[Span] = Span(*[LEAST[datetime] + timedelta(days=1)] * 2)   # a span at the least time it holds in any zone: TimeSpan reads its times in gppu's
+custom_bookmark_type(Span, 'span', deserializer=SPAN.validate_json, serializer=lambda s: SPAN.dump_json(s).decode())   # .. a page sorted by span carries one in its cursor
+LEAST = {str: '', int: 0, float: -1e308, UUID: UUID(int=0), datetime: datetime.min.replace(tzinfo=ZoneInfo('UTC'))}   # .. what an empty column is sorted as
+LEAST[Span] = Span(*[LEAST[datetime] + timedelta(days=1)] * 2)   # .. a span at the least time it holds in any zone: TimeSpan reads its times in gppu's
 
 
 # ++     _Record: every record's columns and its operations; a table's class only defines its table
@@ -180,13 +180,13 @@ class _Record(SQLModel):
     `class Node(_Record, table=True)`, so it is created, read, updated, deleted, listed and searched in its own table by its own
     rules. What a caller sends is a record without the columns Postgres fills (`STORE`); a field its table has not is refused."""
     model_config = ConfigDict(extra='forbid')
-    db: ClassVar[Any] = None   # the store's scoped session, set once by serve(): called, the session of the request being served
-    __shard__: ClassVar[int]   # the first two bytes of every id in its table, shard1 its schema and shard2 the table (# UUID)
-    __mapper_args__ = {'eager_defaults': True}   # the id, name, ts and times the table makes come back with the insert
+    db: ClassVar[Any] = None   # .. the store's scoped session, set once by serve(): called, the session of the request being served
+    __shard__: ClassVar[int]   # .. the first two bytes of every id in its table, shard1 its schema and shard2 the table (# UUID)
+    __mapper_args__ = {'eager_defaults': True}   # .. the id, name, ts and times the table makes come back with the insert
     id: UUID | None = Field(None, primary_key=True, sa_column_kwargs={'server_default': FetchedValue()},
                             description="The record's identity; its first byte is shard1, its schema, and its second shard2, its table.")
     flags: int = Field(0, sa_type=SmallInteger, description='ro 1, system 2, deleted 4, hidden 8, archived 16.')
-    # String, not SQLModel's own AutoString: search looks for its text only in String columns
+    # .. String, not SQLModel's own AutoString: search looks for its text only in String columns
     type: str | None = Field(None, sa_type=String, description='Slug of its type.')
     status: str | None = Field(None, sa_type=String, sa_column_args=[Computed("meta->>'status'", persisted=True)],
                                description='`meta.status`, the slug of its status. Read only.')
@@ -194,7 +194,7 @@ class _Record(SQLModel):
                              description='`meta.kind`, the slug of its kind. Read only.')
     parent_id: UUID | None = Field(None, description='The record it belongs to.')
     span: Span | None = Field(None, sa_type=SpanColumn, description='Its timespan: `start` and `end`; `date` and `duration`; a `date` alone, one day; a `ts` alone, one second.')
-    # DateTime, not SQLModel's own: filters read a time they are given only for DateTime columns
+    # .. DateTime, not SQLModel's own: filters read a time they are given only for DateTime columns
     ts: datetime | None = Field(None, sa_type=DateTime(timezone=True), sa_column_args=[Computed('lower(span)', persisted=True)],
                                 description='The start of `span`. Read only.')
     data: dict = Field(default_factory=dict, sa_type=JSONB, description='The data recorded. On update, merged into what is there; a null removes a key.')
@@ -235,7 +235,7 @@ class _Record(SQLModel):
         if extra := sent.model_fields_set - cls.model_fields.keys():
             raise HTTPException(422, f'a record in {cls.__tablename__} has no {", ".join(sorted(extra))}')
         if id and (row := await cls.db().get(cls, id)):
-            change = {k: getattr(sent, k) for k in sent.model_fields_set}   # what was sent, a span still a Span
+            change = {k: getattr(sent, k) for k in sent.model_fields_set}   # .. what was sent, a span still a Span
             if row.flags & READ_ONLY and change.keys() - {'flags'}:
                 raise HTTPException(422, f'{id} is read only ({Flags(row.flags & READ_ONLY)!r}): only its flags change')
             if 'flags' in change:
@@ -245,7 +245,7 @@ class _Record(SQLModel):
                     change[key] = {k: v for k, v in (getattr(row, key) | change[key]).items() if v is not None}
             row = row.sqlmodel_update(change)
         else:
-            while True:   # an id the store makes has two random bytes in its millisecond (# UUID): one already taken is made again
+            while True:   # .. an id the store makes has two random bytes in its millisecond (# UUID): one already taken is made again
                 row = cls.model_validate(sent, update={'id': id})
                 try:
                     async with cls.db().begin_nested():
@@ -256,7 +256,7 @@ class _Record(SQLModel):
                         raise
         await cls.db().flush()
         if 'status' in sent.meta:
-            await cls.db().refresh(row, ['flags'])   # the flag a status comes with (# Flags), which the store sets
+            await cls.db().refresh(row, ['flags'])   # .. the flag a status comes with (# Flags), which the store sets
         return row
 
     @classmethod
@@ -318,7 +318,7 @@ class _Record(SQLModel):
         then by the id, which no two rows share; every match when no limit is given. A key of `meta` is filtered, sorted and
         searched as a column is, `meta.{key}`."""
         filters = parse_filter_query(conditions.filters) if conditions else None
-        seen = () if filters and cls.asks(filters, 'flags') else (cls.flags.op('&')(int(UNSEEN)) == 0,)   # out of sight when asked for
+        seen = () if filters and cls.asks(filters, 'flags') else (cls.flags.op('&')(int(UNSEEN)) == 0,)   # .. out of sight when asked for
         query, sort = select(cls).where(*seen, *where), []
         if conditions:
             if filters:
@@ -332,19 +332,19 @@ class _Record(SQLModel):
                 if way.strip().lower() not in ('', 'asc', 'desc'):
                     raise HTTPException(400, f'{clause}: a sort is column:asc or column:desc')
                 key, lower = key.strip(), lambda c: func.lower(c, type_=String()) if isinstance(c.type, String) and not conditions.case_sensitive else c
-                columns = [cls.key(key, number=True), lower(cls.key(key))] if key.startswith('meta.') else [lower(cls.key(key))]   # a key of meta: its numbers, then its text
+                columns = [cls.key(key, number=True), lower(cls.key(key))] if key.startswith('meta.') else [lower(cls.key(key))]   # .. a key of meta: its numbers, then its text
                 sort += [c.desc() if way.strip().lower() == 'desc' else c.asc() for c in columns]
 
         def after(key):
             """A sort key a page can read after: one a record may leave empty, a column's or a key's in `data` or `meta`, sorts that
             record as the least value of its kind, the key's when it is read as one, else its column's."""
             key = key if isinstance(key, UnaryExpression) else key.asc()
-            column = next(c for c in iterate(key.element) if isinstance(c, Column))   # under a lower() of a text column
-            typed = column if isinstance(key.element.type, NullType) else key.element   # an expression with no type of its own
+            column = next(c for c in iterate(key.element) if isinstance(c, Column))   # .. under a lower() of a text column
+            typed = column if isinstance(key.element.type, NullType) else key.element   # .. an expression with no type of its own
             if not column.nullable and typed is column:
                 return key
             return UnaryExpression(func.coalesce(key.element, literal(LEAST[typed.type.python_type], typed.type)), modifier=key.modifier)
-        keys = [after(k) for k in (*sort, *order)]   # the search's sort, then the caller's, read as sqlakeyset reads them
+        keys = [after(k) for k in (*sort, *order)]   # .. the search's sort, then the caller's, read as sqlakeyset reads them
         query = query.order_by(*keys, cls.id)
         if params.size is None:
             rows = (await cls.db().scalars(query)).all()
@@ -357,7 +357,7 @@ class _Type(_Record):
     schema and shard2 the table (# UUID); a type with no records of its own, an abstract type, a vocabulary or a value, has the shard
     of its types table. A value's parent is its vocabulary and its `kind` the type the value applies to; a slug is one under its parent.
     Each schema's types are a table of its own."""
-    # required to make a type, which its table refuses without them, not to change one: an update takes only what changes
+    # .. required to make a type, which its table refuses without them, not to change one: an update takes only what changes
     slug: str | None = Field(None, sa_type=String, sa_column_kwargs={'nullable': False}, description='Its slug, one under its parent.')
     shard: int | None = Field(None, sa_type=Integer, sa_column_kwargs={'nullable': False}, description='The shard of the table its records are in, two bytes: shard1 its schema, shard2 the table.')
 
@@ -393,7 +393,7 @@ class Event(_Record, table=True):
 def operations(path: str, body: type[_Record], name: str, table: type[_Record]) -> APIRouter:
     """A path for its table: create, read, update, delete and search, `body` what a caller sends."""
     routes = APIRouter(tags=[name])
-    a, names = 'an' if name[0] in 'aeiou' else 'a', name[:-1] + 'ies' if name.endswith('y') else name + 's'   # an entity, entities
+    a, names = 'an' if name[0] in 'aeiou' else 'a', name[:-1] + 'ies' if name.endswith('y') else name + 's'   # .. an entity, entities
 
     @routes.post(path, response_model=table, summary=f'Create {a} {name}')
     async def create(record: body):
@@ -458,7 +458,7 @@ async def refusal(request: Request, e: StatementError):
 
 app = FastAPI(
     title='Linked Data',
-    version='1',   # the major version its path carries, /ld/v1 (Alex 10-16 09:48: versions in the URL)
+    version='1',   # .. the major version its path carries, /ld/v1 (Alex 10-16 09:48: versions in the URL)
     summary='Records and the links between them: create, read, update, delete, search.',
     openapi_tags=[
         {'name': 'type', 'description': 'What a record can be, the vocabularies and their values.'},
@@ -481,7 +481,7 @@ def serve(apis: dict[str, FastAPI], store: _SQABase) -> FastAPI:
     """The core and the APIs built on it as one API on `store`, the app's: its scoped session is every record's (`_Record.db`), set
     once here, and each request is one transaction (`transaction`). Every route in one OpenAPI document, `/openapi.json`, shown at `/docs`, each API's routes under its tag; each API built on it keeps its own
     document at `{path}/docs` as well. With no APIs, the core alone."""
-    tags = {t: a.summary for a in apis.values() for ops in a.openapi()['paths'].values() for op in ops.values() for t in op.get('tags', ())}   # each API's tags, described by its summary
+    tags = {t: a.summary for a in apis.values() for ops in a.openapi()['paths'].values() for op in ops.values() for t in op.get('tags', ())}   # .. each API's tags, described by its summary
     one = FastAPI(title=app.title, version=app.version, summary='Records and the links between them, and the APIs built on them: '
                   + ', '.join(p.strip('/') for p in apis) + '.',
                   openapi_tags=app.openapi_tags + [{'name': t, 'description': s} for t, s in tags.items()],

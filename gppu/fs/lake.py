@@ -32,8 +32,8 @@ from .catalog import Catalog, GppuCatalog
 from ..gppu import TimeSpan
 from .uri import y2uri
 
-PIECE = 1 << 20   # a download is sent a mebibyte at a time
-INDEX = '.gppufs.sqlite'   # how a gppufs index's name ends
+PIECE = 1 << 20   # .. a download is sent a mebibyte at a time
+INDEX = '.gppufs.sqlite'   # .. how a gppufs index's name ends
 
 
 class Lake:
@@ -43,10 +43,10 @@ class Lake:
 
     def __init__(self, catalog: GppuCatalog, store: y2uri | str, contents: Catalog) -> None:
         self.catalog = catalog
-        provider = FileSystem()   # the Lake's store is its own configuration, a folder this host reaches, not one of Linked Data's locations
+        provider = FileSystem()   # .. the Lake's store is its own configuration, a folder this host reaches, not one of Linked Data's locations
         self.store = Container(provider, y2uri(store))
         self.contents = contents
-        self.root = provider.local(self.store.uri)   # the Lake on this host
+        self.root = provider.local(self.store.uri)   # .. the Lake on this host
 
     def _here(self, uri: y2uri | str) -> Path | None:
         """The Lake folder or file a uri names, on this host; none for a uri outside the Lake."""
@@ -70,7 +70,7 @@ class Lake:
             return found
         try:
             return handler.parse(path)
-        except Exception as error:   # what a handler cannot read has no place in the Lake: the save is refused with its reason
+        except Exception as error:   # .. what a handler cannot read has no place in the Lake: the save is refused with its reason
             raise ValueError(f'{path.name}: {handler.__name__} cannot read it: {type(error).__name__}: {error}') from error
 
  
@@ -89,7 +89,7 @@ class Lake:
         and then has it indexed. Its content is a file under its own name in CACHE while it is read and stored, a stream copied a
         piece at a time, so a large file is never held whole."""
         with tempfile.TemporaryDirectory(prefix='lake-', dir=CACHE) as folder:
-            scratch = Path(folder) / Path(obj.name).name   # its own name, never a path out of the folder
+            scratch = Path(folder) / Path(obj.name).name   # .. its own name, never a path out of the folder
             with scratch.open('wb') as file:
                 if hasattr(obj.content, 'read'):
                     shutil.copyfileobj(obj.content, file)
@@ -98,12 +98,12 @@ class Lake:
                                if isinstance(obj.content, str) else json.dumps(obj.content, ensure_ascii=False).encode('utf-8'))
             record = self.read(scratch)
             type = 'index' if obj.name.endswith(INDEX) else handlers.probe(scratch).type
-            span = getattr(record, 'span', None) or handlers.Handler.named(obj.name)   # the date it is of: its span's, else its name's
+            span = getattr(record, 'span', None) or handlers.Handler.named(obj.name)   # .. the date it is of: its span's, else its name's
             source = urlsplit(str(obj.uri))
             try:
                 path = file_path(type, obj.name, record=record, kind=obj.kind, start=span.start if span else None,
                                  account=source.netloc, path=unquote(source.path).strip('/'))
-            except ValueError as error:   # its line asks for the date of what gives none, such as a session with no time
+            except ValueError as error:   # .. its line asks for the date of what gives none, such as a session with no time
                 if span is None and isinstance(error.__cause__, UndefinedError):
                     raise ValueError(f'{obj.name}: no path for a {type}: what was sent of it gives no time, so it has no date') from error
                 raise
@@ -114,7 +114,7 @@ class Lake:
                 self.store.write(path, DataObject(obj.uri, stream, obj.identity, obj.kind, obj.name))
             self._recorded(uri, scratch, record)
             if obj.name.endswith(INDEX):
-                self.contents.received(str(obj.uri))   # loaded after the answer, by load()
+                self.contents.received(str(obj.uri))   # .. loaded after the answer, by load()
         return uri
 
     def load(self, uri: y2uri | str, source: str) -> None:
@@ -227,14 +227,14 @@ def api(lake: Lake):
 
     app = FastAPI(title='Lake')
     app.add_exception_handler(LookupError, lambda request, error: reply({'error': str(error)}, 404))
-    app.add_exception_handler(FileExistsError, lambda request, error: reply({'error': str(error)}, 409))   # the place is taken
+    app.add_exception_handler(FileExistsError, lambda request, error: reply({'error': str(error)}, 409))   # .. the place is taken
     for refused in (ValueError, TypeError):
         app.add_exception_handler(refused, lambda request, error: reply({'error': str(error)}, 400))
 
-    indexing: dict[str, bool] = {}   # each uri waiting or being indexed, and whether it was copied to again meanwhile
-    failures: dict[str, str] = {}   # each uri whose last index or load failed, and why: the client had its 202 before, so ?failed shows it
-    turn, guard = threading.Lock(), threading.Lock()   # one file indexed at a time; guard keeps indexing and failures whole
-    loads = threading.Lock()   # one index loaded at a time, apart from the copies indexed, as a load takes minutes
+    indexing: dict[str, bool] = {}   # .. each uri waiting or being indexed, and whether it was copied to again meanwhile
+    failures: dict[str, str] = {}   # .. each uri whose last index or load failed, and why: the client had its 202 before, so ?failed shows it
+    turn, guard = threading.Lock(), threading.Lock()   # .. one file indexed at a time; guard keeps indexing and failures whole
+    loads = threading.Lock()   # .. one index loaded at a time, apart from the copies indexed, as a load takes minutes
 
     def load(uri: str, source: str) -> None:
         try:
@@ -242,21 +242,21 @@ def api(lake: Lake):
                 lake.load(uri, source)
             with guard:
                 failures.pop(uri, None)
-        except BaseException as error:   # kept for ?failed and the catalog's /indexes, and raised on to the server's log
+        except BaseException as error:   # .. kept for ?failed and the catalog's /indexes, and raised on to the server's log
             with guard:
                 failures[uri] = f'{type(error).__name__}: {error}'
             raise
 
     @app.post('/')
     async def save(request: Request, name: str, source: str = '', copy: str | None = None):
-        with tempfile.TemporaryFile(dir=CACHE) as body:   # the body streamed to a file as it arrives, never held whole
+        with tempfile.TemporaryFile(dir=CACHE) as body:   # .. the body streamed to a file as it arrives, never held whole
             async for chunk in request.stream():
                 body.write(chunk)
             body.seek(0)
             uri = lake.save(DataObject(source, body, None, 'file', name), copy is not None)
         if copy is not None:
             return reply({'uri': str(uri), 'path': lake.path(uri)})
-        if name.endswith(INDEX):   # stored and received; loaded after the answer, as a large index loads for minutes
+        if name.endswith(INDEX):   # .. stored and received; loaded after the answer, as a large index loads for minutes
             return Response(json.dumps({'uri': str(uri)}), status_code=202, media_type='application/json; charset=utf-8',
                             background=BackgroundTask(load, str(uri), source))
         return reply({'uri': str(uri)}, 201)
@@ -272,7 +272,7 @@ def api(lake: Lake):
                         del indexing[uri]
                         return
                     indexing[uri] = False
-        except BaseException as error:   # kept for ?failed and raised on to the server's log, the uri free for the next copy
+        except BaseException as error:   # .. kept for ?failed and raised on to the server's log, the uri free for the next copy
             with guard:
                 indexing.pop(uri, None)
                 failures[uri] = f'{type(error).__name__}: {error}'
@@ -291,7 +291,7 @@ def api(lake: Lake):
 
     @app.get('/{uri:path}')
     def found(uri: str, ls: str | None = None, walk: str | None = None, level: str = 'files', recursive: str | None = None,
-              retrieve: str | None = None, content: str | None = None, failed: str | None = None):   # a flag is there, ?ls, or not
+              retrieve: str | None = None, content: str | None = None, failed: str | None = None):   # .. a flag is there, ?ls, or not
         if failed is not None:
             with guard:
                 return reply(dict(failures))
@@ -302,7 +302,7 @@ def api(lake: Lake):
             return reply(lake.walk(uri, level, recursive == '1'))
         if retrieve is not None:
             return reply(lake.retrieve(uri))
-        if content is not None:   # streamed a piece at a time, so a large file is never held whole
+        if content is not None:   # .. streamed a piece at a time, so a large file is never held whole
             stream = lake.open(uri)
             return StreamingResponse(iter(lambda: stream.read(PIECE), b''), media_type='application/octet-stream',
                                      background=BackgroundTask(stream.close))
@@ -328,7 +328,7 @@ class LakeFileSystem(AbstractFileSystem):
         super().__init__(**kwargs)
         import httpx
         self.root = root.rstrip('/')
-        self.client = client or httpx.Client(base_url=url.rstrip('/'), timeout=300)   # as gppu.fs.catalog.connect gives each call
+        self.client = client or httpx.Client(base_url=url.rstrip('/'), timeout=300)   # .. as gppu.fs.catalog.connect gives each call
 
     def _uri(self, path: str) -> str:
         path = self._strip_protocol(path).strip('/')
