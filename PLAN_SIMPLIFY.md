@@ -15,8 +15,10 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
   - Logging is set up in six places: the top of `gppu.py` makes the console output; the `Logger` class, far below, gives it colours and a filter; loading the configuration applies `trace_rules` and `log_file`; `init_logger(name)` renames the log, a name nothing prints; every class gets its own log when it is defined; the TUI launcher swaps the console output for its own panel while it runs
   - The CRAP file indexer, Plaud and Transcriber scripts and RAN's md-indexer import `init_logger` from `gppu`, which no longer offers it, so they stop at import
 - [ ] `mixin_Config`: "It DOES not read the configuration ... self.my was initialized somewhere and needs a place, but not this complexity"
-- [ ] `App`: "Not human reviewed"
+- [ ] `App`: "Not human reviewed" and "Rewrote. folowing the architecture, not beside it"; an app declares RAN or IoT, which decides Env's environment, so a built app such as PC Control has its environment
 - [ ] The Jinja region: "AI, not human reviewed"
+- [ ] The old tracing block, commented out, with "Ignoring all python3 libraries"
+- [ ] `gppu/app.py`, once its edits are committed: `TimerHandle` ("Unjustified class"), `_Scheduler` ("Antipatterns"), `_Runtime` ("This is not runtime. It is bad code from y2"), `state_changed` ("This is state, not runtime"), `listen_topic_state` ("Topics do not have states")
 
 ## Independent, unscoped
 - Objects read their configuration as `self.name`
