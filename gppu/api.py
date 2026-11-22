@@ -22,12 +22,12 @@ class APIApp(AsyncApp):
         """path -> the FastAPI (or any ASGI) app served there."""
         return {}
 
-    def asgi(self) -> FastAPI:
+    def _asgi(self) -> FastAPI:
         """The app uvicorn serves: the apps of ``apis()`` at their paths."""
         root = FastAPI(title=self.name)
         for path, app in self.apis().items(): root.mount(path, app)
         return root
 
     def __start(self) -> None:
-        server = self._spawn(uvicorn.Server(uvicorn.Config(self.asgi(), host=self.my('host'), port=self.my('port'))).serve())
+        server = self._spawn(uvicorn.Server(uvicorn.Config(self._asgi(), host=self.my('host'), port=self.my('port'))).serve())
         server.add_done_callback(lambda _: self.stop())   # .. uvicorn ends serving on SIGTERM or SIGINT: the app ends with it

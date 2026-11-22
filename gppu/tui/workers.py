@@ -84,7 +84,7 @@ class WorkerRow(Horizontal):
         if self.state.state == 'running':
             self.query_one(SpinnerIndicator).start()
 
-    def refresh_row(self) -> None:
+    def _refresh_row(self) -> None:
         """Re-render glyph/detail/spinner from self.state.  Call after
         mutating the state in-place (or via :meth:`WorkerPool.mark`)."""
         self.query_one('.worker-glyph', Static).update(
@@ -167,7 +167,7 @@ class WorkerPool(Vertical):
             st.counters.update(counters)
         try:
             row = self.query_one(f'#worker-{slugify(key)}', WorkerRow)
-            row.refresh_row()
+            row._refresh_row()
         except NoMatches:
             pass   # .. the row is not mounted yet
         self._refresh_footer()

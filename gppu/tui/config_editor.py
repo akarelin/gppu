@@ -31,20 +31,20 @@ from gppu.gppu import Path, YmlLoader, full_path
 INCLUDE_RE = re.compile(r"(?:^|:\s*)!include\s+(?P<path>[^#\n]+)")
 
 
-class LoaderWithInclude(YmlLoader):
+class _LoaderWithInclude(YmlLoader):
     """gppu's YAML loader, its !include tags named but not opened, for syntax validation."""
 
 
-def _load_include(loader: LoaderWithInclude, node: yaml.Node) -> str:
+def _load_include(loader: _LoaderWithInclude, node: yaml.Node) -> str:
     return loader.construct_scalar(node)
 
 
-LoaderWithInclude.add_constructor('!include', _load_include)
+_LoaderWithInclude.add_constructor('!include', _load_include)
 
 
 # .. ── File discovery ──────────────────────────────────────────────────────────
 
-def find_direct_includes(yaml_path: Path) -> list[Path]:
+def _find_direct_includes(yaml_path: Path) -> list[Path]:
     """Return include targets declared in *yaml_path*."""
     includes: list[Path] = []
     base_dir = yaml_path.parent
@@ -56,7 +56,7 @@ def find_direct_includes(yaml_path: Path) -> list[Path]:
     return includes
 
 
-def walk_includes(root_yaml: Path) -> list[Path]:
+def _walk_includes(root_yaml: Path) -> list[Path]:
     """Return *root_yaml* and all recursively included files (cycle-safe)."""
     ordered: list[Path] = []
     seen: set[Path] = set()
@@ -69,14 +69,14 @@ def walk_includes(root_yaml: Path) -> list[Path]:
         ordered.append(resolved)
         if not resolved.exists() or not resolved.is_file():
             return
-        for include in find_direct_includes(resolved):
+        for include in _find_direct_includes(resolved):
             visit(include)
 
     visit(root_yaml)
     return ordered
 
 
-def extend_unique(ordered: list[Path], values: Iterable[Path]) -> None:
+def _extend_unique(ordered: list[Path], values: Iterable[Path]) -> None:
     """Append values preserving order and uniqueness."""
     seen = set(ordered)
     for value in values:
@@ -87,17 +87,17 @@ def extend_unique(ordered: list[Path], values: Iterable[Path]) -> None:
         ordered.append(resolved)
 
 
-def collect_yaml_targets(
+def _collect_yaml_targets(
     root_config: Path,
     extra_dirs: list[Path] | None = None,
     extra_files: list[Path] | None = None,
 ) -> list[Path]:
     """Build editable file list from root config + optional extra directories/files."""
-    files = walk_includes(root_config)
+    files = _walk_includes(root_config)
     for d in (extra_dirs or []):
         if d.exists() and d.is_dir():
-            extend_unique(files, sorted(d.rglob('*.yaml')))
-    extend_unique(files, extra_files or [])
+            _extend_unique(files, sorted(d.rglob('*.yaml')))
+    _extend_unique(files, extra_files or [])
     return files
 
 
@@ -116,14 +116,14 @@ def _normalize_bare_includes(content: str) -> str:
     return '\n'.join(normalized_lines)
 
 
-def validate_yaml(path: Path) -> tuple[bool, str | None]:
+def _validate_yaml(path: Path) -> tuple[bool, str | None]:
     """Validate YAML syntax while tolerating !include tags."""
     try:
         content = path.read_text(encoding='utf-8')
     except OSError as exc:
         return False, f'Unable to read file: {exc}'
     try:
-        yaml.load(_normalize_bare_includes(content), Loader=LoaderWithInclude)
+        yaml.load(_normalize_bare_includes(content), Loader=_LoaderWithInclude)
     except yaml.YAMLError as exc:
         return False, str(exc)
     return True, None
@@ -131,7 +131,7 @@ def validate_yaml(path: Path) -> tuple[bool, str | None]:
 
 # .. ── Editor ──────────────────────────────────────────────────────────────────
 
-def pick_editor() -> str:
+def _pick_editor() -> str:
     """Pick terminal editor command."""
     editor = os.environ.get('VISUAL') or os.environ.get('EDITOR')
     if editor:
@@ -209,7 +209,7 @@ class ConfigEditorApp(TUIApp):
         self._refresh_tree()
 
     def _refresh_tree(self) -> None:
-        self._files = collect_yaml_targets(
+        self._files = _collect_yaml_targets(
             self._root_config, self._extra_dirs, self._extra_files,
         )
         tree = self.query_one('#file-tree', Tree)
@@ -269,7 +269,7 @@ class ConfigEditorApp(TUIApp):
             rel = fp
         log.write(f'[bold]{rel}[/bold]')
 
-        valid, error = validate_yaml(fp)
+        valid, error = _validate_yaml(fp)
         if valid:
             log.write('[green]\u2713 Valid YAML[/green]')
         else:
@@ -290,7 +290,7 @@ class ConfigEditorApp(TUIApp):
             log.write(f'[red]Error reading: {e}[/red]')
 
         if fp.exists():
-            includes = find_direct_includes(fp)
+            includes = _find_direct_includes(fp)
             if includes:
                 log.write('')
                 log.write('[bold]Includes:[/bold]')
@@ -359,7 +359,7 @@ class ConfigEditorApp(TUIApp):
             self.query_one('#status-bar', Static).update(f'[red]Save failed: {e}[/red]')
             return
 
-        valid, error = validate_yaml(fp)
+        valid, error = _validate_yaml(fp)
         status = self.query_one('#status-bar', Static)
         if valid:
             status.update(f'[green]\u2713 Saved {fp.name} \u2014 valid YAML[/green]')
@@ -392,7 +392,7 @@ class ConfigEditorApp(TUIApp):
         for fp in self._files:
             if not fp.exists():
                 continue
-            valid, error = validate_yaml(fp)
+            valid, error = _validate_yaml(fp)
             try:
                 rel = fp.relative_to(self._project_root)
             except ValueError:
@@ -423,9 +423,9 @@ def _cli_editor(
     extra_files: list[Path] | None = None,
     project_root: Path | None = None,
 ) -> int:
-    files = collect_yaml_targets(root_config, extra_dirs, extra_files)
+    files = _collect_yaml_targets(root_config, extra_dirs, extra_files)
     project_root = project_root or root_config.parent
-    editor = pick_editor()
+    editor = _pick_editor()
 
     while True:
         print(f'\nConfig Editor')
@@ -459,10 +459,10 @@ def _cli_editor(
             target.touch()
 
         subprocess.call([editor, str(target)])
-        valid, error = validate_yaml(target)
+        valid, error = _validate_yaml(target)
         if valid:
             print(f'\u2713 YAML validation passed: {target}')
         else:
             print(f'\u2717 YAML validation failed: {target}')
             print(error or 'Unknown parse error')
-        files = collect_yaml_targets(root_config, extra_dirs, extra_files)
+        files = _collect_yaml_targets(root_config, extra_dirs, extra_files)

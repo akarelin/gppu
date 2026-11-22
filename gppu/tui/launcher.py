@@ -138,7 +138,7 @@ def _platform_spec(d: dict | None) -> list[str]:
     return [str(s).upper() for s in spec]
 
 
-def platform_ok(d: dict | None, current_os: OSType | None = None) -> bool:
+def _platform_ok(d: dict | None, current_os: OSType | None = None) -> bool:
     """True if `d['platform']` permits running on the current OS."""
     spec = _platform_spec(d)
     if not spec:
@@ -243,7 +243,7 @@ def launch_app(
     ).returncode
 
 
-def group_apps(apps: dict[str, dict]) -> dict[str, dict]:
+def _group_apps(apps: dict[str, dict]) -> dict[str, dict]:
     """The top-level menu rows: every app that declares a ``nav`` collapses into one row for that nav, in the
     position of the first of them, carrying the apps under it and how many there are. Apps without a nav stay
     as they are."""
@@ -323,7 +323,7 @@ class AppItem(ListItem):
         super().__init__()
         self.app_key = key
         self.app_def = app_def
-        self.enabled = platform_ok(app_def)
+        self.enabled = _platform_ok(app_def)
         if not self.enabled:
             self.add_class('platform-disabled')
 
@@ -367,10 +367,10 @@ class ModeItem(ListItem):
         self.mode_def = mode_def or {}
         # .. Mode-level platform overrides app-level; otherwise inherit app-level.
         if 'platform' in self.mode_def:
-            self.enabled = platform_ok(self.mode_def)
+            self.enabled = _platform_ok(self.mode_def)
             self._effective_platform = self.mode_def
         else:
-            self.enabled = platform_ok(app_def or {})
+            self.enabled = _platform_ok(app_def or {})
             self._effective_platform = app_def or {}
         if not self.enabled:
             self.add_class('platform-disabled')
@@ -902,7 +902,7 @@ class TUILauncher(TUIApp):
 
     def _rows(self) -> dict[str, dict]:
         """What the menu shows: the top-level rows, or the apps of the group that is open."""
-        top = group_apps(self._apps)
+        top = _group_apps(self._apps)
         return top[self._group]['apps'] if self._group else top
 
     def on_mount(self) -> None:
@@ -1367,7 +1367,7 @@ def launcher_main(
             name = app_def.get('name', key)
             desc = app_def.get('description', '')
             suffix = ''
-            if not platform_ok(app_def):
+            if not _platform_ok(app_def):
                 suffix = f'  [{_platform_label(app_def)} only]'
             print(f'  {icon}  {key:12s}  {name} — {desc}{suffix}')
         return
@@ -1387,7 +1387,7 @@ def launcher_main(
     # .. Direct launch
     if args.app:
         app_def = apps[args.app]
-        if not platform_ok(app_def):
+        if not _platform_ok(app_def):
             print(
                 f"{args.app!r} is restricted to {_platform_label(app_def)}; "
                 f"current OS is {Env.os.name}",

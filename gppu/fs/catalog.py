@@ -808,7 +808,7 @@ class Catalog:
             if not (cursor := page.get('next')):
                 return linked
 
-    def file_of(self, uri: str, linked: dict[str, str] | None = None) -> str:
+    def _file_of(self, uri: str, linked: dict[str, str] | None = None) -> str:
         """The uri of the file a copy at uri is an instance of: below the deepest location at or above it that is linked to
         another, the linked location's uri and the same path below it; elsewhere uri itself."""
         linked = self._linked() if linked is None else linked
@@ -851,7 +851,7 @@ class Catalog:
         instance in sight at any of its copies' uris and no file in sight inside it, the deepest first; it keeps its record, its
         links and its place on a timeline."""
         linked = self._linked()
-        for uri in sorted({self.file_of(copy, linked) for copy in copies}, key=len, reverse=True):
+        for uri in sorted({self._file_of(copy, linked) for copy in copies}, key=len, reverse=True):
             file = self._at('files', uri)
             if file is not None and not any(self._at('instances', copy) for copy in self._copies(uri, linked)) \
                     and not self._get('/fs/files', filters=json.dumps({'parent_id': {'$eq': file['id']}}), limit=1)['items']:
@@ -886,7 +886,7 @@ class Catalog:
         held = rows(copy)
         if not held or held[0]['path']:
             raise ValueError(f'{folder}: the index holds no row for its folder')
-        top = self.file_of(folder)
+        top = self._file_of(folder)
         file, copy = self._at('files', top, flagged=True), self._at('instances', folder, flagged=True)
         files = self._tree('files', file, top) if file else {}
         deeper: dict[str, dict[str, Any]] = {}   # .. the folders of the indexes inside this one, by their uris
@@ -941,7 +941,7 @@ class Catalog:
         its id, name, canonical address, parent's id and whether the catalog holds its folder."""
         records = {r['id']: r for r in self.records() if r['meta'].get('uri')}
         linked, places = self._linked(), self._places()
-        indexed = {id for id, r in records.items() if self._at('files', self.file_of(r['meta']['uri'], linked), places=places) is not None}
+        indexed = {id for id, r in records.items() if self._at('files', self._file_of(r['meta']['uri'], linked), places=places) is not None}
         kept: set[str] = set()
         for id in indexed:
             while id in records and id not in kept:
@@ -984,7 +984,7 @@ class Catalog:
 
     def _held(self, uri: str) -> dict[str, Any]:
         """The file a copy at uri is an instance of."""
-        if (found := self._at('files', self.file_of(uri))) is None:
+        if (found := self._at('files', self._file_of(uri))) is None:
             raise LookupError(f'{uri}: the catalog holds nothing there')
         return found
 
@@ -1032,7 +1032,7 @@ class Catalog:
         _linked()'s answer, read once by a caller asking for many."""
         if self._at('instances', uri) is None:
             return None
-        found = self._at('files', self.file_of(uri, linked))
+        found = self._at('files', self._file_of(uri, linked))
         return found['id'] if found else None
 
     def instances(self, uri: str) -> list[dict[str, Any]]:
@@ -1040,7 +1040,7 @@ class Catalog:
         linked = self._linked()
         self._held(uri)
         return [{'id': r['id'], 'uri': copy, 'kind': r['meta'].get('kind')}
-                for copy in self._copies(self.file_of(uri, linked), linked) if (r := self._at('instances', copy))]
+                for copy in self._copies(self._file_of(uri, linked), linked) if (r := self._at('instances', copy))]
 
     def loaded(self, folder: str) -> dict[str, Any]:
         """The copy of a folder's index the catalog holds and the one it received last: when it was loaded, from the database; when
