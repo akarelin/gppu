@@ -79,10 +79,11 @@ from datetime import datetime
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from gppu import App, dict_from_yml, dict_to_yml
+from gppu import App, dict_from_yml, dict_to_yml, format_since
 from gppu.tui import TUIApp, StatusHeader
 from w11 import resolve_app_dir
 APP_DIR: Path   # .. the w11 folder, which main resolves
+from rich.markup import escape
 from textual import work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -102,25 +103,6 @@ LEVEL_STYLES = {
 }
 LEVEL_NUMS = {'Critical': 1, 'Error': 2, 'Warning': 3, 'Information': 4, 'Verbose': 5, 'All': 99}
 SEVERITY_ORDER = ['CRT', 'ERR', 'WRN', 'INF', 'VRB']
-
-
-def time_since(dt: datetime) -> str:
-    delta = datetime.now() - dt
-    secs = int(delta.total_seconds())
-    if secs < 0:
-        return 'now'
-    if secs < 60:
-        return f'{secs}s ago'
-    mins = secs // 60
-    if mins < 60:
-        return f'{mins}m ago'
-    hours = mins // 60
-    if hours < 24:
-        return f'{hours}h ago'
-    days = hours // 24
-    if days < 30:
-        return f'{days}d ago'
-    return f'{days // 30}mo ago'
 
 
 def dedup_key(evt: dict) -> str:
@@ -198,7 +180,7 @@ def parse_event_xml(xml_str: str) -> dict | None:
 
     return {
         'datetime': dt,
-        'since': time_since(dt),
+        'since': f'{format_since(dt)} ago',
         'level': LEVEL_NAMES.get(level_num, '???'),
         'level_num': level_num,
         'event_id': event_id,
@@ -921,14 +903,14 @@ class EventLogApp(TUIApp):
         # .. Show full message without truncation, wrap manually
         msg = evt.get('_full_message', evt['message'])
         for part in msg.split(' | '):
-            detail_log.write(f'  {_escape(part)}')
+            detail_log.write(f'  {escape(part)}')
 
         ed = evt.get('event_data', {})
         if ed:
             detail_log.write('')
             detail_log.write('[bold]EventData (XML fields):[/]')
             for k, v in ed.items():
-                detail_log.write(f'  [bold]{_escape(k)}:[/] {_escape(v)}')
+                detail_log.write(f'  [bold]{escape(k)}:[/] {escape(v)}')
 
     def action_add_rule(self) -> None:
         """Add selected history row as a rule to error_rules.yaml.
@@ -990,7 +972,7 @@ class EventLogApp(TUIApp):
             }
 
             detail_log.write(f'[bold green]Added category "{slug}/"[/]')
-            detail_log.write(f'  pattern: {_escape(pattern[:80])}')
+            detail_log.write(f'  pattern: {escape(pattern[:80])}')
 
         else:
             # .. Has category but no source — add /source
@@ -1029,7 +1011,7 @@ class EventLogApp(TUIApp):
             detail_log.write(f'[bold green]Added source "/{slug}"[/]')
             detail_log.write(f'  match: "{match_str}"')
 
-        detail_log.write(f'  saved to {_escape(str(rules_file))}')
+        detail_log.write(f'  saved to {escape(str(rules_file))}')
         detail_log.write('[dim]Press "s" to recalculate stats[/]')
 
     def action_analyze_overlap(self) -> None:
@@ -1109,7 +1091,7 @@ class EventLogApp(TUIApp):
             detail_log.write(f'[yellow]No category ({len(unmatched)} types, {unmatched_total:,} events):[/]')
             for key, info in sorted_un[:20]:
                 detail_log.write(f'  [bold]{key}[/]: {info["count"]}')
-                detail_log.write(f'    [dim]{_escape(info["sample"])}[/]')
+                detail_log.write(f'    [dim]{escape(info["sample"])}[/]')
             if len(sorted_un) > 20:
                 detail_log.write(f'  ... and {len(sorted_un) - 20} more')
         else:
@@ -1131,7 +1113,7 @@ class EventLogApp(TUIApp):
             sorted_ns = sorted(no_src.items(), key=lambda x: x[1]['count'], reverse=True)
             detail_log.write(f'[yellow]No source ({len(no_src)} types):[/]')
             for key, info in sorted_ns[:20]:
-                detail_log.write(f'  [bold]{_escape(key)}[/]: {info["count"]}')
+                detail_log.write(f'  [bold]{escape(key)}[/]: {info["count"]}')
             if len(sorted_ns) > 20:
                 detail_log.write(f'  ... and {len(sorted_ns) - 20} more')
         else:
@@ -1184,7 +1166,7 @@ class EventLogApp(TUIApp):
         path.write_text('\n'.join(lines), encoding='utf-8')
         detail_log = self.query_one('#detail-log', RichLog)
         detail_log.clear()
-        detail_log.write(f'[bold green]History exported: {_escape(str(path))}[/]')
+        detail_log.write(f'[bold green]History exported: {escape(str(path))}[/]')
         detail_log.write(f'{len(lines)} events')
 
     def action_export_errors(self) -> None:
@@ -1196,7 +1178,7 @@ class EventLogApp(TUIApp):
         path.write_text(clean, encoding='utf-8')
         detail_log = self.query_one('#detail-log', RichLog)
         detail_log.clear()
-        detail_log.write(f'[bold green]Errors exported: {_escape(str(path))}[/]')
+        detail_log.write(f'[bold green]Errors exported: {escape(str(path))}[/]')
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """When a history row is clicked/selected, show its detail."""
@@ -1329,7 +1311,7 @@ class EventLogApp(TUIApp):
         )
         self.call_from_thread(
             detail_log.write,
-            f'[bold green]Stats saved to {_escape(str(path))}[/]'
+            f'[bold green]Stats saved to {escape(str(path))}[/]'
         )
         self.call_from_thread(detail_label.update, 'Live tail')
 
@@ -1360,10 +1342,6 @@ class EventLogApp(TUIApp):
 
     def action_toggle_dark(self) -> None:
         self.theme = 'textual-light' if self.theme == 'textual-dark' else 'textual-dark'
-
-
-def _escape(text: str) -> str:
-    return text.replace('[', '\\[')
 
 
 # .. ── CLI stats mode ───────────────────────────────────────────────────────────

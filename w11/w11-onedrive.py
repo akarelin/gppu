@@ -82,6 +82,7 @@ from pathlib import Path
 import gppu
 from gppu import format_size, format_duration
 from gppu.tui import TUIApp, StatusHeader
+from rich.markup import escape
 from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -701,11 +702,6 @@ class AccountData:
 
 # .. ── TUI ──────────────────────────────────────────────────────────────────────
 
-def _escape(text: str) -> str:
-    """Escape Rich markup characters."""
-    return text.replace('[', '\\[').replace(']', '\\]')
-
-
 class OneDriveDiagApp(TUIApp):
     CSS = """
     #main-layout { height: 1fr; }
@@ -990,11 +986,11 @@ class OneDriveDiagApp(TUIApp):
         log = self._detail_log_for(data.account)
         log.clear()
         label = self._detail_label_for(data.account)
-        label.update(f'Detail — {_escape(item["file"][:60])}')
+        label.update(f'Detail — {escape(item["file"][:60])}')
 
         log.write(f'[bold]Type:[/]   {item["type"]}')
-        log.write(f'[bold]File:[/]   {_escape(item["file"])}')
-        log.write(f'[bold]Folder:[/] {_escape(item["folder"])}')
+        log.write(f'[bold]File:[/]   {escape(item["file"])}')
+        log.write(f'[bold]Folder:[/] {escape(item["folder"])}')
         if item['size']:
             log.write(f'[bold]Size:[/]   {format_size(item["size"])}')
         if item['retries'] != '-':
@@ -1003,7 +999,7 @@ class OneDriveDiagApp(TUIApp):
         issues = item.get('issues')
         if issues:
             log.write('')
-            log.write(f'[bold yellow]Issues: {_escape(issues)}[/]')
+            log.write(f'[bold yellow]Issues: {escape(issues)}[/]')
 
         detail = item.get('detail', {})
         if detail:
@@ -1012,7 +1008,7 @@ class OneDriveDiagApp(TUIApp):
             for k, v in detail.items():
                 if k == 'detail':
                     continue
-                log.write(f'  {k}: {_escape(str(v)[:200])}')
+                log.write(f'  {k}: {escape(str(v)[:200])}')
 
         # .. Show full local path if folder is known
         folder = item['folder']
@@ -1022,7 +1018,7 @@ class OneDriveDiagApp(TUIApp):
             log.write('')
             exists = Path(full).exists() if len(full) < 260 else False
             status = '[green]exists locally[/]' if exists else '[red]NOT found locally[/]'
-            log.write(f'[bold]Local path:[/] {_escape(full)}')
+            log.write(f'[bold]Local path:[/] {escape(full)}')
             log.write(f'  {status}')
 
         # .. Recommendations
@@ -1031,7 +1027,7 @@ class OneDriveDiagApp(TUIApp):
         if issues:
             new_name = normalize_filename(item['file'])
             if new_name != item['file']:
-                log.write(f'  [bold cyan]Press "n" to auto-fix: {_escape(item["file"])} -> {_escape(new_name)}[/]')
+                log.write(f'  [bold cyan]Press "n" to auto-fix: {escape(item["file"])} -> {escape(new_name)}[/]')
         if 'space before' in (issues or ''):
             log.write('  [yellow]Or rename on SharePoint web to remove trailing space[/]')
         if item['type'] == 'Download':
@@ -1088,11 +1084,11 @@ class OneDriveDiagApp(TUIApp):
         detail_log.clear()
         detail_log.write('[bold]Normalize Filename[/]')
         detail_log.write('')
-        detail_log.write(f'[bold]Old:[/] {_escape(old_name)}')
-        detail_log.write(f'[bold]New:[/] {_escape(new_name)}')
-        detail_log.write(f'[bold]Issues fixed:[/] {_escape(issues)}')
+        detail_log.write(f'[bold]Old:[/] {escape(old_name)}')
+        detail_log.write(f'[bold]New:[/] {escape(new_name)}')
+        detail_log.write(f'[bold]Issues fixed:[/] {escape(issues)}')
         detail_log.write('')
-        detail_log.write(f'[bold]Path:[/] {_escape(old_path)}')
+        detail_log.write(f'[bold]Path:[/] {escape(old_path)}')
         detail_log.write('')
 
         if not os.path.exists(old_path):
@@ -1101,14 +1097,14 @@ class OneDriveDiagApp(TUIApp):
             return
 
         if os.path.exists(new_path):
-            detail_log.write(f'[bold red]Target already exists: {_escape(new_name)}[/]')
+            detail_log.write(f'[bold red]Target already exists: {escape(new_name)}[/]')
             detail_log.write('[dim]Rename manually to avoid overwriting[/]')
             return
 
         try:
             os.rename(old_path, new_path)
         except OSError as e:
-            detail_log.write(f'[bold red]Rename failed: {_escape(str(e))}[/]')
+            detail_log.write(f'[bold red]Rename failed: {escape(str(e))}[/]')
             detail_log.write('')
             detail_log.write('[dim]Try closing any app that has the file open,[/]')
             detail_log.write('[dim]or rename via SharePoint web UI.[/]')
@@ -1142,7 +1138,7 @@ class OneDriveDiagApp(TUIApp):
             self._reset_armed = True
             detail_log.write('[bold red]OneDrive Reset[/]')
             detail_log.write('')
-            detail_log.write(f'[bold]Executable:[/] {_escape(exe)}')
+            detail_log.write(f'[bold]Executable:[/] {escape(exe)}')
             detail_log.write('')
             detail_log.write('[bold yellow]This will:[/]')
             detail_log.write('  - Kill the OneDrive process')
@@ -1158,7 +1154,7 @@ class OneDriveDiagApp(TUIApp):
             # .. Second press — execute reset
             self._reset_armed = False
             detail_log.write('[bold]Executing OneDrive reset...[/]')
-            detail_log.write(f'[dim]{_escape(exe)} /reset[/]')
+            detail_log.write(f'[dim]{escape(exe)} /reset[/]')
             detail_log.write('')
 
             try:
@@ -1172,11 +1168,11 @@ class OneDriveDiagApp(TUIApp):
                 if result.returncode != 0:
                     detail_log.write(f'[yellow]Return code: {result.returncode}[/]')
                 if result.stderr:
-                    detail_log.write(f'[dim]{_escape(result.stderr[:200])}[/]')
+                    detail_log.write(f'[dim]{escape(result.stderr[:200])}[/]')
             except subprocess.TimeoutExpired:
                 detail_log.write('[bold green]Reset in progress (process is restarting)[/]')
             except OSError as e:
-                detail_log.write(f'[bold red]Failed: {_escape(str(e))}[/]')
+                detail_log.write(f'[bold red]Failed: {escape(str(e))}[/]')
                 return
 
             detail_log.write('')
@@ -1582,11 +1578,11 @@ class ConflictApp(TUIApp):
         log = self.query_one('#cdetail-log', RichLog)
         log.clear()
         label = self.query_one('#cdetail-label', Static)
-        label.update(f'Detail — {_escape(c["base_name"][:50])}')
+        label.update(f'Detail — {escape(c["base_name"][:50])}')
 
-        log.write(f'[bold]Base file:[/]     {_escape(c["base_name"])}')
-        log.write(f'[bold]Conflict file:[/] {_escape(c["conflict_name"])}')
-        log.write(f'[bold]Folder:[/]        {_escape(c["folder"])}')
+        log.write(f'[bold]Base file:[/]     {escape(c["base_name"])}')
+        log.write(f'[bold]Conflict file:[/] {escape(c["conflict_name"])}')
+        log.write(f'[bold]Folder:[/]        {escape(c["folder"])}')
         log.write('')
 
         if c['base_exists']:
@@ -1613,7 +1609,7 @@ class ConflictApp(TUIApp):
                 log.write('[green]Same size — likely identical content[/]')
 
         log.write('')
-        log.write(f'[bold]Conflict path:[/] {_escape(c["conflict_path"])}')
+        log.write(f'[bold]Conflict path:[/] {escape(c["conflict_path"])}')
         log.write('')
         log.write('[bold cyan]Press Delete to remove the conflict file[/]')
 
@@ -1634,10 +1630,10 @@ class ConflictApp(TUIApp):
         try:
             os.remove(path)
         except OSError as e:
-            log.write(f'[bold red]Delete failed: {_escape(str(e))}[/]')
+            log.write(f'[bold red]Delete failed: {escape(str(e))}[/]')
             return
 
-        log.write(f'[bold green]Deleted: {_escape(c["conflict_name"])}[/]')
+        log.write(f'[bold green]Deleted: {escape(c["conflict_name"])}[/]')
         self._conflicts.pop(idx)
         self._render_table()
         self._render_summary()
