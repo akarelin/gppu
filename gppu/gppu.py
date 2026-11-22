@@ -851,7 +851,7 @@ def dict_from_yml(filename: str | Path) -> dict:
   """ yaml file to dictionary, resolving includes, but not templates"""
   filename = Path(filename)
   # // dir_stack: list[Path] = [filename.parent]
-  root = filename.parent   # .. every include is named from the folder of the file loaded, the environment's configuration
+  root = filename.parent   # .. an include's path is relative to the folder of the file loaded, the environment's configuration
 
   class Loader(YmlLoader): pass
 
