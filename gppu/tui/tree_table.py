@@ -52,7 +52,7 @@ class _Node:
 class TreeTable(Widget):
     """Lazy expandable hierarchy rendered in Textual's existing ``DataTable``.
 
-    The adapter contract is the same as :class:`TreeBrowser`.  Container
+    The adapter is a :class:`TreeAdapter`.  Container
     children are requested only when expanded.  ``refresh_entry`` replaces one
     loaded branch while preserving expansion, selection, and every other row.
     """

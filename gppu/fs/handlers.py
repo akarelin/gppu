@@ -8,7 +8,7 @@ type, a file's type in Linked Data (# fs, File), says which handler reads it:
     handler = HANDLERS[record.type]                          # MarkdownHandler
     record = handler.parse('D:/Dev/gppu/README.md')
 
-Probing is gppu's probe_path, from the path's stat and its name, and nothing is read: it names a folder's handler by
+Probing is probe_path, from the path's stat and its name, and nothing is read: it names a folder's handler by
 its path and a file's by its name or its suffix. A link, a junction, an ignored path and an offline file are what probe gives; no
 handler reads them. A handler is a class of class methods, and `parse(path)` reads the path into a Record, what Linked
 Data holds of the thing, or a Session; each handler says what it returns. A handler made from another is a type made from
@@ -34,7 +34,7 @@ from uuid import UUID, uuid5
 
 import yaml
 
-from ..gppu import Path, TimeSpan, probe_path
+from ..gppu import Path, TimeSpan
 
 # .. Times tools write in place of a time: Windows FILETIME zero, Unix epoch zero, DOS zero, and the constant Android build tools stamp on every APK member. Anything at or before DOS zero is not a time either.
 PLACEHOLDER_TIMES = (
@@ -778,12 +778,6 @@ class SessionHandler(FileHandler):
         if prompt and (not session["topic"] or session["topic"].startswith("<") and not prompt.startswith("<")):
             session["topic"], session["name"] = prompt, cls.first_line(cls._readable(text))
 
-    @staticmethod
-    def _own_type(message: Mapping[str, Any]) -> str | None:
-        """The type a harness gives its message, or its role; None only where it gives neither."""
-        value = message.get("type") or message.get("role")
-        return value if isinstance(value, str) else None
-
     @classmethod
     def _session_message(cls, uid: str | None, message: Mapping[str, Any], n: int, message_type: str | None,
                          text: str) -> Record:
@@ -1480,15 +1474,6 @@ class SessionHandler(FileHandler):
         )
 
     @staticmethod
-    def _agy_session_folder(path: Path) -> bool:
-        """Recognize an Agy UUID folder containing a transcript file."""
-
-        return SESSION_UID.fullmatch(path.name) is not None and any(
-            (path / ".system_generated" / "logs" / name).is_file()
-            for name in ("transcript_full.jsonl", "transcript.jsonl")
-        )
-
-    @staticmethod
     def typed(text: str) -> str:
         """The text a person typed in a user message: the envelope stripped, '' when the message was generated."""
         if match := REALTIME_INPUT.search(text):
@@ -1640,8 +1625,90 @@ HANDLERS: dict[str, type[Handler]] = {
 FOLDERS = tuple(handler.type for handler in HANDLERS.values() if issubclass(handler, FolderHandler))
 
 
+def probe_path(path: str | Path) -> dict:
+  """ Known and approved to be a hack
+  Filesystem attributes and content handler without reading contents."""
+  _CONFIG = {
+    "ignored_suffixes": (".tmp", ".bak", ".swp"),
+    "ignored_prefixes": ("~$",),
+    "ignored_names": ("Thumbs.db", ".DS_Store", "desktop.ini"),
+    "ignored_folders": (
+      ".git", ".svn", "__pycache__", ".venv", "venv", "node_modules", ".idea", ".vscode",
+      ".SynologyWorking Directory", ".SynologyWorkingDirectory", "$RECYCLE.BIN", "RECYCLE.BIN",
+      "System Volume Information", "OneDriveTemp", "Cache", ".cache",
+    ),
+    "session_folders": (".hermes", ".gemini/antigravity", ".gemini/antigravity-cli", ".gemini/antigravity-cli/brain/*"),
+    "partitioned_folders": {"Work": "WorkFolderHandler", "Projects": "ProjectsFolderHandler"},
+    "suffix_handlers": {
+      ".sqlite": "SqliteHandler", ".sqlite3": "SqliteHandler", ".db": "SqliteHandler",
+      ".md": "MarkdownHandler", ".csv": "CSVHandler", ".log": "LogHandler",
+      ".eml": "EmailHandler", ".msg": "EmailHandler", ".jsonl": "SessionHandler",
+    },
+    "named_handlers": {"conversations.json": "ExportHandler", "conversations-*.json": "ExportHandler"},
+  }
+
+  path = Path(path) # type: ignore
+  info = path.info
+  stat = path.stat(follow_symlinks=False)
+  attributes = getattr(stat, "st_file_attributes", 0)
+
+  result = {
+    "symlink": info.is_symlink(),
+    "junction": path.is_junction(),
+    "folder": info.is_dir(follow_symlinks=False),
+    "file": info.is_file(follow_symlinks=False),
+    "offline": bool(attributes & 0x5000),
+    "created": datetime.fromtimestamp(stat.st_birthtime, timezone.utc)
+               if getattr(stat, "st_birthtime", None) is not None else None,
+    "modified": datetime.fromtimestamp(stat.st_mtime, timezone.utc),
+  }
+
+  result["ignored"] = bool(path.name) and (
+    path.suffix.casefold() in _CONFIG["ignored_suffixes"]
+    or any(path.name.startswith(p) for p in _CONFIG["ignored_prefixes"])
+    or path.name in _CONFIG["ignored_names"]
+    or result["folder"] and (
+      path.name in _CONFIG["ignored_folders"]
+      or bool(attributes & 0x4)
+    )
+  )
+
+  result["type"] = next(
+    (k for k in ("symlink", "junction", "folder", "file") if result[k]),
+    "other",
+  )
+  result["status"] = next(
+    (k for k in ("symlink", "junction", "offline", "ignored") if result[k]),
+    "normal",
+  )
+
+  handler = None
+  if result["status"] == "normal":
+    if result["folder"]:
+      handler = (
+        "SessionFolderHandler"
+        if any(path.match(p) for p in _CONFIG["session_folders"])
+        else _CONFIG["partitioned_folders"].get(path.name, "FolderHandler")
+      )
+    elif result["file"]:
+      handler = (
+        next((h for name, h in _CONFIG["named_handlers"].items() if path.match(name)),
+             _CONFIG["suffix_handlers"].get(path.suffix.casefold(), "FileHandler"))
+        if stat.st_size else "FileHandler"
+      )
+
+  result.update(
+    handler=handler,
+    size=stat.st_size if result["file"] else None,
+    target=path.readlink() if result["symlink"] or result["junction"] else None,
+    attributes=getattr(stat, "st_file_attributes", None),
+  )
+  return result
+
+
+
 def probe(path: str | Path) -> Record:
-    """gppu's probe_path as a Record: nothing read. A path probe_path gives a handler is that handler's type; a link, a
+    """probe_path as a Record: nothing read. A path probe_path gives a handler is that handler's type; a link, a
     junction, an offline file and an ignored path are that type, and no handler reads them.
 
     Returns: type; name the path's name; updated, and created where the stat has a birth time, each a time valid_time takes, in local

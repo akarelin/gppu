@@ -1,26 +1,11 @@
-"""Canonical state glyphs + spinner frame sets.
+"""Canonical state glyphs.
 
-Every gppu TUI should render the same visual vocabulary for worker state,
-reachability, pass/fail, and generic "thinking" spinners.  Keeping the
-glyphs in one place avoids per-app drift (preservator using ✓, another app
-using ✅, a third using OK).
+Every gppu TUI renders the same glyphs for worker state, reachability and pass/fail: :data:`STATE_GLYPHS`, by key
+(``'running'``, ``'ok'`` …), each a ``(symbol, rich_color, ansi_code)`` triple; :func:`glyph_rich` formats one.
 
-Two families:
-
-- :data:`STATE_GLYPHS` — discrete state markers.  Accessed by key
-  (``'running'``, ``'ok'`` …) to get a ``(symbol, rich_color, ansi_code)``
-  triple.  Convenience :func:`glyph_rich` / :func:`glyph_ansi` format one.
-- :data:`SPINNERS` — named frame sequences.  :class:`gppu.tui.SpinnerIndicator`
-  already uses Braille dots for background processes; this module exposes
-  named variants (``dots``, ``line``, ``arc``, ``triangle``) so widgets
-  with different density needs can pick appropriately.
-
-Import style::
-
-    from gppu.tui.icons import STATE_GLYPHS, glyph_rich, SPINNERS
+    from gppu.tui.icons import glyph_rich
 
     label = glyph_rich('ok') + ' pulled'
-    widget.spinner_frames = SPINNERS['arc']
 """
 
 from __future__ import annotations
@@ -82,39 +67,3 @@ def glyph_rich(key: str) -> str:
     if g is None:
         return '[dim]?[/]'
     return marker_rich(g)
-
-
-def glyph_ansi(key: str) -> str:
-    """Raw-ANSI glyph by state key."""
-    g = STATE_GLYPHS.get(key)
-    if g is None:
-        return '?'
-    return marker_ansi(g)
-
-
-# .. ── spinner frame sequences ────────────────────────────────────────────────
-
-SPINNERS: dict[str, str] = {
-    # region - braille dots
-    # .. Braille dots — dense, smooth, default choice.
-    # .. Matches the set already used by gppu.tui.SpinnerIndicator.
-    # endregion
-    'dots':     '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏',
-
-    # .. Clock-like line: thin, works in narrow columns.
-    'line':     '|/-\\',
-
-    # .. Arcs — slightly more visible than dots on dark terminals.
-    'arc':      '◜◠◝◞◡◟',
-
-    # .. Triangle — emphatic; useful for a single focal indicator.
-    'triangle': '▹▸▶▸',
-
-    # .. Pulse — 2-frame breathing dot; minimal motion, good for per-row.
-    'pulse':    '○●',
-}
-
-
-def spinner_frames(name: str = 'dots') -> str:
-    """Lookup helper — unknown name falls back to ``'dots'``."""
-    return SPINNERS.get(name, SPINNERS['dots'])

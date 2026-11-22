@@ -28,7 +28,7 @@ from collections import defaultdict, UserDict, UserList
 from collections.abc import Mapping
 
 from functools import wraps, cache
-from datetime import datetime as dt, timedelta, timezone
+from datetime import datetime as dt, timedelta
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -73,87 +73,6 @@ def full_path(path: str | Path, base_dir: str | Path | None = None, *, strict: b
   result = Path(path)   # .. Path expands a text path's variables, its ~ and a WSL drive; an absolute path stays as it is
   if not result.is_absolute(): result = (Path.cwd() if base_dir is None else full_path(base_dir)) / result
   return result.resolve(strict=strict)
-
-
-def probe_path(path: str | Path) -> dict:
-  """ Known and approved to be a hack
-  Filesystem attributes and content handler without reading contents."""
-  _CONFIG = {
-    "ignored_suffixes": (".tmp", ".bak", ".swp"),
-    "ignored_prefixes": ("~$",),
-    "ignored_names": ("Thumbs.db", ".DS_Store", "desktop.ini"),
-    "ignored_folders": (
-      ".git", ".svn", "__pycache__", ".venv", "venv", "node_modules", ".idea", ".vscode",
-      ".SynologyWorking Directory", ".SynologyWorkingDirectory", "$RECYCLE.BIN", "RECYCLE.BIN",
-      "System Volume Information", "OneDriveTemp", "Cache", ".cache",
-    ),
-    "session_folders": (".hermes", ".gemini/antigravity", ".gemini/antigravity-cli", ".gemini/antigravity-cli/brain/*"),
-    "partitioned_folders": {"Work": "WorkFolderHandler", "Projects": "ProjectsFolderHandler"},
-    "suffix_handlers": {
-      ".sqlite": "SqliteHandler", ".sqlite3": "SqliteHandler", ".db": "SqliteHandler",
-      ".md": "MarkdownHandler", ".csv": "CSVHandler", ".log": "LogHandler",
-      ".eml": "EmailHandler", ".msg": "EmailHandler", ".jsonl": "SessionHandler",
-    },
-    "named_handlers": {"conversations.json": "ExportHandler", "conversations-*.json": "ExportHandler"},
-  }
-
-  path = Path(path) # type: ignore
-  info = path.info
-  stat = path.stat(follow_symlinks=False)
-  attributes = getattr(stat, "st_file_attributes", 0)
-
-  result = {
-    "symlink": info.is_symlink(),
-    "junction": path.is_junction(),
-    "folder": info.is_dir(follow_symlinks=False),
-    "file": info.is_file(follow_symlinks=False),
-    "offline": bool(attributes & 0x5000),
-    "created": dt.fromtimestamp(stat.st_birthtime, timezone.utc)
-               if getattr(stat, "st_birthtime", None) is not None else None,
-    "modified": dt.fromtimestamp(stat.st_mtime, timezone.utc),
-  }
-
-  result["ignored"] = bool(path.name) and (
-    path.suffix.casefold() in _CONFIG["ignored_suffixes"]
-    or any(path.name.startswith(p) for p in _CONFIG["ignored_prefixes"])
-    or path.name in _CONFIG["ignored_names"]
-    or result["folder"] and (
-      path.name in _CONFIG["ignored_folders"]
-      or bool(attributes & 0x4)
-    )
-  )
-
-  result["type"] = next(
-    (k for k in ("symlink", "junction", "folder", "file") if result[k]),
-    "other",
-  )
-  result["status"] = next(
-    (k for k in ("symlink", "junction", "offline", "ignored") if result[k]),
-    "normal",
-  )
-
-  handler = None
-  if result["status"] == "normal":
-    if result["folder"]:
-      handler = (
-        "SessionFolderHandler"
-        if any(path.match(p) for p in _CONFIG["session_folders"])
-        else _CONFIG["partitioned_folders"].get(path.name, "FolderHandler")
-      )
-    elif result["file"]:
-      handler = (
-        next((h for name, h in _CONFIG["named_handlers"].items() if path.match(name)),
-             _CONFIG["suffix_handlers"].get(path.suffix.casefold(), "FileHandler"))
-        if stat.st_size else "FileHandler"
-      )
-
-  result.update(
-    handler=handler,
-    size=stat.st_size if result["file"] else None,
-    target=path.readlink() if result["symlink"] or result["junction"] else None,
-    attributes=getattr(stat, "st_file_attributes", None),
-  )
-  return result
 # endregion
 
 
