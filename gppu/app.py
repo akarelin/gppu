@@ -11,20 +11,18 @@ import inspect
 import json
 import os
 import random
-from abc import abstractmethod
 from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
-from dataclasses import dataclass
 from itertools import count
-from typing import Any, ClassVar, final
+from typing import Any, ClassVar
 
 import aiomqtt
 import yaml
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.properties import Properties
 
-from .gppu import App, Debug, Env, YmlLoader, _Base, _DC, _mixin, deepset, glob, glob_list, now_ts, sync, y2path, y2topic
-from .gppu import _YMRO, YInit, YLoad, YStart
+from .gppu import App, Env, YmlLoader, _Base, _DC, _mixin, deepset, glob_list, now_ts, sync, y2topic
+from .gppu import _YMRO, YStart
 
 
 
@@ -126,7 +124,6 @@ class AsyncApp(App, YStart, mixin_EventLoopBridge):
   _loop: asyncio.AbstractEventLoop | None
   _timer_ids = count(1)
   _supported_types: ClassVar[dict] = {}
-  restartable: ClassVar[bool] = True   # .. whether Runtime.restart_app may stop, reconstruct and start it
 
   def __init(self) -> None:
     self._task_group = None
@@ -360,138 +357,6 @@ class AppService(mixin_Mqtt, AsyncApp):
 # endregion
 
 
-# region - Runtime: Y2's, the program's apps and who listens to what
-@dataclass(frozen=True)
-class ListenerHandle:
-  """A registered listener: its id, and the call that removes it."""
-  id: int
-  cancel: Callable[[], None]
-
-
-class _Runtime:
-# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-# !!! This is not runtime. It is bad code from y2. 
-# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-  """The program's apps, which all share it: ``apps`` by name, the registries they fill (``actions``, ``buttons``,
-  ``indicators``), and the listeners to events, to entity states and to topics. ``Runtime`` is its one instance. A
-  callback is called with only the keywords it takes."""
-
-  def __init__(self) -> None:
-    self._init_runtime()
-
-
-  def _init_runtime(self) -> None:
-    self.apps: dict[str, Any] = {}
-    self.actions: dict[str, Any] = {}
-    self.buttons: dict[str, Any] = {}
-    self.indicators: dict[str, Any] = {}
-    self.event_listeners: dict[int, tuple[str | None, Callable[..., Any], dict[str, Any]]] = {}
-    self.state_listeners: dict[int, tuple[Any, str | None, Callable[..., Any], dict[str, Any]]] = {}
-    self.topic_listeners: dict[int, tuple[y2path | None, Callable[..., Any], dict[str, Any]]] = {}
-    self._listener_ids = count(1)
-    self.data = {
-      'apps': self.apps,
-      'actions': self.actions,
-      'buttons': self.buttons,
-      'indicators': self.indicators,
-    }
-
-  def reset(self) -> None:
-    """Every app's timers cancelled, and the apps, the registries and the listeners empty."""
-    for app in self.apps.values():
-      app.cancel_timers()
-    self._init_runtime()
-
-  def register_app(self, app: Any) -> None:
-    self.apps[app.name] = app
-
-  def restart_app(self, name: str) -> Any:
-    """Stop one app, discard it, and start a fresh instance of the same class from the same data. Raises for an unknown
-    or non-restartable name."""
-    app = self.apps.get(name)
-    if app is None:
-      raise ValueError(f"Unknown app: {name}")
-    if not app.restartable:
-      raise ValueError(f"App is not restartable: {name}")
-    app.stop()
-    self.apps.pop(name, None)
-    new_app = type(app)(data=dict(app.data))
-    new_app.start()
-    return new_app
-
-  def listen_event(self, callback: Callable[..., Any], *, event: str | None = None, **data: Any) -> ListenerHandle:
-    callback = _callback_wrapper(callback)
-    key = next(self._listener_ids)
-    self.event_listeners[key] = (event, callback, dict(data))
-
-    def cancel() -> None:
-      self.event_listeners.pop(key, None)
-
-    return ListenerHandle(id=key, cancel=cancel)
-
-  def fire_event(self, event: str, **data: Any) -> None:
-    for expected, callback, listener_data in tuple(self.event_listeners.values()):
-      if expected is not None and expected != event: continue
-      callback(event=event, data=dict(data), **listener_data)
-
-  def listen_state(self, callback: Callable[..., Any], *, eid: Any = None, attribute: str | None = None,
-                   **data: Any) -> ListenerHandle:
-    from .iot import y2eid   # .. an entity's id is IoT's type, and gppu.iot is built on this module
-    parsed = y2eid(eid) if eid else None
-    callback = _callback_wrapper(callback)
-    key = next(self._listener_ids)
-    self.state_listeners[key] = (parsed, attribute, callback, dict(data))
-
-    def cancel() -> None:
-      self.state_listeners.pop(key, None)
-
-    return ListenerHandle(id=key, cancel=cancel)
-
-
-  def state_changed(self, entity: Any, *, old_state: Any, old_attrs: Mapping[str, Any]) -> None:
-# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-# !!! This is state, not runtime. And its not gppu as I explai ed
-# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    changes: list[tuple[str | None, Any, Any]] = []
-    if old_state != entity.state:
-      changes.append((None, old_state, entity.state))
-    for attr in sorted(set(old_attrs) | set(entity.attributes)):
-      old = old_attrs.get(attr)
-      new = entity.attributes.get(attr)
-      if old != new:
-        changes.append((attr, old, new))
-    for attribute, old, new in changes:
-      for expected_eid, expected_attr, callback, data in tuple(self.state_listeners.values()):
-        if expected_eid is not None and expected_eid != entity.eid: continue
-        if expected_attr != '*' and expected_attr != attribute: continue
-        callback(entity=entity, attribute=attribute, old=old, new=new, **data)
-
-  
-  def listen_topic_state(self, callback: Callable[..., Any], *, path: str | y2path | None = None, **data: Any) -> ListenerHandle:
-# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-# !!! Topics do not have states    
-# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-    parsed = y2path(path) if path else None
-    callback = _callback_wrapper(callback)
-    key = next(self._listener_ids)
-    self.topic_listeners[key] = (parsed, callback, dict(data))
-
-    def cancel() -> None:
-      self.topic_listeners.pop(key, None)
-
-    return ListenerHandle(id=key, cancel=cancel)
-
-  def topic_changed(self, path: y2path, *, old: Any, new: Any) -> None:
-    if old == new: return
-    for expected_path, callback, data in tuple(self.topic_listeners.values()):
-      if expected_path is not None and expected_path != path: continue
-      callback(path=path, old=old, new=new, **data)
-
-
-Runtime = _Runtime()
-# endregion
 
 
 

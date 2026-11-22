@@ -29,10 +29,6 @@ from .app import (
     mixin_Mqtt,
     AppService,
 
-    # .. the program's apps and their listeners
-    Runtime,
-    ListenerHandle,
-
     # .. sync lifecycle (AppDaemon / Y2)
     _YMRO,
     YInit,
@@ -192,7 +188,7 @@ __all__ = [
     '_Base', 'App', '_callback_wrapper', 'AsyncApp', 'APIApp', 'mixin_Rest',
 
     # .. y2xxx classes
-    'y2list', 'y2path', 'Path', 'y2uri', 'y2topic', 'y2slug', 'y2eid', 'Runtime', 'ListenerHandle',
+    'y2list', 'y2path', 'Path', 'y2uri', 'y2topic', 'y2slug', 'y2eid',
 
     # .. mqtt library
     'mixin_Mqtt', 'AppService',

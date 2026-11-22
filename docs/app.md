@@ -19,10 +19,6 @@ Example().main()
 
 `Env` is the global singleton environment, made and loaded as gppu is imported; see [configuration.md](configuration.md). It sets what needs no file: `host`, `os`, `user`, `home`.
 
-## State and Runtime
-
-`Runtime` (`gppu.iot`) is Y2's, now gppu's: the program's apps by name, which register with `Runtime.register_app(app)`, the registries they fill (`actions`, `buttons`, `indicators`), and the listeners to events (`listen_event`, `fire_event`), to entity states (`listen_state`, which `state_changed` calls) and to topics (`listen_topic_state`, `topic_changed`). Each listener returns a `ListenerHandle`, whose `cancel()` removes it. `Runtime.restart_app(name)` stops an app and starts a fresh one of the same class, unless the class says `restartable = False`. `Runtime.reset()` cancels every app's timers and empties it. gppu has no `State` today; Y2's is the one in use, and it becomes gppu's, as Y2's timers and Runtime did.
-
 Caching is the standard library's: gppu exports `cache`, `lru_cache` and `cached_property` from `functools`. `gppu.data.Cache` is the persistent cache, on disk or in a database.
 
 ## The log
