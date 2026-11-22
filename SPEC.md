@@ -23,6 +23,8 @@
 - A template is a named template, and `template:` names it. Templates are simple inline functions that return lists, dicts or scalars to be merged into dicts; they return objects, not text.
 - YAML anchors are YAML, resolved by the YAML standard. They are not Jinja.
 - Configuration has no repeats where a for loop can produce them.
+- Jinja in configuration is an expression in `{{ }}`. Statements in `{% %}` are a special case that is almost never used, and multi-line Jinja is usually a fail.
+- Objects are created through configuration: `_DC` initializes them natively, and a class does not redo its initialization from zero.
 - The YAML reader reads YAML. Reading a script's inline configuration is not a feature of its own and has no export.
 - A script's manifest is read from its source file with a simple regex: a line or two, not pages of parsing code. The manifest sits within the first 4 kilobytes of a known executable file.
 - Loading scripts as menu items from the file system is a simple loader, as State's managers load a bunch of objects from a YAML list or from a folder. The manifest tells the loader how to list, execute or instantiate the script.
