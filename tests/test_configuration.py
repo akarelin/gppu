@@ -1,13 +1,20 @@
-"""An app declares its environment, RAN or IoT; Env loads it once. An app given its own configuration file reads that, independent from the environment; one given none reads its own section of the environment."""
+"""An app given its own configuration file reads that, independent from the environment; one given none reads its own section of the environment. The command line goes over both."""
+import sys
+
 import pytest
 
-from gppu import App, AsyncApp, Env, OSType, glob, jinja_template
-from gppu.gppu import Logger
+from gppu import App, AsyncApp, Env, dict_from_yml, glob, jinja, jinja_template
+
+
+def environment(path):
+    """New configuration for Env, as configuration that arrives after import is: one YAML load of the file, its Jinja filled."""
+    Env.data = dict_from_yml(path)
+    Env.data = jinja.configuration(Env.data)   # .. its Jinja reads glob, which reads what was loaded
 
 
 @pytest.fixture(autouse=True)
 def home(tmp_path, monkeypatch):
-    """RAN and IoT in a temporary home, which Env reads as on a host that is not Windows."""
+    """RAN's configuration in a temporary folder, given to Env."""
     hosts = tmp_path / 'RAN' / '_config'
     hosts.mkdir(parents=True)
     (hosts / 'config.yaml').write_text(
@@ -17,66 +24,26 @@ def home(tmp_path, monkeypatch):
     creekview = tmp_path / 'IoT' / '_Creekview'
     creekview.mkdir(parents=True)
     (creekview / '_creekview.yaml').write_text('fixture_creekview: true\n', encoding='utf-8')
-    monkeypatch.setattr('gppu.gppu.detect_os', lambda: OSType.LINUX)
-    monkeypatch.setenv('HOME', str(tmp_path))
-    monkeypatch.setenv('USERPROFILE', str(tmp_path))
-    Env.reset()
-    yield tmp_path
-    Env.reset()
+    monkeypatch.setattr(sys, 'argv', ['example'])   # .. the command line is the test's own
+    environment(hosts / 'config.yaml')
+    return tmp_path
 
 
 class Example(App):
     pass
 
 
-def test_app_with_an_environment_loads_it_first():
-    app = Example(environment='RAN')
-    assert Env.initialized
-    assert glob('fixture_hosts/fixture-row/tags') == ['fixture']
-    assert app.name == 'example'
-    assert app.my('enabled') is False
-    assert app.my('fixture_hosts') is None
-
-
-def test_iot_reads_creekview():
-    App(environment='IoT')
-    assert glob('fixture_creekview') is True
-
-
-def test_app_without_an_environment_starts_with_no_configuration():
-    app = Example()
-    assert not Env.initialized
-    assert app.my('enabled') is None
-    assert glob('example') is None
-    assert Env.os is OSType.LINUX and Env.host and Env.user
-
-
-def test_later_apps_share_the_loaded_environment():
-    class Second(App):
-        pass
-
-    Example(environment='RAN')
-    assert Second().my('value') == 2
-    assert Second(environment='RAN').my('value') == 2     # .. naming the loaded environment again is the same one
-
-
-def test_an_app_naming_another_environment_raises():
-    App(environment='RAN')
-    with pytest.raises(ValueError, match="'RAN' is loaded; 'IoT' cannot load as well"):
-        App(environment='IoT')
-    assert glob('fixture_creekview') is None
-
-
 def test_the_section_is_the_apps_own_copy():
-    app = Example(environment='RAN')
+    app = Example()
     app.my('names').append('iot')
     assert app.my('names') == ['seven', 'iot']
     assert glob('example/names') == ['seven']
 
 
-def test_the_command_line_goes_over_the_apps_own_configuration_not_the_environment():
-    app = Example(environment='RAN', argv=['--enabled', 'yes', 'positional', '--cells', '--step/name', 'TechHit'])
-    assert app.my('enabled') == 'yes'
+def test_the_command_line_goes_over_the_apps_own_configuration_not_the_environment(monkeypatch):
+    monkeypatch.setattr(sys, 'argv', ['example', '--enabled', 'yes', 'positional', '--cells', '--step/name', 'TechHit'])
+    app = Example()
+    assert app.my('enabled') is True   # .. a value is read as YAML, as configuration is
     assert app.my('cells') is True
     assert app.my('step/name') == 'TechHit'
     assert app.my('names') == ['seven']
@@ -84,60 +51,19 @@ def test_the_command_line_goes_over_the_apps_own_configuration_not_the_environme
     assert glob('cells') is None
 
 
-def test_an_app_without_an_environment_takes_the_command_line():
-    app = Example(argv=['--local', '--preview', '80'])
-    assert (app.my('local'), app.my('preview')) == (True, '80')
-
-
-def test_reset_lets_the_next_app_load_another_environment():
-    App(environment='RAN')
-    Env.reset()
-    App(environment='IoT')
-    assert glob('fixture_creekview') is True
-    assert glob('example') is None
-
-
-def test_unknown_environment_raises():
-    with pytest.raises(KeyError):   # .. a name that is neither of the two environments
-        App(environment='Creekview')
-    assert not Env.initialized
-
-
-def test_missing_environment_file_raises(home):
-    (home / 'IoT' / '_Creekview' / '_creekview.yaml').unlink()
-    with pytest.raises(FileNotFoundError):
-        App(environment='IoT')
-    assert not Env.initialized
+def test_an_app_takes_the_command_line(monkeypatch):
+    monkeypatch.setattr(sys, 'argv', ['example', '--local', '--preview', '80'])
+    app = Example()
+    assert (app.my('local'), app.my('preview')) == (True, 80)   # .. a value is read as YAML, as configuration is
 
 
 class Stepped(AsyncApp):
-
-
     def __init(self):   # .. its part of init: a private step, run after App's, which loaded the configuration
         self.seen = (self.my('enabled'), glob('second/value'))
 
 
-def test_async_init_step_sees_its_configuration_after_the_environment_loads():
-    assert Stepped(environment='RAN', name='example').seen == (False, 2)
-
-
-def test_environment_applies_its_trace_rules(home):
-    (home / 'RAN' / '_config' / 'config.yaml').write_text(
-        'trace_rules: {all: true, Basic: false}\n', encoding='utf-8')
-    previous = dict(Logger.trace_rules)
-    try:
-        App(environment='RAN')
-        assert Logger.trace_rules == {'all': True, 'Basic': False}
-    finally:
-        Logger.init_logger(trace_rules=previous)
-
-
-@pytest.mark.parametrize('value', ["''", 'true'])
-def test_invalid_log_file_raises(home, value):
-    (home / 'RAN' / '_config' / 'config.yaml').write_text(f'log_file: {value}\n', encoding='utf-8')
-    with pytest.raises(ValueError, match='explicit log_file'):
-        App(environment='RAN')
-    assert not Env.initialized
+def test_async_init_step_sees_its_configuration():
+    assert Stepped(config={'enabled': False}).seen == (False, 2)
 
 
 def test_fleet_node_templates_keep_booleans_and_omit_empty_conditional_keys():
@@ -155,14 +81,13 @@ def test_app_loads_its_own_configuration_without_an_environment(home):
     app = Example(config=own)
     assert app.my('mount_point') == 'G:'
     assert app.my('sources/Lake') == '//s1/Lake'
-    assert not Env.initialized
-    assert glob('') == {}
+    assert app.my('names') is None   # .. not the environment's section
 
 
 def test_own_configuration_is_independent_from_the_environment(home):
     own = home / 'example.yaml'
     own.write_text('enabled: true\n', encoding='utf-8')
-    app = Example(environment='RAN', config=own)
+    app = Example(config=own)
     assert app.my('enabled') is True
     assert app.my('names') is None
     assert glob('example') == {'enabled': False, 'names': ['seven']}
@@ -200,7 +125,7 @@ bin: "{{ glob('globals/mount') }}/{{ platform }}"
 shell: 'export PATH="$HOME/.cargo/bin:$PATH"'
 example: {enabled: false}
 ''', encoding='utf-8')
-    Example(environment='RAN')
+    environment(home / 'RAN' / '_config' / 'config.yaml')
     assert glob('endpoint') == 'https://otel/v1/logs'
     assert glob('port') == 4318
     assert glob('mounts') == {'/mnt/S1/Public': '//s1/Public', '/mnt/S1/Lake': '//s1/Lake'}
@@ -223,7 +148,7 @@ trix: >-
   {{ dict(glob_dict('server_mounts'), **{'/mnt/S9/TulaCo-M365': '//s9/TulaCo\\\\040-\\\\040M365'}) }}
 next_port: "{{ glob_int('port') + 1 }}"
 ''', encoding='utf-8')
-    Example(environment='RAN')
+    environment(home / 'RAN' / '_config' / 'config.yaml')
     mounts = {'/mnt/S1/Public': '//s1/Public', '/mnt/S1/Lake': '//s1/Lake'}
     assert glob('seven') == mounts
     assert glob('trix') == {**mounts, '/mnt/S9/TulaCo-M365': '//s9/TulaCo\\040-\\040M365'}
@@ -232,9 +157,10 @@ next_port: "{{ glob_int('port') + 1 }}"
 
 def test_own_configuration_fills_its_jinja_from_the_environment(home):
     (home / 'RAN' / '_config' / 'config.yaml').write_text('globals: {url: "https://otel"}\n', encoding='utf-8')
+    environment(home / 'RAN' / '_config' / 'config.yaml')
     own = home / 'example.yaml'
     own.write_text('''endpoint: "{{ glob('globals/url') }}/v1/traces"\n''', encoding='utf-8')
-    assert Example(environment='RAN', config=own).my('endpoint') == 'https://otel/v1/traces'
+    assert Example(config=own).my('endpoint') == 'https://otel/v1/traces'
 
 
 def test_async_app_keeps_its_steps():
@@ -256,11 +182,13 @@ def test_async_app_keeps_its_steps():
 
         def start(self):
             self.steps.append('start')
-            return super().start()
+            result = super().start()
+            self.stop()   # .. a started app runs until it is stopped
+            return result
 
     import asyncio
-    app = Example(environment='RAN')
+    app = Example()
     assert app.steps == ['init']
     asyncio.run(app.run())
     assert app.steps == ['init', 'init', 'load', 'start']
-    assert app.initialized and app.loaded and app.started
+    assert app.initialized and app.stopped

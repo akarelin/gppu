@@ -45,13 +45,11 @@ def api():
     try:
         with psycopg.connect(STORE, autocommit=True) as db:
             db.execute((Path(__file__).parent / 'ld.sql').read_text(encoding='utf-8'))
-        Env.reset()
-        Env.init(config={'db': STORE})   # .. the store's `db`, as an app's configuration gives it
+        Env.data = {'db': STORE}   # .. the store's `db`, as the environment gives it
         apis = {'/fs': files.app, '/sessions': sessions.app, '/ordered': api_at('/ordered', 'ordered', "A session's messages in order.", ordered)}
         with TestClient(serve(apis, _SQABase()), backend_options={'loop_factory': asyncio.SelectorEventLoop}) as client:   # .. psycopg's async connections need the selector loop on Windows, as RAN's api.py runs it
             yield client
     finally:
-        Env.reset()
         with psycopg.connect(DSN, autocommit=True) as server:
             server.execute(f'DROP DATABASE {DB} WITH (FORCE)')
 

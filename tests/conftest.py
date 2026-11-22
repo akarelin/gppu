@@ -29,21 +29,17 @@ def one_gppufs_per_test():
 @pytest.fixture
 def ran(tmp_path, monkeypatch):
     """The RAN environment a test gives: its configuration, a mapping or YAML text, is RAN's config.yaml in a temporary
-    home, read as on a host that is not Windows, and an app declaring RAN loads it."""
+    folder, and Env gets it as new configuration arrives: one YAML load of the file, then its Jinja filled."""
     import yaml
-    from gppu import App, Env, OSType
-    monkeypatch.setattr('gppu.gppu.detect_os', lambda: OSType.LINUX)
-    monkeypatch.setenv('HOME', str(tmp_path))
-    monkeypatch.setenv('USERPROFILE', str(tmp_path))
+    from gppu import Env, dict_from_yml, jinja
     def load(configuration: dict | str) -> None:
         folder = tmp_path / 'RAN' / '_config'
         folder.mkdir(parents=True, exist_ok=True)
         text = configuration if isinstance(configuration, str) else yaml.safe_dump(configuration)
         (folder / 'config.yaml').write_text(text, encoding='utf-8')
-        Env.reset()
-        App(environment='RAN')
-    yield load
-    Env.reset()
+        Env.data = dict_from_yml(folder / 'config.yaml')
+        Env.data = jinja.configuration(Env.data)   # .. its Jinja reads glob, which reads what was loaded
+    return load
 
 
 @pytest.fixture(scope='module')
@@ -67,11 +63,9 @@ def ld():
         store = dsn.rsplit('/', 1)[0] + '/' + db
         with psycopg.connect(store, autocommit=True) as made:
             made.execute((Path(__file__).parent / 'ld.sql').read_text(encoding='utf-8'))
-        Env.reset()
-        Env.init(config={'db': store})
+        Env.data = {'db': store}   # .. the store's `db`, as the environment gives it
         with TestClient(serve({'/fs': files.app}, _SQABase()), backend_options={'loop_factory': asyncio.SelectorEventLoop}) as client:
             yield client
     finally:
-        Env.reset()
         with psycopg.connect(dsn, autocommit=True) as server:
             server.execute(f'DROP DATABASE {db} WITH (FORCE)')

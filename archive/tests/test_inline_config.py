@@ -62,3 +62,45 @@ def test_app_given_the_script_reads_its_inline_config(tmp_path):
     app = Example(config=python_script(tmp_path))
     assert app.my('keep_hours') == 24
     assert app.my('manifest/name') == 'example'
+
+
+# .. archived 2026-11-22 from tests/test_inline_config.py: an App given a script file read its MANIFEST; an app now passes its MANIFEST text as its configuration, and the launcher reads a script's manifest
+
+def test_app_given_the_script_reads_its_manifest_without_running_it(tmp_path):
+    class Example(App):
+        pass
+
+    app = Example(config=python_script(tmp_path))
+    assert {key: app[key] for key in EXPECTED} == EXPECTED
+    assert app.my('keep_hours') == 24
+    assert app.my('manifest/name') == 'example'
+
+
+def test_script_reads_as_its_yaml_file_would(tmp_path):
+    (tmp_path / 'example.yaml').write_text(MANIFEST, encoding='utf-8')
+    app = App(config=python_script(tmp_path))
+    assert {key: app[key] for key in EXPECTED} == dict_from_yml(tmp_path / 'example.yaml')
+
+
+def test_command_line_goes_over_the_manifest(tmp_path):
+    assert App(config=str(python_script(tmp_path)), argv=['--keep_hours', '48']).my('keep_hours') == '48'
+
+
+def test_raw_manifest_keeps_its_backslashes(tmp_path):
+    script = tmp_path / 'raw.py'
+    script.write_text('MANIFEST = r"""\n  folder: \'D:\\Work\'\n"""\n', encoding='utf-8')
+    assert App(config=script).my('folder') == 'D:\\Work'
+
+
+def test_script_without_a_manifest_assignment_raises(tmp_path):
+    script = tmp_path / 'plain.py'
+    script.write_text('"""A docstring."""\n\n"""\n  manifest: {name: bare}\n"""\nCONFIG = "manifest: {}"\n', encoding='utf-8')
+    with pytest.raises(ValueError, match='no MANIFEST in its first 4 KB'):
+        App(config=script)
+
+
+def test_manifest_below_the_first_4_kb_is_not_read(tmp_path):
+    script = tmp_path / 'late.py'
+    script.write_text('#' * 4096 + '\nMANIFEST = """\n  manifest: {name: late}\n"""\n', encoding='utf-8')
+    with pytest.raises(ValueError, match='no MANIFEST in its first 4 KB'):
+        App(config=script)
