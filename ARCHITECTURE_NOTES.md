@@ -118,6 +118,9 @@ Notes of an agent session, 2026-11-21. The first part is what Alex said in that 
 - What is specific to a device moves into configuration even when it has only one or two uses, such as the matrix's: the user never has to open source code, because there is nothing for him there. The source code works and never changes, and the system works as its configuration declares.
 - Something stateless that has an ID and a direct API call, such as triggering a scene, is an action, not an entity: it needs no entity ID and no entity of its own, and it is never created as two actions.
 - A cover group that exposes several covers as one cover is its members and its scenes. It is declared directly, with its scenes' IDs, without declaring the scenes.
+- A scene or an action that can be triggered by a path has only one path, the user-friendly one.
+- Triggering an action is stateless: no response comes back and no state change is looked at. It is much simpler than keeping the state of the action's participants, and the two can take different paths.
+- An action is triggered the most direct way its system allows. For Insteon, whose PLM is connected to MQTT, that is MQTT itself, with no intermediate step such as publishing `action/ao/light/off`.
 - For a given task the user never has to leave a single configuration file. Today the configuration is all over the place: Hue in more than one place, Kasa scattered, Homebridge impossible to take apart. Consolidating it by these rules makes the topology readable.
 
 ## UI
