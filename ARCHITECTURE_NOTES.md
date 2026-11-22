@@ -107,18 +107,18 @@ Notes of an agent session, 2026-11-21. The first part is what Alex said in that 
 - UI templates do not move into `gppu.py`; they play nicely together with it.
 
 ## The model breaks — decisions the structural rewrite needs (surfaced 2026-11-22, by the static reduction)
-These are where the one-shot stops because the architecture as stated does not yet say what to do. The safe reduction (dead code, Path fix) is applied without them; the structural rewrite waits for each.
-1. **Env without `path`.** Y2 reads the generated files beside the configuration through `Env.path.parent` (`ecobee/__init__.py:83`, `covers.py:227`, `creekview.py:45/53/73`, `ui/creekview.py:44/50`), and `creekview_validate.py:65` sets `Env.path`. If the environment carries no `path`, where do they find the configuration's folder? (Env is reserved to Alex.)
+These are where the one-shot stopped because the architecture as stated did not yet say what to do. Items 1 and 8–11 are answered from what Alex said about the environment; items 2–7 are open.
+1. **Env without `path`.** A program never reads the environment's file or folder. Creekview names its own folder in configuration, `y2/topology_folder`, and its file, `y2/topology`; Y2 opens them with `Path`, as covers did before. An agent patch of 2026-11-13 (`D:\Work\11\13\y2-fewer-hacks\creekview.patch`) removed both lines and put `Env.path.parent` in their place (`ecobee/__init__.py:83`, `covers.py:227`, `creekview.py:45/53/73`, `ui/creekview.py:44/50`); with the two lines back, those reads are `Path(glob('y2/topology_folder'))` and `creekview_validate.py:67` has nothing to set.
 2. **Choosing an object's class without `kind`.** Y2's GSM, HueSM, AV, zwjs and unifi pick a row's class by its `kind` (`_supported_types[data['kind']]`), and `y2/__main__.py` builds every app from `y2/apps` by `kind`. What names the class an object is built from instead?
 3. **The two relations between an object and its runtime** (Tuya light vs Insteon light): what the runtime does for an object made from configuration — refresh it, or route its events to it. Answered so far only on connections (one per Tuya light, one per Hue hub; queues and rate limits per connection).
 4. **Timers: one Runtime's or each app's.** Y2's Supervisor finds a leaking app by counting that app's own timers (`app.timers`, `app.h_timeouts`). If one Runtime holds every timer, whose is whose?
 5. **`mixin_Rest` removed.** Y2's UI API serves its object pages and entity command buttons through it (`y2/ui.py`, `y2/api.py`), and CRAP `admin_ui/shared/layer.py` uses it. What serves them when it is gone?
 6. **TUI as a mixin.** `TUIApp` subclasses Textual's `App`, whose `__init__` must run, but `_DC.__init__` is final. How does a Textual app reconcile with "objects need no constructor"? (7 gppu/tui modules, w11, several CRAP/RAN TUIs depend on it.)
 7. **The DB bases' constructors.** `_PGBase`/`_SQABase` are built by their users with arguments (CRAP `db.py`, `plaud_sinks`, `registry`; RAN `ld` api). If objects are not constructed by passing arguments, how is a database connection made?
-8. **Configuration that arrives after import.** `Env` loads once, as gppu is imported, but a PC Control host is given its configuration over MQTT later (`gppu/app.py`, `AppService`) and Y2's `configure` gives a whole configuration (`y2/y2/y2entity.py:1862`); both write into `Env.data` and load it again. How does a configuration that arrives later reach the hidden `Env`?
-9. **The host.** The lake, the admin UI and Preservator pick this machine's local paths by its host name (`locations[uid].access[host]`) and read `Env.host` for it. With `Env` hidden, what gives a program the host?
-10. **Programs with their own file beside them.** The CCTV tools, Transcriber, the file indexer and the LD services load a YAML file next to the script through `Env.from_env`, which gppu does not have. In the architecture an `App` takes its section of the environment or a file it is given; these programs are not Apps.
-11. **Relative paths in configuration.** Y2's generated folders are relative paths in configuration (Ecobee's `generated_folder: _devices/ecobee/generated`), and `Path` resolves a relative path against the current folder, not the environment's; Y2 builds them on `Env.path.parent` today.
+8. **Configuration that arrives after import.** It is the environment's: a host without the repository, as PC Control's, is given its sections over MQTT. gppu's own `AppService` puts a section into `Env` and fills it as the file is filled; `Env` has no load step to run again. Y2's `configure` gives `Env` the validator's candidate configuration the same way.
+9. **The host.** A program reads the host to pick a location's local path on this machine (`locations[uid].access[host]`), which is building a path, and building paths is gppu's, through `Env`. Locations are gppu.fs's and the Lake's, out of scope for now, so `Env.host` stays until that work.
+10. **Programs with their own file beside them.** They are Apps: an `App` takes its section of the environment, or the file or MANIFEST it is given, and gppu needs nothing more. `Env.from_env` does not exist, and nothing calls it.
+11. **Relative paths in configuration.** A generated folder is relative to Creekview's folder, which configuration names (`y2/topology_folder`, item 1); `Path` opens the joined path. `Path` itself is unchanged: a relative path is the current folder's.
 
 ## How the work is done
 - The job of the supervising session: look at gppu, understand the changes that need to be made, then dispatch agents to make those changes.
@@ -181,7 +181,7 @@ Everything else in `gppu.py` is access:
 - Output: `TColor` and `pcp`, which stay as they are; `Logger` with `Debug`, `Info`, `Warn`, `Error`, `Dump`.
 
 What changes, at Alex's marks, in agent code only:
-- `Env` (marked Rewrite, and its load): the machine is found once, not set field by field into its data; its configuration is loaded once, as it is made, and no load step replaces the data it was made with; its file is its own and private, as `path` is every object's own name.
+- `Env` (marked Rewrite, and its load): a system object with no load step. It reads its file as it is made, and its Jinja is filled once `glob` reads it. What it knows of the machine (os, home, host, user) is plain attributes, not its data; those lines keep their marks.
 - `mixin_Config` (marked): the `my` readers over the object's data, nothing more.
 - `App` (marked Rewrote): follows the architecture, not beside it.
 - The Jinja region (marked AI, not human reviewed), the largest block agents wrote in the file, has each method justify itself.
