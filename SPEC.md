@@ -7,7 +7,7 @@
 - The location of the configuration is invisible to an app. There are two environments: RAN, configured in `RAN/_config/config.yaml`, and Creekview, configured in `IoT/_Creekview/_creekview.yaml`. Each comes from its repository.
 - The environment, or the part of it an app needs, is read from MQTT on a host that does not have its repository.
 - Apps share the RAN environment. The only other apps are Y2's, and they share Creekview.
-- Configuration is not found by hard-coding or by walking up and down folders.
+- gppu hard-codes the paths of the two environment files: two lines for the only two use cases. Nothing else finds configuration, and nothing walks up and down folders.
 - An environment is a single YAML file. Its path is constructed from the location of the repository.
 - An app declares RAN or IoT; the rest is determined from that declaration.
 - There is no topology file.
