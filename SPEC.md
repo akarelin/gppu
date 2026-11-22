@@ -53,4 +53,5 @@
 - Exceptions are not swallowed.
 - gppu is a class hierarchy of objects with all functionality in methods; it rarely exports standalone functions. A new standalone function needs significant justification.
 - Every new method or class is justified.
+- gppufs can have its own uri where it needs to extend y2uri.
 - Code uses public methods, never protected members.
