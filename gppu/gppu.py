@@ -1348,7 +1348,7 @@ _ENV_PATHS = {'RAN': 'RAN/_config/config.yaml', 'IoT': 'IoT/_Creekview/_creekvie
 
 
 class _Env(YLoad, _Base, _DC):
-    """The program's environment: singleton app object. It's my is glob"""
+    """The program's environment: singleton app object. Its my is glob"""
     # region - what Env knows that is not configuration
     # .. The machine and the environment are found as gppu is imported, before Env is made, so they are plain class
     # .. attributes and never its data. Y2's and IoT's programs share Creekview, and so does a host without RAN's
