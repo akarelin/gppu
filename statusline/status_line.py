@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Claude Code 2-line status line.
+"""Claude Code 2-line status line, on gppu.
 
-Uses gppu for colors, Jinja for widget templates (built into templates.py — no
-YAML to keep in sync across installs), cache.py for incremental parsing.
+Run it as the status line command; Claude Code writes its JSON to stdin:
+  python -m statusline < input.json
 
 build_stats() → {**stdin_data, enrichments} — raw merged dicts
 line1/line2: Jinja templates with pre-rendered widget values.
@@ -10,28 +10,29 @@ Filters: c grad remaining sep tok ms ago time_left pct effort_icon counter_sum t
 """
 
 import json
-import os
 import socket
 import sys
 import time
+from collections import Counter
+from datetime import datetime, timezone
+from functools import cache
+
+from gppu import App, TColor, Env, Warn
+from gppu.gppu import Path, _colorize
+from jinja2 import Environment, Undefined
+
+from statusline.cache import cached, transcript_stats_cached
+from statusline.ov import ov_stats
+from statusline.stats import git_info
+from statusline.templates import (
+    CONTEXT_BAR_WIDTH, GIT_TTL, JSONL_TTL, OV_TTL, TEMPLATES, LINE1, LINE2, LINE2_INDENT,
+)
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-from collections import Counter
 
-from gppu import TColor
-from gppu.gppu import _colorize
-from jinja2 import Environment, Undefined
-
-from statusline.cache import transcript_stats_cached, git_info_cached
-from statusline.ov import ov_stats
-from statusline.stats import git_info
-from statusline.templates import (
-    CONTEXT_BAR_WIDTH, OV_TTL, TEMPLATES, LINE1, LINE2, LINE2_INDENT,
-)
-
-# ── Jinja filters ──────────────────────────────────────────────────────────
+# .. Jinja filters
 
 def _ftok(n):
     if not n:
@@ -58,16 +59,13 @@ def _fago(val):
     if not val:
         return ""
     if isinstance(val, str):
-        from datetime import datetime, timezone
         try:
-            ts = val.rstrip("Z").split(".")[0]
-            dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
-            seconds = time.time() - dt.timestamp()
-        except Exception:
+            dt = datetime.strptime(val.rstrip("Z").split(".")[0], "%Y-%m-%dT%H:%M:%S")
+        except ValueError as e:
+            Warn("unreadable timestamp", val, e)
             return ""
-    else:
-        seconds = val
-    s = int(seconds)
+        val = time.time() - dt.replace(tzinfo=timezone.utc).timestamp()
+    s = int(val)
     if s < 60:
         return f"{s}s"
     m = s // 60
@@ -132,10 +130,12 @@ def _fcounter_sum(val):
     return str(sum(val.values()))
 
 
-# Tools read as their action, not their name: a shell prompt for the shell, an
-# open book for reading, a pencil for editing. Anything unmapped keeps its name.
-# The caret is the one text glyph here, so it is painted white on black rather
-# than inheriting whatever color wraps the group.
+# region - tool icons
+# .. Tools read as their action, not their name: a shell prompt for the shell, an
+# .. open book for reading, a pencil for editing. Anything unmapped keeps its name.
+# .. The caret is the one text glyph here, so it is painted white on black rather
+# .. than inheriting whatever color wraps the group.
+# endregion
 _SHELL_ICON = "❯"
 _TOOL_ICONS = {
     "Bash": _SHELL_ICON, "PowerShell": _SHELL_ICON,
@@ -189,9 +189,11 @@ def _fc(val, color, prefix='', suffix=''):
     return _colorize(text, tc) if tc else text
 
 
-# Red → yellow → green ramp in the xterm-256 cube. Numbers that live on a scale
-# get a position on it rather than a hand-picked colour per threshold, so the
-# gradient is code, not config.
+# region - gradient ramp
+# .. Red → yellow → green ramp in the xterm-256 cube. Numbers that live on a scale
+# .. get a position on it rather than a hand-picked colour per threshold, so the
+# .. gradient is code, not config.
+# endregion
 _GRADIENT = (196, 202, 208, 214, 220, 226, 190, 154, 118, 82, 46)
 _REMAINING_DIM = 240
 _REMAINING_BRIGHT = 255
@@ -251,53 +253,36 @@ class _SilentUndefined(Undefined):
         return self
 
 _JINJA_ENV = Environment(undefined=_SilentUndefined)
-_JINJA_ENV.filters["tok"] = _ftok
-_JINJA_ENV.filters["ms"] = _fms
-_JINJA_ENV.filters["ago"] = _fago
-_JINJA_ENV.filters["time_left"] = _ftime_left
-_JINJA_ENV.filters["pct"] = _fpct
-_JINJA_ENV.filters["effort_icon"] = _feffort_icon
-_JINJA_ENV.filters["counter_sum"] = _fcounter_sum
-_JINJA_ENV.filters["top_tools"] = _ftop_tools
-_JINJA_ENV.filters["nonzero"] = _fnonzero
-_JINJA_ENV.filters["c"] = _fc
-_JINJA_ENV.filters["grad"] = _fgrad
-_JINJA_ENV.filters["remaining"] = _fremaining
-_JINJA_ENV.filters["sep"] = _fsep
+_JINJA_ENV.filters.update(
+    tok=_ftok, ms=_fms, ago=_fago, time_left=_ftime_left, pct=_fpct, effort_icon=_feffort_icon,
+    counter_sum=_fcounter_sum, top_tools=_ftop_tools, nonzero=_fnonzero, c=_fc, grad=_fgrad,
+    remaining=_fremaining, sep=_fsep,
+)
 
-_template_cache = {}
+
+@cache
+def _compile(template_str):
+    return _JINJA_ENV.from_string(template_str)
 
 
 def _render_template(template_str, ctx):
-    tmpl = _template_cache.get(template_str)
-    if tmpl is None:
-        tmpl = _JINJA_ENV.from_string(template_str)
-        _template_cache[template_str] = tmpl
-    return tmpl.render(ctx).strip()
+    return _compile(template_str).render(ctx).strip()
 
 
-# ── Raw stats builder ───────────────────────────────────────────────────────
+# .. Raw stats builder
 
 def _home_rel(p):
-    """Normalize a path to forward slashes and abbreviate the home prefix with ~."""
-    if not p:
-        return ""
-    p = p.replace("\\", "/")
-    home = os.path.expanduser("~").replace("\\", "/")
-    if p.lower().startswith(home.lower()):
-        p = "~" + p[len(home):]
-    return p
+    """The path with forward slashes and the home prefix abbreviated to ~."""
+    p, home = str(Path(p)), str(Env.home)
+    return "~" + p[len(home):] if p.lower().startswith(home.lower()) else p
 
 
 def build_stats(data):
     """Merge raw stdin data with enrichments. No extraction, no calculations."""
     ws = data.get("workspace", {})
     cwd = ws.get("current_dir") or data.get("cwd", "")
-    transcript_path = data.get("transcript_path", "")
     project_dir = ws.get("project_dir") or cwd
-
-    gi = git_info_cached(cwd, git_info)
-    tools, counts, tmeta, subagent_count = transcript_stats_cached(transcript_path)
+    tools, counts, tmeta, subagent_count = transcript_stats_cached(data.get("transcript_path", ""), JSONL_TTL)
 
     return {
         **data,
@@ -305,16 +290,17 @@ def build_stats(data):
         "counts": counts,
         "tmeta": tmeta,
         "subagents": subagent_count,
-        "git": gi,
+        "git": cached(f"git:{cwd}", GIT_TTL, lambda: git_info(cwd)) if cwd else git_info(cwd),
         "ov": ov_stats(data.get("session_id", ""), OV_TTL),
         "project_dir": project_dir,
-        "project_name": os.path.basename(project_dir) if project_dir else "",
-        "project_folder": _home_rel(os.path.dirname(project_dir)) if project_dir else "",
+        "project_name": Path(project_dir).name if project_dir else "",
+        "project_folder": _home_rel(Path(project_dir).parent) if project_dir else "",
+        # .. socket's name, not Env.host: Env.host is lowercased and cut at the first dot.
         "hostname": socket.gethostname(),
     }
 
 
-# ── Complex formatters (internal ANSI via gppu) ─────────────────────────────
+# .. Complex formatters (internal ANSI via gppu)
 
 def _fmt_context_bar(s):
     ctx = s.get("context_window") or {}
@@ -325,16 +311,20 @@ def _fmt_context_bar(s):
     width = CONTEXT_BAR_WIDTH
     window = ctx.get("context_window_size") or 200_000
     usage = ctx.get("current_usage") or {}
-    # As of CC v2.1.132 context_window.total_input/output_tokens reflect current
-    # context (not cumulative), so derive segments straight from current_usage.
+    # region - context segments
+    # .. As of CC v2.1.132 context_window.total_input/output_tokens reflect current
+    # .. context (not cumulative), so derive segments straight from current_usage.
+    # endregion
     cache = usage.get("cache_read_input_tokens", 0) + usage.get("cache_creation_input_tokens", 0)
     inp = usage.get("input_tokens", 0)
     out = usage.get("output_tokens", 0)
     used = cache + inp + out
     free = max(0, window - used)
     total = used + free or 1
-    # Floor non-zero segments at 1 cell so small input/output slices stay
-    # visible against a large (e.g. 1M) window instead of rounding to 0.
+    # region - segment floor
+    # .. Floor non-zero segments at 1 cell so small input/output slices stay
+    # .. visible against a large (e.g. 1M) window instead of rounding to 0.
+    # endregion
     def cells(t): return max(1, round(width * t / total)) if t else 0
     c_cache = cells(cache)
     c_in = cells(inp)
@@ -398,20 +388,20 @@ _FORMATTERS = {
 }
 
 
-# ── Rendering ───────────────────────────────────────────────────────────────
+# .. Rendering
 
 def _pre_render(stats):
     """Pre-render all widget templates and formatters into string values."""
-    ctx = {**stats}
-    rendered = {}
-    for name, tmpl_str in TEMPLATES.items():
-        rendered[name] = _render_template(tmpl_str, ctx)
-    for name, func in _FORMATTERS.items():
-        rendered[name] = func(stats)
-    return rendered
+    return {**{name: _render_template(t, stats) for name, t in TEMPLATES.items()},
+            **{name: fn(stats) for name, fn in _FORMATTERS.items()}}
+
+
+class StatusLine(App):
+    """The status line is an app with no environment: starting it gives Env its home, host, user and os."""
 
 
 def main():
+    StatusLine()
     data = json.loads(sys.stdin.read())
     stats = build_stats(data)
     rendered = _pre_render(stats)

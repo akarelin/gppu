@@ -10,15 +10,19 @@ GIT_TTL = 10
 JSONL_TTL = 2
 OV_TTL = 5
 
-# Each element carries its own color so it is identifiable without reading it.
-# Colors that ramp (context badge, weekly limit, +/- lines, OV health) mean state;
-# every other color is just that element's identity.
+# region - element colors
+# .. Each element carries its own color so it is identifiable without reading it.
+# .. Colors that ramp (context badge, weekly limit, +/- lines, OV health) mean state;
+# .. every other color is just that element's identity.
+# endregion
 LINE1 = "{{ model }}{{ effort_icon }} {{ context_pct }}{{ limit_7d|sep }}{{ user_turns|c('DC','🐯 ')|sep }} {{ assistant_msgs|c('BP','🤖 ') }}{{ top_tools|sep }}{{ started_ago|c('DGOLD','🕐 ')|sep }}{{ wall_time|c('BO','⏱️ ')|sep }}{{ api_time|c('DPINK','⚙️ ')|sep }}"
 LINE2 = "{{ project|c('BGOLD') }} {{ project_folder|c('GRAY4','📂 ') }}{{ hostname|c('DM','💻 ')|sep }}{{ git_remote|c('DB')|sep }}{{ git_branch|sep }}{{ lines_changed|sep }}{{ ov_score|sep }}{{ ov_recall|sep }}{{ ov_state|sep }}{{ ov_capture|sep }}"
 LINE2_INDENT = "  "
 
-# Model carries its own colors: the model itself reads brighter than the
-# style/window suffix trailing it, so the slash separates two weights.
+# region - model colors
+# .. Model carries its own colors: the model itself reads brighter than the
+# .. style/window suffix trailing it, so the slash separates two weights.
+# endregion
 _MODEL = """
 {% set name = (model.display_name | default('')).split('(')[0] | trim -%}
 {% set lo = name | lower -%}
@@ -44,9 +48,11 @@ _MODEL = """
 {% endif %}
 """
 
-# Context reads as a filled badge (black on color) rather than a bare number:
-# the block of color is what catches the eye, the digits confirm it. Headroom
-# left is what the gradient tracks, so the badge greens down as it fills.
+# region - context badge
+# .. Context reads as a filled badge (black on color) rather than a bare number:
+# .. the block of color is what catches the eye, the digits confirm it. Headroom
+# .. left is what the gradient tracks, so the badge greens down as it fills.
+# endregion
 _CONTEXT_PCT = """
 {% if context_window is mapping and context_window.used_percentage is not none -%}
   {% set p = context_window.used_percentage | int -%}
@@ -61,8 +67,10 @@ _LIMIT_5H = """
 {%- endif %}
 """
 
-# Weekly headroom and time until reset. Abundant headroom stays quiet; urgency
-# brightens toward 20%, then turns red.
+# region - weekly limit
+# .. Weekly headroom and time until reset. Abundant headroom stays quiet; urgency
+# .. brightens toward 20%, then turns red.
+# endregion
 _LIMIT_7D = """
 {% if rate_limits.seven_day.used_percentage is number -%}
   {% set left = (100 - rate_limits.seven_day.used_percentage) | round | int -%}
@@ -81,8 +89,10 @@ _EFFORT = """
 {%- endif %}
 """
 
-# Server reachability. The bolt carries the state as a gradient over the probe
-# round-trip; the millisecond figure itself stays neutral.
+# region - OV health
+# .. Server reachability. The bolt carries the state as a gradient over the probe
+# .. round-trip; the millisecond figure itself stays neutral.
+# endregion
 _OV_STATE = """
 {% if ov.health == 'ok' -%}
   {{ '⚡' | grad(1000 - ov.latency_ms, 0, 1000) }}{{ (' ' ~ ov.latency_ms ~ 'ms') | c('GRAY3') }}
@@ -105,8 +115,10 @@ _OV_RECALL = """
 {%- endif %}
 """
 
-# Top similarity among the memories the last recall injected. Its own segment so
-# the number reads at a glance; the ramp says how good the match was.
+# region - OV recall score
+# .. Top similarity among the memories the last recall injected. Its own segment so
+# .. the number reads at a glance; the ramp says how good the match was.
+# endregion
 _OV_SCORE = """
 {% if ov.recall and ov.recall.top_score -%}
   {% set s = ov.recall.top_score -%}

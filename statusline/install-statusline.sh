@@ -1,6 +1,8 @@
 #!/bin/sh
-# Install gppu statusline for Claude Code on a Debian/Linux host.
-# Run on the target host; assumes Claude Code is already installed.
+# region - install
+# .. Install gppu statusline for Claude Code on a Debian/Linux host.
+# .. Run on the target host; assumes Claude Code is already installed.
+# endregion
 
 . "$HOME/.venv/bin/activate" || exit
 
