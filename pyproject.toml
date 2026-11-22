@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "gppu"
 dynamic = ["version"]
 description = "General Purpose Python Utilities"
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 dependencies = [
     "tzdata; platform_system == 'Windows'",
     "PyYAML",
@@ -15,23 +15,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-m365 = ["msal", "requests", "azure-identity", "azure-keyvault-secrets"]
+m365 = ["requests"]
 pg = ["psycopg2-binary"]
 sql = ["sqlalchemy"]
 cache = ["diskcache"]
 mqtt = ["aiomqtt"]
-iot = ["aiomqtt", "aiohttp", "telnetlib3"]
+iot = ["aiomqtt", "aiohttp"]
 chrome = ["selenium>=4.0.0"]
-statusline = ["jinja2"]
 tui = ["textual"]
 desktop = ["fusepy"]
 serve = ["textual-serve"]
 vault-azure = ["azure-identity", "azure-keyvault-secrets"]
-vault = ["azure-identity", "azure-keyvault-secrets"]
 # .. gppu.ld and APIApp, uvicorn serving them; httpx for the catalog's and the Lake's file systems over their APIs; and fastapi-querybuilder, installed with --no-deps: its metadata lists poetry, uvicorn and aiosqlite as runtime dependencies
 ld = ["fastapi", "uvicorn", "sqlmodel", "sqlalchemy[asyncio]", "psycopg[binary]", "fastapi-pagination", "sqlakeyset", "httpx"]
-all = ["psycopg2-binary", "sqlalchemy", "diskcache", "aiomqtt", "selenium>=4.0.0", "jinja2", "textual", "textual-serve", "azure-identity", "azure-keyvault-secrets"]
-test = ["pytest"]
+all = ["requests", "psycopg2-binary", "sqlalchemy", "diskcache", "aiomqtt", "aiohttp", "selenium>=4.0.0", "textual", "fusepy", "textual-serve", "azure-identity", "azure-keyvault-secrets", "fastapi", "uvicorn", "sqlmodel", "sqlalchemy[asyncio]", "psycopg[binary]", "fastapi-pagination", "sqlakeyset", "httpx"]
 test-tui = ["pytest", "pytest-asyncio", "textual"]
 
 [project.scripts]
@@ -56,7 +53,6 @@ disable = [
     "expression-not-assigned",
 
     "global-statement",
-    "import-outside-toplevel",
 
     "line-too-long",
 

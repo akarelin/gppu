@@ -47,11 +47,7 @@ from .gppu import (
     y2path,
     y2uri,
     y2topic,
-
-    # .. Version info
     VER_GPPU,
-    VER_GPPU_BASE,
-    VER_GPPU_BUILD,
 
     # .. Human-readable formatters
     format_size,
@@ -148,10 +144,7 @@ from .iot import (
 
 __version__ = VER_GPPU
 __all__ = [
-    'Span', 'TimeSpan', 'uuid_create',
-    # .. Version
-    'VER_GPPU', 'VER_GPPU_BASE', 'VER_GPPU_BUILD', '__version__',
-
+    'Span', 'TimeSpan', 'uuid_create', 'VER_GPPU', '__version__',
     # .. OS detection
     'OSType', 'detect_os',
 

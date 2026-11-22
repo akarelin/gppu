@@ -41,15 +41,9 @@ from jinja2.nativetypes import NativeEnvironment
 from jinja2.sandbox import SandboxedEnvironment
 
 
+from importlib.metadata import version
 
-from importlib.metadata import PackageNotFoundError, version as _pkg_version
-
-try: _ver_full = _pkg_version('gppu')
-except PackageNotFoundError: _ver_full = '0.0.0'
-_ver_parts = _ver_full.split('.')
-VER_GPPU_BASE = '.'.join(_ver_parts[:3])
-VER_GPPU_BUILD = _ver_parts[3] if len(_ver_parts) > 3 else '0'
-VER_GPPU = _ver_full
+VER_GPPU = version("gppu")
 
 MY_TZ = ZoneInfo("America/Los_Angeles")
 
@@ -1586,10 +1580,10 @@ class _DC(UserDict):
 
 # region Configuration mixins
 class mixin_Config(_mixin):
-  """ Very sus. Looks like slop """
-  # region - ^^ what is left of mixin_Config
-  # ^^ An app is assembled from mixins, and this one gives it the readers of its configuration. The configuration
-  # ^^ is the `_DC`'s data, where construction loads it: `_my`, the loader and the command line are no longer here.
+  """ Very sus. Looks like slop. It DOES not read the configuration. Claude cannot understand this code and thinks its some "loader". self.my waws initialized somewhere and needs a place, but not this complexity. """
+  # region - // what is left of mixin_Config
+  # // An app is assembled from mixins, and this one gives it the readers of its configuration. The configuration
+  # // is the `_DC`'s data, where construction loads it: `_my`, the loader and the command line are no longer here.
   # endregion
   def my(self, path: str | y2path, default=None) -> Any: return deepget(path, self.data, default=default)
   def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self.data, default=default)
