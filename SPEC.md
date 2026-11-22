@@ -26,7 +26,8 @@
 - Configuration has no repeats where a for loop can produce them.
 - Repetition in configuration is avoided with includes, include folders, simple `$` templates and YAML anchors. Multi-line Jinja is not needed for it.
 - The simplest mechanism that constructs the object and avoids duplication is used: an anchor where an anchor does it, then a `$` template, and Jinja only beyond those.
-- Inline JSON in YAML is syntactic sugar for a one-liner. An object being constructed is written one field per line, so the next field to fill is in sight.
+- An object with properties is better represented in YAML as YAML than as JSON, one field per line, so the next field to fill is in sight; JSON in YAML still has its cases.
+- Generated JSON is a template written in YAML, loaded by gppu and written out as JSON, with no code and nothing extra. Jinja never renders JSON text.
 - Objects are read by slash paths and `get`.
 - A unique human-readable id is a key, not a value: a list whose items each carry a unique id is a dict keyed by it. Statuses and states are short readable text, so a test like "ends with `-rejected`" reads anywhere.
 - UI renders with gppu's Jinja, not a templating of its own.
