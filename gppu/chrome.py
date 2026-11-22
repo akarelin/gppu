@@ -15,17 +15,18 @@ import json
 import subprocess
 import sys
 import time
-import os
 
 from typing import Optional, List
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 
+from .gppu import Path
+
 
 # .. -- Defaults (overridable via prepare_driver kwargs) --
-DEFAULT_PROFILE = os.path.expanduser("~/.config/chrome-automation")
-SYSTEM_CHROME = "/opt/google/chrome/chrome"
+DEFAULT_PROFILE = "~/.config/chrome-automation"
+SYSTEM_CHROME = Path("/opt/google/chrome/chrome")
 
 
 # region - Chrome Process Management
@@ -48,21 +49,20 @@ def _chrome_pids(profile: str) -> List[int]:
   return [int(l.split(maxsplit=1)[0]) for l in lines if profile in l]
 
 
-def _remove_stale_locks(user_data_dir: str) -> None:
+def _remove_stale_locks(user_data_dir: Path) -> None:
   """Remove stale SingletonLock / SingletonCookie left after a Chrome crash."""
   for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
-    lock = os.path.join(user_data_dir, name)
-    if os.path.exists(lock) or os.path.islink(lock):
-      os.remove(lock)
+    lock = user_data_dir / name
+    if lock.exists() or lock.is_symlink():
+      lock.unlink()
 
 
-def _clear_crash_state(user_data_dir: str, profile_directory: Optional[str] = None) -> None:
+def _clear_crash_state(user_data_dir: Path, profile_directory: Optional[str] = None) -> None:
   """Clear Chrome crash recovery flags so it starts cleanly under Selenium."""
-  profile_dir = profile_directory or "Default"
-  prefs_path = os.path.join(user_data_dir, profile_dir, "Preferences")
-  if not os.path.exists(prefs_path): return
+  prefs_path = user_data_dir / (profile_directory or "Default") / "Preferences"
+  if not prefs_path.exists(): return
 
-  with open(prefs_path) as f:
+  with prefs_path.open() as f:
     prefs = json.load(f)
   changed = False
   if prefs.get("profile", {}).get("exit_type") != "Normal":
@@ -72,12 +72,12 @@ def _clear_crash_state(user_data_dir: str, profile_directory: Optional[str] = No
     prefs.setdefault("profile", {})["exited_cleanly"] = True
     changed = True
   if changed:
-    with open(prefs_path, "w") as f:
+    with prefs_path.open("w") as f:
       json.dump(prefs, f)
 
 
-def _ensure_profile_unlocked(profile: str, timeout: float = 5.0, interactive: bool = True) -> None:
-  pids = _chrome_pids(profile)
+def _ensure_profile_unlocked(profile: Path, timeout: float = 5.0, interactive: bool = True) -> None:
+  pids = _chrome_pids(str(profile))
 
   if pids:
     if interactive:
@@ -89,13 +89,13 @@ def _ensure_profile_unlocked(profile: str, timeout: float = 5.0, interactive: bo
     subprocess.run(["kill", "-TERM", *map(str, pids)], check=False)
 
     end = time.time() + timeout
-    while time.time() < end and _chrome_pids(profile): time.sleep(0.25)
+    while time.time() < end and _chrome_pids(str(profile)): time.sleep(0.25)
 
-    if _chrome_pids(profile):
-      subprocess.run(["kill", "-KILL", *map(str, _chrome_pids(profile))], check=False)
+    if _chrome_pids(str(profile)):
+      subprocess.run(["kill", "-KILL", *map(str, _chrome_pids(str(profile)))], check=False)
       time.sleep(1)
 
-    if _chrome_pids(profile): sys.exit("Could not close Chrome – aborting.")
+    if _chrome_pids(str(profile)): sys.exit("Could not close Chrome – aborting.")
 
   _remove_stale_locks(profile)
 
@@ -120,19 +120,19 @@ def prepare_driver(
       profile_directory:   Profile subfolder (e.g. "Default", "Profile 1"). Optional.
       interactive:         If True, prompt before killing Chrome. If False, kill silently.
   """
-  user_data_dir = os.path.expanduser(user_data_dir)
+  user_data_dir = Path(user_data_dir)   # .. Path expands its ~
   _ensure_profile_unlocked(user_data_dir, interactive=interactive)
   _clear_crash_state(user_data_dir, profile_directory)
 
   options = webdriver.ChromeOptions()
   prefs = {
-      "download.default_directory": download_directory,
+      "download.default_directory": str(Path(download_directory)),   # .. Chrome is given the folder, its ~ expanded
       "download.prompt_for_download": False,
       "plugins.always_open_pdf_externally": True
   }
   options.add_experimental_option("prefs", prefs)
 
-  if os.path.exists(SYSTEM_CHROME): options.binary_location = SYSTEM_CHROME
+  if SYSTEM_CHROME.exists(): options.binary_location = str(SYSTEM_CHROME)
 
   options.add_argument(f"--user-data-dir={user_data_dir}")
   if profile_directory:
@@ -142,9 +142,9 @@ def prepare_driver(
   options.add_argument("--disable-dev-shm-usage")
 
   # .. Remove stale DevToolsActivePort
-  devtools_port = os.path.join(user_data_dir, "DevToolsActivePort")
-  if os.path.exists(devtools_port):
-    os.remove(devtools_port)
+  devtools_port = user_data_dir / "DevToolsActivePort"
+  if devtools_port.exists():
+    devtools_port.unlink()
 
   service = Service()
   driver = webdriver.Chrome(service=service, options=options)
