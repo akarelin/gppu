@@ -75,7 +75,6 @@ class AsyncApp(App, YStart):
   """
   key: str
   poll_interval: int
-  poll_delay: int   # .. no longer waited out, since there is no startup delay; Y2's UI still shows it
 
   _task_group: asyncio.TaskGroup | None
   _background_tasks: set[asyncio.Task[Any]]
