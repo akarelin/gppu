@@ -36,7 +36,7 @@ from yaml.dumper import Dumper
 from yaml.representer import SafeRepresenter
 from yaml.loader import FullLoader
 from yaml.nodes import Node
-from jinja2 import DictLoader, FileSystemLoader, StrictUndefined, Undefined, meta, pass_context
+from jinja2 import DictLoader, StrictUndefined, Undefined, meta, pass_context
 from jinja2.nativetypes import NativeEnvironment
 from jinja2.sandbox import SandboxedEnvironment
 
@@ -923,14 +923,14 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
         return self._jinja_compile(template).render(values)
 
     def jinja_configuration(self, node: Any) -> None:
-        """Every `macros:` block and every named template (a `*_templates` or `generators` block) of a configuration,
+        """Every `macros:` block and every named template (a `*_templates` block) of a configuration,
         wherever it sits, added to this environment: a macro is then callable by its name from any template."""
         if not isinstance(node, dict): return
         for key, value in node.items():
             if key == 'macros' and isinstance(value, str):
                 module = self.from_string(value).make_module()
                 self.globals.update({name: getattr(module, name) for name in dir(module) if not name.startswith('_')})
-            elif (key == 'generators' or str(key).endswith('_templates')) and isinstance(value, dict):
+            elif str(key).endswith('_templates') and isinstance(value, dict):
                 self.loader.mapping.update(value)
                 self.cache.clear()
             else: self.jinja_configuration(value)
@@ -993,29 +993,7 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
         return node
 
 
-class JinjaDocument(SandboxedEnvironment):
-  """Jinja templates that write a document rather than a value.
-
-  A value is rendered natively, so `{{ 1 }}` is the number. A document must not be:
-  a macro that writes `"seven"` would have its quotes evaluated away and the YAML it
-  was building would stop being YAML. This renders text, and reaches the files beside
-  the template so a document can import macros and read the facts it applies them to.
-  """
-
-  def __init__(self, search_path: Path, **options):
-    super().__init__(loader=FileSystemLoader(str(search_path)), undefined=StrictUndefined, autoescape=False,
-                     trim_blocks=True, lstrip_blocks=True, keep_trailing_newline=True, **options)
-    self.filters.update(JinjaEnvironment.jinja_helpers())
-    self.globals.update(JinjaEnvironment.jinja_helpers())
-    self.filters['from_yaml'] = lambda name: dict_from_yml(full_path(name, search_path))
-    self.filters['to_yaml'] = lambda value: yaml.safe_dump(value, default_flow_style=True).strip()
-    self.globals['hostname'] = lambda: socket.gethostname().split('.')[0].casefold()
-    # .. The builtins a document needs to merge a row onto its template and count what it loops over; the same set Y2 gives its own templates.
-    self.globals.update({name: getattr(builtins, name) for name in
-                         ('dict', 'list', 'int', 'float', 'str', 'len', 'sorted', 'min', 'max', 'range')})
-
-
-jinja = JinjaEnvironment(loader=DictLoader({}))
+jinja =JinjaEnvironment(loader=DictLoader({}))
 jinja.globals.update({name: getattr(builtins, name) for name in
                       ('dict', 'list', 'int', 'float', 'str', 'bool', 'len', 'round', 'sorted', 'min', 'max', 'range')},
                      re=re, render_template=jinja._render_template_in)

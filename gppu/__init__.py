@@ -82,7 +82,6 @@ from .gppu import (
     jinja_configuration,
     render_template,
     apply_template,
-    JinjaDocument,
 
     # .. Dictionary utilities
     deepget,
@@ -167,7 +166,6 @@ __all__ = [
     # .. Configuration
     'dict_from_yml', 'dict_to_yml', 'dict_from_json', 'dict_to_json', 'dict_sanitize',
     'template_populate', 'jinja_template', 'jinja', 'jinja_configuration', 'render_template', 'apply_template',
-    'JinjaDocument',
 
     # .. Dictionary utilities
     'deepget', 'deepget_dict', 'deepget_float', 'deepget_int', 'deepget_list',

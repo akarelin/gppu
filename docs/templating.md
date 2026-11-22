@@ -24,10 +24,6 @@ render_template("{{ {'state': state, 'brightness': brightness} }}", state='on', 
 
 Templates that include one another by their own names, such as a Container's naming templates or the lake's Markdown pages, render from an overlay of it over their mapping: `jinja.overlay(loader=DictLoader(templates)).get_template(name).render(values)`. The overlay has the same globals and helpers; only the names it finds are its own.
 
-## Documents
-
-A configuration document is a different matter. `JinjaDocument` renders text rather than native values, because a macro that writes `"seven"` would otherwise have its quotes evaluated away and the YAML it was building would stop being YAML. It loads templates from the directory its document sits in, so a document can `{% import %}` macros and read the facts it applies them to with `from_yaml`; `to_yaml` writes a value back out.
-
 ## Resolving rows
 
 Alex, 2026-09-16: "Templates are generating dicts that are used to create objects. Startup/restart only. Templates are used to override class property behavior. Mostly by returning a value using jinja for calculations (regex matching of filenames in handlers). Templates can be stacked and applied in order. Templates have all needed to understand what they do in the same file."
