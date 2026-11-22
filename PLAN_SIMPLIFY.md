@@ -7,7 +7,7 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [x] gppu stays on 3.7.11: a build with no bump moves the 3.7.11 tag to master and builds it, and betas are off the menu (2716f70). `gppu/latest` and 3.7.11 are master, and `~/.venv` on alex-pc runs it: the Hosts TUI starts and draws its menu, and the TUI's, Preservator's and the Fleet grid's tests and PC Control's checks pass on it
 - [x] `pip show gppu` shows the time of the build's commit after a `+` (`setup.py`), Alex as author and gppu's GitHub repository; a plain `pip install -r requirements.txt` takes each new build
 - [x] The gppu wheel carries only the gppu package, and its source archive only the library and the files that build it; the next gppu build releases it
-- [ ] PC Control imports `MqttApp`, which master no longer has: a build of master stops it at import until it moves to an async app's MQTT, at the release that takes it
+- [ ] PC Control imports `MqttApp` and calls `submit` and `call`, which master no longer has (`schedule` does both): a build of master stops it at import until it moves to an async app's MQTT and `schedule`, at the release that takes it
 
 ## Step 1: gppu reduced statically (in progress)
 - [x] Logging is one `Logger`: the console, its colours and filter, and the trace rules; the file logging and `init_logger` are gone
@@ -25,10 +25,9 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
   - Waits on which programs use gppu today: a base made from its data needs each live subclass to give it data and move its constructor into an init step
 - [x] gppufs (`gppu.fs` with `gppu.ld`) is a submodule of gppu, reduced as the rest
 - [ ] gppu reduced to what the programs that use it today need (waits on Alex's list of them)
-  - Read from the deployments: Y2 and its UI, any2mqtt's utilities, PC Control, Plaud, MCP United, the Lake through Dagster, the Hosts tools, gppu's W11 tools and status line
-  - None of those reaches `gppu.ld`, `gppu.ld.sessions`, `gppu.fs.files`, `gppu.fs.vfs` or `gppu.chrome`
-  - In gppu.tui only programs not deployed use the selectors, `TickProgress`, `ConfirmScreen`, the tree entries and `TreeTable`, and `launch_app`
-  - gppu.fs beyond the handlers and `probe` is reached only through the Lake
+  - Read from the deployments: Y2 and its UI, any2mqtt's utilities, PC Control, Plaud, MCP United, the Lake and the Session Manager through Dagster with the admin UI's shared code it mounts, the Hosts tools, gppu's W11 tools, status line and examples
+  - None of those reaches `gppu.ld`, `gppu.ld.sessions`, `gppu.fs.files` or `gppu.chrome`: the Linked Data API uses the first three, Transcriber's annotation scripts the last
+  - gppu's examples use the TUI pieces and `gppu.fs.vfs`
 - [x] gppu's tests run on the environment gppu has and pass whole; those of removed behaviour are archived
 
 ## Independent, unscoped
@@ -45,6 +44,7 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
   - [x] Read their section of the environment, or the file they are given: the Linked Data API and its tools, YuE2, coverage, eMail-triage, openapi_query, qdrant, the admin UI, the file indexer (`file_indexer`, its stores' `db` from it), neo-mqtt's rule generator and bridge
   - [x] The lake holds the configuration it keeps in Everything and reads it through its own `section()`; the admin UI reads the lake's sections the same way
   - [ ] Transcriber's recordings tool and lake's m365 read a `lake.yaml` that exists only in archives
+  - [ ] Plaud's hourly sync on seven, its sign-in and its TUI call `Env.from_env`; Plaud is not ported
 - RAN's gppu skill names `MarkerProgress` and `spinner_frames`, which gppu.tui no longer has
 - Y2's tests and the Hosts tests set up with `Env.reset()` and `Env.init(environment=...)`, which Env no longer has
 - The Hosts TUI's Configs browser reads `configs_config`, which RAN's configuration no longer has
