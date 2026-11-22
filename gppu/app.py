@@ -277,14 +277,9 @@ class AsyncApp(App, YStart, mixin_EventLoopBridge):
     for group in self._my_groups: group.stop()
     loop = self._loop
     if loop is None: return                    # .. not running: nothing it spawned is left to cancel
-    try: on_loop = asyncio.get_running_loop() is loop
-    except RuntimeError: on_loop = False
-    if not on_loop:                            # .. stopped from another thread: the loop cancels its own tasks
-      loop.call_soon_threadsafe(lambda: [task.cancel() for task in list(self._background_tasks) if not task.done()])
-      return
-    current = asyncio.current_task()
-    for task in self._background_tasks:
-      if task is not current and not task.done(): task.cancel()
+    # .. the loop cancels everything the app spawned, from any thread and from inside its own tasks: an MQTT listener
+    # .. that stops its app ends the MQTT loop it runs in
+    loop.call_soon_threadsafe(lambda: [task.cancel() for task in list(self._background_tasks)])
 
   def _get_loop(self) -> asyncio.AbstractEventLoop:
     loop = self._loop
