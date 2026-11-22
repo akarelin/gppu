@@ -1608,32 +1608,15 @@ class App(YInit, _Base, _DC):
     environment: str
 
     def _config_load(self, source: Mapping | str | Path, argv: list[str] = []) -> None:
-        """The one loader of Env and every app. Its source goes into this object's data, a copy, over what the object was
-        constructed with: a section already loaded, a YAML file, or a script (.py, .cmd, .ps1, .sh), whose manifest is
-        the YAML assigned to MANIFEST within its first 4 kilobytes.
-
-        Jinja is resolved here only where it reads nothing but the configuration: a value that reads only ``glob``,
-        ``glob_int``, ``glob_list`` or ``glob_dict`` is filled now, each reading the environment filled. Jinja that
-        reads anything else, a row or a host, stays as written for the code that renders it with those values, and so
-        does ``$`` text. A row's ``template:`` is merged under the row here.
-
-        The command line goes over it: ``--key value`` sets the key, a slash path a nested one, to the string,
-        ``--flag`` with no value after it sets it to True, and other arguments are the program's own."""
+        """An app's own configuration over what it was constructed with: a row, a YAML file, or a script's MANIFEST;
+        the command line over it: ``--key value`` sets a key, a slash path a nested one, ``--flag`` sets it to True."""
         if isinstance(source, Mapping): loaded = deepcopy(dict(source))
         elif str(source).lower().endswith(('.py', '.cmd', '.ps1', '.sh')):
             with open(full_path(source), encoding='utf-8-sig') as f: manifest = re.search(r'^MANIFEST = r?"""(.*?)"""', f.read(4096), re.M | re.S)
             if not manifest: raise ValueError(f'{source}: no MANIFEST in its first 4 KB')
             loaded = dict(yaml.load(manifest[1], Loader=YmlLoader))
         else: loaded = dict_from_yml(source)
-        given, self.data = self.data, self.data | loaded   # .. glob reads Env's own configuration while Env fills it
-        jinja.jinja_configuration(loaded)
-        def read(path: str) -> Any: return jinja.jinja_fill(glob(path), **readers)
-        readers = {'glob': read,
-                   'glob_int': lambda path: _ if isinstance(_ := read(path), int) else 0,
-                   'glob_list': lambda path: _ if isinstance(_ := read(path), list) else [],
-                   'glob_dict': lambda path: _ if isinstance(_ := read(path), dict) else {}}
-        loaded = jinja.jinja_fill(loaded, **readers)
-        self.data = given | jinja.apply_template(loaded, jinja.templates_of(loaded))
+        self.data = self.data | loaded
         i = 0
         while i < len(argv):
             arg, i = argv[i], i + 1
@@ -1681,17 +1664,21 @@ class _Env(App):
     self.user = getpass.getuser()
     self.home = Path.home()
 
-    # region - Env's configuration
-    # .. Env loads like any app: the file its name selects, one of the two hard-coded here, or the `config` it is given
-    # .. as an app is, which is how the part read from MQTT and a copy of the file under validation come in
-    # endregion
-    config = kw.get('config')
-    if config is None and environment: config = Path("D:\\Dev" if self.os == OSType.W11 else "~").expanduser() / _ENV_PATHS[environment]
-    if config is None: return
-
-    if isinstance(config, PurePath): self.path = config
+    if not environment: return
     self.environment = environment
-    self._config_load(config)
+    self.path = Path("D:\\Dev" if self.os == OSType.W11 else "~").expanduser() / _ENV_PATHS[environment]
+    self.data = kw['config'] if 'config' in kw else dict_from_yml(self.path)   # .. one YAML load of its file; MQTT and Y2's configure give it whole
+    # region - the configuration's macros, named templates, `template:` rows and the Jinja that reads only the configuration
+    # .. Creekview and RAN use all four: _creekview.yaml's macros, the *_templates and templates blocks of groups, Insteon,
+    # .. covers and the devices, and RAN config.yaml's mounts; glob reads the value it fills, filled
+    # endregion
+    jinja.jinja_configuration(self.data)
+    def read(path: str) -> Any: return jinja.jinja_fill(glob(path), **readers)
+    readers = {'glob': read,
+               'glob_int': lambda path: _ if isinstance(_ := read(path), int) else 0,
+               'glob_list': lambda path: _ if isinstance(_ := read(path), list) else [],
+               'glob_dict': lambda path: _ if isinstance(_ := read(path), dict) else {}}
+    self.data = jinja.apply_template(jinja.jinja_fill(self.data, **readers), jinja.templates_of(self.data))
     if 'log_file' in self.data: Logger.enable_file_logging(self.data['log_file'])
     if 'trace_rules' in self.data: Logger.init_logger(trace_rules=self.data['trace_rules'])
     self.initialized = True
