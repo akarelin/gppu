@@ -24,6 +24,7 @@
 - YAML anchors are YAML, resolved by the YAML standard. They are not Jinja.
 - Configuration has no repeats where a for loop can produce them.
 - The YAML reader reads YAML. Reading a script's inline configuration is not a feature of its own and has no export.
+- A script's manifest is read from its source file with a simple regex: a line or two, not pages of parsing code.
 - Every use of YAML goes through the same parsing process, whatever the text comes from: a file, an include, a script's inline configuration, MQTT.
 
 ## State
