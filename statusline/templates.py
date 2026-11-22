@@ -19,6 +19,30 @@ LINE1 = "{{ model }}{{ effort_icon }} {{ context_pct }}{{ limit_7d|sep }}{{ user
 LINE2 = "{{ project|c('BGOLD') }} {{ project_folder|c('GRAY4','📂 ') }}{{ hostname|c('DM','💻 ')|sep }}{{ git_remote|c('DB')|sep }}{{ git_branch|sep }}{{ lines_changed|sep }}{{ ov_score|sep }}{{ ov_recall|sep }}{{ ov_state|sep }}{{ ov_capture|sep }}"
 LINE2_INDENT = "  "
 
+# region - tool icons
+# .. Tools read as their action, not their name: a shell prompt for the shell, an
+# .. open book for reading, a pencil for editing. Anything unmapped keeps its name.
+# .. The caret is the one text glyph here, so it is painted white on black rather
+# .. than inheriting whatever color wraps the group. MCP tools all read as one plug.
+# endregion
+SHELL_ICON = "❯"
+MCP_ICON = "🔌"
+TOOL_ICONS = {
+    "Bash": SHELL_ICON, "PowerShell": SHELL_ICON,
+    "Read": "📖", "Edit": "✏️", "Write": "📝", "NotebookEdit": "📓",
+    "Glob": "📁", "Grep": "🔍", "Artifact": "📦", "SendUserFile": "📤",
+    "Task": "👥", "Agent": "👥", "ListAgents": "👥", "Workflow": "🔄",
+    "TaskCreate": "☑️", "TaskList": "☑️", "TaskOutput": "☑️",
+    "TaskStop": "☑️", "TaskUpdate": "☑️", "TodoWrite": "☑️",
+    "SendMessage": "💬", "SendFeedback": "💬", "AskUserQuestion": "❓",
+    "PushNotification": "🔔",
+    "WebFetch": "🌐", "WebSearch": "🌐",
+    "ToolSearch": "🧰", "Skill": "🎓", "StructuredOutput": "🧾",
+    "EnterPlanMode": "🗺️", "ExitPlanMode": "🗺️", "EnterWorktree": "⑂",
+    "CronCreate": "⏰", "CronDelete": "⏰", "CronList": "⏰",
+    "ScheduleWakeup": "⏰", "Monitor": "👁️",
+}
+
 # region - model colors
 # .. Model carries its own colors: the model itself reads brighter than the
 # .. style/window suffix trailing it, so the slash separates two weights.
