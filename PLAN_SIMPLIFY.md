@@ -4,12 +4,15 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 
 ## Release
 - [x] The status line released: statusline 0.7.6
-- [x] gppu released from master by its GitHub Action: 3.7.11; alex-pc's `~/.venv` runs it from `gppu/latest`
-- [x] On that release on alex-pc: the Hosts TUI and its utilities, Preservator and the Fleet grid, PC Control's checks
+- [ ] gppu: 3.7.10 and 3.7.11 went out as stable releases, not beta, and `gppu/latest` moved to 3.7.11; Alex did not ask for them. A build with no bump rebuilds the last tag, not master, and since 1708b03 passes by overwriting that release's files. The wheel carries the `statusline` and `w11` packages, and the source archive every file in the repository
+- [ ] On alex-pc the Hosts TUI and its utilities, Preservator and the Fleet grid, and PC Control's checks ran on 3.7.11, which Alex has not reviewed
 
 ## gppu's code, by Alex's marks
 - [ ] `Logger.enable_file_logging`: "Need justification for this to exist" (in progress)
-  - It writes the log to the file an environment's `log_file` names. RAN's `config.yaml` names `~/.cache/gppu/hosts.log`; Creekview names none. `Env.init` is its only caller, and `Logger.file_log`, which RAN's rewrite-commits calls, writes to the files it opened
+  - What it does: RAN's `config.yaml` has the line `log_file: ~/.cache/gppu/hosts.log`, so every program that loads RAN's configuration also writes every line it prints into that one file. Creekview's configuration has no such line
+  - The file's lines have no time, severity or caller. Preservator, the Hosts TUI, rewrite-commits and test runs all write into it. No program reads it
+  - Logging is set up in six places: the top of `gppu.py` makes the console output; the `Logger` class, far below, gives it colours and a filter; loading the configuration applies `trace_rules` and `log_file`; `init_logger(name)` renames the log, a name nothing prints; every class gets its own log when it is defined; the TUI launcher swaps the console output for its own panel while it runs
+  - The CRAP file indexer, Plaud and Transcriber scripts and RAN's md-indexer import `init_logger` from `gppu`, which no longer offers it, so they stop at import
 - [ ] `mixin_Config`: "It DOES not read the configuration ... self.my was initialized somewhere and needs a place, but not this complexity"
 - [ ] `App`: "Not human reviewed"
 - [ ] The Jinja region: "AI, not human reviewed"

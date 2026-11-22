@@ -1308,8 +1308,8 @@ class Logger:
   def enable_file_logging(log_file: str) -> Path:
     """ Need justification for this to exist """
     # region - ^^ why enable_file_logging exists
-    # ^^ It is code for one configuration key: an environment declares `log_file` (RAN's config.yaml does) and Env.init
-    # ^^ applies it here, its only caller. The handler is the logger's, so it sits in Logger and not in Env.
+    # ^^ RAN's config.yaml has the line `log_file: ~/.cache/gppu/hosts.log`, and loading that configuration calls this:
+    # ^^ every line a RAN program prints also goes into that one file, without time or severity. No program reads it.
     # ^^ The file rotates at 4 MB and keeps 5 older files; both numbers are written here, not configured.
     # endregion
     if not isinstance(log_file, str) or not log_file.strip(): raise ValueError('File logging requires an explicit log_file in configuration')
