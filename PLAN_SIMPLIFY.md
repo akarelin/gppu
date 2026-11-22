@@ -22,7 +22,7 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [x] A `TUIApp` has no constructor: Textual's construction is the last part of its init step (architecture notes, item 6)
 - [ ] The database bases made from their data, with an init step and a connection on first use (architecture notes, item 7)
 - [x] gppufs (`gppu.fs` with `gppu.ld`) is a submodule of gppu, reduced as the rest
-- [ ] gppu's tests that load an environment through `Env.reset` (configuration, inline configuration, the Lake, Linked Data, providers): Env has no reset
+- [x] gppu's tests run on the environment gppu has and pass whole; those of removed behaviour are archived
 
 ## Independent, unscoped
 - Objects read their configuration as `self.name`
