@@ -54,4 +54,11 @@
 - gppu is a class hierarchy of objects with all functionality in methods; it rarely exports standalone functions. A new standalone function needs significant justification.
 - Every new method or class is justified.
 - gppufs can have its own uri where it needs to extend y2uri.
+
+## Identity
+- A UUID is the primary way to refer to any object, internally and externally. The database stores UUIDs, and links are UUIDs.
+- A URI is an external reference. A UUID is issued for a URI, which gives a mapping of UUID to URI.
+- A user-friendly id is short, unique across the system and usually created by a human: a slug, a namespace, a name or a path. A status is a short lower-case enum rather than an integer key.
+- Some objects have a default path that is not stored but can be generated.
+- y2uri is a foundation, as `_DC` is: features beyond it come into y2uri or as mixins that a derivative picks.
 - Code uses public methods, never protected members.
