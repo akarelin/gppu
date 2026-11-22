@@ -4,7 +4,7 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 
 ## Release
 - [x] The status line released: statusline 0.7.6
-- [x] gppu stays on 3.7.11: a build with no bump moves the 3.7.11 tag to master and builds it, and betas are off the menu (2716f70). `gppu/latest` and 3.7.11 are master, and `~/.venv` on alex-pc runs it: the Hosts TUI starts and draws its menu, and the TUI's, Preservator's and the Fleet grid's tests and PC Control's checks pass on it
+- [x] gppu stays on 3.7.11: a build with no bump moves the 3.7.11 tag to master and builds it, and betas are off the menu (2716f70). `gppu/latest` and 3.7.11 are master as it was then; `~/.venv` on alex-pc imports gppu from the `D:\Dev\gppu` checkout, so the programs it runs take every change to master at once
 - [x] `pip show gppu` shows the time of the build's commit after a `+` (`setup.py`), Alex as author and gppu's GitHub repository; a plain `pip install -r requirements.txt` takes each new build
 - [x] The gppu wheel carries only the gppu package, and its source archive only the library and the files that build it; the next gppu build releases it
 - [ ] PC Control imports `MqttApp` and calls `submit` and `call`, which master no longer has (`schedule` does both): a build of master stops it at import until it moves to an async app's MQTT and `schedule`, at the release that takes it
@@ -33,6 +33,7 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [x] MQTT 5 on gppu's own MQTT: a listener knows whether a message is retained and when it was sent, and each listener gets a topic's retained state, however many listeners came before it (architecture notes, State)
 - [x] The poller: no startup delay, each object polled by its own next poll time, at least once an hour, and `poll(obj, delay)` puts a device first or soon when its state, an event or a command calls for it (architecture notes, State and Presses and indicators)
 - [x] `poll_delay` is gone from AsyncApp: there is no startup delay, and Y2's UI no longer shows it
+- [x] MQTT connects with Creekview's `mqtt` as it is: the client takes the connection, the block's other keys are the app's, and the will and online status come only where a `status_topic` is named
 - [x] A row names its class in `class`, exactly, among the app's default class and its subclasses; a row without it gets the default class (architecture notes, the model breaks, item 2)
 - [ ] Env, rewritten as marked: an app declares RAN or IoT and the rest follows from it; today Env, made as gppu is imported, guesses the environment from the script's path (waits on Alex: the model breaks where the declaration comes after the import)
 - [ ] Env without `path` (the model breaks, item 1): Y2's UI (`y2/ui/creekview.py`) and RAN's y2-compare skill script still read it
