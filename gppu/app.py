@@ -20,134 +20,10 @@ from itertools import count
 from typing import Any, ClassVar, final
 
 from .gppu import App, Debug, Env, _Base, _DC, _mixin, now_ts
-
-_trace_mro = False
-
+from .gppu import _YMRO, _YInit, _YLoad, _YStart, YStepper, mixin_Stepper
 
 
 
-# region YMRO lifecycle
-class _YMRO:
-  POSSIBLE_STEPS = ['init', 'load', 'start', 'stop']
-
-  @property
-  def _trace_mro(self) -> bool:
-    result = getattr(self, 'args', {}).get('trace_mro', False)
-    global _trace_mro
-    _trace_mro = result
-    return result
-
-
-  def print_ymro(self):
-    Debug('BY', self.__class__.__qualname__)
-    siblings = [c for c in reversed(self.__class__.__mro__) if c != _YMRO and issubclass(c, _YMRO)]
-    step = 'init'
-    for sibling in siblings:
-      Debug('DG', f"  {sibling.__qualname__}")
-      qname = f"{sibling.__qualname__}__{step}"
-      if qname[0] != '_': qname = '_' + qname
-      method = getattr(self, qname, None)
-      if method:
-        Debug('INFO', f"  {method.__qualname__}")
-        initers = getattr(sibling, '_initers', [])
-        for initer in initers: Debug('DIM', f"     {initer.__qualname__}")
-
-
-  def _ymros(self):
-    result = {}
-    siblings = [c for c in reversed(self.__class__.__mro__) if c != _YMRO and issubclass(c, _YMRO)]
-    for step in self.POSSIBLE_STEPS:
-      result[step] = []
-      for sibling in siblings:
-        qname = f"{sibling.__qualname__}__{step}"
-        if qname[0] != '_': qname = '_' + qname
-        method = getattr(self, qname, None)
-        if method: result[step].append(method)
-    return result
-
-  def _ymro(self, method: str) -> list: return self._ymros().get(method, [])
-
-  def _callall(self, method, *a, **kw):
-    if any(inspect.iscoroutinefunction(m) for m in self._ymro(method)): return self._acallall(method, *a, **kw)
-    [m(*a, **kw) for m in self._ymro(method)]
-
-  async def _acallall(self, method: str, *a, **kw) -> None:
-    for m in self._ymro(method):
-      result = m(*a, **kw)
-      if asyncio.iscoroutine(result): await result
-
-
-class _YInit(_YMRO):
-  @abstractmethod
-  def __init(self): pass
-
-  @final
-  def init(self):
-    if self.initialized: return
-    result = self._callall('init')
-    self.initialized = True
-    return result
-
-  @property
-  def initialized(self) -> bool: return getattr(self, '_initialized', False)
-  @initialized.setter
-  def initialized(self, value: bool): self._initialized = value
-
-
-class _YLoad(_YInit):
-  @abstractmethod
-  def __load(self): pass
-
-  @final
-  def load(self):
-    if self.loaded: return
-    assert self.initialized
-    result = self._callall('load')
-    self.loaded = True
-    return result
-
-  @property
-  def loaded(self) -> bool: return getattr(self, '_loaded', False)
-  @loaded.setter
-  def loaded(self, value: bool): self._loaded = value
-
-
-class _YStart(_YLoad):
-  @abstractmethod
-  def __start(self): pass
-
-  @final
-  def start(self):
-    if self.started: return
-    result = self._callall('start')
-    self.started = True
-    return result
-
-  @property
-  def started(self) -> bool: return getattr(self, '_started', False)
-  @started.setter
-  def started(self, value: bool): self._started = value
-
-
-  @final
-  def stop(self):
-    if self.stopped: return
-    result = self._callall('stop')
-    self.started = False
-    self.stopped = True
-    self.loaded = False
-    return result
-
-
-  @property
-  def stopped(self) -> bool: return getattr(self, '_stopped', False)
-  @stopped.setter
-  def stopped(self, value: bool): self._stopped = value
-
-
-YStepper = _YStart
-class mixin_Stepper(YStepper, _mixin): pass
-# endregion
 
 
 # region event-loop bridge
@@ -283,8 +159,8 @@ class AsyncApp(App, mixin_Stepper, mixin_EventLoopBridge):
 
   Construction runs init; ``run()`` runs init (light loading, with the configuration ready),
   load (the heavy loading) and start, last, on the app's loop: ``asyncio.run(MyApp().run())``.
-  An app gives its part of a step by overriding ``init``, ``load`` or ``start`` and calling
-  super; a mixin gives its part as ``__init``, ``__load`` or ``__start``, sync or ``async def``.
+  A class gives its part of a step as a private ``__init``, ``__load``, ``__start`` or ``__stop``, sync or
+  ``async def``, with no super: every class's part runs, base first.
   A part adds concurrent work with ``self._spawn(coro)``; ``run()`` returns when all of it
   has finished, and ``app.stop()`` cancels it.
   The app is a ``mixin_EventLoopBridge`` onto its own running loop, so off-loop threads
@@ -301,14 +177,12 @@ class AsyncApp(App, mixin_Stepper, mixin_EventLoopBridge):
   _timer_ids = count(1)
   restartable: ClassVar[bool] = True   # whether Runtime.restart_app may stop, reconstruct and start it
 
-  def __init__(self, **kw) -> None:
-    super().__init__(**kw)
+  def __init(self) -> None:
     self._task_group = None
     self._background_tasks = set()
     self._loop = None
     self.timers: dict[int, TimerHandle] = {}
     self.h_timeouts: dict[str, TimerHandle] = {}
-    self.init()
 
   def run_later(self, callback: Callable[..., Any], *, delay: int | float, key: str | None = None, **data: Any) -> TimerHandle:
     if key is not None:

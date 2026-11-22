@@ -1,7 +1,7 @@
 """An app declares its environment, RAN or IoT; Env loads it once. An app given its own configuration file reads that, independent from the environment; one given none reads its own section of the environment."""
 import pytest
 
-from gppu import App, Env, Logger, OSType, glob, jinja_template
+from gppu import App, AsyncApp, Env, Logger, OSType, glob, jinja_template
 
 
 @pytest.fixture(autouse=True)
@@ -109,15 +109,15 @@ def test_missing_environment_file_raises(home):
     assert not Env.initialized
 
 
-def test_async_init_sees_its_configuration_after_the_environment_loads():
-    from gppu import AsyncApp
+class Stepped(AsyncApp):
 
-    class Example(AsyncApp):
-        def init(self):
-            self.seen = (self.my('enabled'), glob('second/value'))
-            return super().init()
 
-    assert Example(environment='RAN').seen == (False, 2)
+    def __init(self):   # its part of init: a private step, run after App's, which loaded the configuration
+        self.seen = (self.my('enabled'), glob('second/value'))
+
+
+def test_async_init_step_sees_its_configuration_after_the_environment_loads():
+    assert Stepped(environment='RAN', name='example').seen == (False, 2)
 
 
 def test_environment_applies_its_trace_rules(home):

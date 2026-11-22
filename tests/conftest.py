@@ -12,6 +12,12 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def no_command_line(monkeypatch):
+    """An app takes the command line by default; a test's apps take pytest's none, only the argv a test gives."""
+    monkeypatch.setattr(sys, 'argv', sys.argv[:1])
+
+
+@pytest.fixture(autouse=True)
 def one_gppufs_per_test():
     """gppufs is one object in a process; each test starts with its own, as a new process does."""
     from gppu.fs.gppufs import GppuFileSystem, _INDEXES

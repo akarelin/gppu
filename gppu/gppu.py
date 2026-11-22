@@ -23,7 +23,7 @@ from pathlib import PurePath, PureWindowsPath
 
 from enum import Enum
 from abc import abstractmethod
-from typing import Union, Any, List, Optional, Tuple, Dict, DefaultDict, Callable, Concatenate
+from typing import Union, Any, List, Optional, Tuple, Dict, DefaultDict, Callable, Concatenate, final
 from collections import defaultdict, UserDict, UserList
 from collections.abc import Mapping
 
@@ -1428,6 +1428,133 @@ Dump = Logger.Dump
 # endregion
 
 
+_trace_mro = False
+
+
+# region YMRO lifecycle
+class _YMRO:
+  POSSIBLE_STEPS = ['init', 'load', 'start', 'stop']
+
+  @property
+  def _trace_mro(self) -> bool:
+    result = getattr(self, 'args', {}).get('trace_mro', False)
+    global _trace_mro
+    _trace_mro = result
+    return result
+
+
+  def print_ymro(self):
+    Debug('BY', self.__class__.__qualname__)
+    siblings = [c for c in reversed(self.__class__.__mro__) if c != _YMRO and issubclass(c, _YMRO)]
+    step = 'init'
+    for sibling in siblings:
+      Debug('DG', f"  {sibling.__qualname__}")
+      qname = f"{sibling.__qualname__}__{step}"
+      if qname[0] != '_': qname = '_' + qname
+      method = getattr(self, qname, None)
+      if method:
+        Debug('INFO', f"  {method.__qualname__}")
+        initers = getattr(sibling, '_initers', [])
+        for initer in initers: Debug('DIM', f"     {initer.__qualname__}")
+
+
+  def _ymros(self):
+    result = {}
+    siblings = [c for c in reversed(self.__class__.__mro__) if c != _YMRO and issubclass(c, _YMRO)]
+    for step in self.POSSIBLE_STEPS:
+      result[step] = []
+      for sibling in siblings:
+        qname = f"{sibling.__qualname__}__{step}"
+        if qname[0] != '_': qname = '_' + qname
+        method = vars(sibling).get(qname)   # .. the sibling's own step: two classes of one name, as gppu's App and Y2's App, each keep theirs
+        if method: result[step].append(method.__get__(self))
+    return result
+
+  def _ymro(self, method: str) -> list: return self._ymros().get(method, [])
+
+  def _callall(self, method, *a, **kw):
+    if any(inspect.iscoroutinefunction(m) for m in self._ymro(method)): return self._acallall(method, *a, **kw)
+    [m(*a, **kw) for m in self._ymro(method)]
+
+  async def _acallall(self, method: str, *a, **kw) -> None:
+    for m in self._ymro(method):
+      result = m(*a, **kw)
+      if asyncio.iscoroutine(result): await result
+
+
+class _YInit(_YMRO):
+  @abstractmethod
+  def __init(self): pass
+
+  @final
+  def init(self):
+    if self.initialized: return
+    result = self._callall('init')
+    self.initialized = True
+    return result
+
+  @property
+  def initialized(self) -> bool: return getattr(self, '_initialized', False)
+  @initialized.setter
+  def initialized(self, value: bool): self._initialized = value
+
+
+class _YLoad(_YInit):
+  @abstractmethod
+  def __load(self): pass
+
+  @final
+  def load(self):
+    if self.loaded: return
+    assert self.initialized
+    result = self._callall('load')
+    self.loaded = True
+    return result
+
+  @property
+  def loaded(self) -> bool: return getattr(self, '_loaded', False)
+  @loaded.setter
+  def loaded(self, value: bool): self._loaded = value
+
+
+class _YStart(_YLoad):
+  @abstractmethod
+  def __start(self): pass
+
+  @final
+  def start(self):
+    if self.started: return
+    result = self._callall('start')
+    self.started = True
+    return result
+
+  @property
+  def started(self) -> bool: return getattr(self, '_started', False)
+  @started.setter
+  def started(self, value: bool): self._started = value
+
+
+  @final
+  def stop(self):
+    if self.stopped: return
+    result = self._callall('stop')
+    self.started = False
+    self.stopped = True
+    self.loaded = False
+    return result
+
+
+  @property
+  def stopped(self) -> bool: return getattr(self, '_stopped', False)
+  @stopped.setter
+  def stopped(self, value: bool): self._stopped = value
+
+
+YStepper = _YStart
+class mixin_Stepper(YStepper, _mixin): pass
+# endregion
+
+
 # region DC - pseudo DataClass
 _DC_BASE_TYPE_MAP = {'str': str, 'list': list, 'dict': dict, 'set': set, 'int': int, 'float': float, 'bool': bool, 'None': type(None)}
 # from typing import Callable, Concatenate
@@ -1443,18 +1570,6 @@ class _DC(UserDict):
   """
   _DC_TYPE_MAP: dict[str, type] = _DC_BASE_TYPE_MAP.copy()
   _DC_EXCLUDE_NAMES: list[str] = []
-
-
-  def _init_from_kw(self, **kw) -> None:
-    data = kw.pop('data', {})
-    if isinstance(data, str): data = {'data': data}
-    self.data = kw | data
-
-
-  # _INIT_STEPS: list[Callable] = [_init_from_kw]
-  # _INIT_STEPS: list[Callable[Concatenate["_DC", ...], None]] = [_init_from_kw]
-  # _INIT_STEPS: ClassVar[tuple[InitStep, ...]] = (_init_from_kw,)
-  _INIT_STEPS: list[Callable[Concatenate[Any, ...], None]] = [_init_from_kw]
 
 
   def __init_subclass__(cls, **kw) -> None:
@@ -1485,9 +1600,12 @@ class _DC(UserDict):
       setattr(cls, aname, property(getter, setter))
 
 
+  @final
   def __init__(self, **kw):
-    self.data = {}
-    for step in self._INIT_STEPS: step(self, **kw)
+    data = kw.pop('data', {})
+    if isinstance(data, str): data = {'data': data}
+    self.data = kw | data
+    if hasattr(self, 'init') and callable(self.init): self.init()
 
 # endregion
 
@@ -1510,17 +1628,15 @@ class _Base(mixin_Logger, mixin_Config): pass
 
 
 # region App
-class App(_Base, _DC):
+class App(_YInit, _Base, _DC):
     """ Not human reviewed """
-    # region - ^^ why App exists, and what it holds
-    # ^^ SPEC: every app is a `_DC`, takes its environment at initialization, knows its own name, loads its own
-    # ^^ configuration through `_DC`'s init with no init of its own, and Env is the global singleton app.
-    # ^^ It is code about configuration and it is used by everything downstream: Fleet and the Hosts tools, the TUI
-    # ^^ apps, Y2's apps and Env are all Apps. It is `_Base`, the logger and the configuration's readers, on a `_DC`,
-    # ^^ and adds the one step that loads: the configuration goes into the `_DC`'s data, beside what the app was
-    # ^^ constructed with. Templates stay in the Jinja environment and YAML in YmlLoader: the step only calls them.
+    # region - ^^ why App exists
+    # ^^ SPEC: every app is a `_DC`, takes its environment, knows its own name and loads its own configuration.
+    # ^^ It is code about configuration, used by everything downstream: Fleet and the Hosts tools, the TUI apps, Y2's
+    # ^^ apps and Env are Apps. It adds one init step, which loads the configuration into the object's data.
     # endregion
     name: str
+    environment: str
 
     def _config_load(self, source: Mapping | str | Path, argv: list[str] = []) -> None:
         """The one loader of Env and every app. Its source goes into this object's data, a copy, over what the object was
@@ -1557,12 +1673,10 @@ class App(_Base, _DC):
             if i < len(argv) and not argv[i].startswith('--'): value, i = argv[i], i + 1
             deepset(arg[2:], self.data, value)
 
-    def _init_config(self, environment: str | None = None, config: Mapping | str | Path | None = None, argv: list[str] = [], **kw) -> None:
+    def __init(self) -> None:
         if not self.name: self.name = type(self).__name__.lower()
-        Env.init(environment=environment)
-        self._config_load(glob_dict(self.name) if config is None else config, argv)
-
-    _INIT_STEPS = _DC._INIT_STEPS + [_init_config]
+        Env.init(environment=self.environment)
+        self._config_load(self.data['config'] if 'config' in self.data else glob_dict(self.name), self.data['argv'] if 'argv' in self.data else sys.argv[1:])
 # endregion
 
 
@@ -1579,17 +1693,9 @@ class _Env(App):
   _global_log = True
   # region - Env as an app
   # .. Its data is the environment alone, which glob reads: what Env finds out about the machine is no configuration,
-  # .. so those names are plain attributes. No configuration exists when Env is constructed: init loads it, as App's
-  # .. step loads an app.
+  # .. so those names are plain attributes. Its init is its own: it loads when an app names the environment.
   # endregion
   _DC_EXCLUDE_NAMES = ['user', 'host', 'environment']
-  _INIT_STEPS = _DC._INIT_STEPS
-
-  @property
-  def initialized(self) -> bool: return getattr(self, '_initialized', False)
-  @initialized.setter
-  def initialized(self, value: bool): self._initialized = value
-
 
   def init(self, **kw):
     _ENV_PATHS = {"RAN": "RAN/_config/config.yaml", "IoT": "IoT/_Creekview/_creekview.yaml"}

@@ -9,13 +9,17 @@ Principles: no new verb or noun; gppu.py core shrinks; downstreams that never us
 - [x] A script's manifest is the YAML assigned to `MANIFEST` in its first 4 KB, taken by a regex in the one place where App loads a path: an app gives itself, `App(config=__file__)`, and the launcher loads each item through App. The launcher's parser for `.py`, `.cmd` and `.ps1` is gone (`test_inline_config`)
 - [x] Configuration is the `_DC`'s data and `_my` is gone: `mixin_Config` is the readers and `_Base` the assembly; App adds the one step that loads; Env is an App whose data is the environment, and takes `config=` as an app does. Creekview and RAN load identically before and after, and identically on 3.7.9
 - [x] `Env.init` is the two hard-coded environment paths and the load
+- [x] Objects load as Y2's YData and YMRO did (y2 `bd717a3:y2core.py`): `_DC.__init__` is final, takes the row as its data and runs `init`; every class's private `__init`, `__load`, `__start` or `__stop` runs once, base first. `_INIT_STEPS`, `_init_from_kw` and `_init_config` are gone; App's loading and AsyncApp's own setup are their private `__init` steps, and the lifecycle classes are in `gppu.py`, where App is. Two classes of one name, gppu's App and Y2's, each keep their step. No class has a `__refresh` or `__publish` step, so the steps stay init, load, start and stop
+- [x] Every app takes the command line: App reads `sys.argv[1:]` when it is given no `argv`; gppu's and y2's tests give their apps none through one conftest fixture each
+- [x] The load-time template pieces, measured on the loaded configurations (`load_pieces.py`): the Jinja that reads only `glob` fills 9 values in RAN (`server_mounts`, four hosts' `mounts`, four OTEL endpoints) and 2 in Creekview (`groups/ao/2`'s `listen_topic` and `command_topic`); a row's `template:` gives 2699 values in Creekview and 84 in RAN, the 16 host rows; `jinja_configuration` registers Creekview's `macros` and 8 `*_templates` blocks for Y2's rendering and nothing in RAN. Each piece has a live use, so none is cut
 - [x] The Jinja region's functions are methods of gppu's Jinja environment under their present names; the exported names are bound to the one environment, as `glob` is to Env
 - [x] `Logger.enable_file_logging` is the one form Env calls, and says in place why it exists
 - [x] Y2 on this gppu: it gives Env a whole configuration through Env's init, its tests reset Env before they load Creekview, and it no longer sets `Env.app_path`. Its dry runtime is identical (776 entities, 1812 actions, 18 buttons, 121 indicators), and its suite passes in one process as it does file by file: 480 passed, the 2 known failures, where one process failed 139 and errored 115
 - [x] RAN's `hosts` hold every row whole: a row names `template: ssh` and loading lays `ssh` under it, so `glob('hosts')` is what Fleet merged, identical on 3.7.9 and on master, and Fleet reads it with no merge of its own (RAN 7b038bc66). A row's platform is still `Fleet.platform(row)`, its tag that names an operating system
 - [ ] Y2's objects load through the state manager's key loader, natively by `_DC`, with no constructor of their own
   - Today they cannot: an entity given its row by `_DC`'s init alone holds its data and does not start (`native_load.py`: `'YGroup' object has no attribute '_eid'`). 14 classes initialize in `__init__` (YBasicEntity, YEntity, YGroup, YRoom, mixin_ColorLoop, HueScene, PowerViewHub, TuyaLight, SensiboAC, Insteon's IIndicator, IEntity and IDevice, and Y2's App and State), and 7 state managers loop over their own sections in place of the key loader (Hue, Z-Wave, Flume, ecobee, Nest, hosts, Insteon)
-  - Next: each constructor's body becomes its class's `__init` step, run at construction as AsyncApp runs it, checked against the dry runtime dump
+  - Y2's `DataObject` keeps a constructor of its own with its list of steps, in place of the list gppu no longer has, until its classes' constructors are steps
+  - Next: each constructor's body becomes its class's `__init` step, checked against the dry runtime dump
 
 Independent and unscoped:
 - Y2's state managers read their rows through `_DC` accessors, with no `_key`, `poll_interval` or section copies
@@ -25,7 +29,6 @@ Independent and unscoped:
 - Fleet in gppu under its own name, RAN's reduced to `expand` and `values`; a row's platform read from the environment
 - Objects read `self.name`, their annotated accessors, never `my('name')`
 - Creekview and RAN repeats, by named templates and the loader's key and parameters, not loops
-- Every app takes the command line by default: App takes `argv` only when it is given
 - Error handling around logging goes: `dict_to_yml`'s and `dict_to_json`'s error files, which `Logger.Dump` reaches
 - One MQTT connection: MqttApp's own `connection` key, and Creekview's seven repeated `connection:` blocks
 
