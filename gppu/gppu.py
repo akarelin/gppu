@@ -892,22 +892,105 @@ def dict_from_json(filename: str | Path):
 
 
 # region Jinja (AI, not human reviewed)
-def jinja_helpers() -> dict:
-  """gppu's own filters, offered to every Jinja environment it builds."""
-  return {
-    'safe_int': safe_int, 'safe_float': safe_float, 'safe_list': safe_list,
-    'safe_timedelta': safe_timedelta, 'dict_sanitize': dict_sanitize,
-    'pretty_timedelta': pretty_timedelta, 'pfy': pfy, 'slugify': slugify,
-  }
-
-
 class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
-  """Jinja templates with native values and gppu's formatting helpers."""
+    """gppu's templates: Jinja with native values and gppu's formatting helpers, and the named templates a row's
+    `template:` names. `jinja` is the one environment gppu renders with; loading a configuration adds its macros and
+    named Jinja templates to it."""
 
-  def __init__(self, **options):
-    super().__init__(undefined=StrictUndefined, autoescape=False, **options)
-    self.filters.update(jinja_helpers())
-    self.globals.update(jinja_helpers())
+    def __init__(self, **options):
+        super().__init__(undefined=StrictUndefined, autoescape=False, **options)
+        self.filters.update(self.jinja_helpers())
+        self.globals.update(self.jinja_helpers())
+
+    @staticmethod
+    def jinja_helpers() -> dict:
+        """gppu's own filters, offered to every Jinja environment it builds."""
+        return {
+            'safe_int': safe_int, 'safe_float': safe_float, 'safe_list': safe_list,
+            'safe_timedelta': safe_timedelta, 'dict_sanitize': dict_sanitize,
+            'pretty_timedelta': pretty_timedelta, 'pfy': pfy, 'slugify': slugify,
+        }
+
+    @pass_context
+    def _render_template_in(self, context, name: str, **values) -> Any:
+        """A named template rendered from inside another one: it sees the caller's values, and its keywords win over them."""
+        return self.get_template(name).render(context.get_all() | values)
+
+    def render_template(self, template: str, values: Mapping = {}, /, **more) -> Any:
+        """template, the name of a template in a `*_templates` block or Jinja text, rendered with values and more."""
+        values = {**values, **more}
+        if template in self.loader.mapping: return self.get_template(template).render(values)
+        return self._jinja_compile(template).render(values)
+
+    def jinja_configuration(self, node: Any) -> None:
+        """Every `macros:` block and every named template (a `*_templates` or `generators` block) of a configuration,
+        wherever it sits, added to this environment: a macro is then callable by its name from any template."""
+        if not isinstance(node, dict): return
+        for key, value in node.items():
+            if key == 'macros' and isinstance(value, str):
+                module = self.from_string(value).make_module()
+                self.globals.update({name: getattr(module, name) for name in dir(module) if not name.startswith('_')})
+            elif (key == 'generators' or str(key).endswith('_templates')) and isinstance(value, dict):
+                self.loader.mapping.update(value)
+                self.cache.clear()
+            else: self.jinja_configuration(value)
+
+    def templates_of(self, node: Any, found: dict | None = None) -> dict:
+        """Every template of a configuration by its name: a mapping in a `templates:` block. A name is declared once."""
+        found = {} if found is None else found
+        if isinstance(node, list):
+            for value in node: self.templates_of(value, found)
+        if not isinstance(node, dict): return found
+        for key, value in node.items():
+            if key == 'templates' and isinstance(value, dict):
+                for name, template in value.items():
+                    if not isinstance(template, dict): continue
+                    if name in found: raise ValueError(f'template {name!r} is declared twice')
+                    found[name] = template
+            self.templates_of(value, found)
+        return found
+
+    def apply_template(self, node: Any, templates: dict) -> Any:
+        """Every row of node whose `template:` names one of templates, merged over that template: the row wins. The
+        template's Jinja that reads the row stays as written, for the app that renders it."""
+        if isinstance(node, list): return [self.apply_template(value, templates) for value in node]
+        if not isinstance(node, dict): return node
+        node = {key: self.apply_template(value, templates) for key, value in node.items()}
+        if isinstance(name := node.get('template'), str) and name in templates:
+            return self.apply_template(templates[name], templates) | node
+        return node
+
+    @cache
+    def _jinja_compile(self, template: str):
+        return self.from_string(template)
+
+    def jinja_template(self, template: Any, /, **data) -> Any:
+        """Render Jinja strings, including keys and values of a configuration node; missing inputs raise."""
+        if isinstance(template, dict):
+            return {key: self.jinja_template(value, **data) for key, value in
+                    ((self.jinja_template(key, **data), value) for key, value in template.items()) if key != ''}
+        if isinstance(template, list): return [self.jinja_template(value, **data) for value in template]
+        if not isinstance(template, str): return template
+        if '{{' not in template and '{%' not in template and '{#' not in template: return template
+        value = self._jinja_compile(template).render(**data)
+        if isinstance(value, Undefined): return str(value)
+        return value
+
+    @staticmethod
+    @cache
+    def _jinja_inputs(template: str) -> frozenset[str]:
+        """The names a Jinja string reads beyond gppu's own Jinja globals."""
+        environment = JinjaEnvironment()
+        return frozenset(meta.find_undeclared_variables(environment.parse(template))) - set(environment.globals)
+
+    def jinja_fill(self, node: Any, /, **data) -> Any:
+        """Render the Jinja strings of a configuration node, keys included, that read only the given names. Jinja that
+        reads any other name stays as written, for the app that renders it later."""
+        if isinstance(node, dict): return {self.jinja_fill(key, **data): self.jinja_fill(value, **data) for key, value in node.items()}
+        if isinstance(node, list): return [self.jinja_fill(value, **data) for value in node]
+        if isinstance(node, str) and ('{{' in node or '{%' in node) and (inputs := self._jinja_inputs(node)) and inputs <= data.keys():
+            return self.jinja_template(node, **data)
+        return node
 
 
 class JinjaDocument(SandboxedEnvironment):
@@ -922,8 +1005,8 @@ class JinjaDocument(SandboxedEnvironment):
   def __init__(self, search_path: Path, **options):
     super().__init__(loader=FileSystemLoader(str(search_path)), undefined=StrictUndefined, autoescape=False,
                      trim_blocks=True, lstrip_blocks=True, keep_trailing_newline=True, **options)
-    self.filters.update(jinja_helpers())
-    self.globals.update(jinja_helpers())
+    self.filters.update(JinjaEnvironment.jinja_helpers())
+    self.globals.update(JinjaEnvironment.jinja_helpers())
     self.filters['from_yaml'] = lambda name: dict_from_yml(full_path(name, search_path))
     self.filters['to_yaml'] = lambda value: yaml.safe_dump(value, default_flow_style=True).strip()
     self.globals['hostname'] = lambda: socket.gethostname().split('.')[0].casefold()
@@ -933,99 +1016,14 @@ class JinjaDocument(SandboxedEnvironment):
                          ('dict', 'list', 'int', 'float', 'str', 'len', 'sorted', 'min', 'max', 'range')})
 
 
-@pass_context
-def _render_template_in(context, name: str, **values) -> Any:
-  """A named template rendered from inside another one: it sees the caller's values, and its keywords win over them."""
-  return jinja.get_template(name).render(context.get_all() | values)
-
-
-def render_template(template: str, values: Mapping = {}, /, **more) -> Any:
-  """template, the name of a template in a `*_templates` block or Jinja text, rendered with values and more."""
-  values = {**values, **more}
-  if template in jinja.loader.mapping: return jinja.get_template(template).render(values)
-  return _jinja_compile(template).render(values)
-
-
-def jinja_configuration(node: Any) -> None:
-  """Every `macros:` block and every named template (a `*_templates` or `generators` block) of a configuration,
-  wherever it sits, added to gppu's Jinja: a macro is then callable by its name from any template."""
-  if not isinstance(node, dict): return
-  for key, value in node.items():
-    if key == 'macros' and isinstance(value, str):
-      module = jinja.from_string(value).make_module()
-      jinja.globals.update({name: getattr(module, name) for name in dir(module) if not name.startswith('_')})
-    elif (key == 'generators' or str(key).endswith('_templates')) and isinstance(value, dict):
-      jinja.loader.mapping.update(value)
-      jinja.cache.clear()
-    else: jinja_configuration(value)
-
-
-def templates_of(node: Any, found: dict | None = None) -> dict:
-  """Every template of a configuration by its name: a mapping in a `templates:` block. A name is declared once."""
-  found = {} if found is None else found
-  if isinstance(node, list):
-    for value in node: templates_of(value, found)
-  if not isinstance(node, dict): return found
-  for key, value in node.items():
-    if key == 'templates' and isinstance(value, dict):
-      for name, template in value.items():
-        if not isinstance(template, dict): continue
-        if name in found: raise ValueError(f'template {name!r} is declared twice')
-        found[name] = template
-    templates_of(value, found)
-  return found
-
-
-def apply_template(node: Any, templates: dict) -> Any:
-  """Every row of node whose `template:` names one of templates, merged over that template: the row wins. The
-  template's Jinja that reads the row stays as written, for the app that renders it."""
-  if isinstance(node, list): return [apply_template(value, templates) for value in node]
-  if not isinstance(node, dict): return node
-  node = {key: apply_template(value, templates) for key, value in node.items()}
-  if isinstance(name := node.get('template'), str) and name in templates:
-    return apply_template(templates[name], templates) | node
-  return node
-
-
-@cache
-def _jinja_compile(template: str):
-  return jinja.from_string(template)
-
-
-def jinja_template(template: Any, /, **data) -> Any:
-  """Render Jinja strings, including keys and values of a configuration node; missing inputs raise."""
-  if isinstance(template, dict):
-    return {key: jinja_template(value, **data) for key, value in
-            ((jinja_template(key, **data), value) for key, value in template.items()) if key != ''}
-  if isinstance(template, list): return [jinja_template(value, **data) for value in template]
-  if not isinstance(template, str): return template
-  if '{{' not in template and '{%' not in template and '{#' not in template: return template
-  value = _jinja_compile(template).render(**data)
-  if isinstance(value, Undefined): return str(value)
-  return value
-
-
-@cache
-def _jinja_inputs(template: str) -> frozenset[str]:
-  """The names a Jinja string reads beyond gppu's own Jinja globals."""
-  environment = JinjaEnvironment()
-  return frozenset(meta.find_undeclared_variables(environment.parse(template))) - set(environment.globals)
-
-
-def jinja_fill(node: Any, /, **data) -> Any:
-  """Render the Jinja strings of a configuration node, keys included, that read only the given names. Jinja that
-  reads any other name stays as written, for the app that renders it later."""
-  if isinstance(node, dict): return {jinja_fill(key, **data): jinja_fill(value, **data) for key, value in node.items()}
-  if isinstance(node, list): return [jinja_fill(value, **data) for value in node]
-  if isinstance(node, str) and ('{{' in node or '{%' in node) and (inputs := _jinja_inputs(node)) and inputs <= data.keys():
-    return jinja_template(node, **data)
-  return node
-
-
 jinja = JinjaEnvironment(loader=DictLoader({}))
 jinja.globals.update({name: getattr(builtins, name) for name in
                       ('dict', 'list', 'int', 'float', 'str', 'bool', 'len', 'round', 'sorted', 'min', 'max', 'range')},
-                     re=re, render_template=_render_template_in)
+                     re=re, render_template=jinja._render_template_in)
+
+# the template functions are globals: the one environment's methods
+render_template, jinja_configuration, templates_of = jinja.render_template, jinja.jinja_configuration, jinja.templates_of
+apply_template, jinja_template, jinja_fill = jinja.apply_template, jinja.jinja_template, jinja.jinja_fill
 # endregion
 
 
