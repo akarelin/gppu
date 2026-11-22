@@ -30,7 +30,7 @@
 - Generated JSON is a template written in YAML, loaded by gppu and written out as JSON, with no code and nothing extra. Jinja never renders JSON text.
 - Objects are read by slash paths and `get`.
 - A unique human-readable id is a key, not a value: a list whose items each carry a unique id is a dict keyed by it. Statuses and states are short readable text, so a test like "ends with `-rejected`" reads anywhere.
-- UI renders with gppu's Jinja, not a templating of its own.
+- UI renders with gppu's Jinja, not a templating of its own. UI is periphery; its templates move toward one way of rendering.
 - A template file keeps its destination's extension, such as `.html` or `.md`, never `.j2`. OpenViking's Markdown templates are an example of Jinja used correctly.
 - Jinja constructs living objects, `_DC`s, never dicts, and never concatenates tokens to create JSON. In a YAML template, curly braces mean Jinja and nothing else: flow-style `{…}` is embedded JSON and makes YAML not YAML.
 - Jinja in configuration is an expression in `{{ }}`. Statements in `{% %}` are a special case that is almost never used, and multi-line Jinja is usually a fail.
@@ -60,6 +60,10 @@
 - A trivial utility stays trivial: a launcher, a TUI or fleet management runs it with one click, and no sidecar file sits beside it.
 - Apps initialize in steps with the tools gppu already has (init, load, start, stop). Construction decides where data is parsed from and in which step.
 - TUI apps support inline configs: a script carries its own configuration and manifest, as `examples/sessions_clean.py` does. A Python script assigns its manifest to a global variable.
+- An app comes in every size: an entity can be an app, a whole CLI can be an app, and a container app runs small apps and tends their state. Apps nest; a runtime app or a container app holds others. A bunch of apps is created from a YAML list, and the container tends the state of those apps, including apps with a simplified lifecycle that start often, such as data loads and processes.
+- The command line, MQTT and container apps come for free. An app does not know it has an MQTT last will or an online status: that is configured and done for it. Its client id comes from its name, which configuration gives it.
+- A connection string, such as Postgres's or MQTT's, is a one-line value in the global configuration, and an app reads it by its key.
+- Hosting and spawning processes, with their completion callbacks, is one simple shared mechanism in gppu, used by fleet management and Y2 alike.
 - Running processes in parallel is not part of a TUI, since a command-line app runs them too. It is an app's method, like its timers (run after, run in, run at).
 - Every TUI app is an async app. Every app is a `_DC`, whose data holds everything the app is given, so no app sets its own attributes from it again.
 - An app is an assembly of mixins: `_Base` puts the basic two together, and an app picks async, TUI or whatever else it needs.
