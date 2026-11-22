@@ -153,3 +153,25 @@ These are where the one-shot stops because the architecture as stated does not y
 - A measure exists as the second segment of a value topic (`comfort/<measure>/…`, `sensor/<measure>/…`), as a key in `State.sensors`, and as an attribute of the entity that names it under `attributes:`. Which measures exist, their units and how they combine are each written in a different place.
 - `areas`, `subareas`, `floors`, `floors_deep` and `infer_area` are in use. `indicator_tails`, `indicators`, `superareas`, `floors_simple` and the tag meanings were removed from `_creekview.yaml` on 2026-09-12.
 - The conventions, what a name implies, the special cases and the places configuration repeats what is implied are in the vault at `_Standards/drafts/Conventions/Topics.md`.
+
+## Where each public name lives (gppu master, 2026-11-22)
+Read from the code, nothing moved: every public name of the core modules, the module and class that hold it.
+
+- `gppu.gppu`, the one file every program imports:
+  - Types: `OSType` and `detect_os`, `Span` and `TimeSpan`, `y2list` → `y2path` → `y2topic`, `Path` (a `y2path` and a `pathlib.Path`, the way to files), `y2uri`, `uuid_create`.
+  - Values: `safe_int`, `safe_float`, `format_size`, `pfy`, `slugify`, `now_ts`, `MY_TZ`.
+  - Configuration access: `deepget` with `deepget_int`, `deepget_float`, `deepget_list`, `deepget_dict`, and `deepset`; `dict_from_yml` (an include is relative to the file that holds it), `dict_to_yml` (Y2's generated files, Transcriber, the file indexer), `YmlLoader`; `jinja` (a `JinjaEnvironment`), `jinja_template`, `render_template`, `apply_template`, `jinja_fill`.
+  - Output: `TColor` and `pcp`; `Logger` with `Debug`, `Info`, `Warn`, `Error`, `Dump`; `mixin_Logger`.
+  - Objects: `_DC`; the lifecycle `_YMRO` → `YInit` → `YLoad` → `YStart`; `_mixin`; `mixin_Config` (the `my` readers); `_Base` (`mixin_Logger` and `mixin_Config`); `App`.
+  - Environment: `_Env` → `Env`, read with `glob`, `glob_int`, `glob_list`, `glob_dict`.
+- `gppu.app`, the run: `AsyncApp(App, YStart)` (run, schedule, timers), `mixin_Mqtt(YStart)` (listen, publish), `AppService(mixin_Mqtt, AsyncApp)` (configuration arriving over MQTT), `mixin_Rest` (deprecated; Y2's UI and CRAP's admin UI use it).
+- `gppu.api`: `APIApp(AsyncApp)`, an app serving HTTP.
+- `gppu.iot`: device controls, `SerializedControl(_mixin)` → `HTTPControl` → `JSONHTTPControl`.
+- `gppu.data`: database foundations `_PersistentBase(_Base)` → `_PGBase` and `_SQABase`, with `async_engine`; `Cache`.
+- `gppu.vault`, `gppu.tui`, `gppu.fs`, `gppu.ld` and `gppu.chrome` are outside this page.
+
+Where code touches `Env` although nothing downstream should:
+- Y2 reads the configuration's folder through `Env.path` (Ecobee, covers, the Creekview editor and its UI page), and its validator sets it; RAN's `y2-compare.py` too. Before 2026-11-13 Y2 read that folder from its own configuration (`y2/topology_folder`, Ecobee's `topology_folder`).
+- Y2's `configure` puts a configuration into `Env.data` and loads it; the lake's m365 configuration resets `Env` and returns `Env.data`, and its graph configuration loads a configuration into it; the file indexer's developer-session ingest calls `Env.load()`; the CCTV tools, Transcriber, plaud, the file indexer, the LD services and some RAN scripts call `Env.from_env`, which gppu does not have.
+- `Env.host` is read by the lake, the admin UI and Preservator; `Env.os` by the Hosts sessions cleaner; Homebridge's compile and layout log through `Env.Info`.
+- Inside gppu, `AppService` writes the configuration arriving over MQTT into `Env.data`, and the TUI launcher reads `Env.os`.
