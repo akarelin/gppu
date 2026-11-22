@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from gppu import AsyncApp, Env, ListenerHandle, Runtime, StateManager, y2eid, y2path
+from gppu import AsyncApp, Env, ListenerHandle, Runtime, y2eid, y2path
 
 
 @pytest.fixture(autouse=True)

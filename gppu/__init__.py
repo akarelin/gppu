@@ -31,7 +31,6 @@ from .app import (
     # .. the program's apps and their listeners
     Runtime,
     ListenerHandle,
-    StateManager,
 
     # .. sync lifecycle (AppDaemon / Y2)
     _YMRO,
@@ -207,7 +206,7 @@ __all__ = [
     '_Base', 'App', 'TimerHandle', '_callback_wrapper', 'AsyncApp', 'APIApp', 'mixin_Rest',
 
     # .. y2xxx classes
-    'y2list', 'y2path', 'y2uri', 'y2topic', 'y2slug', 'y2eid', 'Runtime', 'ListenerHandle', 'StateManager',
+    'y2list', 'y2path', 'y2uri', 'y2topic', 'y2slug', 'y2eid', 'Runtime', 'ListenerHandle',
 
     # .. mqtt library
     'mixin_Mqtt', 'MqttApp', 'AppService',

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from itertools import count
 from typing import Any, ClassVar, final
 
-from .gppu import App, Debug, Env, _Base, _DC, _mixin, glob, now_ts, y2path
+from .gppu import App, Debug, Env, _Base, _DC, _mixin, glob, glob_list, now_ts, y2path
 from .gppu import _YMRO, _YInit, _YLoad, _YStart, YStepper, mixin_Stepper
 
 
@@ -169,12 +169,17 @@ class AsyncApp(App, mixin_Stepper, mixin_EventLoopBridge):
   Its timers: ``run_later`` fires a callback once after a delay, and arming it again under the same key replaces it;
   ``run_every`` fires it at an interval. ``timers`` holds every armed timer by its id, ``h_timeouts`` those armed under
   a key.
+
+  Its objects are the rows of the list at its ``key``, each ``cls(data=row, parent=self)`` of the class its ``kind``
+  names in ``_supported_types``; its steps start and stop them.
   """
+  key: str
 
   _task_group: asyncio.TaskGroup | None
   _background_tasks: set[asyncio.Task[Any]]
   _loop: asyncio.AbstractEventLoop | None
   _timer_ids = count(1)
+  _supported_types: ClassVar[dict] = {}
   restartable: ClassVar[bool] = True   # .. whether Runtime.restart_app may stop, reconstruct and start it
 
   def __init(self) -> None:
@@ -183,6 +188,14 @@ class AsyncApp(App, mixin_Stepper, mixin_EventLoopBridge):
     self._loop = None
     self.timers: dict[int, TimerHandle] = {}
     self.h_timeouts: dict[str, TimerHandle] = {}
+    self._my_groups: list = []
+    for data in glob_list(self.key): self._add_group(data)
+
+  def _add_group(self, data: dict) -> None:
+    self._my_groups.append(self._supported_types[data['kind']](data=data, parent=self))
+
+  def __start(self) -> None:
+    for group in self._my_groups: group.start()
 
   def run_later(self, callback: Callable[..., Any], *, delay: int | float, key: str | None = None, **data: Any) -> TimerHandle:
     if key is not None:
@@ -241,6 +254,7 @@ class AsyncApp(App, mixin_Stepper, mixin_EventLoopBridge):
     self.h_timeouts.clear()
 
   def __stop(self) -> None:
+    for group in self._my_groups: group.stop()
     loop = self._loop
     if loop is None: return                    # .. not running: nothing it spawned is left to cancel
     try: on_loop = asyncio.get_running_loop() is loop
@@ -436,28 +450,6 @@ Runtime = _Runtime()
 # endregion
 
 
-# region StateManager: the loader
-class StateManager(AsyncApp):
-    """Creates the objects at a path into the configuration. `key` names the path; at its end is a list of rows, or a
-    dict of rows by name. Each row becomes `cls(data=row, parent=self)`, its class the one its `kind` names in
-    `_supported_types`, else `_default`, and `__start` starts every one."""
-    key: str
-    _default: ClassVar[type | None] = None
-    _supported_types: ClassVar[dict] = {}
-
-    def _add_group(self, data: dict) -> None:
-        cls = self._supported_types.get(data.get('kind'), self._default)
-        if cls is None: raise KeyError(f"{self.name}: no class for kind {data.get('kind')!r} at {self.key}")
-        self._my_groups.append(cls(data=data, parent=self))
-
-    def __init(self) -> None:
-        self._my_groups: list = []
-        rows = glob(self.key) if self.key else []   # .. an app that names no path makes its objects itself
-        for data in (rows if isinstance(rows, list) else [{'name': name, **row} for name, row in rows.items()]): self._add_group(data)
-
-    def __start(self) -> None:
-        for group in self._my_groups: group.start()
-# endregion
 
 
 # region REST surface
