@@ -1288,17 +1288,17 @@ class App(YInit, _Base, _DC):
 
 
 # region - Env: the configuration
-class _Env(YLoad, _Base, _DC):
+class _Env(YInit, _Base, _DC):
 # !!! Rewrute!
-    """The program's environment: singleton app object. Its my is glob"""
+    """The program's environment: a system object, made once as gppu is imported and hidden from programs. Its my is glob"""
     home: Path
     os: OSType
     path: Path   # .. the environment's YAML file
 
-    # region - Env as an app
+    # region - Env as a system object
     # .. Its data is the environment's configuration, which glob reads. Made as gppu is imported, it finds out the machine
-    # .. and the environment, which are no configuration and so plain attributes (host, user, environment); it loads
-    # .. once glob reads it.
+    # .. and the environment, which are no configuration and so plain attributes (host, user, environment), and reads its
+    # .. file: the configuration is there as Env is made, as an app's is, and no load step reads it again.
     # endregion
 
     def __init(self) -> None:
@@ -1311,22 +1311,19 @@ class _Env(YLoad, _Base, _DC):
         # .. containers are; a host with neither, as PC Control's, is given its configuration over MQTT
         self.environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (root / _ENV_PATHS['RAN']).exists() else 'RAN' # !!!  Rewrite
         self.path = root / _ENV_PATHS[self.environment] # !!!  Rewrite
-
-    def __load(self) -> None: # !!!  LOAD, are you crazxy!!!???
-        # .. one YAML load of its file; a configuration given whole (MQTT's, Y2's configure) is its data already, and a
-        # .. host without its repository has no file until MQTT gives it one
+        # .. one YAML load of its file; a host without its repository has no file until MQTT gives it its sections
         if not self.data and self.path.exists(): self.data = dict_from_yml(self.path) # !!!  Rewrite
-        # region - the configuration's macros, named templates, `template:` rows and the Jinja that reads only the configuration
-        # .. Creekview and RAN use all four: _creekview.yaml's macros, the *_templates and templates blocks of groups, Insteon,
-        # .. covers and the devices, and RAN config.yaml's mounts; glob reads the value it fills, filled
-        # endregion
-        self.data = jinja.configuration(self.data)
-        if 'trace_rules' in self.data: Logger.trace_rules = dict(self.data['trace_rules'])
 
 
 Env = _Env()
 
 # .. the configuration's readers are globals: Env's my readers
 glob, glob_int, glob_list, glob_dict = Env.my, Env.my_int, Env.my_list, Env.my_dict
-Env.load()
+# region - the configuration's macros, named templates, `template:` rows and the Jinja that reads only the configuration
+# .. Creekview and RAN use all four: _creekview.yaml's macros, the *_templates and templates blocks of groups, Insteon,
+# .. covers and the devices, and RAN config.yaml's mounts. Its Jinja reads glob, so it is filled once, as glob reads Env;
+# .. glob reads the value it fills, filled
+# endregion
+Env.data = jinja.configuration(Env.data)
+if 'trace_rules' in Env.data: Logger.trace_rules = dict(Env.data['trace_rules'])
 # endregion

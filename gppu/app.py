@@ -21,7 +21,7 @@ import yaml
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.properties import Properties
 
-from .gppu import App, Env, YmlLoader, _Base, _DC, _mixin, deepset, glob_list, now_ts, sync, y2topic
+from .gppu import App, Env, YmlLoader, _Base, _DC, _mixin, deepset, glob_list, jinja, now_ts, sync, y2topic
 from .gppu import _YMRO, YStart
 
 
@@ -255,7 +255,7 @@ class mixin_Mqtt(YStart):
 
 class AppService(mixin_Mqtt, AsyncApp):
     """An app whose part of Env arrives over MQTT: ``config_mqtt/topics`` in its own configuration maps each retained topic
-    to the path in Env that its payload replaces, the same as loading it again, so ``glob`` reads it as it reads the rest of
+    to the path in Env that its payload replaces, filled as Env's file is, so ``glob`` reads it as it reads the rest of
     Env. An app that acts on new configuration listens to the same topic: its listener runs after the section is loaded.
     ``await app.from_mqtt()`` reads every topic once, then stops."""
 
@@ -273,8 +273,7 @@ class AppService(mixin_Mqtt, AsyncApp):
 
     def _receive_config(self, topic: y2topic, payload: Any) -> None:
         deepset(self.my('config_mqtt/topics')[str(topic)], Env.data, yaml.load(payload, Loader=YmlLoader) if isinstance(payload, str) else payload)
-        Env.loaded = False   # .. new configuration is the same event as a load: Env loads again, from what it holds with the section that arrived
-        Env.load()
+        Env.data = jinja.configuration(Env.data)   # .. the section that arrived is filled as Env's file was, with what Env holds
         if self.until_loaded is not None:
             self.until_loaded.discard(str(topic))
             if not self.until_loaded: self.stop()
