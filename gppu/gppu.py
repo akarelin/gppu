@@ -838,11 +838,7 @@ def dict_to_yml(filename: str | Path, data=None, sort_keys=False):
   yaml.add_representer(set, SafeRepresenter.represent_list)
   yaml.add_representer(tuple, _tuple_representer)
 
-  with open(filename,'w+', encoding='utf-8') as f:
-    try: yaml.dump(redata, f, indent=2, Dumper=IndentedListDumper, sort_keys=sort_keys, width=2147483647)
-    except Exception as err:
-      error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(redata)}\n\n"
-      with open(str(filename) + '_error.txt', 'w+', encoding='utf-8') as ferr: ferr.write(error)
+  with open(filename,'w+', encoding='utf-8') as f: yaml.dump(redata, f, indent=2, Dumper=IndentedListDumper, sort_keys=sort_keys, width=2147483647)
 
 
 class YmlLoader(FullLoader):
@@ -879,11 +875,7 @@ def dict_from_yml(filename: str | Path) -> dict:
 def dict_to_json(filename: str | Path, data=None, indent=2):
   assert filename
   if not data: return
-  with open(filename, 'w', encoding='utf-8') as f:
-    try: json.dump(data, f, indent=indent, ensure_ascii=False, default=str)
-    except Exception as err:
-      error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(data)}\n\n"
-      with open(str(filename)+'_error.txt', 'w', encoding='utf-8') as ferr: ferr.write(error)
+  with open(filename, 'w', encoding='utf-8') as f: json.dump(data, f, indent=indent, ensure_ascii=False, default=str)
 
 
 def dict_from_json(filename: str | Path):
