@@ -21,6 +21,8 @@ Principles: no new verb or noun; gppu.py core shrinks; downstreams that never us
   - Today they cannot: an entity given its row by `_DC`'s init alone holds its data and does not start (`native_load.py`: `'YGroup' object has no attribute '_eid'`). 14 classes initialize in `__init__` (YBasicEntity, YEntity, YGroup, YRoom, mixin_ColorLoop, HueScene, PowerViewHub, TuyaLight, SensiboAC, Insteon's IIndicator, IEntity and IDevice, and Y2's App and State), and 7 state managers loop over their own sections in place of the key loader (Hue, Z-Wave, Flume, ecobee, Nest, hosts, Insteon)
   - Y2's `DataObject` keeps a constructor of its own with its list of steps, in place of the list gppu no longer has, until its classes' constructors are steps
   - Next: each constructor's body becomes its class's `__init` step, checked against the dry runtime dump
+- [x] `JinjaDocument` is gone: its one caller, Preservator, renders its run log's path with `jinja_template`, the same path on 3.7.9 and on master (RAN 22fe51dc5, gppu c55019b)
+- [x] No sidecars: `tui/sidecar.py`, its second entry point and its injection into a copy of a script are gone. A launcher lists the manifests its `apps:` names (`load_app_registry`) and launches each item through `launch_app`, under the interpreter the script's suffix names; an asked value reaches the item on its command line (gppu 4c5af4a). The Hosts TUI's sidecars are `MANIFEST`s in their scripts, named in `tui.yaml`'s `apps:`, and it lists the same items on 3.7.9 and on master (RAN 6e0c5c033)
 
 Independent and unscoped:
 - Y2's state managers read their rows through `_DC` accessors, with no `_key`, `poll_interval` or section copies
@@ -108,15 +110,15 @@ The release and the y2 deploy are one window. In order:
 1. gppu is released from master by its GitHub Action; alex-pc's `~/.venv` takes it, and the Hosts TUI is opened on it.
 2. y2's image is rebuilt on `gppu/latest`, its suite run, and y2 deployed, which restarts it in the house.
 3. In the same window, with that y2: Creekview's `ui/ui.yaml` loses its inner `ui:` level, the old block kept commented out, and `y2/ui/data.py` drops `self.data |= self.my('ui')`. Neither is written yet.
-4. RAN: the `::` lines of `Hosts/mapper.cmd` and the `.NOTES` of `Hosts/tray-control.ps1` go, their `MANIFEST` staying; Preservator and the Fleet grid switch, by the Preservator session.
+4. RAN: the `::` lines of `Hosts/mapper.cmd` and the `.NOTES` of `Hosts/tray-control.ps1` and `Hosts/tui/all-all.ps1` go, their `MANIFEST` staying; the Hosts TUI's `tui.py` calls `launcher_main` and `load_app_registry` in place of `sidecar_main` and `load_registry`, and its `tests/test_tui.py` stops importing `sidecar_command` and `load_registry`; Preservator and the Fleet grid switch, by the Preservator session.
 5. Every other host that runs a gppu tool takes the release before it runs one: the Mac, trix and five have 3.6, seven has none.
 What stops at the release until it is switched is listed below.
 
 These move in the same commit as the release. gppu 3.7.7 is released and alex-pc's `~/.venv` runs it, so the Hosts TUI opens there on the RAN environment; a program below that still calls `from_argv`, `from_env` or `from_dict` stops on alex-pc until it switches. Before 3.7.2, the Hosts tools that construct Fleet (Preservator, configs, list-sessions, list-sessions2, sessions-clean, start-page) ran on neither gppu. Still to switch:
 - Preservator: switched in RAN, and on 3.7.5 its steps run on alex-pc: it preserved alex-pc's LLM logs, browser history and shell history to the Lake on 2026-11-14. RAN `Hosts/preservator/preservator.py` is the one Preservator, reading the `preservator` section; its other versions are archived (RAN `archive/Hosts/preservator`, CRAP `archive/Processes/preservator`). It stores each file by `gppu.fs.file_path(type, name, ...)`, which reads where each type of file is stored from the Lake's row in RAN `_config/topology/locations.yaml` (`locations/lake/folders`), with no function per kind; on alex-pc's own files those lines place every file where the version before it did (`D:\Work\11\13\lake-templates`). Another host runs it there over ssh, which needs current gppu on that host: the Mac, trix and five have 3.6, seven has none, five has no Lake mount
-- display-control (`IoT/PCC`): `on_change` and `AppService.update_config`/`changed_paths` callers; MQTT configuration by topic prefix
+- display-control (`IoT/PCC`): switched; on master its 24 checks that drive no display pass. MQTT configuration by topic prefix is still to come
 - The programs that write the command line over Env: display-control, Intune's three scripts, `setup-ld-monitors.py`, `operon_remove.py`, `sync_to_operon.py` and `openapi_query.py`
-- Every `Env.from_env` caller in RAN, CRAP, IoT and Y2, and the "Configuration without an app" line in the global CLAUDE.md that names `Env.from_env`
+- Every `Env.from_env` caller in RAN, CRAP, IoT and Y2, and the "Configuration without an app" line in the global CLAUDE.md that names `Env.from_env`. Switched, on 3.7.9 and on master: Kuma's three setup scripts, Mailstore's two and the devops skill's six (RAN 38233c8f5). Left in scope: any2mqtt's `brul2mqtt.py` and `lastfile2mqtt.py` and devops' `iot-monitor.py`, which run in containers
 - Every reader of `Env.data`, which is `Env._my` now, reads `glob_dict('')`: lake's `graph_configuration.py` and `m365/config.py`, display-control and its Intune scripts, and the Preservator, Session Manager and FileIndexer tests
 
 - RAN `Hosts/mapper.cmd` and `Hosts/tray-control.ps1` carry `MANIFEST` and, beside it, the `::` lines and `.NOTES` the released gppu reads; the older lines go at the release (RAN aa2f5939d: the Hosts launcher lists every item identically on 3.7.9 and on master)
@@ -126,6 +128,8 @@ These move in the same commit as the release. gppu 3.7.7 is released and alex-pc
 - A caller of `Logger.enable_file_logging(name, log_dir=...)`, of `mixin_Config._config_load` or of `Env._my`: none is left in gppu, y2 or RAN/Hosts
 
 ## Found outside this task
+- Linked Data's API (`api.karel.in/ld/v1`) and CCTV-detective (`detective.karel.in`) answer 502; both programs call the removed `Env.from_env`
+- RAN `Systems/static_sites/start-page.py` reads the Hosts sidecars through `load_sidecar_registry`, which gppu no longer has
 - Hosts: `configs.py`'s and `start-page.py`'s `load_config` read `fleet.platforms`, which Fleet has not had since 2026-09-30
 - Hosts: `hosts.yaml` lost s1's, s9's and yellow's `mount` in the move to `RAN/_config`, so `server_mounts` rendered `None/Lake` and the like; the three lines are back (RAN b071600bb)
 - Fixed: gppu: `test_tui_logging`'s file-and-trace-rules and shared-log-screens tests pass, and gppu's whole suite passes on master
