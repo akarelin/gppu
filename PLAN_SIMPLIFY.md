@@ -25,7 +25,7 @@ Principles: no new verb or noun; gppu.py core shrinks; downstreams that never us
 Independent and unscoped:
 - Y2's state managers read their rows through `_DC` accessors, with no `_key`, `poll_interval` or section copies
 - Swallowed exceptions in AI code
-- Y2 onto gppu's loader: Y2's StateManager a thin subclass, its apps the rows of `y2/apps`, its `initialize`, `terminate`, `start` and `stop` overrides private steps, its mixins lifecycle members; `D:\Work	\y2-gppu-overlapeview.md` lists every place
+- Y2 onto gppu's loader: Y2's StateManager a thin subclass, its apps the rows of `y2/apps`, its `initialize`, `terminate`, `start` and `stop` overrides private steps, its mixins lifecycle members; `D:\Work\11\21\y2-gppu-overlap\review.md` lists every place
 - Fleet in gppu under its own name, RAN's reduced to `expand` and `values`; a row's platform read from the environment
 - Objects read `self.name`, their annotated accessors, never `my('name')`
 - Y2's apps are the rows of `y2/apps` that Y2's loader creates, `cls(data=row)`; Y2's App stops passing `config=`. gppu's App would then load the section named as the app, and Creekview's `hue`, `av` and other sections carry the apps' names and a `name` key of their own
