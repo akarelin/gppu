@@ -14,7 +14,7 @@ Usage::
         MENU_TITLE = 'My Tools'
 
     def main():
-        launcher = App(environment='RAN', config=APP_DIR / 'myapp.yaml')
+        launcher = App(config=APP_DIR / 'myapp.yaml')
         launcher_main(load_app_registry(APP_DIR, launcher), MyApp, APP_DIR, 'My Tools — launcher')
 
     # Serve as a web app:  python myapp.py --serve [--port 8566] [--host localhost]
@@ -27,6 +27,7 @@ import asyncio
 import importlib
 import logging
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -36,7 +37,8 @@ from typing import ClassVar
 
 from gppu import Env, App, AsyncApp, mixin_Config, dict_from_yml, glob, glob_dict, glob_list
 from gppu.gppu import Logger, _EmptyMessageFilter, _LogColorizer
-from gppu.gppu import OSType
+from gppu.gppu import OSType, YmlLoader, jinja
+import yaml
 from rich.text import Text
 from textual.app import App as TextualApp, ComposeResult
 from textual.binding import Binding
@@ -273,15 +275,20 @@ def _absolute(base: Path, value):
 def read_manifest(app_dir: Path, config_file: str, nav: str | None = None) -> dict:
     """One YAML config, or a script that carries its manifest, as a launcher item: its script and cwd resolved against
     the manifest's own directory, so a launcher can list manifests that live anywhere, and the nav the launcher files
-    it under. The file is loaded as the item's own app loads it, by App: a YAML file, or the MANIFEST in a script's
-    first 4 KB. A script's manifest that names no script or url launches the script itself. Empty when the config holds
-    no manifest."""
+    it under. The file is a YAML file, or a script that carries its configuration as MANIFEST in its first 4 KB. A
+    script's manifest that names no script or url launches the script itself. Empty when the config holds no
+    manifest."""
     path = (app_dir / config_file).resolve()
-    cfg = App(config=path)
+    if path.suffix.lower() in ('.yaml', '.yml'): cfg = dict_from_yml(path)
+    else:
+        with path.open(encoding='utf-8-sig') as f: script = re.search(r'^MANIFEST = r?"""(.*?)"""', f.read(4096), re.M | re.S)
+        if not script: raise ValueError(f'{path}: no MANIFEST in its first 4 KB')
+        cfg = dict(yaml.load(script[1], Loader=YmlLoader))
+    cfg = jinja.configuration(cfg)
     manifest = cfg.get('manifest', {})
     if not manifest:
         return {}
-    manifest['_config'] = {k: v for k, v in cfg.items() if k not in ('manifest', 'config', 'name')}   # .. its own keys, without what App was constructed with
+    manifest['_config'] = {k: v for k, v in cfg.items() if k != 'manifest'}   # .. its own keys
     if path.suffix.lower() not in ('.yaml', '.yml') and not {'script', 'url'} & manifest.keys():
         manifest['script'] = path.name
     for key in ('script', 'cwd'):

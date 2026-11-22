@@ -832,11 +832,11 @@ def dict_to_yml(filename: str | Path, data=None, sort_keys=False):
   yaml.add_representer(set, SafeRepresenter.represent_list)
   yaml.add_representer(tuple, _tuple_representer)
 
-  with Path(filename).open('w+') as f:
+  with open(filename,'w+', encoding='utf-8') as f:
     try: yaml.dump(redata, f, indent=2, Dumper=IndentedListDumper, sort_keys=sort_keys, width=2147483647)
     except Exception as err:
       error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(redata)}\n\n"
-      with Path(f'{filename}_error.txt').open('w+') as ferr: ferr.write(error)
+      with open(str(filename) + '_error.txt', 'w+', encoding='utf-8') as ferr: ferr.write(error)
 
 
 class YmlLoader(FullLoader):
@@ -875,11 +875,11 @@ def dict_from_yml(filename: str | Path) -> dict:
 def dict_to_json(filename: str | Path, data=None, indent=2):
   assert filename
   if not data: return
-  with Path(filename).open('w') as f:
+  with open(filename, 'w', encoding='utf-8') as f:
     try: json.dump(data, f, indent=indent, ensure_ascii=False, default=str)
     except Exception as err:
       error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(data)}\n\n"
-      with Path(f'{filename}_error.txt').open('w') as ferr: ferr.write(error)
+      with open(str(filename)+'_error.txt', 'w', encoding='utf-8') as ferr: ferr.write(error)
 
 
 def dict_from_json(filename: str | Path):
@@ -1541,6 +1541,8 @@ class _DC(UserDict):
 
 # region Configuration mixins
 class mixin_Config(_mixin):
+# !!!  """ Very sus. Looks like slop. It DOES not read the configuration. Claude cannot understand this code and thinks its some "loader". self.my waws initialized somewhere and needs a place, but not this complexity. """
+
   """ Very sus. Looks like slop. It DOES not read the configuration. Claude cannot understand this code and thinks its some "loader". self.my waws initialized somewhere and needs a place, but not this complexity. """
   # region - // what is left of mixin_Config
   # // An app is assembled from mixins, and this one gives it the readers of its configuration. The configuration
@@ -1559,92 +1561,73 @@ class _Base(mixin_Logger, mixin_Config): pass
 
 # region App
 class App(YInit, _Base, _DC):
+# !!! Rewrote. folowing the architecture, not beside it
     """ Not human reviewed """
     # region - ^^ why App exists
     # ^^ SPEC: every app is a `_DC`, takes its environment, knows its own name and loads its own configuration.
-    # ^^ It is code about configuration, used by everything downstream: Fleet and the Hosts tools, the TUI apps, Y2's
-    # ^^ apps and Env are Apps. It adds one init step, which loads the configuration into the object's data.
+    # ^^ It is code about configuration, used by everything downstream: Fleet and the Hosts tools, the TUI apps and Y2's
+    # ^^ apps are Apps. It adds one init step, which loads the configuration into the object's data.
     # endregion
     name: str
-    environment: str
 
-    def _config_load(self, source: Mapping | str | Path, argv: list[str] = []) -> None:
-        """An app's own configuration over what it was constructed with: a row, a YAML file, or a script's MANIFEST;
-        the command line over it: ``--key value`` sets a key, a slash path a nested one, ``--flag`` sets it to True."""
-        if isinstance(source, Mapping): loaded = deepcopy(dict(source))
-        elif str(source).lower().endswith(('.py', '.cmd', '.ps1', '.sh')):
-            with Path(source).open(encoding='utf-8-sig') as f: manifest = re.search(r'^MANIFEST = r?"""(.*?)"""', f.read(4096), re.M | re.S)
-            if not manifest: raise ValueError(f'{source}: no MANIFEST in its first 4 KB')
-            loaded = dict(yaml.load(manifest[1], Loader=YmlLoader))
-        else: loaded = dict_from_yml(source)
-        self.data = self.data | jinja.configuration(loaded)
-        i = 0
+    def __init(self) -> None:
+        if not self.name: self.name = type(self).__name__.lower()
+        if 'parent' in self.data: return   # .. a runtime made it from its row: the row is its configuration
+        # region - the program's app: its section of the environment, the one named as it is, or the configuration it
+        # .. was given (a YAML file, or a script's MANIFEST text), over what it was made with
+        # endregion
+        own = self.data.pop('config') if 'config' in self.data else glob_dict(self.name)
+        if isinstance(own, os.PathLike): own = dict_from_yml(own)
+        elif isinstance(own, str): own = dict(yaml.load(own, Loader=YmlLoader))
+        self.data |= jinja.configuration(deepcopy(dict(own)))
+        # .. the command line over it: --key value sets a key, a slash path a nested one, --flag sets it to True
+        argv, i = sys.argv[1:], 0
         while i < len(argv):
             arg, i = argv[i], i + 1
             if not arg.startswith('--') or len(arg) == 2: continue
             value = True
             if i < len(argv) and not argv[i].startswith('--'): value, i = argv[i], i + 1
             deepset(arg[2:], self.data, value)
-
-    def __init(self) -> None:
-        if not self.name: self.name = type(self).__name__.lower()
-        Env.init(environment=self.environment)
-        # .. its own configuration: what it is given; nothing more when a loader made it from its row; else its section, named as it is
-        own = self.data['config'] if 'config' in self.data else {} if 'parent' in self.data else glob_dict(self.name)
-        self._config_load(own, self.data['argv'] if 'argv' in self.data else sys.argv[1:])
 # endregion
 
 
 # region - Env: the configuration
-class _Env(App):
-  """The program's environment: singleton app object. It's my is glob"""
-  home: Path
-  user: str
-  os: OSType
-  host: str
-  path: Path   # .. the environment's YAML file
-  environment: str = ''   # .. the environment loaded: RAN or IoT
+class _Env(YLoad, _Base, _DC):
+    """The program's environment: singleton app object. It's my is glob"""
+    home: Path
+    os: OSType
+    path: Path   # .. the environment's YAML file
 
-  _global_log = True
-  # region - Env as an app
-  # .. Its data is the environment alone, which glob reads: what Env finds out about the machine is no configuration,
-  # .. so those names are plain attributes. Its init is its own: it loads when an app names the environment.
-  # endregion
-  _DC_EXCLUDE_NAMES = ['user', 'host', 'environment']
-
-  def init(self, **kw):
-    _ENV_PATHS = {"RAN": "RAN/_config/config.yaml", "IoT": "IoT/_Creekview/_creekview.yaml"}
-
-    environment = kw.get('environment') or ''
-    if self.initialized:
-      if environment and environment != self.environment: raise ValueError(f'Environment {self.environment!r} is loaded; {environment!r} cannot load as well')
-      return
-
-    self.os = detect_os()
-    self.host = socket.gethostname().split('.')[0].lower()
-    self.user = getpass.getuser()
-    self.home = Path.home()
-
-    if not environment and 'config' not in kw: return   # .. a host without its repository is given its configuration, from MQTT
-    self.environment = environment
-    if environment: self.path = Path("D:\\Dev" if self.os == OSType.W11 else "~").expanduser() / _ENV_PATHS[environment]
-    self.data = kw['config'] if 'config' in kw else dict_from_yml(self.path)   # .. one YAML load of its file; MQTT and Y2's configure give it whole
-    # region - the configuration's macros, named templates, `template:` rows and the Jinja that reads only the configuration
-    # .. Creekview and RAN use all four: _creekview.yaml's macros, the *_templates and templates blocks of groups, Insteon,
-    # .. covers and the devices, and RAN config.yaml's mounts; glob reads the value it fills, filled
+    _global_log = True
+    # region - Env as an app
+    # .. Its data is the environment's configuration, which glob reads. Made as gppu is imported, it finds out the machine
+    # .. and the environment, which are no configuration and so plain attributes (host, user, environment); it loads
+    # .. once glob reads it.
     # endregion
-    self.data = jinja.configuration(self.data)
-    if 'trace_rules' in self.data: Logger.init_logger(trace_rules=self.data['trace_rules'])
-    self.initialized = True
 
+    def __init(self) -> None:
+        _ENV_PATHS = {"RAN": "RAN/_config/config.yaml", "IoT": "IoT/_Creekview/_creekview.yaml"}
+        self.os, self.home = detect_os(), Path.home()
+        self.host, self.user = socket.gethostname().split('.')[0].lower(), getpass.getuser()
+        # .. the program's repository names it: a program in IoT or y2 is Creekview's, any other RAN's
+        self.environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) else 'RAN'
+        self.path = (Path('D:/Dev') if self.os == OSType.W11 else self.home) / _ENV_PATHS[self.environment]
 
-  def reset(self) -> None:
-    self.data = {}
-    self.initialized = False
+    def __load(self) -> None:
+        # .. one YAML load of its file; a configuration given whole (MQTT's, Y2's configure) is its data already, and a
+        # .. host without its repository has no file until MQTT gives it one
+        if not self.data and self.path.exists(): self.data = dict_from_yml(self.path)
+        # region - the configuration's macros, named templates, `template:` rows and the Jinja that reads only the configuration
+        # .. Creekview and RAN use all four: _creekview.yaml's macros, the *_templates and templates blocks of groups, Insteon,
+        # .. covers and the devices, and RAN config.yaml's mounts; glob reads the value it fills, filled
+        # endregion
+        self.data = jinja.configuration(self.data)
+        if 'trace_rules' in self.data: Logger.init_logger(trace_rules=self.data['trace_rules'])
 
 
 Env = _Env()
 
 # .. the configuration's readers are globals: Env's my readers
 glob, glob_int, glob_list, glob_dict = Env.my, Env.my_int, Env.my_list, Env.my_dict
+Env.load()
 # endregion

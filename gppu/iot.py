@@ -17,7 +17,6 @@ import threading
 from collections import UserList
 from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping
 from concurrent.futures import Future
-from copy import deepcopy
 from dataclasses import dataclass
 from itertools import count
 from typing import Any, ClassVar, List, Optional
@@ -328,10 +327,9 @@ class AppService(MqttApp):
   async def _receive_config(self, topic: y2topic, payload: object) -> None:
     data = yaml.load(payload, Loader=YmlLoader) if isinstance(payload, str) else payload
     if not isinstance(data, dict): raise TypeError(f'MQTT configuration must be a mapping: {topic}')
-    configuration, environment = deepcopy(Env.my_dict('')), Env.environment
-    deepset(self.my('config_mqtt/topics')[str(topic)], configuration, data)
-    Env.reset()   # .. new configuration is the same event as a reset: Env loads again, from what it held and the section that arrived
-    Env.init(environment=environment, config=configuration)
+    deepset(self.my('config_mqtt/topics')[str(topic)], Env.data, data)
+    Env.loaded = False   # .. new configuration is the same event as a load: Env loads again, from what it holds with the section that arrived
+    Env.load()
     if self.until_loaded is not None:
       self.until_loaded.discard(str(topic))
       if not self.until_loaded: self.stop()

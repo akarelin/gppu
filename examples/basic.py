@@ -9,4 +9,4 @@ class Basic(App):
 
 
 if __name__ == '__main__':
-    Basic(environment='RAN').main()
+    Basic().main()
