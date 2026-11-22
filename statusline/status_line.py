@@ -56,6 +56,7 @@ def _fms(ms):
     return f"{h}:{m:02d}:{s:02d}"
 
 
+# .. not gppu.format_since: that gives one unit (9d reads 1w); the started widget shows two, 9d18h
 def _fago(val):
     if not val:
         return ""
@@ -216,6 +217,10 @@ def _fsep(val, sep='|', color='GRAY2'):
     return s + str(val)
 
 
+# region - own Jinja environment
+# .. not gppu's JinjaEnvironment: that is StrictUndefined and native, so a field Claude Code leaves out of its
+# .. JSON raises and a widget renders a value, not text; here a missing field renders empty
+# endregion
 class _SilentUndefined(Undefined):
     """Undefined that returns empty/falsy instead of raising."""
     def __str__(self):

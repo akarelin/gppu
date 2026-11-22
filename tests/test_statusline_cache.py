@@ -2,7 +2,7 @@
 
 import json
 
-from statusline.cache import _is_user_prompt, _parse_from_offset, transcript_stats_cached
+from statusline.cache import _is_user_prompt, _parse_from_offset, _read_session
 
 
 def test_tool_results_are_not_user_turns():
@@ -55,9 +55,9 @@ def test_a_rewritten_smaller_file_is_read_from_the_start(tmp_path):
     line = json.dumps({"type": "user", "message": {"content": "question"}}) + "\n"
     path = tmp_path / "t.jsonl"
     path.write_bytes((line * 3).encode())
-    _, counts, *_ = transcript_stats_cached(str(path), 0)
+    _, counts, *_ = _read_session(str(path))
     assert counts["user"] == 3
 
     path.write_bytes((line).encode())
-    _, counts, *_ = transcript_stats_cached(str(path), 0)
+    _, counts, *_ = _read_session(str(path))
     assert counts["user"] == 1

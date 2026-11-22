@@ -2,7 +2,6 @@
 
 import json
 import tempfile
-import time
 from collections import Counter
 
 from gppu.data import Cache
@@ -12,21 +11,20 @@ CACHE_DIR = Path(tempfile.gettempdir()) / "claude_statusline_cache"
 # region - SCHEMA
 # .. Bump when the meaning of a cached count changes: entries accumulate from a byte
 # .. offset, so a parser fix cannot correct totals already stored under the old key.
-# .. v5: offset only through the last complete line; no system count.
+# .. v6: offset only through the last complete line; no system count; a session entry is its result.
 # endregion
-SCHEMA = "v5"
+SCHEMA = "v6"
 
 _dc = Cache(str(CACHE_DIR), ttl=86400, backend='sqlite', skip_env='')
 
 
 def cached(key, ttl, fn):
-    """Return fn()'s result, re-running it only once the cached entry is older than ttl."""
+    """fn()'s result, which Cache keeps for ttl seconds."""
     hit = _dc.get(key)
-    now = time.time()
-    if hit and now - hit["ts"] < ttl:
-        return hit["data"]
+    if hit is not None:
+        return hit
     data = fn()
-    _dc.set(key, {"ts": now, "data": data}, ttl=ttl * 3)
+    _dc.set(key, data, ttl=ttl)
     return data
 
 
@@ -121,20 +119,17 @@ def _merge_meta(a, b):
 
 
 def transcript_stats_cached(path, ttl):
-    """Read the transcript and its subagents, each file only from where the last read stopped.
+    """The transcript's counts, read again at most once per ttl seconds.
 
     Returns (Counter of tools, counts dict, meta dict, subagent_count).
     """
     if not path or not Path(path).is_file():
         return Counter(), _new_counts(), _new_meta(), 0
+    return cached(f"session:{SCHEMA}:{path}", ttl, lambda: _read_session(path))
 
-    # .. Session-level TTL: skip all file checks if recently validated
-    now = time.time()
-    session_key = f"session:{SCHEMA}:{path}"
-    hit = _dc.get(session_key)
-    if hit and now - hit["ts"] < ttl:
-        return Counter(hit["tools"]), hit["counts"], hit["meta"], hit["subagents"]
 
+def _read_session(path):
+    """Read the transcript and its subagents, each file only from where the last read stopped."""
     subagents_dir = Path(path.removesuffix(".jsonl")) / "subagents"
     subagents = list(subagents_dir.glob("*.jsonl")) if subagents_dir.is_dir() else []
 
@@ -162,9 +157,4 @@ def transcript_stats_cached(path, ttl):
         tools.update(entry["tools"])
         counts = _merge_counts(counts, entry["counts"])
         meta = _merge_meta(meta, entry["meta"])
-
-    _dc.set(session_key, {
-        "ts": now, "tools": dict(tools), "counts": counts,
-        "meta": meta, "subagents": len(subagents),
-    }, ttl=0)
     return tools, counts, meta, len(subagents)
