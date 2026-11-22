@@ -135,10 +135,14 @@ import sys
 from gppu import App, Info
 
 class Logs(App):
-  def main(self) -> None:
-    Info('Reading logs', self.my('logs'), self.my('level'), self.my('days'))
+  logs: str
+  level: str
+  days: int
 
-Logs(environment='Hosts', argv=sys.argv[1:]).main()
+  def main(self) -> None:
+    Info('Reading logs', self.logs, self.level, self.days)
+
+Logs().main()
 ```
 
 `--days 7` overrides `days`, as a string; a bare `--verbose` sets `verbose` to True. The command line goes over the app's own configuration, never over the environment. Use `App` for an object that needs more and `AsyncApp` for asyncio work.
@@ -180,7 +184,7 @@ APP_DIR = Path(__file__).parent
 class MyLauncher(TUILauncher):
     TITLE = 'My Tools'
 
-launcher = App(environment='RAN', config=APP_DIR / 'launcher.yaml')   # its own apps:
+launcher = App(config=APP_DIR / 'launcher.yaml')   # its own apps:
 launcher_main(load_app_registry(APP_DIR, launcher), MyLauncher, APP_DIR, 'My Tools')
 ```
 

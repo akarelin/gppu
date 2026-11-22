@@ -1,21 +1,23 @@
 # Apps
 
-An app receives its environment declaration at construction and reads its own configuration under its known name. All apps in the process share `Env`; `glob` reads the shared configuration. See [configuration.md](configuration.md).
+An app is a `_DC`: its annotations are its configuration, read inside the app. All apps in the process share `Env`; `glob` reads the shared configuration. See [configuration.md](configuration.md).
 
 ```python
 from gppu import App, glob
 
 class Example(App):
-    pass
+    greeting: str
 
-app = Example(environment='Hosts')
-app.Info(app.my('greeting'))
-assert glob('hosts')
+    def main(self):
+        self.Info(self.greeting)
+        assert glob('hosts')
+
+Example().main()
 ```
 
 ## The environment
 
-`Env` is the global singleton environment. App initialization calls `Env.init(environment=...)` before selecting the app's own section. The environment is optional; the first app that declares one loads it, later apps share it, an app that declares another one raises, and apps with no loaded environment start with empty configuration. `Env.init` also sets what needs no file: `host`, `os`, `user`, `home`.
+`Env` is the global singleton environment, made and loaded as gppu is imported; see [configuration.md](configuration.md). It sets what needs no file: `host`, `os`, `user`, `home`.
 
 ## State and Runtime
 
@@ -25,7 +27,7 @@ Caching is the standard library's: gppu exports `cache`, `lru_cache` and `cached
 
 ## The log
 
-`Logger` is the program's log: on the console from gppu's first line, with colours and trace rules, mirrored to a file when the environment names a `log_file`, which Env applies with `Logger.enable_file_logging(log_file)`. `Logger.trace_rules` decides which `Debug` lines show; `{'all': True}` shows them all. A line names where it came from: `<module>` for a script, `Class.method` for a method.
+`Logger` is the program's log: on the console from gppu's first line, with colours and the trace rules the environment's `trace_rules` sets. `Logger.trace_rules` decides which `Debug` lines show; `{'all': True}` shows them all. A line names where it came from: `<module>` for a script, `Class.method` for a method.
 
 ## Objects that need more
 

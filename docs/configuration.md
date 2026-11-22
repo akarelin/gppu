@@ -1,40 +1,24 @@
 # Configuration
 
-An app declares its environment by name at construction: `Hosts` or `IoT`. The environment is optional. When an app has one, the environment loads first, then the app starts on its own section of it.
+There are two environments: RAN, `RAN/_config/config.yaml`, and Creekview, `IoT/_Creekview/_creekview.yaml`, under `D:\Dev` on Windows and under the home folder elsewhere. `Env` loads one of them as gppu is imported; no app or script names it. A program in the IoT or y2 repository is Creekview's, and so is any host without RAN's repository, as Y2's containers are; every other program is RAN's. A host with neither file, as PC Control's PCs, starts with an empty `Env` and gets its configuration over MQTT. `glob(...)` reads the environment.
 
 ```python
 from gppu import App, glob
 
 class Example(App):
-    pass
+    mode: str
 
-app = Example(environment='Hosts')
-app.my('mode')          # the `example:` section of Hosts
-glob('hosts')           # the rest of Hosts
+    def main(self):
+        self.Info(self.mode, glob('hosts'))
+
+Example().main()
 ```
 
-The app already has its identity: `Example` selects `example`, and `Fleet` selects `fleet`. An explicit name remains an override for existing callers. The app's section is its own copy.
+An app reads its configuration inside itself, through its annotations: nothing outside an app reads it. The program's app takes the environment's configuration under its name (`Example` reads `example`), or the configuration it is given: `config=` a YAML file, or a script's `MANIFEST` text. The command line goes over it: `--key value` sets the key to the string, a slash path names a nested key, `--flag` with no value after it sets it to True. An app a runtime makes from its row takes that row and nothing else.
 
-An app's own configuration is independent from the environment: `Example(config='example.yaml')` loads that YAML file as the app's own, whether or not it declares an environment. A script gives itself, `Example(config=__file__)`: its configuration is the YAML it assigns to `MANIFEST` within its first 4 kilobytes, taken by a regex and never by running the script. An app given no file loads its section of the environment. The configuration goes into the app's data, the `_DC`'s, over what the app was constructed with; `my(...)` and the class's annotated accessors read it there.
+Env loads in its own steps: its init finds the machine (`host`, `os`, `user`, `home`) and the environment, its load is one YAML load of the file. A configuration given whole, from MQTT or Y2's `configure`, goes into `Env.data` and loads through the same load step.
 
-The command line goes over the app's own configuration, never over the environment: `Example(environment='Hosts', argv=sys.argv[1:])`. `--key value` sets the key to the string, a slash path names a nested key, `--flag` with no value after it sets it to True, and other arguments are the program's own.
-
-Env and every app load through the same step, App's: a YAML file, a script's manifest, or a section already loaded goes into the object's data as a copy. `mixin_Config` is the readers alone, `my`, `my_int`, `my_float`, `my_list` and `my_dict`.
-
-## Env.init
-
-App construction calls `Env.init(environment=...)`. Env is the global singleton app; nothing else loads it.
-
-- It sets `host`, `os`, `user` and `home`, so an app without an environment has them too.
-- A declared name selects one YAML file: Hosts is `RAN/Hosts/_config/config.yaml`, IoT is `IoT/_Creekview/_creekview.yaml`. The path is under `D:\Dev` on Windows and under the home folder elsewhere. YAML `!include` paths are relative to the file that includes them.
-- The file loads into Env's data, so it becomes the configuration that `glob(...)` reads; its `log_file` and `trace_rules` then apply to gppu's logger.
-- Env takes `config=` as any app does: `Env.init(config=mapping)` loads a mapping already read, as the part read from MQTT is, and `Env.init(environment='IoT', config=path)` a copy of the file.
-- The environment loads once. Later apps share it, with or without a declaration, until `Env.reset()`.
-- An unknown name, a missing file and invalid YAML raise. Nothing searches folders or guesses a program's configuration.
-
-An app without an environment, and none loaded, starts with empty configuration; `glob(...)` returns None.
-
-`examples/basic.py` declares Hosts; its Info and Debug lines follow that file's `trace_rules` and `log_file`. Run it from the gppu repository with `python -m examples.basic`.
+`examples/basic.py` is the smallest app.
 
 ## Templates
 
