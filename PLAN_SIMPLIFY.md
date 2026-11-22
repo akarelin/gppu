@@ -46,6 +46,7 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
   - [ ] Transcriber's recordings tool and lake's m365 read a `lake.yaml` that exists only in archives
   - [ ] Plaud's hourly sync on seven, its sign-in and its TUI call `Env.from_env`; Plaud is not ported
 - RAN's gppu skill names `MarkerProgress` and `spinner_frames`, which gppu.tui no longer has
+- gppu's handler-ls example reads its catalog at `D:/TextLake/.catalog`, which holds no folder for alex-pc, so it stops there
 - Y2's tests and the Hosts tests set up with `Env.reset()` and `Env.init(environment=...)`, which Env no longer has
 - The Hosts TUI's Configs browser reads `configs_config`, which RAN's configuration no longer has
 - The start page reads a `start_page` configuration that was archived and its include commented out on 2026-09-29, and imports the sidecar loader gppu no longer has
