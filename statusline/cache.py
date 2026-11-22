@@ -20,6 +20,8 @@ _dc = Cache(str(CACHE_DIR), ttl=86400, backend='sqlite', skip_env='')
 
 def cached(key, ttl, fn):
     """fn()'s result, which Cache keeps for ttl seconds."""
+    # .. The key carries SCHEMA: an older status line writes its own entry shape to the same cache folder.
+    key = f"{SCHEMA}:{key}"
     hit = _dc.get(key)
     if hit is not None:
         return hit
