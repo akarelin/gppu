@@ -202,7 +202,7 @@ class mixin_Mqtt(YStart):
         self._client: aiomqtt.Client | None = None
         self._callbacks: dict[y2topic, list[tuple[Callable[..., Any], Any, bool]]] = {}   # .. a topic's listeners: callback, payload, ignore_retained
         self._subscriptions: dict[y2topic, int] = {}                                    # .. a topic's QoS
-        self._retained: set[tuple] = set()   # .. (topic, listener, the message's topic): the retained messages each listener got on this connection
+        self._retained: dict[int, tuple[tuple, set[str]]] = {}   # .. a listener by id: it (held, so its id stays its own) and the topics whose retained message it got on this connection
 
     def __start(self) -> None: self._spawn(self._mqtt_loop())
 
@@ -251,17 +251,18 @@ class mixin_Mqtt(YStart):
         if isinstance(payload, str) and payload[:1] in ('{', '['):
             try: payload = json.loads(payload)
             except json.JSONDecodeError: pass   # .. not JSON after all: the text is the payload
-        sent = next((float(value) for key, value in getattr(message.properties, 'UserProperty', None) or [] if key == 'sent'), None)
         for topic, listeners in list(self._callbacks.items()):
             if not message.topic.matches(str(topic)): continue
             for listener in list(listeners):
                 callback, expected, ignore_retained = listener
                 if expected not in (None, payload): continue
                 if message.retain:
-                    got = (topic, listener, str(message.topic))
-                    if ignore_retained or got in self._retained: continue
-                    self._retained.add(got)
+                    if ignore_retained: continue
+                    got = self._retained.setdefault(id(listener), (listener, set()))[1]
+                    if str(message.topic) in got: continue
+                    got.add(str(message.topic))
                 try:
+                    sent = next((float(value) for key, value in getattr(message.properties, 'UserProperty', None) or [] if key == 'sent'), None)
                     if inspect.isawaitable(result := _callback_wrapper(callback)(y2topic(str(message.topic)), payload, retained=message.retain, sent=sent)): await result
                 except Exception as error: self.Error('listener failed:', message.topic, error)   # .. one listener's failure stops neither the others nor the app
 
