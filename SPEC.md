@@ -35,6 +35,8 @@
 - Jinja constructs living objects, `_DC`s, never dicts, and never concatenates tokens to create JSON. In a YAML template, curly braces mean Jinja and nothing else: flow-style `{…}` is embedded JSON and makes YAML not YAML.
 - Jinja in configuration is an expression in `{{ }}`. Statements in `{% %}` are a special case that is almost never used, and multi-line Jinja is usually a fail.
 - Objects are created through configuration: `_DC` initializes them natively, and a class does not redo its initialization from zero.
+- An object's identity comes from configuration; no code creates it, and Jinja has nothing to do with it. The kind of object being constructed is always known, because the construction is passed in.
+- An object's data is its representation, as YAML, JSON or an MQTT payload: an input template turns what arrives into data, and an output template writes data out. A simple callback needs no object unless it has state.
 - Some functionality is declared in code rather than configuration. A class per kind of equipment is fine where there are one or two of each, such as Y2's AV classes (an LG TV, a Denon receiver), whose configuration would be awkward. What exists in hundreds, such as light switches, scenes and Insteon devices, comes from templates.
 - Templates also serve compilers: Y2 compiles its configuration into Insteon's, MQTT's and Home Assistant's, and some compilers write text files. A generated file, such as the shades table, is semi-static: cache and configuration at once, not written by a human, regenerated on rare occasions, saved and included into the configuration correctly.
 - A host is declared by its name, and everything else about it, its address, its MAC and the rest, follows from that name. RAN's hosts, which Preservator and fleet management use, and Creekview's hosts, which IoT uses, are separate tables for now. Looking a host up works the same way in both, and how the two environments reference hosts converges over time.
@@ -48,6 +50,7 @@
 
 ## State
 - gppu offers a simple way for an app to keep its own state, as it offers Env.
+- State is a shared object, a trivial `_DC`: a lookup from an entity's identity to the entity object, reached through the entity or through the runtime. gppu provides state and its persistence, and persistence works as it should. Y2's version of state, with its caching, stays in Y2 for now.
 
 ## Apps
 - App initialization takes its environment; the app already knows its name. An app loads its own configuration, which is independent from the environment.
@@ -65,6 +68,7 @@
 - A connection string, such as Postgres's or MQTT's, is a one-line value in the global configuration, and an app reads it by its key.
 - Hosting and spawning processes, with their completion callbacks, is one simple shared mechanism in gppu, used by fleet management and Y2 alike.
 - Running processes in parallel is not part of a TUI, since a command-line app runs them too. It is an app's method, like its timers (run after, run in, run at).
+- Refreshing belongs to the runtime and is configured; callbacks sit on a different level. Every object refreshes in the one way known for it, and every way is a simple timer or listener: on a schedule, after a timeout following an event, on a state change, when a state has stayed the same for a period, or when no events of a kind have come for a period.
 - Every TUI app is an async app. Every app is a `_DC`, whose data holds everything the app is given, so no app sets its own attributes from it again.
 - An app is an assembly of mixins: `_Base` puts the basic two together, and an app picks async, TUI or whatever else it needs.
 - A simple CLI app has no code to find where it was started or where its configuration is, and invents no command line of its own; it is aware of the topology. Nothing passes paths to construct something, and nothing needs the user's home.
@@ -81,7 +85,7 @@
 - Y2 uses Env; it has no environment of its own.
 - Y2's entity is part of gppu.
 - Y2 was originally part of gppu. Only entity support, the Y2 entity and below, is specific to Y2; everything else is generic and is gppu's, so Y2's own code is slim.
-- Y2's state manager, Y2 entity and Y2 group are one step on top of gppu, and they are correct. The state manager is one class, in `gppu.app`; nothing derives a second state manager from it. A class full of special cases, such as an AV device, stays a valid Y2 entity or group and never does what gppu does.
+- Y2's runtime, Y2 entity and Y2 group are one step on top of gppu, and they are correct. There is no state manager: it is a kind of runtime, the async app, initialized from configuration, which knows what kinds of objects it makes and where it loads them from (its `key`), and kicks off their lifecycle. Only a manager that handles hardware, such as Hue's, has code of its own; GSM and ISM have very little. A class full of special cases, such as an AV device, stays a valid Y2 entity or group and never does what gppu does.
 
 ## Library and periphery
 - No functionality has two implementations. It is either gppu's, and every app uses it, or an app's own. An app that does its own thing is named and known, to be refactored later.
