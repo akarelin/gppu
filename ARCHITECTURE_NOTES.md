@@ -103,6 +103,9 @@ Notes of an agent session, 2026-11-21. The first part is what Alex said in that 
 - A light is configured the same way whatever drives it, Hue, Tuya, Insteon or any other: declaring a light, its behavior and its room is done for it as a light, so lights mix and match. Covers and groups work the same way.
 - An entity is generic, built from configuration that produces its dictionary. It speaks a system because its dictionary carries that system's ID: a cover whose row has a PowerView ID speaks PowerView, and has every generic feature besides.
 - PowerView's configuration is not generated: each cover's and each scene's PowerView ID is part of its declaration.
+- Configuration defines the things that need commands executed and the things that know how to execute them.
+- One kind of configuration describes how a system behaves: how it executes an action, by mapping the action to the system's API call, and how it calculates state. It is a mapping of a dictionary to a dictionary, and is almost code.
+- A system whose API works differently between versions is still the same product, and needs no new object: the difference is in that system's configuration. PowerView's V1 and V2 hubs are the example.
 
 ## UI
 - All objects are data classes with the same `self.data`, and state is lists and dicts of them, so any object can be displayed in a list by a UI that knows nothing about it.
