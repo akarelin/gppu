@@ -1498,7 +1498,7 @@ class _Env(YLoad, _Base, _DC):
     def __init(self) -> None:
         _ENV_PATHS = {"RAN": "RAN/_config/config.yaml", "IoT": "IoT/_Creekview/_creekview.yaml"}
 
-        self.os =, self.home = detect_os(), Path.home() # !!!  Rewrite
+        self.os, self.home = detect_os(), Path.home() # !!!  Rewrite
         self.host, self.user = socket.gethostname().split('.')[0].lower(), getpass.getuser() # !!!  Rewrite
         root = Path('D:/Dev') if self.os == OSType.W11 else self.home # !!!  Rewrite
         # .. apps share RAN; Y2's and IoT's programs share Creekview, and so does a host without RAN's repository, as Y2's
