@@ -166,16 +166,6 @@ def safe_float(o, default: float = float("NaN")) -> float:
   except: result = default
   return result
 def safe_int(o, default: int = 0) -> int: return int(_) if (_ := safe_float(o, default)) else default
-def safe_list(o) -> list:
-  result = []
-  if isinstance(o, str): result = [o]
-  elif isinstance(o, list): result = [element for element in o if element]
-  elif isinstance(o, dict): result = list(o.keys())
-  return result
-def safe_timedelta(o: object) -> float:
-  try: then = dt.fromisoformat(str(o)).timestamp()
-  except: then = 0.0
-  return now_ts() - then
 def safe_datetime(o: object) -> dt | None:
   if isinstance(o, int | float): 
     try: result = dt.fromtimestamp(o, MY_TZ)
@@ -195,36 +185,7 @@ def safe_datetime(o: object) -> dt | None:
 
 
 # region Time helpers
-def now_str(): return dt.now().strftime("%Y%m%d.%H%M%S")
 def now_ts(): return dt.now().timestamp()
-
-def timestamp(): return dt.now().strftime("%y%m%d-%H%M")
-def datestamp(): return dt.now().strftime("%y%m%d")
-
-
-def prepend_datestamp(path, separator=" ") -> Path:
-  datestamp_str = datestamp()  
-  _ = Path(path)
-  return _.parent / f"{datestamp_str}{separator}{_.name}"
-
-
-def append_timestamp(path, separator=" ") -> Path:
-  timestamp_str = timestamp()
-  _ = Path(path)
-  return _.parent / f"{_.stem}{separator}{timestamp_str}{_.suffix}"
-
-
-def pretty_timedelta(ts) -> str:
-  delta = now_ts() - ts
-  seconds = int(delta)
-  days, seconds = divmod(seconds, 86400)
-  hours, seconds = divmod(seconds, 3600)
-  minutes, seconds = divmod(seconds, 60)
-  if days > 0: return '%dd %dh %dm %ds' % (days, hours, minutes, seconds)
-  elif hours > 0: return '%dh %dm %ds' % (hours, minutes, seconds)
-  elif minutes > 0: return '%dm %ds' % (minutes, seconds)
-  else: return '%ds' % (seconds,)
-
 
 def format_size(size: int | float) -> str:
   """Format byte count as '0 B', '1.5 KB', '2.3 MB', '4.5 GB', '7.8 TB'.
@@ -415,21 +376,6 @@ class y2list(UserList):
   def discard(self, element): self.data = [e for e in self.data if not e == element]
   def pophead(self) -> Optional[str]: return self.data.pop(0) if len(self.data) > 0 else None
   def poptail(self) -> Optional[str]: return self.data.pop(-1) if len(self.data) > 0 else None
-  def popsuffix(self, ix):
-    if self.endswith(ix):
-      if '_' in ix and self.token != '_': ix = ix.replace('_',self.token)
-      elif '/' in ix and self.token != '/': ix = ix.replace('/',self.token)
-      self.data = self._any2list(str(self).replace(ix, ''))
-      return self.token.join(self._any2list(ix))
-  def popprefix(self, ix):
-    if self.startswith(ix):
-      if '_' in ix and self.token != '_': ix = ix.replace('_', self.token)
-      elif '/' in ix and self.token != '/': ix = ix.replace('/', self.token)
-      self.data = self._any2list(str(self).replace(ix, ''))
-      return self.token.join(self._any2list(ix))
-  def popxfix(self, ix): return self.popsuffix(ix) or self.popprefix(ix)
-
-
 class y2path(y2list):
   """
     A slash-separated path held as a list. An element of the list can be called a segment,
@@ -616,9 +562,6 @@ class y2uri:
 
 
 # region Dict utils: deepget, dict_all_paths
-deepdict: Callable[[], DefaultDict[Any, Any]] = lambda: defaultdict(deepdict)
-
-
 def deepget(path: str | y2path, d: dict, default=None):
   """The value at a slash path, falsy values included; default when any step is absent."""
   if path in d.keys(): return d[path]   # .. a key that holds a slash itself
@@ -659,6 +602,10 @@ def deepset(path: str | y2path, d: dict, value) -> None:
     if parent not in node: node[parent] = {}
     node = node[parent]
   node[key] = value
+
+
+
+
 
 
 # def dict_sort_keylen(d, reverse: bool = True) -> dict:
@@ -750,47 +697,6 @@ def dict_sanitize(data: dict | list, sort_keys: bool = False) -> dict | list:
   else: raise ValueError(f"Unable to sanitize {data}")
 
 
-def template_populate(o, data: dict = {}, excludes:list = []) -> Any:
-  """ templates are simple inline functtions that return lists, dicts or scalars to be merged into dicts."""
-  def __tp(o: dict | str, data: dict) -> Any:
-    result: Any = None
-    if not data: data = {}
-
-    if not o: return None
-    if isinstance(o, dict):
-      result = {}
-      for k, old in o.items():
-        if k in excludes or inspect.isfunction(old): new = old
-        else: new = __tp(old, o | data)
-        result[k] = new
-    elif isinstance(o, list):
-      result = []
-      for old in o:
-        new = __tp(old, data)
-        result.append(new)
-    elif isinstance(o, (int, bool, float)): result = o
-    elif inspect.isfunction(o): result = o
-    else:
-      if str(o) == 'DEL': result = None
-      elif '$' in str(o): 
-        _ = str(Template(str(o)).safe_substitute(data))
-        if _[0] == '[' and _[-1] == ']':
-          result = []
-          _ = _[1:-1]
-          for element in _.split(','):
-            element = element.strip()
-            if element.isdecimal(): element = int(element)
-            elif element.isnumeric(): element = float(element)
-            result.append(element)
-        else: result = _
-      else: result = o
-    return result
-
-  if isinstance(o, dict): _ = o.get('data', {}) | o
-  else: _ = str(o)
-  return __tp(_, data)
-
-
 def dict_to_yml(filename: str | Path, data=None, sort_keys=False):
   class IndentedListDumper(yaml.Dumper):
     def increase_indent(self, flow=False, indentless=False):
@@ -805,11 +711,11 @@ def dict_to_yml(filename: str | Path, data=None, sort_keys=False):
   yaml.add_representer(set, SafeRepresenter.represent_list)
   yaml.add_representer(tuple, _tuple_representer)
 
-  with open(filename,'w+', encoding='utf-8') as f:
+  with Path(filename).open('w+') as f:
     try: yaml.dump(redata, f, indent=2, Dumper=IndentedListDumper, sort_keys=sort_keys, width=2147483647)
     except Exception as err:
       error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(redata)}\n\n"
-      with open(str(filename) + '_error.txt', 'w+', encoding='utf-8') as ferr: ferr.write(error)
+      Path(f'{filename}_error.txt').write_text(error)
 
 
 class YmlLoader(FullLoader):
@@ -840,16 +746,6 @@ def dict_from_yml(filename: str | Path) -> dict:
   with filename.open() as f: return dict(yaml.load(f, Loader=Loader))
 
 
-def dict_to_json(filename: str | Path, data=None, indent=2):
-  assert filename
-  if not data: return
-  with open(filename, 'w', encoding='utf-8') as f:
-    try: json.dump(data, f, indent=indent, ensure_ascii=False, default=str)
-    except Exception as err:
-      error = f"Error dumping {filename}\n{err} {type(err)}\n{pfy(data)}\n\n"
-      with open(str(filename)+'_error.txt', 'w', encoding='utf-8') as ferr: ferr.write(error)
-
-
 def dict_from_json(filename: str | Path):
   with Path(filename).open() as f: return json.load(f)
 # endregion
@@ -870,9 +766,7 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
     def jinja_helpers() -> dict:
         """gppu's own filters, offered to every Jinja environment it builds."""
         return {
-            'safe_int': safe_int, 'safe_float': safe_float, 'safe_list': safe_list,
-            'safe_timedelta': safe_timedelta, 'dict_sanitize': dict_sanitize,
-            'pretty_timedelta': pretty_timedelta, 'pfy': pfy, 'slugify': slugify,
+            'safe_int': safe_int, 'safe_float': safe_float, 'dict_sanitize': dict_sanitize, 'pfy': pfy, 'slugify': slugify,
         }
 
     @pass_context
@@ -975,7 +869,7 @@ jinja.globals.update({name: getattr(builtins, name) for name in
                      re=re, render_template=jinja._render_template_in)
 
 # .. the template functions are globals: the one environment's methods
-render_template, jinja_configuration, templates_of = jinja.render_template, jinja.jinja_configuration, jinja.templates_of
+render_template = jinja.render_template
 apply_template, jinja_template, jinja_fill = jinja.apply_template, jinja.jinja_template, jinja.jinja_fill
 # endregion
 
@@ -1238,9 +1132,7 @@ class Logger:
   async def Dump(filename: str, data: dict = {}, **kw) -> None:
     """ Saves data object to yml file in trace folder """
     if '.' not in filename or not filename.endswith('.yml'): filename += '.yml'
-    if Logger.trace_folder:
-      filename = f"{Logger.trace_folder}/{filename}"
-    dict_to_yml(filename=filename, data=data)
+    dict_to_yml(filename=Path(Logger.trace_folder) / filename, data=data)
 
 
 class mixin_Logger(_mixin):
@@ -1258,35 +1150,9 @@ Dump = Logger.Dump
 # endregion
 
 
-_trace_mro = False
-
-
 # region YMRO lifecycle
 class _YMRO:
   POSSIBLE_STEPS = ['init', 'load', 'start', 'stop']
-
-  @property
-  def _trace_mro(self) -> bool:
-    result = getattr(self, 'args', {}).get('trace_mro', False)
-    global _trace_mro
-    _trace_mro = result
-    return result
-
-
-  def print_ymro(self):
-    Debug('BY', self.__class__.__qualname__)
-    siblings = [c for c in reversed(self.__class__.__mro__) if c != _YMRO and issubclass(c, _YMRO)]
-    step = 'init'
-    for sibling in siblings:
-      Debug('DG', f"  {sibling.__qualname__}")
-      qname = f"{sibling.__qualname__}__{step}"
-      if qname[0] != '_': qname = '_' + qname
-      method = getattr(self, qname, None)
-      if method:
-        Debug('INFO', f"  {method.__qualname__}")
-        initers = getattr(sibling, '_initers', [])
-        for initer in initers: Debug('DIM', f"     {initer.__qualname__}")
-
 
   def _ymros(self):
     result = {}
@@ -1438,7 +1304,6 @@ class mixin_Config(_mixin):
   """ Very sus. Looks like slop. It DOES not read the configuration. Claude cannot understand this code and thinks its some "loader". self.my waws initialized somewhere and needs a place, but not this complexity. """
   def my(self, path: str | y2path, default=None) -> Any: return deepget(path, self.data, default=default)
   def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self.data, default=default)
-  def my_float(self, path: str | y2path, default: float = float('nan')) -> float: return deepget_float(path, self.data, default=default)
   def my_list(self, path: str | y2path, default: list = []) -> list: return deepget_list(path, self.data, default=default or [])
   def my_dict(self, path: str | y2path, default: dict = {}) -> dict: return deepget_dict(path, self.data, default=default or {})
 

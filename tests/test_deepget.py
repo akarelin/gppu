@@ -1,7 +1,6 @@
-"""Tests for dict utilities: deepget, deepget_int, deepget_list, deepget_dict, deepdict."""
+"""Tests for dict utilities: deepget, deepget_int, deepget_list, deepget_dict."""
 from gppu import (
     deepget, deepget_int, deepget_list, deepget_dict,
-    deepdict,
 )
 from gppu import glob
 
@@ -73,10 +72,3 @@ class TestDeepgetTyped:
     def test_deepget_dict_returns_default_for_non_dict(self):
         d = {"config": "string"}
         assert deepget_dict("config", d, default={}) == {}
-
-
-class TestDeepdict:
-    def test_creates_nested_defaultdict(self):
-        d = deepdict()
-        d["a"]["b"]["c"] = 42
-        assert d["a"]["b"]["c"] == 42

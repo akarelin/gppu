@@ -69,12 +69,9 @@ from .gppu import (
     dict_from_yml,
     dict_to_yml,
     dict_from_json,
-    dict_to_json,
     dict_sanitize,
-    template_populate,
     jinja_template,
     jinja,
-    jinja_configuration,
     render_template,
     apply_template,
 
@@ -84,20 +81,13 @@ from .gppu import (
     deepget_int,
     deepget_float,
     deepget_list,
-    deepdict,
 
     # .. Type safety and coercion
     safe_int,
     safe_float,
-    safe_list,
-    safe_timedelta,
 
     # .. Time utilities
-    now_str,
     now_ts,
-    pretty_timedelta,
-    prepend_datestamp,
-    append_timestamp,
 
     # .. String utilities
     pfy,
@@ -135,18 +125,17 @@ __all__ = [
     'sync',
 
     # .. Configuration
-    'dict_from_yml', 'dict_to_yml', 'dict_from_json', 'dict_to_json', 'dict_sanitize',
-    'template_populate', 'jinja_template', 'jinja', 'jinja_configuration', 'render_template', 'apply_template',
+    'dict_from_yml', 'dict_to_yml', 'dict_from_json', 'dict_sanitize',
+    'jinja_template', 'jinja', 'render_template', 'apply_template',
 
     # .. Dictionary utilities
     'deepget', 'deepget_dict', 'deepget_float', 'deepget_int', 'deepget_list',
-    'deepdict',
 
     # .. Type utilities
-    'safe_int', 'safe_float', 'safe_list', 'safe_timedelta',
+    'safe_int', 'safe_float',
 
     # .. Time utilities
-    'now_str', 'now_ts', 'pretty_timedelta', 'prepend_datestamp', 'append_timestamp',
+    'now_ts',
 
     # .. String utilities
     'pfy', 'slugify',
