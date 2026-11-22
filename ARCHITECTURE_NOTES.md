@@ -109,6 +109,10 @@ Notes of an agent session, 2026-11-21. The first part is what Alex said in that 
 - The other kind is the configuration Alex and users care about. It says this is the room, the room has these lights, and what happens when it is turned on and off. Those are sequences, and a sequence is a list of commands.
 - The two kinds are never intermixed. What a system exposes, and Alex may rename, such as Hue's lights and groups, is in the users' kind, in the same file or another. How setting a Hue light red becomes a POST to the bridge is in the system's kind.
 - The users' configuration is Creekview: it describes the whole house, what lights belong where. It is human-readable, has nothing excessive, and is meant for editing. It may be a very large file; nested well, it gives a view of everything, and it is not crowded with how requests are built from templates. Today it is groups. Its format is universal: everything is a group.
+- Every entity a user may be expected to interact with, a named entity such as one exposed to Homebridge, can be in that one file: one big foldable topology, not polluted with the specifics of how Homebridge is built.
+- Homebridge is configured in one place, `homebridge.yaml`: it holds everything needed to change how Homebridge works, and it is the only file to look at for Homebridge. Nothing of Homebridge is hard-coded in code.
+- `homebridge.yaml` says which Homebridge instance handles which entities.
+- Templates, generators of API requests and formatters are the technical part a user does not look into. Big templates, such as Homebridge's, can be external files.
 
 ## UI
 - All objects are data classes with the same `self.data`, and state is lists and dicts of them, so any object can be displayed in a list by a UI that knows nothing about it.
