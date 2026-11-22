@@ -1,5 +1,6 @@
-# w11 — Windows 11 Superapp launcher configuration
-# Each app points to the script whose inline config contains its manifest section.
+# region - w11 — Windows 11 Superapp launcher configuration
+# .. Each app points to the script whose inline config contains its manifest section.
+# endregion
 
 apps:
   events: w11-events.py

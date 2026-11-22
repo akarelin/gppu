@@ -1,5 +1,6 @@
-# w11 — Windows 11 Superapp launcher configuration
-# Each app points to its config file which contains a manifest section.
+# region - w11 — Windows 11 Superapp launcher configuration
+# .. Each app points to its config file which contains a manifest section.
+# endregion
 
 apps:
   events: w11-events.yaml

@@ -1,12 +1,13 @@
-# gppu's documentation, built from the repository's root in an environment of its own, as docs/publish.sh builds it for every gppu
-# release (gppu.yml) and for gppu-docs.yaml:
-#   uvx --python 3.14 --with mkdocs-material --with "mkdocstrings[python]" --with mkdocs-gen-files --with graphifyy mkdocs build --strict -f docs/mkdocs.yaml -d <folder>
+# region - how the documentation is built
+# .. gppu's documentation, built from the repository's root in an environment of its own, as docs/publish.sh builds it for every gppu release (gppu.yml) and for gppu-docs.yaml:
+# ..   uvx --python 3.14 --with mkdocs-material --with "mkdocstrings[python]" --with mkdocs-gen-files --with graphifyy mkdocs build --strict -f docs/mkdocs.yaml -d <folder>
+# endregion
 site_name: gppu
 site_description: General Purpose Python Utilities, documented from the code's docstrings and by gppu's own documents.
-docs_dir: gppu                     # the home page; the modules' pages are made from the code at build time (docs_pages.py)
-site_url: https://kb.karel.in/gppu/v3/   # where it is published; every build names its output folder: mkdocs build -d <folder>
+docs_dir: gppu                     # .. the home page; the modules' pages are made from the code at build time (docs_pages.py)
+site_url: https://kb.karel.in/gppu/v3/   # .. where it is published; every build names its output folder: mkdocs build -d <folder>
 repo_url: https://github.com/akarelin/gppu
-use_directory_urls: false          # every page is a file, so the site opens from disk
+use_directory_urls: false          # .. every page is a file, so the site opens from disk
 
 theme:
   name: material
@@ -14,18 +15,18 @@ theme:
 
 plugins:
   - search
-  - offline                        # the search index as a script, so search works from disk too
+  - offline                        # .. the search index as a script, so search works from disk too
   - gen-files:
       scripts: [docs_pages.py]
   - mkdocstrings:
       handlers:
         python:
-          paths: [..]              # gppu's source, read as it is: the build imports none of it
+          paths: [..]              # .. gppu's source, read as it is: the build imports none of it
           options:
             members_order: source
-            show_source: false     # the docstrings are the documentation
-            show_if_no_docstring: true   # every class and function of gppu, with its signature, also those without a docstring
-            docstring_options:     # a docstring's Parameters may name what **kw takes (gppu.pcp) and leave its types out
+            show_source: false     # .. the docstrings are the documentation
+            show_if_no_docstring: true   # .. every class and function of gppu, with its signature, also those without a docstring
+            docstring_options:     # .. a docstring's Parameters may name what **kw takes (gppu.pcp) and leave its types out
               warn_unknown_params: false
               warn_missing_types: false
 
@@ -34,7 +35,7 @@ markdown_extensions:
   - tables
   - toc:
       permalink: true
-  - pymdownx.superfences:          # a ```mermaid block in a docstring or a page is drawn as a diagram
+  - pymdownx.superfences:          # .. a ```mermaid block in a docstring or a page is drawn as a diagram
       custom_fences:
         - name: mermaid
           class: mermaid

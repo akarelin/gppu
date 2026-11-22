@@ -14,7 +14,7 @@ AS $$
     FROM (SELECT uuid_send(uuidv7()) AS v7) AS s;
 $$;
 
--- a read-only record (ro, system, deleted or archived: Linked Data, # Flags) changes only its flags, and is never deleted;
+-- .. a read-only record (ro, system, deleted or archived: Linked Data, # Flags) changes only its flags, and is never deleted;
 -- `archived` comes with the status `abandoned`, `deleted` with the status `rejected`
 CREATE FUNCTION ld.record()
 RETURNS trigger
