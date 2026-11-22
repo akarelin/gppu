@@ -25,7 +25,8 @@ Notes of an agent session, 2026-11-21. The first part is what Alex said in that 
 - Applications do have a runtime. It has been scattered over various classes: in one place it is called app, in another async app or MQTT app, or a state manager. All of those are effectively the runtime, but it is Y2's runtime, as opposed to a generic and better working one.
 - Runtime does not work at all at present, so nothing executes the lifecycle.
 - There are events in runtime.
-- `kind` is a long gone notion that is not needed. Runtime does not need to know about the kind.
+- In any list of dicts that objects are produced from, a row may carry `class`: exactly the name of the class of the object it initializes. The field is `class`, standardized from `kind`. A row without it gets the default class.
+- A thing keeps its class even when it becomes as simple as a REST group that runs REST commands, as Hue can: its class may have nothing but its name. Classes are rarely added.
 - Loading objects from a list is not inside the async app.
 - When the runtime builds an object, it builds everything the object needs to have its actions.
 - A restart never performs an action that nothing triggered. An action performed on restart means a problem in configuration or code.
