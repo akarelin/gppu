@@ -4,8 +4,9 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 
 ## Release
 - [x] The status line released: statusline 0.7.6
-- [ ] gppu: 3.7.10 and 3.7.11 went out as stable releases, not beta, and `gppu/latest` moved to 3.7.11; Alex did not ask for them. A build with no bump rebuilds the last tag, not master, and since 1708b03 passes by overwriting that release's files. The wheel carries the `statusline` and `w11` packages, and the source archive every file in the repository
-- [ ] On alex-pc the Hosts TUI and its utilities, Preservator and the Fleet grid, and PC Control's checks ran on 3.7.11, which Alex has not reviewed
+- [ ] gppu stays on 3.7.11: a build with no bump moves the 3.7.11 tag to master and builds it, and betas are off the menu (2716f70); the build of master into `gppu/latest` is running (in progress)
+  - Then: `~/.venv` on alex-pc installs it from the Hosts requirements, and the Hosts TUI starts on it
+- [ ] The gppu wheel carries the `statusline` and `w11` packages, and its source archive every file in the repository
 
 ## gppu's code, by Alex's marks
 - [ ] `Logger.enable_file_logging`: "Need justification for this to exist" (in progress)

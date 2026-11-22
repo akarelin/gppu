@@ -106,6 +106,10 @@
 - Every new method or class is justified.
 - gppufs can have its own uri where it needs to extend y2uri.
 
+## Release
+- gppu stays on 3.7.11; 3.8.0 is far on the horizon. A build builds the current code under that version, with no increments and no build numbers, so `pip install -r requirements` gets the one latest.
+- Betas are disabled.
+
 ## Identity
 - A UUID is the primary way to refer to any object, internally and externally. The database stores UUIDs, and links are UUIDs.
 - A URI is an external reference. A UUID is issued for a URI, which gives a mapping of UUID to URI.
