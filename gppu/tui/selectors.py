@@ -25,7 +25,7 @@ from textual.widgets import DataTable, Label, ListItem, ListView, Static
 from .launcher import TUIApp
 
 
-# ── Selector ─────────────────────────────────────────────────────────────────
+# .. ── Selector ─────────────────────────────────────────────────────────────────
 
 class Selector(TUIApp):
     """Pick one item from a list.  Returns the label string, or ``None`` on Escape."""
@@ -58,7 +58,7 @@ class Selector(TUIApp):
             self.exit(None)
 
 
-# ── DetailedSelector ─────────────────────────────────────────────────────────
+# .. ── DetailedSelector ─────────────────────────────────────────────────────────
 
 class DetailScreen(Screen):
     """Modal screen showing expanded row details."""
@@ -130,7 +130,7 @@ class DetailedSelector(TUIApp):
             self.exit(None)
         elif event.key == 'space':
             if table.cursor_row is not None:
-                # coordinate_to_cell_key: DataTable.get_row_key was removed in textual 1.x
+                # .. coordinate_to_cell_key: DataTable.get_row_key was removed in textual 1.x
                 cell = table.coordinate_to_cell_key(table.cursor_coordinate)
                 row_index = cell.row_key.value
                 self.selected[row_index] = not self.selected[row_index]
@@ -153,7 +153,7 @@ class DetailedSelector(TUIApp):
                 await self.push_screen(DetailScreen('\n'.join(details)))
 
 
-# ── Convenience functions ────────────────────────────────────────────────────
+# .. ── Convenience functions ────────────────────────────────────────────────────
 
 def ui_select(options: list[str], *, exit_on_none: bool = True) -> str | None:
     """Show a list picker.  Returns the chosen string or ``None``.

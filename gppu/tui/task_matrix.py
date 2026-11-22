@@ -76,7 +76,7 @@ class TaskMatrix(Widget):
       for task in self.tasks:
         table.add_row(self._row_cell(task), *(self._task_cell(host, task) for host in self.hosts), key=task)
       return
-    # Status glyph, selection mark and name: the status arrives later, so the width is set, not measured.
+    # .. Status glyph, selection mark and name: the status arrives later, so the width is set, not measured.
     table.add_column('Host', key=HOST_COLUMN, width=max(map(len, self.hosts), default=0) + 4)
     for task in self.tasks:
       table.add_column(task, key=task)

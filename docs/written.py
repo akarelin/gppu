@@ -20,9 +20,9 @@ from pathlib import Path
 from docs_pages import ROOT, WRITTEN, committed, corpus, modules
 from gppu.fs import CACHE
 
-MODEL = 'haiku'                            # Claude Code's model for the descriptions
+MODEL = 'haiku'                            # .. Claude Code's model for the descriptions
 TEMPLATE = Path(__file__).parent / 'prompts' / 'module.md'
-GRAPH = CACHE / 'gppu-graph'               # graphify's corpus and what its model has read
+GRAPH = CACHE / 'gppu-graph'               # .. graphify's corpus and what its model has read
 
 
 def blob(path: Path) -> str:
@@ -65,8 +65,8 @@ def graph() -> Path:
     or a function the model names that the code defines once is the code's node, not one of its own."""
     env = os.environ | {'GRAPHIFY_CLAUDE_CLI_MODEL': MODEL, 'PYTHONIOENCODING': 'utf-8'}
     out = GRAPH / 'graphify-out'
-    for previous in ('graph.json', 'manifest.json'):   # the graph is what the documents say now: graphify holds a changed
-        (out / previous).unlink(missing_ok=True)       # document's new reading against its old one; its cache keeps the rest
+    for previous in ('graph.json', 'manifest.json'):   # .. the graph is what the documents say now: graphify holds a changed
+        (out / previous).unlink(missing_ok=True)       # .. document's new reading against its old one; its cache keeps the rest
     documentation = corpus(GRAPH / 'corpus', read=True, content=lambda path: path.read_bytes() if path.parent == WRITTEN else committed(path))
     subprocess.run(['uvx', '--python', '3.14', '--from', 'graphifyy', 'graphify', 'extract', str(documentation),
                     '--backend', 'claude-cli', '--out', str(GRAPH)], env=env, check=True)

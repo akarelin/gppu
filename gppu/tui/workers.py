@@ -45,11 +45,11 @@ from .launcher import SpinnerIndicator
 @dataclass
 class WorkerState:
     """Logical state carried by one :class:`WorkerRow`."""
-    key: str                       # stable identifier, e.g. host name
-    label: str                     # rendered in the row — defaults to key
-    state: str = 'pending'         # one of STATE_GLYPHS keys
-    detail: str = ''               # free-text trailer ("pulled 1188")
-    counters: dict[str, int] = field(default_factory=dict)   # optional numeric extras
+    key: str                       # .. stable identifier, e.g. host name
+    label: str                     # .. rendered in the row — defaults to key
+    state: str = 'pending'         # .. one of STATE_GLYPHS keys
+    detail: str = ''               # .. free-text trailer ("pulled 1188")
+    counters: dict[str, int] = field(default_factory=dict)   # .. optional numeric extras
 
 
 class WorkerRow(Horizontal):
@@ -78,7 +78,7 @@ class WorkerRow(Horizontal):
         yield Static(self.state.detail, classes='worker-detail')
 
     def on_mount(self) -> None:
-        # Only spin when the row is actually in flight.
+        # .. Only spin when the row is actually in flight.
         if self.state.state == 'running':
             self.query_one(SpinnerIndicator).start()
 
@@ -132,7 +132,7 @@ class WorkerPool(Vertical):
             yield WorkerRow(st)
         yield Static(self._footer_text(), id='pool-footer')
 
-    # ── external API ───────────────────────────────────────────────────────
+    # .. ── external API ───────────────────────────────────────────────────────
 
     def add_worker(self, key: str, label: str | None = None) -> None:
         """Add a new row after mount — e.g. when workers are discovered
@@ -153,8 +153,10 @@ class WorkerPool(Vertical):
         """
         st = self._states.get(key)
         if st is None:
-            # Unknown key — create silently rather than raise; keeps the
-            # orchestrator tolerant of dynamic worker sets.
+            # region - ^^ unknown worker key
+            # ^^ Unknown key — create silently rather than raise; keeps the
+            # ^^ orchestrator tolerant of dynamic worker sets.
+            # endregion
             self.add_worker(key)
             st = self._states[key]
         st.state = state
@@ -165,21 +167,21 @@ class WorkerPool(Vertical):
             row = self.query_one(f'#worker-{_slug(key)}', WorkerRow)
             row.refresh_row()
         except NoMatches:
-            pass   # the row is not mounted yet
+            pass   # .. the row is not mounted yet
         self._refresh_footer()
 
     def get(self, key: str) -> WorkerState | None:
         """Read current state (e.g. for "did this host fail?" checks)."""
         return self._states.get(key)
 
-    # ── internal ───────────────────────────────────────────────────────────
+    # .. ── internal ───────────────────────────────────────────────────────────
 
     def _refresh_footer(self) -> None:
         try:
             footer = self.query_one('#pool-footer', Static)
             footer.update(self._footer_text())
         except NoMatches:
-            pass   # the footer is not mounted yet
+            pass   # .. the footer is not mounted yet
 
     def _footer_text(self) -> str:
         if not self._states:

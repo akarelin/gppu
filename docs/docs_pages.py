@@ -13,11 +13,11 @@ import subprocess
 import tempfile
 from pathlib import Path, PurePath
 
-ROOT = Path(__file__).parents[1]   # the repository, beside docs/
+ROOT = Path(__file__).parents[1]   # .. the repository, beside docs/
 PACKAGE = ROOT / 'gppu'
-WRITTEN = ROOT / 'docs' / 'written'   # what Claude Code wrote of each module (docs/written.py), at the top of its page
-GUIDES = 'guides'                  # where the site carries gppu's documents, laid out as in the repository, so their links hold
-LINK = re.compile(r'(?P<lead>\]\(|href="|src=")(?P<target>[^)"#\s]+)')   # a document's links, Markdown's and its HTML's
+WRITTEN = ROOT / 'docs' / 'written'   # .. what Claude Code wrote of each module (docs/written.py), at the top of its page
+GUIDES = 'guides'                  # .. where the site carries gppu's documents, laid out as in the repository, so their links hold
+LINK = re.compile(r'(?P<lead>\]\(|href="|src=")(?P<target>[^)"#\s]+)')   # .. a document's links, Markdown's and its HTML's
 
 
 def modules():
@@ -163,7 +163,7 @@ def relinked(document: str, published: set) -> str:
         file = posixpath.normpath(posixpath.join(here, target))
         if re.match(r'[a-z][a-z0-9+.-]*:|/', target) or file in published:
             return match[0]
-        if file in pages:   # mkdocs turns a Markdown link to a page into the page's address; an HTML link is written as one
+        if file in pages:   # .. mkdocs turns a Markdown link to a page into the page's address; an HTML link is written as one
             return lead + posixpath.relpath(pages[file] if lead == '](' else pages[file][:-3] + '.html', posixpath.join(GUIDES, here))
         if PurePath(file).suffix in {'.svg', '.png', '.jpg', '.gif'}:
             with mkdocs_gen_files.open(f'{GUIDES}/{file}', 'wb') as f:
@@ -180,12 +180,12 @@ def build():
         f.write(graph())
 
     for name, source in modules():
-        if name == 'gppu':   # the package itself: its version, its docstring and what it exports, on the home page
+        if name == 'gppu':   # .. the package itself: its version, its docstring and what it exports, on the home page
             with mkdocs_gen_files.open('index.md', 'a') as f:
                 f.write(f'\n**Version** {version()}\n\n::: gppu\n    options:\n      members: false\n      show_root_heading: false\n\n'
                         f'{exports(name, source)}\n')
             continue
-        body = f'::: {name}\n' if defines(source) else (   # a package: its docstring and what it gathers, defined on its modules' pages
+        body = f'::: {name}\n' if defines(source) else (   # .. a package: its docstring and what it gathers, defined on its modules' pages
             f'::: {name}\n    options:\n      members: false\n      show_root_heading: false\n\n{exports(name, source)}\n')
         written = WRITTEN / f'{name}.md'
         description = written.read_text(encoding='utf-8').split('\n', 1)[1] + '\n' if written.exists() else ''
@@ -198,6 +198,6 @@ def build():
             f.write(relinked(document, published))
 
 
-if __name__ != 'docs_pages':   # run by mkdocs-gen-files; docs/written.py imports it for modules() alone
+if __name__ != 'docs_pages':   # .. run by mkdocs-gen-files; docs/written.py imports it for modules() alone
     import mkdocs_gen_files
     build()

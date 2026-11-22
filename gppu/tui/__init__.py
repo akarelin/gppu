@@ -106,11 +106,11 @@ from .task_matrix import TaskMatrix
 
 
 __all__ = [
-    # Base TUI classes
+    # .. Base TUI classes
     'TUIApp',
     'TUILauncher',
     'AppScreen',
-    # Launcher framework
+    # .. Launcher framework
     'AppItem',
     'InfoScreen',
     'ModeItem',
@@ -124,22 +124,22 @@ __all__ = [
     'load_registry',
     'read_manifest',
     'launcher_main',
-    # Sidecar manifests
+    # .. Sidecar manifests
     'inject_source',
     'load_sidecar_registry',
     'read_sidecar',
     'run_sidecar',
     'sidecar_command',
     'sidecar_main',
-    # Config editor
+    # .. Config editor
     'ConfigEditorApp',
-    # Selector widgets
+    # .. Selector widgets
     'Selector',
     'DetailedSelector',
     'DetailScreen',
     'ui_select',
     'ui_select_rows',
-    # Progress
+    # .. Progress
     'Marker',
     'TickProgress',
     'MarkerProgress',
@@ -147,30 +147,30 @@ __all__ = [
     'marker_ansi',
     'legend_rich',
     'legend_ansi',
-    # Workers
+    # .. Workers
     'WorkerPool',
     'WorkerRow',
     'WorkerState',
-    # Icons
+    # .. Icons
     'Glyph',
     'STATE_GLYPHS',
     'SPINNERS',
     'glyph_rich',
     'glyph_ansi',
     'spinner_frames',
-    # Viz
+    # .. Viz
     'Heatmap',
     'render_heatmap_lines',
-    # Modals
+    # .. Modals
     'ConfirmScreen',
     'InputScreen',
-    # Loaders
+    # .. Loaders
     'LoaderMixin',
-    # Cache
+    # .. Cache
     'CachedFetcher',
     'PaginatedFetcher',
     'CacheRefreshMixin',
-    # Tree
+    # .. Tree
     'TreeEntry',
     'TreeAdapter',
     'FilesystemAdapter',

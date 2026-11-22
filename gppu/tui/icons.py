@@ -29,17 +29,19 @@ from typing import NamedTuple
 
 
 class Glyph(NamedTuple):
-    symbol: str          # one-char glyph
-    rich_color: str      # Rich markup color name ('bright_green', 'dim white')
-    ansi_code: str       # SGR params for plain ANSI ('38;5;10')
+    symbol: str          # .. one-char glyph
+    rich_color: str      # .. Rich markup color name ('bright_green', 'dim white')
+    ansi_code: str       # .. SGR params for plain ANSI ('38;5;10')
 
 
-# ── state markers ──────────────────────────────────────────────────────────
+# .. ── state markers ──────────────────────────────────────────────────────────
 
-# Keys chosen to match common worker/task lifecycle vocabulary.
-# Add to this dict as new states become needed; never re-home existing keys.
+# region - state keys
+# .. Keys chosen to match common worker/task lifecycle vocabulary.
+# .. Add to this dict as new states become needed; never re-home existing keys.
+# endregion
 STATE_GLYPHS: dict[str, Glyph] = {
-    # Generic task lifecycle
+    # .. Generic task lifecycle
     'pending':  Glyph('○', 'dim white',      '38;5;8'),
     'queued':   Glyph('◌', 'dim white',      '38;5'),
     'running':  Glyph('◐', 'bright_yellow',  '38;5;11'),
@@ -48,12 +50,12 @@ STATE_GLYPHS: dict[str, Glyph] = {
     'canceled': Glyph('⊘', 'dim white',      '38;5;8'),
     'skipped':  Glyph('–', 'dim white',      '38;5;8'),
 
-    # Reachability / connectivity (preservator TUI uses these)
+    # .. Reachability / connectivity (preservator TUI uses these)
     'reachable':   Glyph('●', 'bright_green', '38;5;10'),
     'unreachable': Glyph('●', 'bright_red',   '38;5;9'),
     'probing':     Glyph('⟳', 'yellow',        '38;5;3'),
 
-    # Warnings / notes
+    # .. Warnings / notes
     'warn':   Glyph('⚠', 'bright_yellow', '38;5;11'),
     'info':   Glyph('ℹ', 'bright_cyan',   '38;5;14'),
     'error':  Glyph('✗', 'bright_red',    '38;5;9'),
@@ -80,23 +82,25 @@ def glyph_ansi(key: str) -> str:
     return f'\x1b[{g.ansi_code}m{g.symbol}\x1b[0m'
 
 
-# ── spinner frame sequences ────────────────────────────────────────────────
+# .. ── spinner frame sequences ────────────────────────────────────────────────
 
 SPINNERS: dict[str, str] = {
-    # Braille dots — dense, smooth, default choice.
-    # Matches the set already used by gppu.tui.SpinnerIndicator.
+    # region - braille dots
+    # .. Braille dots — dense, smooth, default choice.
+    # .. Matches the set already used by gppu.tui.SpinnerIndicator.
+    # endregion
     'dots':     '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏',
 
-    # Clock-like line: thin, works in narrow columns.
+    # .. Clock-like line: thin, works in narrow columns.
     'line':     '|/-\\',
 
-    # Arcs — slightly more visible than dots on dark terminals.
+    # .. Arcs — slightly more visible than dots on dark terminals.
     'arc':      '◜◠◝◞◡◟',
 
-    # Triangle — emphatic; useful for a single focal indicator.
+    # .. Triangle — emphatic; useful for a single focal indicator.
     'triangle': '▹▸▶▸',
 
-    # Pulse — 2-frame breathing dot; minimal motion, good for per-row.
+    # .. Pulse — 2-frame breathing dot; minimal motion, good for per-row.
     'pulse':    '○●',
 }
 

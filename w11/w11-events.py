@@ -84,13 +84,13 @@ from xml.etree import ElementTree as ET
 from gppu import App, dict_from_yml, dict_to_yml
 from gppu.tui import TUIApp, StatusHeader
 from w11 import resolve_app_dir
-APP_DIR: Path   # the w11 folder, which main resolves
+APP_DIR: Path   # .. the w11 folder, which main resolves
 from textual import work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Footer, RichLog, Static
 
-# ── Event model ──────────────────────────────────────────────────────────────
+# .. ── Event model ──────────────────────────────────────────────────────────────
 
 NS = '{http://schemas.microsoft.com/win/2004/08/events/event}'
 
@@ -126,16 +126,16 @@ def time_since(dt: datetime) -> str:
 
 
 def dedup_key(evt: dict) -> str:
-    # Named source → collapse all events from that source
+    # .. Named source → collapse all events from that source
     if evt.get('_source'):
         return f"source|{evt['_source']}"
-    # Matched error with source_value → collapse by error+source_value
+    # .. Matched error with source_value → collapse by error+source_value
     if evt.get('_error_slug') and evt.get('_source_value'):
         return f"error|{evt['_error_slug']}|{evt['_source_value']}"
-    # Matched error without source_value → collapse all of this error type
+    # .. Matched error without source_value → collapse all of this error type
     if evt.get('_error_slug'):
         return f"error|{evt['_error_slug']}"
-    # Default — normalize numbers and GUIDs
+    # .. Default — normalize numbers and GUIDs
     norm = re.sub(r'\{[0-9A-Fa-f-]{36}\}', '{GUID}', evt['message'])
     norm = re.sub(r'\d+', '#', norm)
     return f"{evt['level']}|{evt['log']}|{evt['provider']}|{evt['event_id']}|{norm}"
@@ -189,7 +189,7 @@ def parse_event_xml(xml_str: str) -> dict | None:
 
     message = message.replace('\r\n', ' | ').replace('\n', ' | ')
 
-    # Extract named EventData fields
+    # .. Extract named EventData fields
     event_data = {}
     ed = root.find(f'{NS}EventData')
     if ed is not None:
@@ -214,7 +214,7 @@ def parse_event_xml(xml_str: str) -> dict | None:
     }
 
 
-# ── Common error patterns ────────────────────────────────────────────────────
+# .. ── Common error patterns ────────────────────────────────────────────────────
 
 class CommonErrorTracker:
     """Track errors and sources using category/source rules.
@@ -228,20 +228,20 @@ class CommonErrorTracker:
     def __init__(self, rules: dict | None = None, categories: dict | None = None):
         rules = rules or {}
 
-        # Category group icons (e.g. app -> "A", service -> "S")
+        # .. Category group icons (e.g. app -> "A", service -> "S")
         self.group_icons: dict[str, str] = {}
         for group, info in (categories or {}).items():
             if isinstance(info, dict):
                 self.group_icons[group] = info.get('icon', group[0].upper())
 
-        self.categories: dict[str, dict] = {}  # category slug -> definition
-        self.sources: dict[str, dict] = {}      # source slug -> definition
-        self.pairings: set[tuple[str, str]] = set()  # explicit (category, source) pairs
+        self.categories: dict[str, dict] = {}  # .. category slug -> definition
+        self.sources: dict[str, dict] = {}      # .. source slug -> definition
+        self.pairings: set[tuple[str, str]] = set()  # .. explicit (category, source) pairs
 
         for key, entry in rules.items():
             entry = entry or {}
             if key.endswith('/') and not key.startswith('/'):
-                # category/ — category definition
+                # .. category/ — category definition
                 cat = key.rstrip('/')
                 raw = entry.get('pattern', '')
                 if isinstance(raw, str):
@@ -257,7 +257,7 @@ class CommonErrorTracker:
                     'last_extracted': {},
                 }
             elif key.startswith('/') and not key.endswith('/'):
-                # /source — source definition (global)
+                # .. /source — source definition (global)
                 src = key.lstrip('/')
                 self.sources[src] = {
                     'slug': src,
@@ -269,7 +269,7 @@ class CommonErrorTracker:
                     'error_breakdown': {},
                 }
             elif '/' in key:
-                # category/source — explicit pairing
+                # .. category/source — explicit pairing
                 cat, src = key.split('/', 1)
                 self.pairings.add((cat, src))
                 if src not in self.sources:
@@ -442,7 +442,7 @@ class CommonErrorTracker:
 
         lines = []
 
-        # ── Categories ──
+        # .. ── Categories ──
         slug_w = max((len(s) for s in self.categories), default=5)
         slug_w = max(slug_w, 8)
         lines.append(f"[bold]  {'Category':<{slug_w}}  {'Hist':>6}  {'Live':>6}[/]")
@@ -458,7 +458,7 @@ class CommonErrorTracker:
                 so, sc = '[yellow]', '[/]'
             lines.append(f"{so}{icon} {slug:<{slug_w}}  {h:>6}  {l:>6}{sc}")
 
-        # ── Sources (sorted by count desc) ──
+        # .. ── Sources (sorted by count desc) ──
         active_sources = [(s, d) for s, d in self.sources.items()
                           if d['history_count'] > 0 or d['live_count'] > 0]
         if active_sources:
@@ -482,7 +482,7 @@ class CommonErrorTracker:
         return '\n'.join(lines)
 
 
-# ── Event queries via wevtutil ───────────────────────────────────────────────
+# .. ── Event queries via wevtutil ───────────────────────────────────────────────
 
 def get_all_log_names() -> list[str]:
     try:
@@ -542,8 +542,8 @@ def deduplicate(events: list[dict]) -> list[dict]:
     Output is sorted by the latest occurrence of each unique event."""
     if not events:
         return []
-    seen: dict[str, dict] = {}   # key -> {evt, count}
-    order: dict[str, datetime] = {}  # key -> latest datetime
+    seen: dict[str, dict] = {}   # .. key -> {evt, count}
+    order: dict[str, datetime] = {}  # .. key -> latest datetime
     for evt in events:
         k = dedup_key(evt)
         if k in seen:
@@ -564,7 +564,7 @@ def format_line(evt: dict) -> str:
     return f"[{since}] [{evt['level']}] [{evt['log_short']}] {evt['provider']} ({evt['event_id']}): {evt['message']}{count}"
 
 
-# ── Host stats ───────────────────────────────────────────────────────────────
+# .. ── Host stats ───────────────────────────────────────────────────────────────
 
 def build_stats(events: list[dict]) -> dict:
     stats: dict = {}
@@ -627,7 +627,7 @@ def recalculate_stats(log_names, level, days, max_msg_len, stats_file, hostname,
         all_events.extend(events)
     all_events.sort(key=lambda e: e['datetime'])
 
-    # Count common error patterns
+    # .. Count common error patterns
     ce, cs = None, None
     if error_tracker:
         for err in error_tracker.errors.values():
@@ -648,7 +648,7 @@ def recalculate_stats(log_names, level, days, max_msg_len, stats_file, hostname,
     return path
 
 
-# ── Clear logs ────────────────────────────────────────────────────────────────
+# .. ── Clear logs ────────────────────────────────────────────────────────────────
 
 def _is_admin() -> bool:
     return bool(ctypes.windll.shell32.IsUserAnAdmin())
@@ -716,7 +716,7 @@ def _clear_logs_elevated(log_names: list[str], progress_cb=None) -> tuple[int, i
             Path(result_path).unlink(missing_ok=True)
 
 
-# ── Live tail ────────────────────────────────────────────────────────────────
+# .. ── Live tail ────────────────────────────────────────────────────────────────
 
 class LiveTail:
     def __init__(self, log_names: list[str], level: str, callback):
@@ -788,7 +788,7 @@ class LiveTail:
                 pass
 
 
-# ── TUI ──────────────────────────────────────────────────────────────────────
+# .. ── TUI ──────────────────────────────────────────────────────────────────────
 
 class EventLogApp(TUIApp):
     CSS = """
@@ -866,7 +866,7 @@ class EventLogApp(TUIApp):
         self._export_fh = None
         self._all_events: list[dict] = []
         self._display_events: list[dict] = []
-        self._detail_mode = False  # True = showing selected event detail
+        self._detail_mode = False  # .. True = showing selected event detail
 
     def compose(self) -> ComposeResult:
         yield StatusHeader()
@@ -920,7 +920,7 @@ class EventLogApp(TUIApp):
             detail_log.write(f'[bold]Count:[/]     {count}')
         detail_log.write('')
         detail_log.write('[bold]Message:[/]')
-        # Show full message without truncation, wrap manually
+        # .. Show full message without truncation, wrap manually
         msg = evt.get('_full_message', evt['message'])
         for part in msg.split(' | '):
             detail_log.write(f'  {_escape(part)}')
@@ -952,7 +952,7 @@ class EventLogApp(TUIApp):
         error_slug = evt.get('_error_slug')
 
         if not error_slug:
-            # No category match — add category/
+            # .. No category match — add category/
             provider_slug = self.error_tracker.slugify(evt['provider'])
             slug = f'{provider_slug}-{evt["event_id"]}'
 
@@ -995,7 +995,7 @@ class EventLogApp(TUIApp):
             detail_log.write(f'  pattern: {_escape(pattern[:80])}')
 
         else:
-            # Has category but no source — add /source
+            # .. Has category but no source — add /source
             if evt.get('_source'):
                 detail_log.write(f'[yellow]Already matched: {error_slug}/{evt["_source"]}[/]')
                 return
@@ -1044,7 +1044,7 @@ class EventLogApp(TUIApp):
         detail_log.write(f'[bold]Rule Analysis[/] ({total:,} events)')
         detail_log.write('')
 
-        # ── 1. Category coverage ──
+        # .. ── 1. Category coverage ──
         cat_counts: dict[str, int] = {}
         for evt in self._all_events:
             slug = evt.get('_error_slug')
@@ -1056,7 +1056,7 @@ class EventLogApp(TUIApp):
         detail_log.write(f'[bold]Coverage:[/] {matched_total:,}/{total:,} ({pct:.0f}%) matched')
         detail_log.write('')
 
-        # ── 2. Multiple category matches ──
+        # .. ── 2. Multiple category matches ──
         multi_cat: dict[str, list[str]] = {}
         for evt in self._all_events:
             msg = evt['message']
@@ -1074,7 +1074,7 @@ class EventLogApp(TUIApp):
             detail_log.write('[green]No category overlaps[/]')
         detail_log.write('')
 
-        # ── 3. Multiple source matches ──
+        # .. ── 3. Multiple source matches ──
         multi_src: dict[str, list[str]] = {}
         for evt in self._all_events:
             err_slug = evt.get('_error_slug')
@@ -1098,8 +1098,8 @@ class EventLogApp(TUIApp):
             detail_log.write('[green]No source overlaps[/]')
         detail_log.write('')
 
-        # ── 4. Unmatched events (no category) ──
-        unmatched: dict[str, dict] = {}  # key -> {count, sample}
+        # .. ── 4. Unmatched events (no category) ──
+        unmatched: dict[str, dict] = {}  # .. key -> {count, sample}
         for evt in self._all_events:
             if not evt.get('_error_slug'):
                 key = f"{evt['provider']}({evt['event_id']})"
@@ -1118,7 +1118,7 @@ class EventLogApp(TUIApp):
             detail_log.write('[green]All events have a category[/]')
         detail_log.write('')
 
-        # ── 5. Matched category but no source ──
+        # .. ── 5. Matched category but no source ──
         no_src: dict[str, dict] = {}
         for evt in self._all_events:
             if evt.get('_error_slug') and not evt.get('_source'):
@@ -1140,7 +1140,7 @@ class EventLogApp(TUIApp):
             detail_log.write('[green]All matched events have a source[/]')
         detail_log.write('')
 
-        # ── 6. Unused rules ──
+        # .. ── 6. Unused rules ──
         unused_cats = [s for s, c in tracker.categories.items() if c['history_count'] == 0]
         unused_srcs = [s for s, d in tracker.sources.items() if d['history_count'] == 0]
         if unused_cats or unused_srcs:
@@ -1152,7 +1152,7 @@ class EventLogApp(TUIApp):
         else:
             detail_log.write('[green]All rules matched at least once[/]')
 
-        # ── Summary ──
+        # .. ── Summary ──
         issues = len(multi_cat) + len(multi_src) + len(unmatched) + len(no_src)
         detail_log.write('')
         if issues == 0:
@@ -1192,7 +1192,7 @@ class EventLogApp(TUIApp):
     def action_export_errors(self) -> None:
         ts = datetime.now().strftime('%Y%m%d_%H%M%S')
         path = APP_DIR / f'errors_{self.hostname}_{ts}.txt'
-        # Strip Rich markup for plain text
+        # .. Strip Rich markup for plain text
         table = self.error_tracker.format_table()
         clean = re.sub(r'\[/?[^\]]*\]', '', table)
         path.write_text(clean, encoding='utf-8')
@@ -1211,7 +1211,7 @@ class EventLogApp(TUIApp):
         table = self.query_one('#history-table', DataTable)
         history_label = self.query_one('#history-label', Static)
 
-        # Try loading common error counts from stats (instant)
+        # .. Try loading common error counts from stats (instant)
         stats_loaded = self.error_tracker.load_from_stats(self.stats_file)
         if stats_loaded:
             self.call_from_thread(self._refresh_errors_display)
@@ -1243,7 +1243,7 @@ class EventLogApp(TUIApp):
         self._all_events = list(all_events)
         raw_count = len(all_events)
 
-        # Tag events for dedup (sets _source, _error_slug, _source_value)
+        # .. Tag events for dedup (sets _source, _error_slug, _source_value)
         for i, evt in enumerate(all_events):
             self.error_tracker.tag_event(evt)
             if not stats_loaded:
@@ -1304,7 +1304,7 @@ class EventLogApp(TUIApp):
             f'{self.hostname} | {self.level}+ | {self.days}d | {logs_with_events} logs'
         )
 
-        # Save stats
+        # .. Save stats
         self._save_stats_from_events(all_events)
 
     def _save_stats_from_events(self, events: list[dict]) -> None:
@@ -1368,7 +1368,7 @@ def _escape(text: str) -> str:
     return text.replace('[', '\\[')
 
 
-# ── CLI stats mode ───────────────────────────────────────────────────────────
+# .. ── CLI stats mode ───────────────────────────────────────────────────────────
 
 def run_stats_cli(log_names, level, days, max_msg_len, hostname, error_tracker):
     stats_file = stats_path_for_host(hostname)
@@ -1385,7 +1385,7 @@ def run_stats_cli(log_names, level, days, max_msg_len, hostname, error_tracker):
         print(f'  {short}: {", ".join(parts)}')
 
 
-# ── Main ─────────────────────────────────────────────────────────────────────
+# .. ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description='Watch Windows Event Logs with TUI')
@@ -1400,7 +1400,7 @@ def main():
     args = parser.parse_args()
 
     global APP_DIR
-    APP_DIR = resolve_app_dir()   # the w11 folder: stats, error rules and exports
+    APP_DIR = resolve_app_dir()   # .. the w11 folder: stats, error rules and exports
     config = App(config=__file__)
 
     if args.all_logs:
@@ -1417,7 +1417,7 @@ def main():
     export_path = args.export
     hostname = socket.gethostname()
 
-    # Common errors patterns (resolved via !include in YAML)
+    # .. Common errors patterns (resolved via !include in YAML)
     error_tracker = CommonErrorTracker(config.my_dict('error_rules'),
                                        categories=config.my_dict('event_categories'))
 

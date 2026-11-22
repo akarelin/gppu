@@ -64,11 +64,11 @@ class Marker:
     glyph works — preservator uses it for LLM vendors, but the type
     itself carries no domain knowledge.
     """
-    key: str                          # 'claude', 'hot', 'db1' — sort/group key
-    label: str                        # 'Claude', 'Hot zone' — human label
-    symbol: str                       # '✻', '●' — one glyph
-    rich_color: str                   # 'bright_cyan' — Rich / Textual markup name
-    ansi_code: str                    # '38;5;14' — SGR params for plain ANSI
+    key: str                          # .. 'claude', 'hot', 'db1' — sort/group key
+    label: str                        # .. 'Claude', 'Hot zone' — human label
+    symbol: str                       # .. '✻', '●' — one glyph
+    rich_color: str                   # .. 'bright_cyan' — Rich / Textual markup name
+    ansi_code: str                    # .. '38;5;14' — SGR params for plain ANSI
 
 
 def marker_rich(marker: Marker) -> str:
@@ -90,7 +90,7 @@ def legend_ansi(markers: tuple[Marker, ...]) -> str:
     return '  '.join(f'{marker_ansi(m)}={m.label}' for m in markers)
 
 
-# ── streaming trackers ─────────────────────────────────────────────────────
+# .. ── streaming trackers ─────────────────────────────────────────────────────
 
 class _BatchedStrip:
     """Internal helper — batches strip emission by count or elapsed time."""

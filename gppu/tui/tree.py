@@ -49,7 +49,7 @@ from textual.widgets import Tree
 from textual.widgets.tree import TreeNode
 
 
-# ── adapter protocol + data record ────────────────────────────────────────
+# .. ── adapter protocol + data record ────────────────────────────────────────
 
 @dataclass
 class TreeEntry:
@@ -78,7 +78,7 @@ class TreeAdapter(Protocol):
     def children(self, entry: TreeEntry) -> Iterable[TreeEntry]: ...
 
 
-# ── bundled adapters ──────────────────────────────────────────────────────
+# .. ── bundled adapters ──────────────────────────────────────────────────────
 
 @dataclass
 class FilesystemAdapter:
@@ -130,7 +130,7 @@ class FilesystemAdapter:
                 is_container=is_dir,
                 meta={'depth': depth + 1, 'size': size},
             ))
-        # Directories first, then files — conventional FS display.
+        # .. Directories first, then files — conventional FS display.
         out.sort(key=lambda e: (not e.is_container, e.label.lower()))
         return out
 
@@ -148,7 +148,7 @@ class GDriveAdapter:
     enumerate folders, then the caller's own code populates whatever
     content pane they're driving (this adapter only handles the tree).
     """
-    service: Any                                   # googleapiclient service
+    service: Any                                   # .. googleapiclient service
     root_id: str = 'root'
     root_label: str = 'My Drive'
     page_size: int = 200
@@ -196,7 +196,7 @@ class GDriveAdapter:
         return out
 
 
-# ── widget ────────────────────────────────────────────────────────────────
+# .. ── widget ────────────────────────────────────────────────────────────────
 
 _PLACEHOLDER_LABEL = 'Loading…'
 
@@ -224,7 +224,7 @@ class TreeBrowser(Tree[TreeEntry]):
     def __init__(self, adapter: TreeAdapter, *,
                  lazy: bool = True,
                  **kwargs) -> None:
-        # Label of the root node comes from the adapter.
+        # .. Label of the root node comes from the adapter.
         root_entry = adapter.root()
         super().__init__(root_entry.label, data=root_entry, **kwargs)
         self._adapter = adapter
@@ -245,7 +245,7 @@ class TreeBrowser(Tree[TreeEntry]):
             return
         children = list(node.children)
         if len(children) == 1 and children[0].data is None:
-            # Placeholder — replace with real fetch.
+            # ^^ Placeholder — replace with real fetch.
             children[0].remove()
             self._populate(node)
 

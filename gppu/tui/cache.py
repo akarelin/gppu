@@ -47,7 +47,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
 
 
-# ── fetchers ───────────────────────────────────────────────────────────────
+# .. ── fetchers ───────────────────────────────────────────────────────────────
 
 @dataclass
 class CachedFetcher:
@@ -61,10 +61,10 @@ class CachedFetcher:
     omitted, a deterministic tuple-based key is used — sufficient for
     most keyword-arg call shapes.
     """
-    cache: Any                                   # gppu.data.Cache
+    cache: Any                                   # .. gppu.data.Cache
     fetch: Callable[..., Any]
     key_fn: Callable[..., str] | None = None
-    ttl: int | None = None                       # None → use cache default
+    ttl: int | None = None                       # .. None → use cache default
 
     def __call__(self, *args: Any, use_cache: bool = True, **kwargs: Any) -> Any:
         key = self._key(args, kwargs)
@@ -101,7 +101,7 @@ class PaginatedFetcher:
     """
     cache: Any
     fetch_page: Callable[..., dict]
-    key_fn: Callable[..., str]                   # must include page number
+    key_fn: Callable[..., str]                   # .. must include page number
     max_pages: int = 10
     limit: int = 100
     total_from: Callable[[dict], int] = field(
@@ -134,7 +134,7 @@ class PaginatedFetcher:
         return out, (total or len(out))
 
 
-# ── Textual mixin ──────────────────────────────────────────────────────────
+# .. ── Textual mixin ──────────────────────────────────────────────────────────
 
 try:
     from textual.binding import Binding

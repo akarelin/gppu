@@ -27,7 +27,7 @@ class W11App(TUILauncher):
 
 
 def main() -> None:
-    apps = load_app_registry(APP_DIR, App(config=W11App.CONFIG))   # w11 reads only its own w11.yaml, no environment
+    apps = load_app_registry(APP_DIR, App(config=W11App.CONFIG))   # .. w11 reads only its own w11.yaml, no environment
     launcher_main(apps, W11App, APP_DIR, 'w11 — Windows 11 Superapp')
 
 

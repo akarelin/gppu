@@ -88,7 +88,7 @@ class LoaderMixin:
             try:
                 self.query_one(status_id, Static).update(msg)
             except NoMatches:
-                pass   # the status line is no longer on screen
+                pass   # .. the status line is no longer on screen
 
         def _populate(rows: list) -> None:
             try:
@@ -153,7 +153,7 @@ class LoaderMixin:
             try:
                 self.query_one(status_id, Static).update(msg)
             except NoMatches:
-                pass   # the status line is no longer on screen
+                pass   # .. the status line is no longer on screen
 
         def _handle(result: object) -> None:
             try:

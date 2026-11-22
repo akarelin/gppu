@@ -136,7 +136,7 @@ class InputScreen(ModalScreen[str]):
             return
         val = event.value.strip()
         if self._require_value and not val:
-            # Refuse empty submit — leave focus in input for retry.
+            # .. Refuse empty submit — leave focus in input for retry.
             return
         self.dismiss(val)
 

@@ -92,7 +92,7 @@ from textual.widgets import (
 )
 
 
-# ── Paths ────────────────────────────────────────────────────────────────────
+# .. ── Paths ────────────────────────────────────────────────────────────────────
 
 def od_base() -> Path:
     return Path(os.environ['LOCALAPPDATA']) / 'Microsoft' / 'OneDrive'
@@ -149,7 +149,7 @@ def user_email(account: str) -> str | None:
 def onedrive_exe_path() -> str | None:
     """Find OneDrive.exe path from registry or known locations."""
     import winreg
-    # Try registry first
+    # .. Try registry first
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                              r'Software\Microsoft\OneDrive')
@@ -158,7 +158,7 @@ def onedrive_exe_path() -> str | None:
             return val
     except OSError:
         pass
-    # Known paths
+    # .. Known paths
     for candidate in [
         r'C:\Program Files\Microsoft OneDrive\OneDrive.exe',
         os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Microsoft', 'OneDrive', 'OneDrive.exe'),
@@ -168,7 +168,7 @@ def onedrive_exe_path() -> str | None:
     return None
 
 
-# ── SyncDiagnostics parser ───────────────────────────────────────────────────
+# .. ── SyncDiagnostics parser ───────────────────────────────────────────────────
 
 HEALTH_FIELDS = {
     'syncStallDetected':      ('Sync stall detected',       '0'),
@@ -213,7 +213,7 @@ def parse_sync_diag(account: str) -> dict:
     return data
 
 
-# ── Downloads queue parser ───────────────────────────────────────────────────
+# .. ── Downloads queue parser ───────────────────────────────────────────────────
 
 def parse_downloads_queue(account: str) -> list[str]:
     """Read file IDs from downloads3.txt (UTF-16LE, locked by OneDrive)."""
@@ -224,7 +224,7 @@ def parse_downloads_queue(account: str) -> list[str]:
     try:
         shutil.copy2(src, tmp)
     except OSError:
-        # File locked — try reading with shared access
+        # .. File locked — try reading with shared access
         try:
             import ctypes
             import ctypes.wintypes as wt
@@ -250,7 +250,7 @@ def parse_downloads_queue(account: str) -> list[str]:
     else:
         try:
             raw = tmp.read_bytes()
-            # Strip BOM if present
+            # .. Strip BOM if present
             if raw[:2] == b'\xff\xfe':
                 raw = raw[2:]
             content = raw.decode('utf-16-le', errors='replace')
@@ -261,7 +261,7 @@ def parse_downloads_queue(account: str) -> list[str]:
     return lines
 
 
-# ── Sync database queries ────────────────────────────────────────────────────
+# .. ── Sync database queries ────────────────────────────────────────────────────
 
 def copy_sync_db(account: str) -> Path | None:
     """Copy SyncEngineDatabase.db (+wal/shm) to temp for safe reading."""
@@ -288,13 +288,13 @@ def query_stuck_downloads(db_path: Path, download_ids: list[str]) -> list[dict]:
     cur = conn.cursor()
     results = []
     for raw_id in download_ids:
-        # Extract the file resource ID (first hex block before any URL/suffix)
+        # .. Extract the file resource ID (first hex block before any URL/suffix)
         parts = raw_id.split()
         if not parts:
             continue
         file_id = parts[0].rstrip('+0123456789')
         if len(file_id) < 20:
-            # Might be a scope ID line, skip
+            # .. Might be a scope ID line, skip
             continue
         try:
             cur.execute(
@@ -358,7 +358,7 @@ def query_hydration_data(db_path: Path) -> list[dict]:
             'SELECT resourceID, firstHydrationTime, lastHydrationTime, '
             'hydrationCount, lastHydrationType FROM od_HydrationData')
         for row in cur.fetchall():
-            # Try to resolve file name
+            # .. Try to resolve file name
             rid = row[0]
             name = ''
             try:
@@ -422,7 +422,7 @@ def query_scope_info(db_path: Path) -> list[dict]:
             'selectiveSyncEnabled, lastProcessedChange '
             'FROM od_ScopeInfo_Records')
         for row in cur.fetchall():
-            # Resolve library name from URL path
+            # .. Resolve library name from URL path
             url = row[3] or ''
             lib_name = url.rstrip('/').rsplit('/', 1)[-1] if url else ''
             results.append({
@@ -548,7 +548,7 @@ def format_epoch(ts: int | None) -> str:
         return str(ts)
 
 
-# ── Health assessment ────────────────────────────────────────────────────────
+# .. ── Health assessment ────────────────────────────────────────────────────────
 
 def assess_health(diag: dict, stuck_dl: list, postponed: list) -> tuple[str, str]:
     """Return (status_text, status_style)."""
@@ -581,7 +581,7 @@ def assess_health(diag: dict, stuck_dl: list, postponed: list) -> tuple[str, str
     return f'ACTIVE (state={progress})', 'cyan'
 
 
-# ── Filename issue detection ─────────────────────────────────────────────────
+# .. ── Filename issue detection ─────────────────────────────────────────────────
 
 def detect_filename_issues(name: str) -> list[str]:
     """Flag known problematic filename patterns on Windows."""
@@ -590,13 +590,13 @@ def detect_filename_issues(name: str) -> list[str]:
         issues.append('trailing whitespace')
     if name != name.lstrip():
         issues.append('leading whitespace')
-    # Space before extension
+    # .. Space before extension
     stem, _, ext = name.rpartition('.')
     if stem and stem.endswith(' '):
         issues.append(f'space before .{ext}')
     if len(name) > 200:
         issues.append(f'long name ({len(name)} chars)')
-    # Characters illegal on Windows
+    # .. Characters illegal on Windows
     illegal = set(name) & set('<>:"/\\|?*')
     if illegal:
         issues.append(f'illegal chars: {"".join(illegal)}')
@@ -605,15 +605,15 @@ def detect_filename_issues(name: str) -> list[str]:
 
 def normalize_filename(name: str) -> str:
     """Return a cleaned filename that won't upset Windows/OneDrive."""
-    # Strip leading/trailing whitespace
+    # .. Strip leading/trailing whitespace
     name = name.strip()
-    # Fix space(s) before extension: "file .docx" -> "file.docx"
+    # .. Fix space(s) before extension: "file .docx" -> "file.docx"
     name = re.sub(r'\s+\.(\w+)$', r'.\1', name)
-    # Replace illegal Windows characters
+    # .. Replace illegal Windows characters
     name = re.sub(r'[<>:"/\\|?*]', '_', name)
-    # Collapse runs of spaces/underscores
+    # .. Collapse runs of spaces/underscores
     name = re.sub(r'_{2,}', '_', name)
-    # Strip trailing dots/spaces from stem (Windows silently strips these)
+    # .. Strip trailing dots/spaces from stem (Windows silently strips these)
     stem, dot, ext = name.rpartition('.')
     if dot:
         name = stem.rstrip('. ') + '.' + ext
@@ -629,7 +629,7 @@ def local_path_for_item(od_folder: str, item: dict) -> str | None:
     return os.path.join(od_folder, folder.replace('/', os.sep), fname)
 
 
-# ── Per-account data container ───────────────────────────────────────────────
+# .. ── Per-account data container ───────────────────────────────────────────────
 
 class AccountData:
     """Holds all diagnostic data for one OneDrive account."""
@@ -699,7 +699,7 @@ class AccountData:
         self.diag = parse_sync_diag(self.account)
 
 
-# ── TUI ──────────────────────────────────────────────────────────────────────
+# .. ── TUI ──────────────────────────────────────────────────────────────────────
 
 def _escape(text: str) -> str:
     """Escape Rich markup characters."""
@@ -765,7 +765,7 @@ class OneDriveDiagApp(TUIApp):
         }
         self.watch = watch
         self._watch_stop = threading.Event()
-        self._reset_armed = False  # two-step confirmation for reset
+        self._reset_armed = False  # .. two-step confirmation for reset
 
     @property
     def _current_account(self) -> str | None:
@@ -773,12 +773,12 @@ class OneDriveDiagApp(TUIApp):
         try:
             tabs = self.query_one('#tabs', TabbedContent)
             active = tabs.active
-            # active is the tab pane ID like "tab-Business1"
+            # .. active is the tab pane ID like "tab-Business1"
             if active and active.startswith('tab-'):
                 return active[4:]
         except Exception:
             pass
-        # Fallback to first account
+        # ^^ Fallback to first account
         if self.accounts_data:
             return next(iter(self.accounts_data))
         return None
@@ -874,7 +874,7 @@ class OneDriveDiagApp(TUIApp):
             data.diag, data.stuck_downloads, data.postponed)
         label.update(f'Sync Health — [{status_style}]{status_text}[/]  [{acc}  {data.od_folder}]')
 
-        # Health indicators row
+        # .. Health indicators row
         parts = []
         for field, (display, healthy) in HEALTH_FIELDS.items():
             val = data.diag.get(field, '?')
@@ -882,7 +882,7 @@ class OneDriveDiagApp(TUIApp):
             parts.append(f'{display}: [{style}]{val}[/]')
         log.write('  '.join(parts))
 
-        # Key info
+        # .. Key info
         uptime = int(data.diag.get('uptimeSecs', '0'))
         files = data.diag.get('files', '?')
         folders = data.diag.get('folders', '?')
@@ -899,7 +899,7 @@ class OneDriveDiagApp(TUIApp):
             f'PID: {pid}  v{version}'
         )
 
-        # Stuck finalizing warning
+        # .. Stuck finalizing warning
         bytes_to_dl = int(data.diag.get('BytesToDownload', '0'))
         bytes_dled = int(data.diag.get('BytesDownloaded', '0'))
         files_dl = int(data.diag.get('FilesToDownload',
@@ -1014,7 +1014,7 @@ class OneDriveDiagApp(TUIApp):
                     continue
                 log.write(f'  {k}: {_escape(str(v)[:200])}')
 
-        # Show full local path if folder is known
+        # .. Show full local path if folder is known
         folder = item['folder']
         fname = item['file']
         if folder and folder != '(unknown folder)':
@@ -1025,7 +1025,7 @@ class OneDriveDiagApp(TUIApp):
             log.write(f'[bold]Local path:[/] {_escape(full)}')
             log.write(f'  {status}')
 
-        # Recommendations
+        # .. Recommendations
         log.write('')
         log.write('[bold]Recommendations:[/]')
         if issues:
@@ -1138,7 +1138,7 @@ class OneDriveDiagApp(TUIApp):
             return
 
         if not self._reset_armed:
-            # First press — arm and show warning
+            # .. First press — arm and show warning
             self._reset_armed = True
             detail_log.write('[bold red]OneDrive Reset[/]')
             detail_log.write('')
@@ -1155,14 +1155,14 @@ class OneDriveDiagApp(TUIApp):
             detail_log.write('')
             detail_log.write('[bold red]>>> Press "x" again to confirm, Esc to cancel <<<[/]')
         else:
-            # Second press — execute reset
+            # .. Second press — execute reset
             self._reset_armed = False
             detail_log.write('[bold]Executing OneDrive reset...[/]')
             detail_log.write(f'[dim]{_escape(exe)} /reset[/]')
             detail_log.write('')
 
             try:
-                # /reset kills OneDrive then relaunches it
+                # .. /reset kills OneDrive then relaunches it
                 result = subprocess.run(
                     [exe, '/reset'],
                     capture_output=True, text=True, timeout=30,
@@ -1206,7 +1206,7 @@ class OneDriveDiagApp(TUIApp):
         self._watch_stop.set()
 
 
-# ── Conflict analysis ────────────────────────────────────────────────────────
+# .. ── Conflict analysis ────────────────────────────────────────────────────────
 
 def discover_hostnames(od_folder: str, sample_limit: int = 5000,
                        extra_stopwords: list[str] | None = None,
@@ -1234,7 +1234,7 @@ def discover_hostnames(od_folder: str, sample_limit: int = 5000,
     hostname_counts: dict[str, int] = {}
     count = 0
     for root, dirs, files in os.walk(od_folder):
-        # Prune excluded directories
+        # .. Prune excluded directories
         dirs[:] = [d for d in dirs if d not in exclude_set]
         for fname in files:
             count += 1
@@ -1256,7 +1256,7 @@ def discover_hostnames(od_folder: str, sample_limit: int = 5000,
                     base_path = os.path.join(root, base)
                     if os.path.exists(base_path) and base != fname:
                         hostname_counts[candidate] = hostname_counts.get(candidate, 0) + 1
-    # Filter to hostnames with 2+ conflicts
+    # .. Filter to hostnames with 2+ conflicts
     return sorted(
         [h for h, c in hostname_counts.items() if c >= 2],
         key=lambda h: hostname_counts[h],
@@ -1268,7 +1268,7 @@ def scan_conflicts(od_folder: str, hostnames: list[str],
                    exclude_dirs: list[str] | None = None) -> list[dict]:
     """Find all conflict file pairs for given hostnames."""
     exclude_set = set(exclude_dirs or [])
-    # Build suffix lookup
+    # .. Build suffix lookup
     suffixes = [(h, f'-{h}.', f'-{h}') for h in hostnames]
     results = []
 
@@ -1522,7 +1522,7 @@ class ConflictApp(TUIApp):
             f'Orphaned (no base): {orphans}'
         )
 
-        # Group by hostname
+        # .. Group by hostname
         by_host: dict[str, int] = {}
         for c in self._conflicts:
             h = c.get('hostname', '?')
@@ -1532,7 +1532,7 @@ class ConflictApp(TUIApp):
                                  sorted(by_host.items(), key=lambda x: x[1], reverse=True))
             log.write(f'By host: {host_str}')
 
-        # Group by extension
+        # .. Group by extension
         by_ext: dict[str, int] = {}
         for c in self._conflicts:
             _, _, ext = c['conflict_name'].rpartition('.')
@@ -1692,7 +1692,7 @@ class ConflictApp(TUIApp):
         label.update('Detail — select a row')
 
 
-# ── DB Explorer (non-TUI report) ────────────────────────────────────────────
+# .. ── DB Explorer (non-TUI report) ────────────────────────────────────────────
 
 def db_explore(accounts: list[str], output_dir: str | None = None) -> str | None:
     """Explore sync databases for all accounts and dump a diagnostic report.
@@ -1721,7 +1721,7 @@ def db_explore(accounts: list[str], output_dir: str | None = None) -> str | None
         out(f'  Email:  {email}')
         out(f'  Folder: {od_folder}')
 
-        # SyncDiagnostics.log summary
+        # .. SyncDiagnostics.log summary
         diag = parse_sync_diag(acc)
         if diag:
             progress_state = int(diag.get('SyncProgressState',
@@ -1734,7 +1734,7 @@ def db_explore(accounts: list[str], output_dir: str | None = None) -> str | None
             out(f'  SyncProgressState: {progress_state} '
                 f'({", ".join(progress_flags)})')
 
-            # Key counters
+            # .. Key counters
             counters = {}
             for field in ['ChangesToProcess', 'ChangesToSend',
                           'FilesToDownload', 'FilesToUpload',
@@ -1753,25 +1753,25 @@ def db_explore(accounts: list[str], output_dir: str | None = None) -> str | None
             out('  SyncDiagnostics.log: NOT FOUND')
             issues_found += 1
 
-        # Database queries
+        # .. Database queries
         db_path = copy_sync_db(acc)
         if not db_path:
             out('  SyncEngineDatabase.db: NOT FOUND or locked')
             issues_found += 1
             continue
 
-        # Scope info
+        # .. Scope info
         scopes = query_scope_info(db_path)
         out(f'  Scopes (synced libraries): {len(scopes)}')
         for s in scopes:
             out(f'    [{s["scopeType"]}] {s["webURL"] or "(no URL)"}'
                 f'  type={s["libraryType"]}')
 
-        # File/folder counts
+        # .. File/folder counts
         files, folders = query_file_folder_counts(db_path)
         out(f'  Database records: {files} files, {folders} folders')
 
-        # Active hydrations
+        # .. Active hydrations
         hydrations = query_hydration_data(db_path)
         if hydrations:
             out(f'  Active hydrations: {len(hydrations)}  *** ISSUE ***')
@@ -1781,7 +1781,7 @@ def db_explore(accounts: list[str], output_dir: str | None = None) -> str | None
                 out(f'    {name}  '
                     f'type={h["type"]}  count={h["count"]}  '
                     f'last={h["lastHydration"]}')
-                # Resolve folder for hydration items
+                # .. Resolve folder for hydration items
                 conn = sqlite3.connect(str(db_path))
                 cur = conn.cursor()
                 try:
@@ -1801,7 +1801,7 @@ def db_explore(accounts: list[str], output_dir: str | None = None) -> str | None
         else:
             out('  Active hydrations: 0')
 
-        # Postponed file changes
+        # .. Postponed file changes
         postponed = query_postponed_changes(db_path)
         if postponed:
             out(f'  Postponed file changes: {len(postponed)}  *** ISSUE ***')
@@ -1814,7 +1814,7 @@ def db_explore(accounts: list[str], output_dir: str | None = None) -> str | None
         else:
             out('  Postponed file changes: 0')
 
-        # Postponed folder changes
+        # .. Postponed folder changes
         postponed_folders = query_postponed_folder_changes(db_path)
         if postponed_folders:
             out(f'  Postponed folder changes: {len(postponed_folders)}'
@@ -1828,7 +1828,7 @@ def db_explore(accounts: list[str], output_dir: str | None = None) -> str | None
         else:
             out('  Postponed folder changes: 0')
 
-        # Service operation history
+        # .. Service operation history
         history = query_service_history(db_path, limit=30)
         errors = [h for h in history
                   if h['resultCode'] not in (200, 206, 304, None)]
@@ -1849,14 +1849,14 @@ def db_explore(accounts: list[str], output_dir: str | None = None) -> str | None
         else:
             out(f'  Recent service operations: {len(history)} (all OK)')
 
-        # Health assessment
+        # .. Health assessment
         postponed_for_health = query_postponed_changes(db_path)
         dl_lines = parse_downloads_queue(acc)
         stuck_dl = query_stuck_downloads(db_path, dl_lines)
         status_text, _ = assess_health(diag, stuck_dl, postponed_for_health)
         out(f'  Health: {status_text}')
 
-    # Summary
+    # .. Summary
     out('')
     out('=' * 72)
     if issues_found:
@@ -1864,7 +1864,7 @@ def db_explore(accounts: list[str], output_dir: str | None = None) -> str | None
     else:
         out('No issues found — all accounts healthy.')
 
-    # Write report file
+    # .. Write report file
     if output_dir is None:
         output_dir = os.environ.get('TEMP', '.')
     out_path = os.path.join(output_dir, f'onedrive-dbexplore-{timestamp}.txt')
@@ -1877,12 +1877,12 @@ def db_explore(accounts: list[str], output_dir: str | None = None) -> str | None
         return None
 
 
-# ── CLI ──────────────────────────────────────────────────────────────────────
+# .. ── CLI ──────────────────────────────────────────────────────────────────────
 
 def main():
     import argparse
 
-    config = gppu.App(config=__file__)   # gppu's App: textual's App is this module's App
+    config = gppu.App(config=__file__)   # .. gppu's App: textual's App is this module's App
 
     parser = argparse.ArgumentParser(description='OneDrive Sync Diagnostics TUI')
     parser.add_argument('mode', nargs='?',
@@ -1898,14 +1898,14 @@ def main():
                         help='Output directory for report files (dbexplore mode)')
     args = parser.parse_args()
 
-    # Config values
+    # .. Config values
     cfg_accounts = config.my_list('accounts')
     cfg_hostnames = config.my_list('hostnames')
     cfg_stopwords = config.my_list('hostname_stopwords')
     cfg_exclude = config.my_list('conflict_scan_exclude')
     cfg_watch_interval = config.my_int('watch_interval')
 
-    # Read manifest modes from config for interactive menu
+    # .. Read manifest modes from config for interactive menu
     manifest = config.my_dict('manifest')
     modes = manifest.get('modes') or {}
 
@@ -1927,13 +1927,13 @@ def main():
         except (ValueError, IndexError):
             selected_key = mode_keys[0]
 
-        # Apply manifest args for the selected mode
+        # .. Apply manifest args for the selected mode
         info = modes.get(selected_key, {})
         manifest_args = info.get('args', []) if isinstance(info, dict) else []
         if manifest_args:
-            # Re-parse with manifest args prepended
+            # .. Re-parse with manifest args prepended
             args = parser.parse_args(manifest_args)
-        mode = args.mode or selected_key.split('-')[0]  # "diag-watch" -> "diag"
+        mode = args.mode or selected_key.split('-')[0]  # .. "diag-watch" -> "diag"
 
     if mode == 'diag':
         if args.account:
@@ -1990,7 +1990,7 @@ def main():
         if args.hostname:
             hostnames = [args.hostname]
         elif cfg_hostnames:
-            # Config hostnames exist — use them, discover extras
+            # .. Config hostnames exist — use them, discover extras
             discovered = discover_hostnames(od_folder,
                                             extra_stopwords=cfg_stopwords,
                                             exclude_dirs=cfg_exclude)
@@ -1999,7 +1999,7 @@ def main():
             if not hostnames:
                 return
         else:
-            # No config, no CLI flag — discover and pick
+            # .. No config, no CLI flag — discover and pick
             discovered = discover_hostnames(od_folder,
                                             extra_stopwords=cfg_stopwords,
                                             exclude_dirs=cfg_exclude)

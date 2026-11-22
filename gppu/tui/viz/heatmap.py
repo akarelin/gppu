@@ -34,12 +34,12 @@ except ImportError:
 
 
 _BLOCK_THRESHOLDS = (
-    # (upper-bound-inclusive, block, color)
+    # .. (upper-bound-inclusive, block, color)
     (0,    '·', 'bright_black'),
     (2,    '░', 'green'),
     (8,    '▒', 'yellow'),
     (24,   '▓', 'orange3'),
-    (None, '█', 'red'),            # None = unbounded
+    (None, '█', 'red'),            # .. None = unbounded
 )
 
 _WEEKDAY_LABELS = ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun')
@@ -69,8 +69,8 @@ def render_heatmap_lines(
     today = datetime.now().date()
     span = [today - timedelta(days=i) for i in range(days - 1, -1, -1)]
 
-    # Pad so the earliest day lands on a Monday → GitHub-style columns align.
-    pad = span[0].weekday()                       # 0 = Monday
+    # .. Pad so the earliest day lands on a Monday → GitHub-style columns align.
+    pad = span[0].weekday()                       # .. 0 = Monday
     padded: list[date | None] = [None] * pad + list(span)
     weeks = [padded[i:i + 7] for i in range(0, len(padded), 7)]
 
@@ -119,7 +119,7 @@ def counts_from_timestamps(timestamps: Iterable[datetime | str]) -> dict[date, i
     return out
 
 
-# ── Textual widget wrapper ────────────────────────────────────────────────
+# .. ── Textual widget wrapper ────────────────────────────────────────────────
 
 if _TEXTUAL:
 
