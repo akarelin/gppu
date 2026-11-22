@@ -12,6 +12,7 @@ Principles: no new verb or noun; gppu.py core shrinks; downstreams that never us
 - [x] The Jinja region's functions are methods of gppu's Jinja environment under their present names; the exported names are bound to the one environment, as `glob` is to Env
 - [x] `Logger.enable_file_logging` is the one form Env calls, and says in place why it exists
 - [x] Y2 on this gppu: it gives Env a whole configuration through Env's init, its tests reset Env before they load Creekview, and it no longer sets `Env.app_path`. Its dry runtime is identical (776 entities, 1812 actions, 18 buttons, 121 indicators), and its suite passes in one process as it does file by file: 480 passed, the 2 known failures, where one process failed 139 and errored 115
+- [x] RAN's `hosts` hold every row whole: a row names `template: ssh` and loading lays `ssh` under it, so `glob('hosts')` is what Fleet merged, identical on 3.7.9 and on master, and Fleet reads it with no merge of its own (RAN 7b038bc66). A row's platform is still `Fleet.platform(row)`, its tag that names an operating system
 - [ ] Y2's objects load through the state manager's key loader, natively by `_DC`, with no constructor of their own
   - Today they cannot: an entity given its row by `_DC`'s init alone holds its data and does not start (`native_load.py`: `'YGroup' object has no attribute '_eid'`). 14 classes initialize in `__init__` (YBasicEntity, YEntity, YGroup, YRoom, mixin_ColorLoop, HueScene, PowerViewHub, TuyaLight, SensiboAC, Insteon's IIndicator, IEntity and IDevice, and Y2's App and State), and 7 state managers loop over their own sections in place of the key loader (Hue, Z-Wave, Flume, ecobee, Nest, hosts, Insteon)
   - Next: each constructor's body becomes its class's `__init` step, run at construction as AsyncApp runs it, checked against the dry runtime dump
@@ -19,7 +20,10 @@ Principles: no new verb or noun; gppu.py core shrinks; downstreams that never us
 Independent and unscoped:
 - Y2's state managers read their rows through `_DC` accessors, with no `_key`, `poll_interval` or section copies
 - Swallowed exceptions in AI code
-- Fleet and the Hosts tools: what Fleet copies from the environment (`hosts` over `ssh`), and `Fleet.values`
+- Runtime, with its ListenerHandle, moves from `gppu.iot` to `gppu.app`; what is Y2's in it stays in Y2
+- The StateManager loader (key, rows, `cls(data=row, parent=self)`, started in `__start`) in `gppu.app` beside Runtime, under its name; Y2's a thin subclass; hosts created by it. gppu master has no loader today: only Y2's StateManager creates objects from a list at a configuration path
+- Fleet in gppu under its own name, RAN's reduced to `expand` and `values`; a row's platform read from the environment
+- Objects read `self.name`, their annotated accessors, never `my('name')`
 - Creekview and RAN repeats, by named templates and the loader's key and parameters, not loops
 - Every app takes the command line by default: App takes `argv` only when it is given
 - Error handling around logging goes: `dict_to_yml`'s and `dict_to_json`'s error files, which `Logger.Dump` reaches
@@ -104,6 +108,8 @@ These move in the same commit as the release. gppu 3.7.7 is released and alex-pc
 
 - The Hosts launcher: `mapper.cmd` and `tray-control.ps1` carry their manifest as `::` lines and as `.NOTES`, which gppu master does not read, so on the next release the Hosts TUI stops at `mapper.cmd: no MANIFEST in its first 4 KB` and RAN's `test_tui` fails as it does on master today. They need a manifest the regex reads, or a sidecar, before that release; which one is Alex's to decide
 - y2 main needs the gppu after 3.7.9 (`y2/NOTE_gppu-rebuild-261121.md`)
+- Preservator (RAN `Hosts/preservator/preservator.py`), with the Fleet grid (`Hosts/configure-all/fleet-tui.py` calls `Preservator().configuration()[0]`, `record_start`, `record_result`) and its tests: switched in the same window as the release by the Preservator session, which is told before the release is cut
+- A script's MANIFEST no longer takes `!include`: it is text, and an include reads beside a file. w11-events reads its `error_rules.yaml` in code
 - A caller of `Logger.enable_file_logging(name, log_dir=...)`, of `mixin_Config._config_load` or of `Env._my`: none is left in gppu, y2 or RAN/Hosts
 
 ## Found outside this task
@@ -127,4 +133,4 @@ These move in the same commit as the release. gppu 3.7.7 is released and alex-pc
 - Y2: `ui/data.py` copies `ui/ui` into its own data, because `ui.yaml` nests a `ui:` key inside the `ui` section
 - RAN: `_config/config.yaml`'s `server_mounts` is statement Jinja, a `{% for %}` over six locations, and `topology/locations.yaml`'s `sessionfolder` opens with a `{% set %}`
 - gppu: handlers that turn a failure into a value, none changed: `mixin_Rest._born` (TypeError to an empty string), `mixin_Mqtt`'s offline publish on disconnect and its JSON decode of a payload, `HTTPControl` and `JSONHTTPControl` (a failed request or a body that is not JSON to None, which Y2's callers branch on), `Vault`'s provider probe
-- The scripts that still call the removed `Env.from_env`, `Env.from_dict`, `Env._load_dict` or read `Env.data`, about 110 in CRAP, IoT's CCTV-detective and RAN's Systems and Skills; CRAP's `prior/` trees; CRAP's `_Base` and `_PGBase` users, which keep both
+- The scripts that still call the removed `Env.from_env`, `Env.from_dict`, `Env._load_dict` or read `Env.data`, about 110 in CRAP, IoT's CCTV-detective and RAN's Systems and Skills; CRAP's `prior/` trees; CRAP's `_Base` and `_PGBase` users: `_Base` is still the logger with the configuration's readers, and the readers now read a `_DC`'s data, which those classes do not have; none of them calls `my`
