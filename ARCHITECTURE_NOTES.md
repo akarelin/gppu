@@ -33,10 +33,16 @@ Notes of an agent session, 2026-11-21. The first part is what Alex said in that 
 - A restart loses no state: there is no time after it when everything is unknown and no state appears. Everything works from the first second.
 - An action or a loss of state on start or restart comes from incorrect initialization of objects. It is found by reading configuration and code, never by experimenting.
 - Time of day is triggered by cron, not by Y2's TOD, where it is disabled.
+- Polling is polling: it happens on an interval. Calls, callbacks, timeouts, poll interval, long poll and retry are universal: they say how poll commands are launched, on what schedule, at what interval and on what event. A Hue poll interval works no differently from any other poll interval.
+- Polling may differ between runtimes. What a poll does differs from entity to entity; whatever does the polling cares only about the schedule, and polls on the right event.
 
 ## State
 - State is the state. It is what the application preserves, and restores on restart. With a state, init and load do not have to be done all over again every time.
 - It is done through persistence.
+- State comes from talking to a device through its API, or from an event that arrives through a subscription.
+- Events arrive from MQTT, and everything on MQTT is retained. An app may start with objects without state; once its subscriptions are enabled, within the first second, they receive the last known state of their devices.
+- Devices without state whose state comes from polling are polled first. On start there is a queue of devices to poll, and the initial poll, for initial state, is much more aggressive than the regular poll, so they have state within the first several seconds.
+- So an object without state is never seen.
 - State is a DC, not a dict. That was lost on the way to simplifying App.
 - Every app has a state. A state that is not persisted, or is bypassed, is still a state. Users of gppu have state: Y2, rewrite-commits, the utilities, Preservator, which knows when it last ran.
 - The previous version of Y2 had an object called state that contained the state. Y2 may now be loaded from scratch every time and keep none.
