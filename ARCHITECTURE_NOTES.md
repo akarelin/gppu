@@ -16,6 +16,7 @@ Notes of an agent session, 2026-11-21. The first part is what Alex said in that 
 - `environment=` on an app is invented and is the worst way to initialize the code. An app dealing with its environment violates the principle.
 - The environment is global and purely a system object. It is created once and stays a global object, hidden from everybody: nothing downstream uses or touches it. gppu's own methods use it to do things correctly, such as building paths.
 - There is no environment config file exposed to programs. A program reading the environment's file or folder (`Env.path.parent` in Y2) is the opposite of how it works.
+- `Env` is part of gppu and always exists, so a program never works with it. `Path` just works: a program calls `Path` and opens the file, and never parses paths. The same goes for `Env`: the program uses the library.
 
 ## Runtime
 - The lifecycle of an object is a feature of runtime.
