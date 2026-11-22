@@ -62,6 +62,16 @@ STATE_GLYPHS: dict[str, Glyph] = {
 }
 
 
+def marker_rich(marker: Glyph) -> str:
+    """Rich-markup symbol of a Glyph, or of a progress Marker — ``[bright_cyan]✻[/]``."""
+    return f'[{marker.rich_color}]{marker.symbol}[/]'
+
+
+def marker_ansi(marker: Glyph) -> str:
+    """Raw ANSI-escaped symbol — used when writing to a plain terminal."""
+    return f'\x1b[{marker.ansi_code}m{marker.symbol}\x1b[0m'
+
+
 def glyph_rich(key: str) -> str:
     """Rich-markup glyph by state key — ``[bright_green]✓[/]``.
 
@@ -71,7 +81,7 @@ def glyph_rich(key: str) -> str:
     g = STATE_GLYPHS.get(key)
     if g is None:
         return '[dim]?[/]'
-    return f'[{g.rich_color}]{g.symbol}[/]'
+    return marker_rich(g)
 
 
 def glyph_ansi(key: str) -> str:
@@ -79,7 +89,7 @@ def glyph_ansi(key: str) -> str:
     g = STATE_GLYPHS.get(key)
     if g is None:
         return '?'
-    return f'\x1b[{g.ansi_code}m{g.symbol}\x1b[0m'
+    return marker_ansi(g)
 
 
 # .. ── spinner frame sequences ────────────────────────────────────────────────

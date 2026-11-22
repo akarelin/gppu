@@ -38,6 +38,8 @@ from textual.containers import Vertical, Horizontal
 from textual.css.query import NoMatches
 from textual.widgets import Static
 
+from gppu.gppu import slugify
+
 from .icons import STATE_GLYPHS, glyph_rich
 from .launcher import SpinnerIndicator
 
@@ -67,7 +69,7 @@ class WorkerRow(Horizontal):
     """
 
     def __init__(self, state: WorkerState) -> None:
-        super().__init__(id=f'worker-{_slug(state.key)}',
+        super().__init__(id=f'worker-{slugify(state.key)}',
                          classes='worker-row')
         self.state = state
 
@@ -164,7 +166,7 @@ class WorkerPool(Vertical):
         if counters:
             st.counters.update(counters)
         try:
-            row = self.query_one(f'#worker-{_slug(key)}', WorkerRow)
+            row = self.query_one(f'#worker-{slugify(key)}', WorkerRow)
             row.refresh_row()
         except NoMatches:
             pass   # .. the row is not mounted yet
@@ -198,8 +200,3 @@ class WorkerPool(Vertical):
                 parts.append(f'{glyph_rich(key)} {n} {key}')
         total = sum(buckets.values())
         return '  '.join(parts) + f'    [dim]({total} total)[/]'
-
-
-def _slug(key: str) -> str:
-    """DOM-safe id fragment — Textual ids reject many chars."""
-    return ''.join(c if c.isalnum() or c in '-_' else '-' for c in str(key))

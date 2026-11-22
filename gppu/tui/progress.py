@@ -52,6 +52,8 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Generic, TypeVar
 
+from .icons import marker_ansi, marker_rich
+
 
 T = TypeVar('T')
 
@@ -69,16 +71,6 @@ class Marker:
     symbol: str                       # .. '✻', '●' — one glyph
     rich_color: str                   # .. 'bright_cyan' — Rich / Textual markup name
     ansi_code: str                    # .. '38;5;14' — SGR params for plain ANSI
-
-
-def marker_rich(marker: Marker) -> str:
-    """Rich-markup symbol — ``[bright_cyan]✻[/]``."""
-    return f'[{marker.rich_color}]{marker.symbol}[/]'
-
-
-def marker_ansi(marker: Marker) -> str:
-    """Raw ANSI-escaped symbol — used when writing to a plain terminal."""
-    return f'\x1b[{marker.ansi_code}m{marker.symbol}\x1b[0m'
 
 
 def legend_rich(markers: tuple[Marker, ...]) -> str:
