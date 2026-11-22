@@ -34,6 +34,8 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [x] The poller: no startup delay, each object polled by its own next poll time, at least once an hour, and `poll(obj, delay)` puts a device first or soon when its state, an event or a command calls for it (architecture notes, State and Presses and indicators)
 - [ ] `poll_delay` goes from AsyncApp once Y2's UI stops reading it
 - [x] A row names its class in `class`, exactly, among the app's default class and its subclasses; a row without it gets the default class (architecture notes, the model breaks, item 2)
+- [ ] Env, rewritten as marked: an app declares RAN or IoT and the rest follows from it; today Env, made as gppu is imported, guesses the environment from the script's path (waits on Alex: the model breaks where the declaration comes after the import)
+- [ ] Env without `path` (the model breaks, item 1): Y2's UI (`y2/ui/creekview.py`) and RAN's y2-compare skill script still read it
 
 ## Independent, unscoped
 - Objects read their configuration as `self.name`
