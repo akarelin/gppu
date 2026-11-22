@@ -21,7 +21,7 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [x] What the reduction removed since 3.7.9 is in `archive/`, beside the module it came from
 - [x] A `TUIApp` has no constructor: Textual's construction is the last part of its init step (architecture notes, item 6)
 - [ ] The database bases made from their data, with an init step and a connection on first use (architecture notes, item 7)
-  - Their users downstream construct themselves: CCTV-detective's Postgres and the admin UI's graph store skip the base's constructor and set its connection string; Transcriber's, Plaud's, the admin UI's sync store and the file indexer's stores have constructors of their own. A base made from its data needs each of them to give it data and move its constructor into an init step
+  - Waits on which programs use gppu today: a base made from its data needs each live subclass to give it data and move its constructor into an init step
 - [x] gppufs (`gppu.fs` with `gppu.ld`) is a submodule of gppu, reduced as the rest
 - [x] gppu's tests run on the environment gppu has and pass whole; those of removed behaviour are archived
 
@@ -36,10 +36,8 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 
 ## Found outside this task
 - Programs that loaded their own file through `Env.from_env`, gone since 3.7.1 (in progress)
-  - [x] Read their section of the environment, or the file they are given: the Linked Data API and its tools, YuE2, coverage, eMail-triage, ticktick-export, openapi_query, qdrant, the admin UI, the file indexer (`file_indexer`, its stores' `db` from it), neo-mqtt's rule generator and bridge
+  - [x] Read their section of the environment, or the file they are given: the Linked Data API and its tools, YuE2, coverage, eMail-triage, openapi_query, qdrant, the admin UI, the file indexer (`file_indexer`, its stores' `db` from it), neo-mqtt's rule generator and bridge
   - [x] The lake holds the configuration it keeps in Everything and reads it through its own `section()`; the admin UI reads the lake's sections the same way
-  - [ ] Transcriber, Plaud, md-indexer, iot-monitor: their files move into RAN's `_config` once Alex approves the move table
-  - [ ] CCTV-detective and crop_possum2: their environment, and their table of moves
   - [ ] Transcriber's recordings tool and lake's m365 read a `lake.yaml` that exists only in archives
 - RAN's gppu skill names `MarkerProgress` and `spinner_frames`, which gppu.tui no longer has
 - Y2's tests and the Hosts tests set up with `Env.reset()` and `Env.init(environment=...)`, which Env no longer has
