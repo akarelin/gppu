@@ -87,8 +87,8 @@ class AsyncApp(App, YStart, mixin_EventLoopBridge):
   ``run_every`` fires it at an interval. ``timers`` holds every armed timer's row by its id (its callback's name, its
   kind, its interval and its next run in epoch seconds), ``h_timeouts`` those armed under a key.
 
-  Its objects are the rows of the list at its ``key``, each ``cls(data=row, parent=self)`` of the class its ``kind``
-  names in ``_supported_types``; its steps start and stop them. With a ``poll_interval`` and objects, it refreshes them
+  Its objects are the rows of the list at its ``key``, each ``_default(data=row, parent=self)``, of the one class it
+  makes them with; its steps start and stop them. With a ``poll_interval`` and objects, it refreshes them
   one at a time, each once per ``poll_interval``, starting ``poll_delay`` after it starts, in an order shuffled every
   round, passing the poller's keywords to each refresh.
   """
@@ -100,7 +100,7 @@ class AsyncApp(App, YStart, mixin_EventLoopBridge):
   _background_tasks: set[asyncio.Task[Any]]
   _loop: asyncio.AbstractEventLoop | None
   _timer_ids = count(1)
-  _supported_types: ClassVar[dict] = {}
+  _default: ClassVar[type]   # .. the class of the objects it makes from the rows at its key
 
   def __init(self) -> None:
     self._task_group = None
@@ -113,7 +113,7 @@ class AsyncApp(App, YStart, mixin_EventLoopBridge):
     for data in glob_list(self.key): self._add_group(data)
 
   def _add_group(self, data: dict) -> None:
-    self._my_groups.append(self._supported_types[data['kind']](data=data, parent=self))
+    self._my_groups.append(self._default(data=data, parent=self))
 
   def __start(self) -> None:
     for group in self._my_groups:
