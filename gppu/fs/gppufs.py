@@ -111,12 +111,15 @@ def _identified(metadata: str, id: str | None) -> str:
   return json.dumps(value)
 
 
-def _signature(path: str | None) -> tuple[int, int] | None:
-  """Which version of a file is there, by its modified time and size; None when there is none."""
+def _signature(path: str | None) -> tuple[int, int, bytes] | None:
+  """Which version of an index is there, by its modified time, its size and SQLite's file change counter (bytes 24-27 of
+  its header), which every write changes; None when there is none."""
   if path is None or not os.path.isfile(path):
     return None
   status = os.stat(path)
-  return status.st_mtime_ns, status.st_size
+  with open(path, 'rb') as index:   # .. Linux stamps a file's mtime from a clock tick of a few ms: a write of the same size within that tick leaves mtime and size as they were
+    index.seek(24)
+    return status.st_mtime_ns, status.st_size, index.read(4)
 
 
 class GppuFileSystem(AsyncFileSystem, ChainedFileSystem):

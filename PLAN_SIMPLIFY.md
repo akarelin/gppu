@@ -6,6 +6,7 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [x] The status line released: statusline 0.7.6
 - [ ] gppu stays on 3.7.11: a build with no bump moves the 3.7.11 tag to master and builds it, and betas are off the menu (2716f70) (in progress)
   - The first build of master failed its tests and published nothing: `Env.init` returned before loading a configuration it was given without an environment, as MQTT gives it, and an app's own configuration was no longer filled. Both load through `jinja.configuration` now, and the suite passes from the checkout
+  - The second failed on the gppufs test that failed in the 3.7.11 build too: an index written again within one Linux clock tick, at the same size, kept its signature, so gppufs read its own stale copy. The signature now carries SQLite's change counter
   - Then: one build, `~/.venv` on alex-pc installs it from the Hosts requirements, and the Hosts TUI starts on it
 - [ ] The gppu wheel carries the `statusline` and `w11` packages, and its source archive every file in the repository
 
@@ -27,6 +28,9 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - Container apps, and MQTT status and last will for free
 - Connection strings as one-line values
 - UIs on gppu's Jinja
+
+## Found outside this task
+- IoT's any2mqtt image is `python:3.13-slim` and installs `gppu/latest`, which imports `uuid7` from Python 3.14
 
 ## Y2 (the gppu-3.8.0 session)
 - Y2's objects load natively by `_DC`, with no constructors of their own
