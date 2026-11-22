@@ -29,4 +29,5 @@ class APIApp(AsyncApp):
         return root
 
     def __start(self) -> None:
-        self._spawn(uvicorn.Server(uvicorn.Config(self.asgi(), host=self.my('host'), port=self.my('port'))).serve())
+        server = self._spawn(uvicorn.Server(uvicorn.Config(self.asgi(), host=self.my('host'), port=self.my('port'))).serve())
+        server.add_done_callback(lambda _: self.stop())   # .. uvicorn ends serving on SIGTERM or SIGINT: the app ends with it
