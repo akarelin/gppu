@@ -1,163 +1,66 @@
-"""gppu.tui — Reusable TUI superapp launcher framework, widgets, and helpers.
+"""gppu.tui — the TUI launcher, its base app and the widgets programs build on.
 
-Public surface is organized as:
+What programs import from it:
 
-- **Launcher / base classes** (``launcher``) — ``TUIApp``, ``TUILauncher``,
-  ``AppScreen``; the sub-app registry + launch plumbing.
-- **Selectors** (``selectors``) — list-style pickers with an optional detail
-  pane (``ui_select``, ``ui_select_rows``, ``Selector``, ``DetailedSelector``).
-- **Config editor** (``config_editor``) — ``ConfigEditorApp`` for editing YAML
-  config via TUI.
-- **Progress** (``progress``) — streaming per-item indicators
-  (``TickProgress`` dim dots, ``MarkerProgress`` classified colored glyphs).
-- **Workers** (``workers``) — ``WorkerPool`` + ``WorkerRow`` for rendering
-  concurrent task state in a stack with aggregate footer.
-- **Icons** (``icons``) — canonical state glyphs + spinner frame sets.
-- **Viz** (``viz``) — ``Heatmap`` activity grid (and any future widgets).
+- **Launcher / base classes** (``launcher``) — ``TUIApp``, ``TUILauncher``, ``StatusHeader``; the sub-app registry and
+  launch plumbing (``load_app_registry``, ``launch_app``, ``launcher_main``).
+- **Selectors** (``selectors``) — ``ui_select`` and ``ui_select_rows``.
+- **Progress, workers, modals, loaders** — ``TickProgress``, ``WorkerPool``, ``ConfirmScreen``, ``LoaderMixin``.
+- **Tree** (``tree``, ``tree_table``) and ``TaskMatrix``.
 
-If your app needs a reusable pattern and it isn't here, the place to add it
-is inside this package — not inside the app.  See
-``_/inbox/gppu-tui-sessionmanager.md`` for the scratch on what's planned.
+The rest of the package is the launcher's own parts (the config editor it opens, the icons its widgets draw) and
+widgets no program uses, each in its module.
 """
 
 from .launcher import (
     _tui_available,
     TUIApp,
     TUILauncher,
-    AppScreen,
-    AppItem,
-    InfoScreen,
-    ModeItem,
-    ProcessRow,
-    SpinnerIndicator,
     StatusHeader,
-    build_args,
-    resolve_cwd,
     launch_app,
     load_app_registry,
-    read_manifest,
     launcher_main,
 )
 
-from .config_editor import ConfigEditorApp
+from .selectors import ui_select, ui_select_rows
 
-from .selectors import (
-    Selector,
-    DetailedSelector,
-    DetailScreen,
-    ui_select,
-    ui_select_rows,
-)
+from .progress import TickProgress
 
-from .progress import (
-    Marker,
-    TickProgress,
-    MarkerProgress,
-    marker_rich,
-    marker_ansi,
-    legend_rich,
-    legend_ansi,
-)
+from .workers import WorkerPool
 
-from .workers import (
-    WorkerPool,
-    WorkerRow,
-    WorkerState,
-)
-
-from .icons import (
-    Glyph,
-    STATE_GLYPHS,
-    SPINNERS,
-    glyph_rich,
-    glyph_ansi,
-    spinner_frames,
-)
-
-from .viz import Heatmap, render_heatmap_lines
-
-from .modals import ConfirmScreen, InputScreen
+from .modals import ConfirmScreen
 
 from .loaders import LoaderMixin
 
-from .cache import CachedFetcher, PaginatedFetcher, CacheRefreshMixin
-
-from .tree import (
-    TreeEntry,
-    TreeAdapter,
-    FilesystemAdapter,
-    GDriveAdapter,
-    TreeBrowser,
-)
+from .tree import TreeEntry
 
 from .tree_table import TreeTable, TreeTableColumn
 
 from .task_matrix import TaskMatrix
 
 
+# .. what programs import from gppu.tui, and nothing else: a name no program uses stays in its module, unexported
 __all__ = [
-    # .. Base TUI classes
+    # .. Base TUI classes and the launcher
     'TUIApp',
     'TUILauncher',
-    'AppScreen',
-    # .. Launcher framework
-    'AppItem',
-    'InfoScreen',
-    'ModeItem',
-    'ProcessRow',
-    'SpinnerIndicator',
     'StatusHeader',
-    'build_args',
-    'resolve_cwd',
     'launch_app',
     'load_app_registry',
-    'read_manifest',
     'launcher_main',
-    # .. Config editor
-    'ConfigEditorApp',
     # .. Selector widgets
-    'Selector',
-    'DetailedSelector',
-    'DetailScreen',
     'ui_select',
     'ui_select_rows',
     # .. Progress
-    'Marker',
     'TickProgress',
-    'MarkerProgress',
-    'marker_rich',
-    'marker_ansi',
-    'legend_rich',
-    'legend_ansi',
     # .. Workers
     'WorkerPool',
-    'WorkerRow',
-    'WorkerState',
-    # .. Icons
-    'Glyph',
-    'STATE_GLYPHS',
-    'SPINNERS',
-    'glyph_rich',
-    'glyph_ansi',
-    'spinner_frames',
-    # .. Viz
-    'Heatmap',
-    'render_heatmap_lines',
     # .. Modals
     'ConfirmScreen',
-    'InputScreen',
     # .. Loaders
     'LoaderMixin',
-    # .. Cache
-    'CachedFetcher',
-    'PaginatedFetcher',
-    'CacheRefreshMixin',
     # .. Tree
     'TreeEntry',
-    'TreeAdapter',
-    'FilesystemAdapter',
-    'GDriveAdapter',
-    'TreeBrowser',
     'TreeTable',
     'TreeTableColumn',
     'TaskMatrix',

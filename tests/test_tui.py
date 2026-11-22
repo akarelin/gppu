@@ -14,18 +14,9 @@ import pytest
 pytest.importorskip('textual', reason='textual not installed — skip TUI tests')
 pytest.importorskip('pytest_asyncio', reason='pytest-asyncio not installed — skip TUI tests')
 
-from gppu.tui import (  # noqa: E402
-    AppItem,
-    DetailedSelector,
-    Selector,
-    TUIApp,
-    TUILauncher,
-    ModeItem,
-    ProcessRow,
-    SpinnerIndicator,
-    StatusHeader,
-    launch_app,
-)
+from gppu.tui import TUIApp, TUILauncher, StatusHeader, launch_app  # noqa: E402
+from gppu.tui.launcher import AppItem, ModeItem, ProcessRow, SpinnerIndicator  # noqa: E402
+from gppu.tui.selectors import DetailedSelector, Selector  # noqa: E402
 from textual.widgets import ListView, RichLog, Static  # noqa: E402
 
 
