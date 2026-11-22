@@ -128,11 +128,6 @@ These move in the same commit as the release. gppu 3.7.7 is released and alex-pc
 
 ## Found outside this task
 - gppu tests: `test_gppufs.py::test_ls_drops_from_the_index_what_is_gone` failed once on the Linux runner and passed on its rerun, with no change between
-- Hosts TUI: configs-web's review needs the Node package `jsonc-parser`, which alex-pc does not have; `tui/tests/test_start_page.py` looks for `start-page.py` beside itself, which lives in `Systems/static_sites`
-- CRAP `Systems/craptui/requirements.txt` installs gppu at `gppu/3.3.1`, a tag gppu does not have; RAN `Services/github-build.sh` names gppu's workflows `release.yml`, `w11-release.yml` and `statusline-release.yml`, which are `gppu.yml`, `w11.yml` and `statusline.yml`
-- Kuma: `test_cctv_repair.py` imports `fcntl`, so it runs only on Linux
-- Linked Data's API (`api.karel.in/ld/v1`) and CCTV-detective (`detective.karel.in`) answer 502; both programs call the removed `Env.from_env`
-- RAN `Systems/static_sites/start-page.py` reads the Hosts sidecars through `load_sidecar_registry`, which gppu no longer has
 - Hosts: `configs.py`'s and `start-page.py`'s `load_config` read `fleet.platforms`, which Fleet has not had since 2026-09-30
 - Hosts: `hosts.yaml` lost s1's, s9's and yellow's `mount` in the move to `RAN/_config`, so `server_mounts` rendered `None/Lake` and the like; the three lines are back (RAN b071600bb)
 - Fixed: gppu: `test_tui_logging`'s file-and-trace-rules and shared-log-screens tests pass, and gppu's whole suite passes on master
