@@ -44,6 +44,10 @@ Notes of an agent session, 2026-11-21. The first part is what Alex said in that 
 - Events arrive from MQTT, and everything on MQTT is retained. An app may start with objects without state; once its subscriptions are enabled, within the first second, they receive the last known state of their devices.
 - Devices without state whose state comes from polling are polled first. On start there is a queue of devices to poll, and the initial poll, for initial state, is much more aggressive than the regular poll, so they have state within the first several seconds.
 - So an object without state is never seen.
+- Every Y2 device publishes its own state to MQTT, in many cases at `devices/yala/...`, retained. A device that takes a long time to give its initial state, such as Atlona, picks up its own state from the last time it posted it. There is no case of a device without state.
+- There is no startup delay: an app responds to commands as early as it can, and everything initializes in about 5 seconds.
+- When an object is first polled depends on its current state; when it is polled after that is configured. A restart changes nothing about it: an object's next poll comes from the time since its last poll or event, which after a restart likely brings it sooner rather than later.
+- At start, thousands of retained messages flood in. An app subscribes to MQTT on start, not on load, so load has happened before any arrives and no MQTT event happens before start.
 - State is a DC, not a dict. That was lost on the way to simplifying App.
 - Every app has a state. A state that is not persisted, or is bypassed, is still a state. Users of gppu have state: Y2, rewrite-commits, the utilities, Preservator, which knows when it last ran.
 - The previous version of Y2 had an object called state that contained the state. Y2 may now be loaded from scratch every time and keep none.
