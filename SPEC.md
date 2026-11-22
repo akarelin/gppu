@@ -45,6 +45,8 @@
 - TUI apps support inline configs: a script carries its own configuration and manifest, as `examples/sessions_clean.py` does. A Python script assigns its manifest to a global variable.
 - Running processes in parallel is not part of a TUI, since a command-line app runs them too. It is an app's method, like its timers (run after, run in, run at).
 - Every TUI app is an async app. Every app is a `_DC`, whose data holds everything the app is given, so no app sets its own attributes from it again.
+- An app is an assembly of mixins: `_Base` puts the basic two together, and an app picks async, TUI or whatever else it needs.
+- A simple CLI app has no code to find where it was started or where its configuration is, and invents no command line of its own; it is aware of the topology. Nothing passes paths to construct something, and nothing needs the user's home.
 - Configuration is done natively by `_DC`. `_my`, an alternative dictionary on every object, is never used.
 - An app does not figure out where its own configuration is. When none is passed to it, gppu finds where it should have been from the app's caller; none of that code is specific to any other code.
 
