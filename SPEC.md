@@ -111,6 +111,6 @@
 - The command line is not a separate kind of app. Every app takes the command line, which always works by default and is never suppressed.
 - An app run with no parameters does something useful; it is not a dry run, and nobody needs to know which parameters to pass.
 - A Python script runs from the host's one `.venv`. A script that imports gppu has everything it needs and always starts.
-- Logging works without special error handling around it: no code logs an error outside the logger, and tracing and object dumping carry no error handling of their own.
+- Logging works without special error handling around it: no code logs an error outside the logger, and tracing carries no error handling of its own. Dumping is the one exception: a dump that fails writes its error to a file beside it, because no logger may be available where it runs, as in an asynchronous callback.
 - An object does not need a configuration key of its own for MQTT.
 - Preservator is the use case of a small CLI app that works trivially.
