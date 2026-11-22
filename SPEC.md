@@ -25,6 +25,12 @@
 - YAML anchors are YAML, resolved by the YAML standard. They are not Jinja.
 - Configuration has no repeats where a for loop can produce them.
 - Repetition in configuration is avoided with includes, include folders, simple `$` templates and YAML anchors. Multi-line Jinja is not needed for it.
+- The simplest mechanism that constructs the object and avoids duplication is used: an anchor where an anchor does it, then a `$` template, and Jinja only beyond those.
+- Inline JSON in YAML is syntactic sugar for a one-liner. An object being constructed is written one field per line, so the next field to fill is in sight.
+- Objects are read by slash paths and `get`.
+- A unique human-readable id is a key, not a value: a list whose items each carry a unique id is a dict keyed by it. Statuses and states are short readable text, so a test like "ends with `-rejected`" reads anywhere.
+- UI renders with gppu's Jinja, not a templating of its own.
+- A template file keeps its destination's extension, such as `.html` or `.md`, never `.j2`. OpenViking's Markdown templates are an example of Jinja used correctly.
 - Jinja constructs living objects, `_DC`s, never dicts, and never concatenates tokens to create JSON. In a YAML template, curly braces mean Jinja and nothing else: flow-style `{…}` is embedded JSON and makes YAML not YAML.
 - Jinja in configuration is an expression in `{{ }}`. Statements in `{% %}` are a special case that is almost never used, and multi-line Jinja is usually a fail.
 - Objects are created through configuration: `_DC` initializes them natively, and a class does not redo its initialization from zero.
