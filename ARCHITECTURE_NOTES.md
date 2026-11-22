@@ -121,6 +121,10 @@ Notes of an agent session, 2026-11-21. The first part is what Alex said in that 
 - A scene or an action that can be triggered by a path has only one path, the user-friendly one.
 - Triggering an action is stateless: no response comes back and no state change is looked at. It is much simpler than keeping the state of the action's participants, and the two can take different paths.
 - An action is triggered the most direct way its system allows. For Insteon, whose PLM is connected to MQTT, that is MQTT itself, with no intermediate step such as publishing `action/ao/light/off`.
+- Paths take the user's form: devices are conformed to how Alex wants paths to look, not his configuration to each device's peculiarities. Power is the example: a thing posts rich JSON to its own topic, and also posts to a common topic, where who posts is unknown but what is posted, such as temperature, is known, raw or formatted.
+- Simple actions are not complicated with entities: an action can be triggered directly.
+- An action never triggers another action. A sequence is a list of actions, and an action is a straight shot: never a generic light action that works out what to do, publishes to a topic, and has something transform and republish it.
+- An entity with state is different: a change of its state is requested formally, through MQTT.
 - For a given task the user never has to leave a single configuration file. Today the configuration is all over the place: Hue in more than one place, Kasa scattered, Homebridge impossible to take apart. Consolidating it by these rules makes the topology readable.
 
 ## UI
