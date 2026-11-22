@@ -115,6 +115,10 @@ These are where the one-shot stops because the architecture as stated does not y
 5. **`mixin_Rest` removed.** Y2's UI API serves its object pages and entity command buttons through it (`y2/ui.py`, `y2/api.py`), and CRAP `admin_ui/shared/layer.py` uses it. What serves them when it is gone?
 6. **TUI as a mixin.** `TUIApp` subclasses Textual's `App`, whose `__init__` must run, but `_DC.__init__` is final. How does a Textual app reconcile with "objects need no constructor"? (7 gppu/tui modules, w11, several CRAP/RAN TUIs depend on it.)
 7. **The DB bases' constructors.** `_PGBase`/`_SQABase` are built by their users with arguments (CRAP `db.py`, `plaud_sinks`, `registry`; RAN `ld` api). If objects are not constructed by passing arguments, how is a database connection made?
+8. **Configuration that arrives after import.** `Env` loads once, as gppu is imported, but a PC Control host is given its configuration over MQTT later (`gppu/app.py`, `AppService`) and Y2's `configure` gives a whole configuration (`y2/y2/y2entity.py:1862`); both write into `Env.data` and load it again. How does a configuration that arrives later reach the hidden `Env`?
+9. **The host.** The lake, the admin UI and Preservator pick this machine's local paths by its host name (`locations[uid].access[host]`) and read `Env.host` for it. With `Env` hidden, what gives a program the host?
+10. **Programs with their own file beside them.** The CCTV tools, Transcriber, the file indexer and the LD services load a YAML file next to the script through `Env.from_env`, which gppu does not have. In the architecture an `App` takes its section of the environment or a file it is given; these programs are not Apps.
+11. **Relative paths in configuration.** Y2's generated folders are relative paths in configuration (Ecobee's `generated_folder: _devices/ecobee/generated`), and `Path` resolves a relative path against the current folder, not the environment's; Y2 builds them on `Env.path.parent` today.
 
 ## How the work is done
 - The job of the supervising session: look at gppu, understand the changes that need to be made, then dispatch agents to make those changes.
