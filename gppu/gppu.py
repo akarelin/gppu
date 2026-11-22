@@ -1609,9 +1609,11 @@ class _Env(YLoad, _Base, _DC):
         _ENV_PATHS = {"RAN": "RAN/_config/config.yaml", "IoT": "IoT/_Creekview/_creekview.yaml"}
         self.os, self.home = detect_os(), Path.home()
         self.host, self.user = socket.gethostname().split('.')[0].lower(), getpass.getuser()
-        # .. the program's repository names it: a program in IoT or y2 is Creekview's, any other RAN's
-        self.environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) else 'RAN'
-        self.path = (Path('D:/Dev') if self.os == OSType.W11 else self.home) / _ENV_PATHS[self.environment]
+        root = Path('D:/Dev') if self.os == OSType.W11 else self.home
+        # .. apps share RAN; Y2's and IoT's programs share Creekview, and so does a host without RAN's repository, as Y2's
+        # .. containers are; a host with neither, as PC Control's, is given its configuration over MQTT
+        self.environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (root / _ENV_PATHS['RAN']).exists() else 'RAN'
+        self.path = root / _ENV_PATHS[self.environment]
 
     def __load(self) -> None:
         # .. one YAML load of its file; a configuration given whole (MQTT's, Y2's configure) is its data already, and a
