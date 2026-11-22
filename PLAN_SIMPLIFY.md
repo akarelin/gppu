@@ -31,7 +31,8 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
   - gppu's examples use the TUI pieces and `gppu.fs.vfs`
 - [x] gppu's tests run on the environment gppu has and pass whole; those of removed behaviour are archived
 - [x] MQTT 5 on gppu's own MQTT: a listener knows whether a message is retained and when it was sent, and each listener gets a topic's retained state, however many listeners came before it (architecture notes, State)
-- [ ] The poller: no startup delay, objects polled by their own next poll time, at least once an hour, and a device polled first or soon when its state, an event or a command calls for it (architecture notes, State and Presses and indicators)
+- [x] The poller: no startup delay, each object polled by its own next poll time, at least once an hour, and `poll(obj, delay)` puts a device first or soon when its state, an event or a command calls for it (architecture notes, State and Presses and indicators)
+- [ ] `poll_delay` goes from AsyncApp once Y2's UI stops reading it
 
 ## Independent, unscoped
 - Objects read their configuration as `self.name`

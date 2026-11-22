@@ -66,13 +66,15 @@ class AsyncApp(App, YStart):
   kind, its interval and its next run in epoch seconds), ``h_timeouts`` those armed under a key.
 
   Its objects are the rows of the list at its ``key``, each ``_default(data=row, parent=self)``, of the one class it
-  makes them with; its steps start and stop them. With a ``poll_interval`` and objects, it refreshes them
-  one at a time, each once per ``poll_interval``, starting ``poll_delay`` after it starts, in an order shuffled every
-  round, passing the poller's keywords to each refresh.
+  makes them with; its steps start and stop them. With a ``poll_interval`` and objects, it refreshes them one at a
+  time, the one whose next poll comes first, from the moment it starts: their first polls are spread over one
+  interval, in shuffled order, and after a poll an object's next is ``poll_interval`` later, never more than an hour.
+  ``poll(obj, delay)`` sets an object's next poll, 0 putting it first in the queue. Each refresh gets the poller's
+  keywords.
   """
   key: str
   poll_interval: int
-  poll_delay: int
+  poll_delay: int   # .. no longer waited out, since there is no startup delay; Y2's UI still shows it
 
   _task_group: asyncio.TaskGroup | None
   _background_tasks: set[asyncio.Task[Any]]
@@ -87,7 +89,7 @@ class AsyncApp(App, YStart):
     self.timers: dict[int, dict] = {}
     self.h_timeouts: dict[str, dict] = {}
     self._my_groups: list = []
-    self._polled: list = []
+    self._next_poll: dict[int, float] = {}   # .. each object's next poll, epoch seconds, by its id
     for data in glob_list(self.key): self._add_group(data)
 
   def _add_group(self, data: dict) -> None:
@@ -97,11 +99,26 @@ class AsyncApp(App, YStart):
     for group in self._my_groups:
       if isinstance(group, AsyncApp): self._spawn(group.run())   # .. a row that is an app runs as one, on this app's loop
       else: group.start()
-    if self.poll_interval and self._my_groups: self.run_every(self._cb_poller, start=self.poll_delay, interval=self.poll_interval / len(self._my_groups))
+    if self.poll_interval and self._my_groups:
+      gap = self.poll_interval / len(self._my_groups)
+      for i, group in enumerate(random.sample(self._my_groups, len(self._my_groups))): self._next_poll[id(group)] = now_ts() + i * gap
+      self._arm_poller()
+
+  def poll(self, obj: Any, delay: float = 0) -> None:
+    """``obj``, one of the objects this app polls, polled ``delay`` seconds from now; 0 puts it first in the queue. Any
+    thread calls it."""
+    if id(obj) not in self._next_poll: raise ValueError(f'{self!r} does not poll {obj!r}')
+    self._next_poll[id(obj)] = now_ts() + delay
+    self._arm_poller()
+
+  def _arm_poller(self) -> None:
+    self.run_later(self._cb_poller, delay=max(0.0, min(self._next_poll.values()) - now_ts()), key='_poller')
 
   def _cb_poller(self, **data: Any) -> None:
-    if not self._polled: self._polled = random.sample(self._my_groups, len(self._my_groups))
-    self._polled.pop().refresh(**data)
+    group = min(self._my_groups, key=lambda group: self._next_poll[id(group)])
+    self._next_poll[id(group)] = now_ts() + min(self.poll_interval, 3600)   # .. every object polled at least once an hour (Alex's hour)
+    try: group.refresh(**data)
+    finally: self._arm_poller()   # .. the next poll is armed as this one ends: the queue is polled one object at a time
 
   def run_later(self, callback: Callable[..., Any], *, delay: int | float, key: str | None = None, **data: Any) -> Future:
     """``callback`` once, ``delay`` seconds from now; armed again under ``key``, the timer armed under it before is
