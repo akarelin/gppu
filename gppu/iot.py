@@ -230,8 +230,7 @@ class mixin_Mqtt:
       except _MqttError as error:
         self.Warn(f'mqtt error, reconnect in {self.MQTT_RECONNECT_DELAY}s:', error)
       except BaseExceptionGroup as group:
-        # TaskGroup wraps task failures in a group; peel off MqttError, re-raise the rest.
-        # (Avoid `except*` syntax: debugpy's source scanner crashes on TryStar nodes.)
+        # ^^ TaskGroup wraps task failures in a group; peel off MqttError, re-raise the rest. (Avoid `except*` syntax: debugpy's source scanner crashes on TryStar nodes.)
         mqtt_errors, other = group.split(_MqttError)
         if mqtt_errors is not None:
           self.Warn(f'mqtt error, reconnect in {self.MQTT_RECONNECT_DELAY}s:', *mqtt_errors.exceptions)
@@ -313,7 +312,7 @@ class AppService(MqttApp):
   then disconnects."""
 
   def __init(self) -> None:
-    self.until_loaded: set[str] | None = None   # from_mqtt: the topics still to arrive
+    self.until_loaded: set[str] | None = None   # .. from_mqtt: the topics still to arrive
 
   async def from_mqtt(self) -> None:
     """Each of its topics read once, then the connection closed."""
@@ -331,7 +330,7 @@ class AppService(MqttApp):
     if not isinstance(data, dict): raise TypeError(f'MQTT configuration must be a mapping: {topic}')
     configuration, environment = deepcopy(Env.my_dict('')), Env.environment
     deepset(self.my('config_mqtt/topics')[str(topic)], configuration, data)
-    Env.reset()   # new configuration is the same event as a reset: Env loads again, from what it held and the section that arrived
+    Env.reset()   # .. new configuration is the same event as a reset: Env loads again, from what it held and the section that arrived
     Env.init(environment=environment, config=configuration)
     if self.until_loaded is not None:
       self.until_loaded.discard(str(topic))

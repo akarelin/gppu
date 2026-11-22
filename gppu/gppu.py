@@ -1170,7 +1170,7 @@ def dpcp(*a: Any, conditional: Optional[bool] = None, rules: Dict[str, bool] = {
   else: _ += list(a)
 
   result = pcp(*_, **kw)
-  # .. Never return None - return empty string instead to prevent logging issues
+  # ^^ Never return None - return empty string instead to prevent logging issues
   return result if result is not None else ''
 
 

@@ -338,7 +338,7 @@ _BACKENDS = {
 }
 
 
-DiskCache = None  # removed, use Cache
+DiskCache = None  # .. removed, use Cache
 
 
 class Cache:
