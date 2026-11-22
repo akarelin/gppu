@@ -611,29 +611,6 @@ class y2uri:
     # return anchor + ':~:' + '&'.join(directives)
   # endregion
 
-  # region - // y2uri: endswith, join
-  # // def endswith(self, suffix) -> bool: return self.path.endswith(suffix)
-
-  # // def __truediv__(self, path: y2path | str) -> 'y2uri':
-  # //   if not isinstance(path, (str, y2path)):
-  # //     return NotImplemented
-  # //   value = str(path)
-  # //   if '://' in value:
-  # //     raise ValueError('Join a path, not another URI')
-  # //   if '?' in value or '#' in value:
-  # //     raise ValueError('Join an escaped path; set params and fragment separately')
-  # //   if not value:
-  # //     return y2uri(self)
-  # //   tail = str(self.path)
-  # //   base = self.scheme + '://' + (tail.rstrip('/') + '/' if tail else '')
-  # //   result = y2uri(base + value.lstrip('/'))
-  # //   result.query = self.query
-  # //   result.fragment = self.fragment
-  # //   return result
-
-  # // def __add__(self, path: y2path | str) -> 'y2uri':
-  # //   return self / path
-  # endregion
 
 # endregion
 
@@ -846,22 +823,17 @@ def _tuple_representer(dumper: Dumper, data: tuple) -> Node:
 def dict_from_yml(filename: str | Path) -> dict:
   """ yaml file to dictionary, resolving includes, but not templates"""
   filename = Path(filename)
-  # // dir_stack: list[Path] = [filename.parent]
   root = filename.parent   # .. an include's path is relative to the folder of the file loaded, the environment's configuration
 
   class Loader(YmlLoader): pass
 
   def yml_include(loader: FullLoader, node: Node) -> Any:
-    # // fn = dir_stack[-1] / loader.construct_scalar(node)
     fn = root / loader.construct_scalar(node)
 
-    # // dir_stack.append(fn.parent)
 
-    # // try:
     with fn.open() as f:
       if fn.suffix.lower().endswith('.json'): return json.load(f)
       return yaml.load(f, Loader=Loader)
-    # // finally: dir_stack.pop()
 
   Loader.add_constructor("!include", yml_include)
 
@@ -1123,61 +1095,6 @@ def pcp(*a: str | List[Any] | Tuple[Any, ...], **kw: Any) -> str:
 _remove_prefixes = lambda s, prefixes: next((s.removeprefix(prefix) for prefix in prefixes if s.startswith(prefix)), s)
 _SHORTEN_BY_PREFIX = ['process_', '_cb_']
 _SEVERITY_COLORS = {'Error': 'WRED', 'Warn': 'WYELLOW', 'Info': 'WBLUE', 'Debug': 'GRAY4', None: 'WPURPLE'}
-# region - // dpcp: a second trace printer beside the logger, which reads the trace rules and names the caller itself (gppu.py, Alex)
-# // _IGNORE_FUNCTIONS = ['dpcp', 'trace', 'pcp', 'Trace', 'Info', 'Debug', 'Warn', 'Error', '_LogColorizer', '_PlainFormatter']
-# // def dpcp(*a: Any, conditional: Optional[bool] = None, rules: Dict[str, bool] = {}, no_prefix: bool = False, severity: Optional[str] = None, **kw: Any) -> str | None:
-# //   """ Version of pcp that adds info on where it was called from """
-# //   def is_traced(name : Optional[str] = None) -> bool:
-# //     if not conditional: return True
-# //     if not name or name not in rules: return rules.get('all', False)
-# //     else: return rules.get(name, False)
-# //
-# //   def is_ignored(f, fi) -> bool:
-# //     if 'python' in fi.filename: return True # !!! Ignoring all python3 libraries
-# //     elif fi.function in _IGNORE_FUNCTIONS: return True
-# //     elif 'self' in f.f_locals and f.f_locals['self'].__class__.__name__ in _IGNORE_FUNCTIONS: return True
-# //     return False
-# //
-# //   print = lambda *a, **kw: None
-# //
-# //   if not conditional and rules: conditional = True
-# //   frame = inspect.currentframe()
-# //   if frame is None: return None
-# //   frame_info = inspect.getframeinfo(frame)
-# //   func_name = frame_info.function
-# //   filename = frame_info.filename
-# //
-# //   frame = frame.f_back
-# //   while frame and frame.f_back:
-# //     frame = frame.f_back
-# //     frame_info = inspect.getframeinfo(frame)
-# //     filename = frame_info.filename
-# //     func_name = frame_info.function
-# //     if not is_ignored(frame, frame_info): break
-# //
-# //     func_name = _remove_prefixes(func_name, _SHORTEN_BY_PREFIX)
-# //
-# //   if frame is None: print(f"\tframe is None"); return None
-# //
-# //   if not is_traced(func_name): print(f"\tis_traced({func_name}) is False"); return None
-# //   module = filename.rsplit('/', 1)[-1].rsplit('.', 1)[0]
-# //   if not is_traced(module) or not is_traced(f"{module}.{func_name}"): print(f"\tis_traced({module}.{func_name}) is False"); return None
-# //
-# //   if 'self' in frame.f_locals: 
-# //     if not is_traced(class_name := frame.f_locals["self"].__class__.__name__): print(f"\tis_traced({class_name}) is False"); return None
-# //     if not is_traced(f"{class_name}.{func_name}"): print(f"\tis_traced({class_name}.{func_name}) is False"); return None
-# //     _ = ['GRAY0', f"{class_name}.", 'GRAY1', f".{func_name}"]
-# //   else: _ = ['GRAY1', f".{func_name}"]
-# //   _ += ['NONE']
-# //
-# //   if severity: _ = [_SEVERITY_COLORS.get(severity, _SEVERITY_COLORS[None]), severity] + _
-# //   if no_prefix: _ = list(a)
-# //   else: _ += list(a)
-# //
-# //   result = pcp(*_, **kw)
-# //   # ^^ Never return None - return empty string instead to prevent logging issues
-# //   return result if result is not None else ''
-# endregion
 
 
 def _colorize_log(msg, level=None, *args) -> str:
@@ -1519,10 +1436,6 @@ class mixin_Config(_mixin):
 # !!!  """ Very sus. Looks like slop. It DOES not read the configuration. Claude cannot understand this code and thinks its some "loader". self.my waws initialized somewhere and needs a place, but not this complexity. """
 
   """ Very sus. Looks like slop. It DOES not read the configuration. Claude cannot understand this code and thinks its some "loader". self.my waws initialized somewhere and needs a place, but not this complexity. """
-  # region - // what is left of mixin_Config
-  # // An app is assembled from mixins, and this one gives it the readers of its configuration. The configuration
-  # // is the `_DC`'s data, where construction loads it: `_my`, the loader and the command line are no longer here.
-  # endregion
   def my(self, path: str | y2path, default=None) -> Any: return deepget(path, self.data, default=default)
   def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self.data, default=default)
   def my_float(self, path: str | y2path, default: float = float('nan')) -> float: return deepget_float(path, self.data, default=default)
@@ -1570,6 +1483,7 @@ class App(YInit, _Base, _DC):
 
 # region - Env: the configuration
 class _Env(YLoad, _Base, _DC):
+# !!! Rewrute!
     """The program's environment: singleton app object. It's my is glob"""
     home: Path
     os: OSType
