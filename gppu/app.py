@@ -358,17 +358,16 @@ class _Runtime:
     self.apps[app.name] = app
 
   def restart_app(self, name: str) -> Any:
-    """Stop one app, discard it, and start a fresh instance of the same class with the same name, which reads its own
-    configuration again. Raises for an unknown or non-restartable name."""
+    """Stop one app, discard it, and start a fresh instance of the same class from the same data. Raises for an unknown
+    or non-restartable name."""
     app = self.apps.get(name)
     if app is None:
       raise ValueError(f"Unknown app: {name}")
     if not app.restartable:
       raise ValueError(f"App is not restartable: {name}")
-    cls = type(app)
     app.stop()
     self.apps.pop(name, None)
-    new_app = cls(name=name)
+    new_app = type(app)(data=dict(app.data))
     new_app.start()
     return new_app
 
@@ -453,7 +452,7 @@ class StateManager(AsyncApp):
 
     def __init(self) -> None:
         self._my_groups: list = []
-        rows = glob(self.key)
+        rows = glob(self.key) if self.key else []   # .. an app that names no path makes its objects itself
         for data in (rows if isinstance(rows, list) else [{'name': name, **row} for name, row in rows.items()]): self._add_group(data)
 
     def __start(self) -> None:

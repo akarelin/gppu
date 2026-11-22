@@ -1311,7 +1311,7 @@ class Logger:
 
   @staticmethod
   def enable_file_logging(log_file: str) -> Path:
-    """The log mirrored to log_file, which rotates."""
+    """ Need justification for this to exist """
     # region - ^^ why enable_file_logging exists
     # ^^ It is code for one configuration key: an environment declares `log_file` (RAN's config.yaml does) and Env.init
     # ^^ applies it here, its only caller. The handler is the logger's, so it sits in Logger and not in Env.
@@ -1589,6 +1589,7 @@ class _DC(UserDict):
 
 # region Configuration mixins
 class mixin_Config(_mixin):
+  """ Very sus. Looks like slop """
   # region - ^^ what is left of mixin_Config
   # ^^ An app is assembled from mixins, and this one gives it the readers of its configuration. The configuration
   # ^^ is the `_DC`'s data, where construction loads it: `_my`, the loader and the command line are no longer here.
