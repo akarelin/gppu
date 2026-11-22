@@ -116,7 +116,7 @@ class StatusHeader(Header):
 
 # .. ── Utilities ────────────────────────────────────────────────────────────────
 
-def build_args(mode_def: dict | None) -> list[str]:
+def _build_args(mode_def: dict | None) -> list[str]:
     """Build CLI args from a mode definition."""
     if not mode_def:
         return []
@@ -177,7 +177,7 @@ def _script_for_os(app_def: dict) -> str:
     return script
 
 
-def resolve_cwd(app_dir: Path, app_def: dict) -> Path:
+def _resolve_cwd(app_dir: Path, app_def: dict) -> Path:
     """Resolve working directory for a sub-app.
 
     Uses the ``cwd`` key from the manifest if present, otherwise defaults
@@ -239,7 +239,7 @@ def launch_app(
         return 0
     cmd = _resolve_cmd(app_dir, app_def) + (extra_args or [])
     return subprocess.run(
-        cmd, cwd=resolve_cwd(app_dir, app_def), env=_child_env(app_def),
+        cmd, cwd=_resolve_cwd(app_dir, app_def), env=_child_env(app_def),
     ).returncode
 
 
@@ -966,7 +966,7 @@ class TUILauncher(TUIApp):
 
     def _resolve_mode(self, mode_key: str, mode_def: dict | None) -> None:
         mode_def = mode_def or {}
-        base_args = build_args(mode_def)
+        base_args = _build_args(mode_def)
         ask_for = mode_def.get('ask_for')
         # .. Check mode-level then app-level for module/class
         tui_module = mode_def.get('module') or self._selected_app.get('module')
@@ -998,7 +998,7 @@ class TUILauncher(TUIApp):
             return
 
         # ^^ Add app's directory to sys.path for import
-        app_cwd = str(resolve_cwd(self._app_dir, app_def))
+        app_cwd = str(_resolve_cwd(self._app_dir, app_def))
         if app_cwd not in sys.path:
             sys.path.insert(0, app_cwd)
 
@@ -1085,7 +1085,7 @@ class TUILauncher(TUIApp):
             proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, bufsize=1, encoding='utf-8', errors='replace',
-                cwd=resolve_cwd(self._app_dir, app_def),
+                cwd=_resolve_cwd(self._app_dir, app_def),
                 env=_child_env(app_def),
             )
             for line in proc.stdout:

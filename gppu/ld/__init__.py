@@ -306,9 +306,9 @@ class _Record(SQLModel):
         return and_(*found)
 
     @staticmethod
-    def asks(filters: dict, key: str) -> bool:
+    def _asks(filters: dict, key: str) -> bool:
         """Whether a filter document has a condition on `key`, in it or in its `$and` and `$or`."""
-        return any(k == key or k in LOGICAL_OPERATORS and any(_Record.asks(f, key) for f in v) for k, v in filters.items())
+        return any(k == key or k in LOGICAL_OPERATORS and any(_Record._asks(f, key) for f in v) for k, v in filters.items())
 
     @classmethod
     async def search(cls, params, *where, conditions: QueryParams | None = None, order: tuple = ()):
@@ -318,7 +318,7 @@ class _Record(SQLModel):
         then by the id, which no two rows share; every match when no limit is given. A key of `meta` is filtered, sorted and
         searched as a column is, `meta.{key}`."""
         filters = parse_filter_query(conditions.filters) if conditions else None
-        seen = () if filters and cls.asks(filters, 'flags') else (cls.flags.op('&')(int(UNSEEN)) == 0,)   # .. out of sight when asked for
+        seen = () if filters and cls._asks(filters, 'flags') else (cls.flags.op('&')(int(UNSEEN)) == 0,)   # .. out of sight when asked for
         query, sort = select(cls).where(*seen, *where), []
         if conditions:
             if filters:
@@ -447,7 +447,7 @@ router.include_router(operations('/types', _Type, 'type', Type))
 router.include_router(operations('/links', _Link, 'link', Link))
 
 
-async def refusal(request: Request, e: StatementError):
+async def _refusal(request: Request, e: StatementError):
     """What a table refuses, a link without an end, a type's slug taken in its shard, a value Postgres cannot hold, and a filter
     its column cannot take, an operator its type has not or a value not of its kind, is the caller's to fix: 422 with the reason.
     Any other failure is the API's own."""
@@ -485,7 +485,7 @@ def serve(apis: dict[str, FastAPI], store: _SQABase) -> FastAPI:
     one = FastAPI(title=app.title, version=app.version, summary='Records and the links between them, and the APIs built on them: '
                   + ', '.join(p.strip('/') for p in apis) + '.',
                   openapi_tags=app.openapi_tags + [{'name': t, 'description': s} for t, s in tags.items()],
-                  dependencies=[Depends(transaction, scope='function')], exception_handlers={StatementError: refusal})
+                  dependencies=[Depends(transaction, scope='function')], exception_handlers={StatementError: _refusal})
     one.include_router(router)
     for api in apis.values():
         one.include_router(api.router)

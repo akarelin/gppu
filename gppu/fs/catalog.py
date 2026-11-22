@@ -513,7 +513,7 @@ def here(catalog: GppuCatalog, uri: str) -> Path | None:
         return None
 
 
-def accessed(row: Mapping[str, Any]) -> Path | None:
+def _accessed(row: Mapping[str, Any]) -> Path | None:
     """The folder a location's handler says it is at on this host, `handler.access` by host (gppu.fs.files); none when it
     names none here."""
     access = (row.get('handler') or {}).get('access') or {}
@@ -530,7 +530,7 @@ def reached(catalog: GppuCatalog) -> dict[str, dict[str, str]]:
     def folder(uid: str) -> Path | None:
         if uid not in found:
             row = catalog.locations[uid]
-            path = accessed(row) or here(catalog, row['canonical'])
+            path = _accessed(row) or here(catalog, row['canonical'])
             if path is None and (parent := row.get('parent')) and (above := folder(parent)) is not None:
                 rest = _below(str(catalog.locations[parent]['canonical']), str(row['canonical']))
                 path = None if rest is None else above / unquote(rest)
