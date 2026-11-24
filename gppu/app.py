@@ -353,19 +353,49 @@ class mixin_Rest:
         if cls not in seen: seen.add(cls); stack.extend(cls.__subclasses__())
       home = self._rest_home()
       classes = {c.__name__: {'members': self._rest_members(c)} for c in sorted(seen, key=lambda c: c.__name__) if self._born(c).startswith(home)}
-      self._rest_manifest = {'classes': {n: c for n, c in classes.items() if c['members']}}
+      self._rest_manifest = {'registries': list(self.rest_registries()), 'classes': {n: c for n, c in classes.items() if c['members']}}
     return self._rest_manifest
 
-  def rest_read(self, obj, name: str | None = None) -> tuple[dict, int]:
-    """GET: the object's values its manifest lists, or one member, a method that needs nothing called; a member it lacks
-    raises."""
-    if name is None: return {'class': type(obj).__name__, 'members': {n: getattr(obj, n) for n, r in self.rest_manifest['classes'].get(type(obj).__name__, {}).get('members', {}).items() if r['kind'] == 'value'}}, 200
-    member = getattr(obj, name)
-    return {name: member() if callable(member) else member}, 200
+  def rest_registries(self) -> dict[str, Mapping]:
+    """name -> roster of live objects (key -> object); the host names its own."""
+    return {'app': {getattr(self, 'name', 'app'): self}}
 
-  async def rest_call(self, obj, name: str, body: Mapping) -> tuple[dict, int]:
-    """POST: the method called with the body as its keyword arguments, off the loop, which a control waits on."""
-    result = await asyncio.to_thread(getattr(obj, name), **body)
-    if asyncio.iscoroutine(result): result = await result
+  def _rest_find(self, registry: str, key: str):
+    return next((o for k, o in (self.rest_registries().get(registry) or {}).items() if str(k) == key), None)
+
+  def _rest_rows(self, obj) -> dict[str, dict]:
+    return self.rest_manifest['classes'].get(type(obj).__name__, {}).get('members', {})
+
+  def rest_payload(self, obj) -> dict:
+    """What the object holds and what it can be asked to do. Values only are read here: calling a method to build a
+    payload would run it for anyone listing the objects."""
+    rows = self._rest_rows(obj)
+    return {'class': type(obj).__name__,
+            'members': {n: getattr(obj, n) for n, r in rows.items() if r['kind'] == 'value'},
+            'methods': {n: r['args'] for n, r in rows.items() if r['kind'] == 'method'}}
+
+  def rest_objects(self, kind: str | None = None, full: bool = False) -> tuple[dict, int]:
+    return {'objects': {f'{registry}/{key}': self.rest_payload(obj) if full else type(obj).__name__
+                        for registry, roster in self.rest_registries().items() for key, obj in roster.items()
+                        if not kind or type(obj).__name__ == kind}}, 200
+
+  def rest_read(self, registry: str, key: str, name: str | None = None) -> tuple[dict, int]:
+    obj = self._rest_find(registry, key)
+    if obj is None: return {'success': False, 'error': 'no such object'}, 404
+    if name is None: return self.rest_payload(obj), 200
+    row = self._rest_rows(obj).get(name)
+    if row is None: return {'success': False, 'error': f'{type(obj).__name__} has no {name!r}'}, 404
+    if row['kind'] == 'method' and not row['read']: return {'success': False, 'error': f'{name} takes arguments; POST it'}, 405
+    member = getattr(obj, name)
+    return {name: member() if row['kind'] == 'method' else member}, 200
+
+  async def rest_call(self, registry: str, key: str, name: str, body: Mapping) -> tuple[dict, int]:
+    obj = self._rest_find(registry, key)
+    if obj is None: return {'success': False, 'error': 'no such object'}, 404
+    row = self._rest_rows(obj).get(name)
+    if row is None or row['kind'] != 'method': return {'success': False, 'error': f'{name} is not a method'}, 405
+    method, args = getattr(obj, name), dict(body)
+    if row['async']: result = await method(**args)
+    else: result = await asyncio.get_running_loop().run_in_executor(None, lambda: method(**args))
     return {'success': True, 'result': result}, 200
 # endregion
