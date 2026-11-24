@@ -80,6 +80,9 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [ ] Env: how RAN or Creekview is chosen. The line under Alex's mark still picks it from the script's path; his words say only that the environment determines the app, never the reverse
 - [ ] Env without `path` (the model breaks, item 1): Y2's UI (`y2/ui/creekview.py`) and RAN's y2-compare skill script still read it
 
+- [x] mixin_Rest: the manifest, `rest_read` and `rest_call` on the object it is given; registries, the object list and the payload method are gone. The admin UI finds its lookups object itself
+- [ ] Y2's UI API finds its objects by id (entities, apps, Insteon devices) and lists them for `/objects`, for gppu's `rest_read` and `rest_call`; its object-surface test with it
+
 ## Independent, unscoped
 - Objects read their configuration as `self.name`
 - Hosts: one lookup in RAN and Creekview
