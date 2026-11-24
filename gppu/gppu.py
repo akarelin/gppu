@@ -18,7 +18,6 @@ import socket
 
 from string import Template
 from copy import copy, deepcopy
-from uuid import UUID, uuid7
 from pathlib import PurePath, PureWindowsPath
 
 from enum import Enum
@@ -169,12 +168,6 @@ def slugify(o) -> str:
   """Converts any object to string, then slugifies it"""
   return re.sub(r'[^a-zA-Z0-9_]', '_', str(o).lower())
 
-
-def uuid_create(shard: int) -> UUID:
-  """A new Linked Data id in a table, made offline as Linked Data's SQL uuid_create makes it: the table's shard in two bytes, shard1 its schema and shard2 the table, then version 1, five zero bytes, then UUIDv7's 6 bytes of time and 2 random bytes. A file's is uuid_create(0x1002), fs.files.
-  The time in an id is when the id was made, never the time of what it names: to a reader it is a random number."""
-  v7 = uuid7().bytes
-  return UUID(bytes=shard.to_bytes(2) + bytes([1]) + bytes(5) + v7[:6] + v7[10:12])
 # endregion
 
 

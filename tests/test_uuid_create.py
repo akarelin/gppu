@@ -1,7 +1,7 @@
 """Tests for uuid_create: Linked Data ids made offline."""
 from datetime import datetime, timezone
 
-from gppu.gppu import uuid_create
+from gppu.fs.gppufs import uuid_create
 
 
 def test_header_is_the_shards_then_version_1_then_zeros():

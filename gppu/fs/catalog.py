@@ -29,10 +29,10 @@ from fsspec.core import split_protocol
 from fsspec.spec import AbstractFileSystem
 
 from ..gppu import glob
-from ..gppu import TimeSpan, apply_template, full_path, jinja_fill, render_template, uuid_create, y2path
+from ..gppu import TimeSpan, apply_template, full_path, jinja_fill, render_template, y2path
 from .uri import y2uri
 from . import FileSystem, Location, Provider, _address, _below
-from .gppufs import GppuFileSystem
+from .gppufs import GppuFileSystem, uuid_create
 
 
 # region - locations
