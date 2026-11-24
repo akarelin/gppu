@@ -13,6 +13,7 @@ def test_env_reads_by_y2path(ran):
   assert glob_dict(y2path('a/d')) == {'x': 1}
 
 
-def test_my_reads_by_y2path():
-  app = App(config={'a': {'b': 2}})
+def test_my_reads_by_y2path(tmp_path):
+  (tmp_path / 'app.yaml').write_text('a: {b: 2}\n', encoding='utf-8')
+  app = App(config=tmp_path / 'app.yaml')
   assert app.my(y2path('a/b')) == 2 == app.my('a/b')

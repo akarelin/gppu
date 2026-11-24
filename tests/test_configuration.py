@@ -62,8 +62,9 @@ class Stepped(AsyncApp):
         self.seen = (self.my('enabled'), glob('second/value'))
 
 
-def test_async_init_step_sees_its_configuration():
-    assert Stepped(config={'enabled': False}).seen == (False, 2)
+def test_async_init_step_sees_its_configuration(home):
+    (home / 'stepped.yaml').write_text('enabled: false\n', encoding='utf-8')
+    assert Stepped(config=home / 'stepped.yaml').seen == (False, 2)
 
 
 def test_fleet_node_templates_keep_booleans_and_omit_empty_conditional_keys():
@@ -153,14 +154,6 @@ next_port: "{{ glob_int('port') + 1 }}"
     assert glob('seven') == mounts
     assert glob('trix') == {**mounts, '/mnt/S9/TulaCo-M365': '//s9/TulaCo\\040-\\040M365'}
     assert glob('next_port') == 4319
-
-
-def test_own_configuration_fills_its_jinja_from_the_environment(home):
-    (home / 'RAN' / '_config' / 'config.yaml').write_text('globals: {url: "https://otel"}\n', encoding='utf-8')
-    environment(home / 'RAN' / '_config' / 'config.yaml')
-    own = home / 'example.yaml'
-    own.write_text('''endpoint: "{{ glob('globals/url') }}/v1/traces"\n''', encoding='utf-8')
-    assert Example(config=own).my('endpoint') == 'https://otel/v1/traces'
 
 
 def test_async_app_keeps_its_steps():

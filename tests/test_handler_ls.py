@@ -50,14 +50,15 @@ def test_main_lists_the_catalog_and_one_location_with_an_argument(tmp_path, monk
   location.mkdir()
   (location / 'plain.txt').write_text('plain', encoding='utf-8')
   catalog = catalog_for(tmp_path, location)
+  monkeypatch.setattr(handler_ls, 'MANIFEST', handler_ls.MANIFEST.replace('catalog: D:/TextLake/.catalog', f'catalog: {catalog.as_posix()}'))   # .. its MANIFEST names the test's catalog
   monkeypatch.setattr(sys, 'argv', ['handler_ls.py'])
-  HandlerLs(config={'catalog': str(catalog)}).main()   # .. its configuration names the test's catalog
+  HandlerLs().main()
   rows = json.loads(capsys.readouterr().out)
   assert [row['gppu']['name'] for row in rows] == ['.catalog', 'loc']
   assert rows[1]['gppu']['location']['id'] == 1
   assert not (location / '.loc.gppufs.sqlite').exists()
   monkeypatch.setattr(sys, 'argv', ['handler_ls.py', str(location)])
-  HandlerLs(config={'catalog': str(catalog)}).main()
+  HandlerLs().main()
   rows = json.loads(capsys.readouterr().out)
   assert [row['gppu']['name'] for row in rows] == ['loc', 'plain.txt']
   assert rows[0]['gppu']['parent'] == GppuCatalog(catalog).root

@@ -4,10 +4,12 @@ import aiohttp
 import asyncio
 import concurrent.futures
 import json
+import tempfile
 import threading
 import unittest
 from contextlib import asynccontextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 
 from gppu import AsyncApp
@@ -33,13 +35,17 @@ class _FiniteApp(AsyncApp):
 
 class AsyncAppTests(unittest.IsolatedAsyncioTestCase):
   async def test_init_on_construction_then_load_and_start_in_run(self) -> None:
-    app = _FiniteApp(config={'values': [1, 2]})
+    with tempfile.TemporaryDirectory() as folder:   # .. its configuration is a YAML file, as a live app's is
+      (Path(folder) / 'finite.yaml').write_text('values: [1, 2]\n', encoding='utf-8')
+      app = _FiniteApp(config=Path(folder) / 'finite.yaml')
     self.assertEqual(app.seen, [1, 2])
     await app.run()
     self.assertEqual(app.seen, [1, 2, 3])
 
   async def test_spawn_requires_active_run(self) -> None:
-    app = _FiniteApp(config={'values': []})
+    with tempfile.TemporaryDirectory() as folder:
+      (Path(folder) / 'finite.yaml').write_text('values: []\n', encoding='utf-8')
+      app = _FiniteApp(config=Path(folder) / 'finite.yaml')
     coroutine = asyncio.sleep(0)
     with self.assertRaises(RuntimeError): app._spawn(coroutine)
     coroutine.close()
