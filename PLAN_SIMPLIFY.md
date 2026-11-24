@@ -92,6 +92,7 @@ A mark comes off only in the commit that makes its change, and that commit says 
 - [ ] PowerView shade (`y2/covers.py`): the mark said to send a command as configured (f0a844d); a shade's open, close and vanes were deleted and nothing configured sends them
 - [ ] Hue (`y2/hue.py`): the mark said to eliminate the bypass of the action mechanism (af8fc0b); `snapshot` and `hue_put` were deleted and the same bridge calls are now made inside HueLight, one GET per light in `_compute_state` and the PUT on the caller's thread, so the bypass moved and the queued PUT is gone
 - [ ] Entity (`y2/y2entity.py`, 86d74ab): the mark said unregistering is done in the State object, and `State.unregister_entity` went with the entity's own; the mark said an entity's kept state is used through the State object, and `_cb_own_state` was deleted with nothing in State doing it, so an entity has no state after a restart until its device reports
+- [ ] REST as Alex wrote it: one request call (`_http_request`, `_json_request` with get, put and post over it, in `HTTPControl` and `JSONHTTPControl`) and a URL builder in the device's class. The builders were deleted: PowerView's `_hub_url` and `_hub_get` with the decoding of the hub's base64 names (`PowerViewHTTPControl`, df18032 on 11-22) and Hue's `_url` (665168a on 11-22); their URLs are now written out inside each method. `rest_read` and `rest_call` took a new `obj` parameter at 4d17b3f
 - [ ] Marks standing: 65 in `y2/y2entity.py`, 6 in `y2/covers.py`, none in gppu
 
 ## Independent, unscoped
