@@ -86,13 +86,12 @@
 - Initialization happens in init. No other step initializes, and start does not set to null what init set.
 - MQTT is initialized the same way as everything else; its connection is not a field.
 - AsyncApp's lifecycle is async. Timers, groups and refresh are not AsyncApp's.
-- REST is general-purpose and is not HTTP. `mixin_Rest` gives any app the methods to make a REST call (get, put, post) in a few lines. `JSONHTTPControl` calls them and only builds the URL, substituting the host.
+- Basic things are done with basic code. REST is the example: a REST call is one call, general purpose, as it was. It does not take a hundred classes and methods.
 - An app does not figure out where its own configuration is. When none is passed to it, gppu finds where it should have been from the app's caller; none of that code is specific to any other code.
 
 ## Y2
 - Y2 only creates apps, and they share one State and one Env.
-- Y2's app is an async app. Y2's main does not do by hand what the async app does: making its apps from their rows and running them is the async app's.
-- An app is an app: Y2 has no class of its own named `App` in place of gppu's.
+- Y2's app is an async app. Y2's main does not do what the async app does.
 - Y2 uses Env; it has no environment of its own.
 - Y2's entity is part of gppu.
 - Y2 was originally part of gppu. Only entity support, the Y2 entity and below, is specific to Y2; everything else is generic and is gppu's, so Y2's own code is slim.
@@ -129,8 +128,8 @@
 - Old code that works is not removed. A base class's virtual methods are not stubs.
 - A method Alex does not understand is removed or justified, and no method repeats an existing one under another name.
 - A rewrite eliminates the mark that asked for it; a mark is not moved between classes.
-- No monkey patching: nothing replaces a method or member of a class or object from outside it, in a program, a test or a check.
-- Existing code is reused. A new file, class or method is tied to the functionality it serves and does not roll its own version of what a base class already does.
+- No monkey patching.
+- Existing code is reused. New files, classes and methods are tied to the functionality; nothing rolls its own.
 - Cleanup deletes more lines than it adds.
 - gppu changes first, and Y2 follows it. Code and the configuration it uses change together; code does not work around configuration.
 - gppufs can have its own uri where it needs to extend y2uri.

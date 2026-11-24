@@ -83,18 +83,17 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [x] mixin_Rest: the manifest, `rest_read` and `rest_call` on the object it is given; registries, the object list and the payload method are gone. The admin UI finds its lookups object itself
 - [ ] Y2's UI API finds its objects by id (entities, apps, Insteon devices) and lists them for `/objects`, for gppu's `rest_read` and `rest_call`; its object-surface test with it
 
-## Alex's marks taken out without their change (found 11-24 by reading each removal against today's code)
-A mark comes off only in the commit that makes its change, and that commit says where the function under it lives now. Each line below is a mark that is gone while its change is not made, or whose function went with it.
-- [ ] Env (`gppu/gppu.py`): the seven Rewrite marks and the mark on its load are gone (8a37a0c, 50303c2); the marked lines stand as they were in `_Env`'s init step (the machine, the environment picked from the script's path, the file's path), and a load step is back
-- [ ] App (`gppu/gppu.py`): its mark is gone (50303c2); App still has an init step of its own that reads a script's MANIFEST, its own `config` and the command line by hand, against "App has no init of its own"
-- [ ] mixin_Rest (`gppu/app.py`): three Eliminate marks went with `rest_registries`, `rest_objects` and `rest_payload` (4d17b3f), and `rest_read` and `rest_call` follow; what they did was not eliminated, it is now written twice, in Y2's `ui.py` (`rest_registries`, `_cb_objects`, `_cb_read`, `_cb_call`) and in the admin UI's server
-- [ ] Sensibo (`y2/sensibo.py`): the two marks asked for the base's REST method and base class (17fd4f1); by 8aef39d a pod is an empty class, so reading it, on and off, mode, target, fan and swing are gone
-- [ ] PowerView shade (`y2/covers.py`): the mark said to send a command as configured (f0a844d); a shade's open, close and vanes were deleted and nothing configured sends them
-- [ ] Hue (`y2/hue.py`): the mark said to eliminate the bypass of the action mechanism (af8fc0b); `snapshot` and `hue_put` were deleted and the same bridge calls are now made inside HueLight, one GET per light in `_compute_state` and the PUT on the caller's thread, so the bypass moved and the queued PUT is gone
-- [ ] Entity (`y2/y2entity.py`, 86d74ab): the mark said unregistering is done in the State object, and `State.unregister_entity` went with the entity's own; the mark said an entity's kept state is used through the State object, and `_cb_own_state` was deleted with nothing in State doing it, so an entity has no state after a restart until its device reports
-- [ ] REST as Alex wrote it: one request call (`_http_request`, `_json_request` with get, put and post over it, in `HTTPControl` and `JSONHTTPControl`) and a URL builder in the device's class. The builders were deleted: PowerView's `_hub_url` and `_hub_get` with the decoding of the hub's base64 names (`PowerViewHTTPControl`, df18032 on 11-22) and Hue's `_url` (665168a on 11-22); their URLs are now written out inside each method. `rest_read` and `rest_call` took a new `obj` parameter at 4d17b3f
-- [ ] Buttons: 28 button paths are shared by two objects (an Insteon scene and a room at `btn/eastroom` and 11 others; `btn/ao/monitor`, `btn/garage/monitor`, `btn/ao/desk/lamp`, `btn/kitchen`, `btn/house/hot_water`, `btn/northroom/lamps`, and the 4 AV buttons with an `av_buttons` row), so a press on them runs both objects' actions; on 11-20 it ran one
-- [ ] Marks standing: 65 in `y2/y2entity.py`, 6 in `y2/covers.py`, none in gppu
+## Alex's marks taken out without their change
+Found on 11-24 by reading what stands today where each mark was. A mark comes off only when its change is made and the function under it still works.
+- [ ] Env: the Rewrite marks are gone and the lines they marked are not rewritten
+- [ ] App: its mark is gone and App still loads its configuration by hand in an init of its own
+- [ ] REST: the marks said to eliminate overcomplication; functions were moved out of gppu into Y2's UI and the admin UI instead, so they are now written twice
+- [ ] Sensibo: the marks asked to use the base class; the class was emptied, so a pod cannot be read or commanded
+- [ ] PowerView shade: the mark said to send a command as configured; a single shade's open, close and vanes were deleted
+- [ ] Hue: the mark said to eliminate the bypass of the action mechanism; the bypass was moved into the light class
+- [ ] Entity: the marks said unregistering and an entity's kept state belong to the State object; both were deleted and State does neither
+- [ ] Buttons: where two objects share one button path, a press now runs both; it used to run one
+- [ ] Marks still standing: 65 in `y2/y2entity.py`, 6 in `y2/covers.py`
 
 ## Independent, unscoped
 - Objects read their configuration as `self.name`
