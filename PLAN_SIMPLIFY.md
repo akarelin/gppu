@@ -10,12 +10,13 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [ ] PC Control imports `MqttApp` and calls `submit` and `call`, which master no longer has (`schedule` does both): a build of master stops it at import until it moves to an async app's MQTT and `schedule`, at the release that takes it
 
 ## Step 1: gppu reduced statically (in progress)
-- [x] Logging is one `Logger`: the console, its colours and filter, and the trace rules; the file logging and `init_logger` are gone
+- [x] Logging is one `Logger`: the console, its colours and filter, and the trace rules; `init_logger` is gone
+- [ ] File logging: RAN's `log_file` was commented out when the file handler was removed on 11-21; judged against Alex's words, it comes back as one line or is shown to be a hack
 - [x] Logging is as it was in March: `Debug`, `Info`, `Warn` and `Error` call the log, and `mixin_Logger` gives a class a log under its own name; the caller's frame is no longer read
 - [x] Device controls run on their app's loop; `SerializedControl`'s own loop thread and `_control_submit` are gone
-- [ ] `Env.reset()` as Alex wrote it; `Env.init()` after it reads the file again but leaves its templates unfilled, because the fill runs at import, outside Env's init
+- [x] `Env.reset()` as Alex wrote it
 - [ ] AsyncApp's lifecycle is async; today it runs the sync steps, and an `async def` step part runs through `@sync` without being awaited (waits on Alex)
-- [x] AsyncApp's timers are `run_later` and `run_every`
+- [x] Timers are `mixin_Timers`, `run_later` and `run_every`, separate from AsyncApp's loop and lifecycle; `mixin_Groups` refreshes its objects through it
 - [x] An app's objects, the rows at its `key`, are `mixin_Groups`', not AsyncApp's; `poll()` is gone
 - [ ] MQTT is initialized the same way as the other objects (waits on Alex's words: its connection is neither a field nor read in a step of its own)
 - [ ] Y2's State is a lookup of entities, not an app made at import that is Y2's MQTT client with its own publish and listen (waits on Alex: which app holds the MQTT connection)
@@ -48,9 +49,9 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
   - [ ] PowerViewHub builds no shades and groups from lists of its own (waits on Alex: how a YDevice is given its entities)
 - [x] HomeKit is the homebridge compiler's: the entity base, rooms, blind groups and Sensibo no longer build Homebridge accessories
 - [ ] `has_actions` goes: it hides that a device and its group share one name, and so one action topic and one keypad LED (the AO AC pod and the AO AC group; a Tuya light and its group; a shade and its group), and that keypad buttons and LEDs are built as entities that answer presses (waits on Alex: the names are configuration)
-- [ ] Alex's `# !!!` marks: `App`, `Env` (Env waits on Alex: programs declare their environment, about 175 files)
+- [ ] Alex's `# !!!` marks: `App` (its loading is back in its one init step), `Env` (done but for how the environment is chosen, below)
 - [ ] Y2's apps read their configuration as fields, not copied from a section by hand: Kasa, UniFi, Z-Wave, Flume, Nest, Insteon (Kasa waits on Alex: its settings are at `power/kasa`, and no `kasa` section exists)
-- [ ] `mixin_Config` reads the object's configuration as it is made, which App did; `my` has no default; `my_int` and `my_float` stay; `my_list` and `my_dict` go with their callers (in review)
+- [x] `mixin_Config` is the readers, `my`, `my_int` and `my_float`, and no loader; `my_list` and `my_dict` go with their callers (Y2's mqtt2pg still calls `my_list`)
 - [ ] `App`: an app is not made by passing it its own name. Its name is its class's, and given no configuration it reads the section named as it is (Preservator); App still takes a name passed to it, and the lake's and the Linked Data API's servers pass one
 - [x] The Jinja region: each public method has a user (`render_template`, `apply_template` and `jinja_template` in programs, `configuration` in Env and App, `jinja_fill` in the catalog)
 - [x] The old tracing block and `gppu/app.py`'s `TimerHandle`, `_Scheduler`, `_Runtime`, `state_changed` and `listen_topic_state` are gone
@@ -75,7 +76,8 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [x] `poll_delay` is gone from AsyncApp: there is no startup delay, and Y2's UI no longer shows it
 - [x] MQTT connects with Creekview's `mqtt` as it is: the client takes the connection, the block's other keys are the app's, and the will and online status come only where a `status_topic` is named
 - [x] A row names its class in `class`, exactly, among the app's default class and its subclasses; a row without it gets the default class (architecture notes, the model breaks, item 2)
-- [ ] Env, rewritten as marked: an app declares RAN or IoT and the rest follows from it; today Env, made as gppu is imported, guesses the environment from the script's path (waits on Alex: the model breaks where the declaration comes after the import)
+- [x] Env is gppu's global system object, loaded as gppu is imported, with no init or load step and no `environment=` on any app; the machine is its class attributes
+- [ ] Env: how RAN or Creekview is chosen. The line under Alex's mark still picks it from the script's path; his words say only that the environment determines the app, never the reverse
 - [ ] Env without `path` (the model breaks, item 1): Y2's UI (`y2/ui/creekview.py`) and RAN's y2-compare skill script still read it
 
 ## Independent, unscoped
@@ -95,7 +97,7 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
   - [ ] Plaud's hourly sync on seven, its sign-in and its TUI call `Env.from_env`; Plaud is not ported
 - RAN's gppu skill names `MarkerProgress` and `spinner_frames`, which gppu.tui no longer has
 - gppu's handler-ls example reads its catalog at `D:/TextLake/.catalog`, which holds no folder for alex-pc, so it stops there
-- Y2's tests and the Hosts tests set up with `Env.reset()` and `Env.init(environment=...)`, which Env no longer has
+- Y2's tests and the Hosts tests set up with `Env.reset()` and `Env.init(environment=...)`, which Env does not have; IoT's scheduler and layout test no longer call it
 - The Hosts TUI's Configs browser reads `configs_config`, which RAN's configuration no longer has
 - The start page reads a `start_page` configuration that was archived and its include commented out on 2026-09-29, and imports the sidecar loader gppu no longer has
 - IoT: `_creekview.yaml` and `ui/editor.yaml` include `zwjs.yaml` and `z2.yaml` from `Insteon/`, which Alex moved back to `_devices/`; Creekview does not load from the checkout
