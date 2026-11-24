@@ -1302,7 +1302,7 @@ class _Env(YInit, _Base, _DC):
         self.os, self.home = detect_os(), Path.home() # !!!  Rewrite
         self.host, self.user = socket.gethostname().split('.')[0].lower(), getpass.getuser() # !!!  Rewrite
         root = Path('D:/Dev') if self.os == OSType.W11 else self.home # !!!  Rewrite
-        self.environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) else 'RAN'
+        self.environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (root / self._ENV_PATHS['RAN']).exists() else 'RAN'
         self.path = root / self._ENV_PATHS[self.environment]
         if self.path.exists(): self.data = jinja.configuration(dict_from_yml(self.path)) | self.data   # .. a host without its repository reads its environment from MQTT
         if 'trace_rules' in self.data: Logger.trace_rules = dict(self.data['trace_rules'])
