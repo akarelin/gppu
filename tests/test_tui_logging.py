@@ -16,9 +16,9 @@ from gppu.tui import TUIApp
 async def test_console_retains_severity_and_class_method():
   core = importlib.import_module('gppu.gppu')
 
-  class Operation:
+  class Operation(core.mixin_Logger):
     def fail(self):
-      core.Error('operation failed')
+      self.Error('operation failed')
 
   app = TUIApp()
   async with app.run_test():

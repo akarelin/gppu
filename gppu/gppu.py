@@ -6,7 +6,6 @@ import re
 import os
 import pathlib
 
-import inspect
 import logging
 import sys
 import platform
@@ -27,7 +26,7 @@ from typing import Union, Any, List, Optional, Tuple, Dict, DefaultDict, Callabl
 from collections import defaultdict, UserDict, UserList
 from collections.abc import Mapping
 
-from functools import wraps, cache
+from functools import cache, partial, wraps
 from datetime import datetime as dt, timedelta
 from zoneinfo import ZoneInfo
 
@@ -922,10 +921,10 @@ class _LogColorizer(logging.Formatter):
   no_prefix = False
 
   def format(self, record: logging.LogRecord) -> str:
-    args = list(record.gppu_args) if hasattr(record, 'gppu_args') else [record.getMessage()]
+    args = list(record.msg) if isinstance(record.msg, tuple) else [record.getMessage()]
     if not self.no_prefix:
       function = _remove_prefixes(record.funcName or '', _SHORTEN_BY_PREFIX)
-      class_name = getattr(record, 'gppu_class', '')
+      class_name = record.name.removeprefix('gppu.') if record.name.startswith('gppu.') else ''
       caller = f'{class_name}.{function}' if class_name else function
       severity = 'Warn' if record.levelno == logging.WARNING else record.levelname.title()
       args = [_SEVERITY_COLORS.get(severity, _SEVERITY_COLORS[None]), severity, 'GRAY1', caller, 'NONE'] + args
@@ -942,9 +941,9 @@ class _EmptyMessageFilter(logging.Filter):
     if record.levelno == logging.DEBUG:
       function = _remove_prefixes(record.funcName or '', _SHORTEN_BY_PREFIX)
       names = [function, record.module, f'{record.module}.{function}']
-      if class_name := getattr(record, 'gppu_class', ''): names += [class_name, f'{class_name}.{function}']
+      if record.name.startswith('gppu.'): names += [class_name := record.name.removeprefix('gppu.'), f'{class_name}.{function}']
       if not all(Logger.trace_rules[name] if name in Logger.trace_rules else Logger.trace_rules.get('all', False) for name in names): return False
-    return bool(record.getMessage().strip() or record.exc_info)
+    return bool(_LogColorizer.ANSI.sub('', pcp(*record.msg) if isinstance(record.msg, tuple) else record.getMessage()).strip() or record.exc_info)
 # endregion
 
 class _mixin: pass
@@ -953,8 +952,7 @@ class _mixin: pass
 # ^~            Logger
 class Logger:
   """The program's one log: the console from the moment gppu is imported, with colours, and the trace rules the
-  environment's configuration sets. Every class and script logs with it; a line names its class from the caller."""
-
+  environment's configuration sets. A class that has ``mixin_Logger`` logs under its own name."""
   trace_folder: str = '.'
   trace_rules: dict = {}
 
@@ -966,45 +964,25 @@ class Logger:
   _root.addHandler(_console)
 
 
-  @staticmethod
-  def _log(level: int, args: tuple, options: dict) -> None:
-    target = Logger._root
-    if not target.isEnabledFor(level): return
-    frame = inspect.currentframe().f_back.f_back
-    extra = dict(options.pop('extra')) if 'extra' in options else {}
-    extra['gppu_args'] = args
-    extra['gppu_class'] = type(frame.f_locals['self']).__name__ if 'self' in frame.f_locals else ''
-    del frame
-    stacklevel = options.pop('stacklevel') if 'stacklevel' in options else 1
-    target.log(level, _LogColorizer.ANSI.sub('', pcp(*args)), extra=extra, stacklevel=stacklevel + 2, **options)
-
-
-  @staticmethod
-  def Debug(*a, **kw): Logger._log(logging.DEBUG, a, kw)
-  @staticmethod
-  def Info(*a, **kw): Logger._log(logging.INFO, a, kw)
-  @staticmethod
-  def Warn(*a, **kw): Logger._log(logging.WARNING, a, kw)
-  @staticmethod
-  def Error(*a, **kw): Logger._log(logging.ERROR, a, kw)
-  @staticmethod
-  @sync
-  async def Dump(filename: str, data: dict = {}, **kw) -> None:
-    """ Saves data object to yml file in trace folder """
-    if '.' not in filename or not filename.endswith('.yml'): filename += '.yml'
-    dict_to_yml(filename=Path(Logger.trace_folder) / filename, data=data)
+def Debug(*a, logger=Logger._root, **kw): logger.debug(a, stacklevel=2, **kw)
+def Info(*a, logger=Logger._root, **kw): logger.info(a, stacklevel=2, **kw)
+def Warn(*a, logger=Logger._root, **kw): logger.warning(a, stacklevel=2, **kw)
+def Error(*a, logger=Logger._root, **kw): logger.error(a, stacklevel=2, **kw)
+@sync
+async def Dump(filename: str, data: dict = {}, **kw) -> None:
+  """ Saves data object to yml file in trace folder """
+  if '.' not in filename or not filename.endswith('.yml'): filename += '.yml'
+  dict_to_yml(filename=Path(Logger.trace_folder) / filename, data=data)
 
 
 class mixin_Logger(_mixin):
-  """A class that has it logs with ``self.Info(...)``: the program's one log."""
-  Debug, Info, Warn, Error, Dump = (Logger.__dict__[name] for name in ('Debug', 'Info', 'Warn', 'Error', 'Dump'))
+  """A class that has it logs under its own name with ``self.Info(...)``."""
+  Dump = staticmethod(Dump)
 
-
-Debug = Logger.Debug
-Info = Logger.Info
-Warn = Logger.Warn
-Error = Logger.Error
-Dump = Logger.Dump
+  def __init_subclass__(cls, **kw):
+    super().__init_subclass__(**kw)
+    logger = Logger._root.getChild(cls.__name__)
+    for name, fn in (('Debug', Debug), ('Info', Info), ('Warn', Warn), ('Error', Error)): setattr(cls, name, staticmethod(partial(fn, logger=logger)))
 
 
 # endregion
@@ -1232,6 +1210,9 @@ class _Env(YInit, _Base, _DC):
         self.path = root / _ENV_PATHS[self.environment] # !!!  Rewrite
         # .. one YAML load of its file; a host without its repository has no file until MQTT gives it its sections
         if not self.data and self.path.exists(): self.data = dict_from_yml(self.path) # !!!  Rewrite
+
+    @staticmethod
+    def reset() -> None: Env.data = {}; Env.initialized = False
 
 
 Env = _Env()
