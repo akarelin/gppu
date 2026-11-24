@@ -68,10 +68,10 @@ class RestSurfaceTests(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(status, 200)
     self.assertEqual(body['members'], {'name': 'desk', 'level': 70, 'api_key': 'secret', 'bright': True})
     self.assertEqual(set(body['methods']), {'stats', 'dim', 'blink', 'refresh', 'wipe', 'get'})
-    self.assertEqual(self.host.rest_read('lamp', 'nope'), ({'success': False, 'error': 'no such object'}, 404))
+    with self.assertRaises(KeyError): self.host.rest_read('lamp', 'nope')                           # .. an object it lacks raises
     self.assertEqual(self.host.rest_read('lamp', 'desk', 'stats'), ({'stats': {'level': 70}}, 200))   # .. no argument: GET calls it
-    self.assertEqual(self.host.rest_read('lamp', 'desk', 'dim')[1], 405)                             # .. takes one: POST only
-    self.assertEqual(self.host.rest_read('lamp', 'desk', 'nope')[1], 404)
+    with self.assertRaises(TypeError): self.host.rest_read('lamp', 'desk', 'dim')                    # .. takes one: the method's own refusal
+    with self.assertRaises(AttributeError): self.host.rest_read('lamp', 'desk', 'nope')              # .. a member it lacks raises
 
   async def test_a_call_is_the_method_with_the_body_as_its_arguments(self) -> None:
     body, status = await self.host.rest_call('lamp', 'desk', 'dim', {'level': 30})
@@ -80,7 +80,7 @@ class RestSurfaceTests(unittest.IsolatedAsyncioTestCase):
     self.assertEqual((status, body['result']), (200, 3))                                    # .. a coroutine is awaited
     body, status = await self.host.rest_call('lamp', 'desk', 'refresh', {})
     self.assertEqual((status, body['result']), (200, 'refreshed'))
-    self.assertEqual((await self.host.rest_call('lamp', 'desk', 'level', {}))[1], 405)       # .. a value is not called
+    with self.assertRaises(TypeError): await self.host.rest_call('lamp', 'desk', 'level', {})   # .. a value is not called
     with self.assertRaises(TypeError): await self.host.rest_call('lamp', 'desk', 'dim', {})   # .. the method's own refusal
 
   def test_objects_lists_every_roster(self) -> None:

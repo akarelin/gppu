@@ -339,7 +339,7 @@ class mixin_Rest:
     return {'app': {getattr(self, 'name', 'app'): self}}
 
   def _rest_find(self, registry: str, key: str):
-    return next((o for k, o in (self.rest_registries().get(registry) or {}).items() if str(k) == key), None)
+    return {str(k): o for k, o in self.rest_registries()[registry].items()}[key]
 
   def _rest_rows(self, obj) -> dict[str, dict]:
     return self.rest_manifest['classes'].get(type(obj).__name__, {}).get('members', {})
@@ -358,24 +358,15 @@ class mixin_Rest:
                         if not kind or type(obj).__name__ == kind}}, 200
 
   def rest_read(self, registry: str, key: str, name: str | None = None) -> tuple[dict, int]:
-    # !! Unnecessary overcomplication. Eliminate
+    """GET: the object's payload, or one member, a method called; an object or member it lacks raises."""
     obj = self._rest_find(registry, key)
-    if obj is None: return {'success': False, 'error': 'no such object'}, 404
     if name is None: return self.rest_payload(obj), 200
-    row = self._rest_rows(obj).get(name)
-    if row is None: return {'success': False, 'error': f'{type(obj).__name__} has no {name!r}'}, 404
-    if row['kind'] == 'method' and not row['read']: return {'success': False, 'error': f'{name} takes arguments; POST it'}, 405
     member = getattr(obj, name)
-    return {name: member() if row['kind'] == 'method' else member}, 200
+    return {name: member() if callable(member) else member}, 200
 
   async def rest_call(self, registry: str, key: str, name: str, body: Mapping) -> tuple[dict, int]:
-    # !! Unnecessary overcomplication. Eliminate
-    obj = self._rest_find(registry, key)
-    if obj is None: return {'success': False, 'error': 'no such object'}, 404
-    row = self._rest_rows(obj).get(name)
-    if row is None or row['kind'] != 'method': return {'success': False, 'error': f'{name} is not a method'}, 405
-    method, args = getattr(obj, name), dict(body)
-    if row['async']: result = await method(**args)
-    else: result = await asyncio.get_running_loop().run_in_executor(None, lambda: method(**args))
+    """POST: the method called with the body as its keyword arguments, off the loop."""
+    result = await asyncio.to_thread(getattr(self._rest_find(registry, key), name), **body)
+    if asyncio.iscoroutine(result): result = await result
     return {'success': True, 'result': result}, 200
 # endregion
