@@ -1227,6 +1227,18 @@ class _DC(UserDict):
   _DC_EXCLUDE_NAMES: list[str] = []
 
 
+  def _init_from_kw(self, **kw) -> None:
+    data = kw.pop('data', {})
+    if isinstance(data, str): data = {'data': data}
+    self.data = kw | data
+
+
+  # _INIT_STEPS: list[Callable] = [_init_from_kw]
+  # _INIT_STEPS: list[Callable[Concatenate["_DC", ...], None]] = [_init_from_kw]
+  # _INIT_STEPS: ClassVar[tuple[InitStep, ...]] = (_init_from_kw,)
+  _INIT_STEPS: list[Callable[Concatenate[Any, ...], None]] = [_init_from_kw]
+
+
   def __init_subclass__(cls, **kw) -> None:
     def _simple_type(typ: type | str) -> str:
       typ = str(typ)
@@ -1255,11 +1267,9 @@ class _DC(UserDict):
       setattr(cls, aname, property(getter, setter))
 
 
-  @final
   def __init__(self, **kw):
-    data = kw.pop('data', {})
-    if isinstance(data, str): data = {'data': data}
-    self.data = kw | data
+    self.data = {}
+    for step in self._INIT_STEPS: step(self, **kw)
     if hasattr(self, 'init') and callable(self.init): self.init()
 
 # endregion
