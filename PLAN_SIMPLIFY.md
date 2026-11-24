@@ -1,6 +1,8 @@
 # gppu 3.8
 
-Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of this file is in git history (gppu 28232bb).
+**This file is written by agents. It is their working list, not Alex's instructions: no line here is his words, and a ticked box is an agent's claim, not his acceptance.**
+
+Agents record what Alex instructed in [SPEC.md](SPEC.md), which is also agents' text; his own words are his marks in the code and what he says. The earlier, longer version of this file is in git history (gppu 28232bb).
 
 ## Release
 - [x] The status line released: statusline 0.7.6
