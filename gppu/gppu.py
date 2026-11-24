@@ -122,6 +122,12 @@ def now_ts(): return dt.now().timestamp()
 def timestamp(): return dt.now().strftime("%y%m%d-%H%M")
 def datestamp(): return dt.now().strftime("%y%m%d")
 
+
+def prepend_datestamp(path, separator=" ") -> Path:
+  datestamp_str = datestamp()  
+  _ = Path(path)
+  return _.parent / f"{datestamp_str}{separator}{_.name}"
+
 def format_size(size: int | float) -> str:
   """Format byte count as '0 B', '1.5 KB', '2.3 MB', '4.5 GB', '7.8 TB'.
 
