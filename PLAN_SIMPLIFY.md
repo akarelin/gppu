@@ -26,6 +26,15 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
   - [ ] Sensibo's templates and one AO AC row in Creekview (waits on Alex: configuration)
   - [ ] Hue, PowerView and Sensibo as one REST entity of the base: a refresh is the row's `read:`, a command the requests its `command:` renders; each device class under ten lines (in progress)
   - [ ] Kasa: a strip built and connected as AVMatrix connects, its outlets' commands through the base
+- [ ] Y2's `y2entity.py`, by Alex's marks, read and fixed in this order (in progress)
+  - [ ] One `command`: it calls the entity's method of that name; the base `turn_on`, `turn_off`, `open` and `close` send what the row says, its sequence or its MQTT payload; `entity_command`, `commands`, YEntity's and YGroup's `command` and the color loop's go
+  - [ ] A press on `btn/<path>` reaches the entity at the path; the Buttons app and `Runtime.buttons` go
+  - [ ] An entity holds no listener handles of its own (`_listen`), does not unregister itself, has no `listen_state` and does not listen to its own state topic
+  - [ ] No state saved to YAML and no hand tracing of calls
+  - [ ] Runtime is State's: `state_changed`, the listeners and the registries; App keeps no state of its own
+  - [ ] Unapproved global functions go into the class that uses them or go: `motion_topic`, `base_object`, `answers_actions`, `object_from_base`, `from_name`, `host_addr`, `runs_colour`
+  - [ ] Z2Light goes: a zigbee2mqtt bulb is a YEntity
+  - [ ] YRoom's own `_compute_state` and `ignores_nightlight`, YDevice's `host_addr`, GSM's `construct` and `_helpers`, mixin_Occupancy's `_occ_cfg`, mixin_Attributes' hard-coded attributes
   - [ ] A blinds group's double press sets the vanes through its row's `actions:`, which the cover_group template would carry (waits on Alex: configuration)
   - [x] Device files keep no `__repr__` of their own; ZwjsSensor and HostEntity are `pass`; a row's `uid` is its own
   - [x] Sensibo's and Tuya's refresh read the device and hand the reading to the base, with no catch
