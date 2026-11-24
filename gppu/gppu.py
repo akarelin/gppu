@@ -1267,6 +1267,7 @@ class _DC(UserDict):
 
 # region Configuration mixins
 class mixin_Config(_mixin):
+# !!!  """ Very sus. Looks like slop. It DOES not read the configuration. Claude cannot understand this code and thinks its some "loader". self.my waws initialized somewhere and needs a place, but not this complexity. """
     """An object's configuration, its data, read back with my."""
     def my(self, path: str | y2path) -> Any: return deepget(path, self.data)
     def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self.data, default=default)
@@ -1279,6 +1280,7 @@ class _Base(mixin_Logger, mixin_Config): pass
 
 # region App
 class App(YInit, _Base, _DC):
+# !!! Rewrote. folowing the architecture, not beside it
     """An app: named as its class unless made with a name. What it is made with goes over its configuration, the one it
     is given or else its section of the environment, and the command line goes over both."""
     name: str
@@ -1296,15 +1298,16 @@ class App(YInit, _Base, _DC):
 
 # region - Env: the configuration
 class _Env(YInit, _Base, _DC):
+# !!! Rewrute!
     """The program's environment: a system object, made once as gppu is imported and hidden from programs. Its init knows
     the machine it runs on and loads its environment's file, so a reset followed by init is a reload."""
     home: Path
     os: OSType
 
     def __init(self) -> None:
-        self.os, self.home = detect_os(), Path.home()
-        self.host, self.user = socket.gethostname().split('.')[0].lower(), getpass.getuser()
-        root = Path('D:/Dev') if self.os == OSType.W11 else self.home
+        self.os, self.home = detect_os(), Path.home() # !!!  Rewrite
+        self.host, self.user = socket.gethostname().split('.')[0].lower(), getpass.getuser() # !!!  Rewrite
+        root = Path('D:/Dev') if self.os == OSType.W11 else self.home # !!!  Rewrite
         self.path = root / 'RAN/_config/config.yaml'   # .. apps share RAN
         if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts): self.path = root / 'IoT/_Creekview/_creekview.yaml'   # .. Y2's apps share Creekview
         self.data = jinja.configuration(dict_from_yml(self.path)) if self.path.exists() else {}   # .. a host without its repository reads its environment from MQTT

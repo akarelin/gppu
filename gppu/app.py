@@ -292,6 +292,7 @@ _NO_JSON_BODY = object()
 
 
 class mixin_Rest:
+  ## !! Deviated from simple class to provide rest (put/post/get etc
   """REST, which any app calls and serves. A call is a request carried over HTTP, with the timeout, headers and SSL its
   class sets, its JSON in and out; a request or response that fails raises. Served, ``rest_manifest`` lists the members
   of the application's own classes, ``rest_read`` reads one and ``rest_call`` calls one."""
@@ -380,6 +381,7 @@ class mixin_Rest:
                         if not kind or type(obj).__name__ == kind}}, 200
 
   def rest_read(self, registry: str, key: str, name: str | None = None) -> tuple[dict, int]:
+    # !! Unnecessary overcomplication. Eliminate
     obj = self._rest_find(registry, key)
     if obj is None: return {'success': False, 'error': 'no such object'}, 404
     if name is None: return self.rest_payload(obj), 200
@@ -390,6 +392,7 @@ class mixin_Rest:
     return {name: member() if row['kind'] == 'method' else member}, 200
 
   async def rest_call(self, registry: str, key: str, name: str, body: Mapping) -> tuple[dict, int]:
+    # !! Unnecessary overcomplication. Eliminate
     obj = self._rest_find(registry, key)
     if obj is None: return {'success': False, 'error': 'no such object'}, 404
     row = self._rest_rows(obj).get(name)
