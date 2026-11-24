@@ -220,6 +220,7 @@ class AsyncApp(App, YStart):
 class mixin_Mqtt(YStart):
 
     def __init(self) -> None:
+        self.connstring = glob_dict('mqtt')   # .. its connection, the configuration's mqtt, read by its key
         self._client: aiomqtt.Client | None = None
         self._callbacks: dict[y2topic, list[tuple[Callable[..., Any], Any, bool]]] = {}   # .. a topic's listeners: callback, payload, ignore_retained
         self._subscriptions: dict[y2topic, int] = {}                                    # .. a topic's QoS
@@ -253,7 +254,7 @@ class mixin_Mqtt(YStart):
         await self._client.publish(str(topic), payload, qos=qos, retain=retain, properties=properties)
 
     async def _mqtt_loop(self) -> None:
-        mqtt = self.my_dict('mqtt') or glob_dict('mqtt')   # .. an app needs no mqtt of its own: without one, the environment's
+        mqtt = self.connstring
         will = aiomqtt.Will(mqtt['status_topic'], b'offline', qos=1, retain=True) if 'status_topic' in mqtt else None
         while True:
             try:
