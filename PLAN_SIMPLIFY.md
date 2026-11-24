@@ -13,7 +13,7 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [x] Logging is one `Logger`: the console, its colours and filter, and the trace rules; the file logging and `init_logger` are gone
 - [x] Logging is as it was in March: `Debug`, `Info`, `Warn` and `Error` call the log, and `mixin_Logger` gives a class a log under its own name; the caller's frame is no longer read
 - [x] Device controls run on their app's loop; `SerializedControl`'s own loop thread and `_control_submit` are gone
-- [x] `Env.reset()` as Alex wrote it: `Env.init()` after it reads the configuration again
+- [ ] `Env.reset()` as Alex wrote it; `Env.init()` after it reads the file again but leaves its templates unfilled, because the fill runs at import, outside Env's init
 - [ ] AsyncApp's lifecycle is async; today it runs the sync steps, and an `async def` step part runs through `@sync` without being awaited (waits on Alex)
 - [x] AsyncApp's timers are `run_later` and `run_every`
 - [x] An app's objects, the rows at its `key`, are `mixin_Groups`', not AsyncApp's; `poll()` is gone
