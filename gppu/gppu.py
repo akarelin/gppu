@@ -1168,14 +1168,9 @@ class App(YInit, _Base, _DC):
         script = vars(sys.modules[type(self).__module__])   # .. a script assigns its own configuration to its MANIFEST global
         configuration = yaml.load(script['MANIFEST'], Loader=YmlLoader) if 'MANIFEST' in script else dict_from_yml(self.data['config']) if 'config' in self.data else glob_dict(self.name)
         self.data = jinja.configuration(deepcopy(configuration)) | self.data
-        # .. --key value sets a key, a slash path a nested one, to the value read as YAML; --flag sets it to True
-        argv, i = sys.argv[1:], 0
-        while i < len(argv):
-            arg, i = argv[i], i + 1
-            if not arg.startswith('--') or len(arg) == 2: continue
-            value = True
-            if i < len(argv) and not argv[i].startswith('--'): value, i = yaml.load(argv[i], Loader=YmlLoader), i + 1
-            deepset(arg[2:], self.data, value)
+        argv = sys.argv[1:]   # .. --key value sets a key, a slash path a nested one, to the value read as YAML; --flag sets it to True
+        for i, arg in enumerate(argv):
+            if arg.startswith('--') and len(arg) > 2: deepset(arg[2:], self.data, yaml.load(argv[i + 1], Loader=YmlLoader) if i + 1 < len(argv) and not argv[i + 1].startswith('--') else True)
 # endregion
 
 
@@ -1191,8 +1186,8 @@ class _Env(YInit, _Base, _DC):
         self.host, self.user = socket.gethostname().split('.')[0].lower(), getpass.getuser()
         # .. the two environments' files, where the repositories are: apps share RAN, Y2's and IoT's programs share Creekview
         root = Path('D:/Dev') if self.os == OSType.W11 else self.home
-        path = root / ('IoT/_Creekview/_creekview.yaml' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (root / 'RAN').exists() else 'RAN/_config/config.yaml')
-        self.data = jinja.configuration(dict_from_yml(path)) if path.exists() else {}   # .. a host without its repository has no file: MQTT gives it its configuration
+        self.path = root / ('IoT/_Creekview/_creekview.yaml' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (root / 'RAN').exists() else 'RAN/_config/config.yaml')
+        self.data = jinja.configuration(dict_from_yml(self.path)) if self.path.exists() else {}   # .. a host without its repository has no file: MQTT gives it its configuration
         if 'trace_rules' in self.data: Logger.trace_rules = dict(self.data['trace_rules'])
 
     @staticmethod
