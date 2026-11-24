@@ -106,6 +106,15 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - IoT: `_creekview.yaml` and `ui/editor.yaml` include `zwjs.yaml` and `z2.yaml` from `Insteon/`, which Alex moved back to `_devices/`; Creekview does not load from the checkout
 - IoT's any2mqtt image is `python:3.13-slim` and installs `gppu/latest`, which imports `uuid7` from Python 3.14
 
+## Y2 pass (in progress, after gppu)
+- [ ] The uncommitted y2 edits (buttons as actions in `mixin_Commands` and AM, Kasa's settings as fields, the UI's button table) are finished as part of this pass: a button's listener is called with the topic and payload it is given; Kasa reads settings its configuration gives it
+- [ ] Kasa: Alex's Creekview row is `class: KasaSM, key: power/kasa/strips` and its settings are at `power/kasa`; the code reads them from there without a `section:` the row does not have
+- [ ] Polling: Alex's Creekview rows for av, hue, insteon and powerview carry no `poll_interval`, which y2.yaml gave them; judged against his words
+- [ ] Y2's UI API on gppu's `rest_read` and `rest_call`
+- [ ] y2entity.py's marks, in file order: `_Runtime` and `state_changed` (state, not runtime), App (own state), the unapproved global functions, YObject's construction, mixin_Attributes, the entity's own `_compute_state`, `commands`, `brightness`, actions, `_send_command` and the one async `command`, `_publish_indicator`, groups' `_calls` and `_resolve_members`, mixin_Occupancy, Z2Light, GSM's `_helpers` and `construct`, the sampler, `_State`'s MQTT overrides, `tagged`, `schedule_state_check` and `check_states`
+- [ ] covers.py's marks: PowerView's `powerview` field, the cover group with no function and its `_call`, the hub's own `covers` and `groups` lists
+- [ ] mqtt2pg reads `my_list`, which gppu no longer has
+
 ## Y2 (the gppu-3.8.0 session)
 - Y2's objects load natively by `_DC`, with no constructors of their own
 - Y2's State is gppu's
