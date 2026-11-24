@@ -280,6 +280,12 @@ class y2list(UserList):
   def discard(self, element): self.data = [e for e in self.data if not e == element]
   def pophead(self) -> Optional[str]: return self.data.pop(0) if len(self.data) > 0 else None
   def poptail(self) -> Optional[str]: return self.data.pop(-1) if len(self.data) > 0 else None
+  def popsuffix(self, ix):
+    if self.endswith(ix):
+      if '_' in ix and self.token != '_': ix = ix.replace('_',self.token)
+      elif '/' in ix and self.token != '/': ix = ix.replace('/',self.token)
+      self.data = self._any2list(str(self).replace(ix, ''))
+      return self.token.join(self._any2list(ix))
 class y2path(y2list):
   """
     A slash-separated path held as a list. An element of the list can be called a segment,
