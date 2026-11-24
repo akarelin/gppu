@@ -288,24 +288,11 @@ class AppService(mixin_Mqtt, AsyncApp):
 # region REST surface
 class mixin_Rest:
   ## !! Deviated from simple class to provide rest (put/post/get etc
-  """Deprecated: it does not work and gets in the way. Its one user is Y2's UI API, whose object pages and entity
-  command buttons go through it, so it stays until they move off it.
-
-  Every public member of the application's own classes, over HTTP, and nothing
-  declared. A field or property reads; a method is called with the JSON body as
-  its keyword arguments; a synchronous method needing none answers a GET as well.
-  A name is the application's when a class born in the application's folder, the
-  folder of the file that defines the app, defines it — a base may define it too —
-  and the private names and the lifecycle steps are the only exclusion.
-
-  The universal REST API to any object. It works only in an AsyncApp. It is not the default: no gppu app
-  includes it; an application that wants it composes it before its application
-  base, as Y2 does. Override ``rest_registries()`` with
-  ``{registry: {key: object}}``; by default it contains the app itself. The HTTP
-  host serves ``rest_manifest`` and binds ``rest_objects``, ``rest_read`` and
-  awaited ``rest_call``, which return ``(payload, status)``. The host supplies
-  the HTTP listener and JSON serialization.
-  """
+  """Every public member of the application's own classes over HTTP, and nothing declared. A GET reads an object, a
+  field or property, or a method that needs nothing; a POST calls a method with the JSON body as its keyword arguments.
+  A name is the application's when a class born in the application's folder, the folder of the file that defines the
+  app, defines it, a base may define it too; the private names and the lifecycle steps are the only exclusion. The app
+  that serves it finds the object by its id and answers with the ``(payload, status)`` these return."""
   REST_RESERVED = (*_YMRO.POSSIBLE_STEPS, 'initialize', 'terminate', 'setup', 'run')
 
   @staticmethod
@@ -318,11 +305,6 @@ class mixin_Rest:
   def _rest_home(self) -> str:
     """The application's folder: where the file that defines the app lives, and its own classes with it."""
     return os.path.dirname(self._born(type(self)))
-
-  def rest_registries(self) -> dict[str, Mapping]:
-    # !! Unnecessary overcomplication. Eliminate
-    """name -> roster of live objects (key -> object); the host names its own."""
-    return {'app': {getattr(self, 'name', 'app'): self}}
 
   def _rest_members(self, cls: type) -> dict[str, dict]:
     home, rows = self._rest_home(), {}
@@ -350,46 +332,26 @@ class mixin_Rest:
         if cls not in seen: seen.add(cls); stack.extend(cls.__subclasses__())
       home = self._rest_home()
       classes = {c.__name__: {'members': self._rest_members(c)} for c in sorted(seen, key=lambda c: c.__name__) if self._born(c).startswith(home)}
-      self._rest_manifest = {'registries': list(self.rest_registries()), 'classes': {n: c for n, c in classes.items() if c['members']}}
+      self._rest_manifest = {'classes': {n: c for n, c in classes.items() if c['members']}}
     return self._rest_manifest
-
-  def _rest_find(self, registry: str, key: str):
-    return next((o for k, o in (self.rest_registries().get(registry) or {}).items() if str(k) == key), None)
 
   def _rest_rows(self, obj) -> dict[str, dict]:
     return self.rest_manifest['classes'].get(type(obj).__name__, {}).get('members', {})
 
-  def rest_payload(self, obj) -> dict:
+  def rest_read(self, obj, name: str | None = None) -> tuple[dict, int]:
     # !! Unnecessary overcomplication. Eliminate
-    """What the object holds and what it can be asked to do. Values only are read
-    here: calling a method to build a payload would run it for anyone listing the objects."""
+    """GET: the object, what it holds and what it can be asked to do, or one of its members. Values only are read for the
+    object: calling a method to build it would run it for anyone listing the objects."""
     rows = self._rest_rows(obj)
-    return {'class': type(obj).__name__,
-            'members': {n: getattr(obj, n) for n, r in rows.items() if r['kind'] == 'value'},
-            'methods': {n: r['args'] for n, r in rows.items() if r['kind'] == 'method'}}
+    if name is None: return {'class': type(obj).__name__, 'members': {n: getattr(obj, n) for n, r in rows.items() if r['kind'] == 'value'},
+                             'methods': {n: r['args'] for n, r in rows.items() if r['kind'] == 'method'}}, 200
+    if name not in rows: return {'success': False, 'error': f'{type(obj).__name__} has no {name!r}'}, 404
+    if rows[name]['kind'] == 'method' and not rows[name]['read']: return {'success': False, 'error': f'{name} takes arguments; POST it'}, 405
+    return {name: getattr(obj, name)() if rows[name]['kind'] == 'method' else getattr(obj, name)}, 200
 
-  def rest_objects(self, kind: str | None = None, full: bool = False) -> tuple[dict, int]:
+  async def rest_call(self, obj, name: str, body: Mapping) -> tuple[dict, int]:
     # !! Unnecessary overcomplication. Eliminate
-    out = {f'{registry}/{key}': self.rest_payload(obj) if full else type(obj).__name__
-           for registry, roster in self.rest_registries().items() for key, obj in roster.items()
-           if not kind or type(obj).__name__ == kind}
-    return {'objects': out}, 200
-
-  def rest_read(self, registry: str, key: str, name: str | None = None) -> tuple[dict, int]:
-    # !! Unnecessary overcomplication. Eliminate
-    obj = self._rest_find(registry, key)
-    if obj is None: return {'success': False, 'error': 'no such object'}, 404
-    if name is None: return self.rest_payload(obj), 200
-    row = self._rest_rows(obj).get(name)
-    if row is None: return {'success': False, 'error': f'{type(obj).__name__} has no {name!r}'}, 404
-    if row['kind'] == 'method' and not row['read']: return {'success': False, 'error': f'{name} takes arguments; POST it'}, 405
-    member = getattr(obj, name)
-    return {name: member() if row['kind'] == 'method' else member}, 200
-
-  async def rest_call(self, registry: str, key: str, name: str, body: Mapping) -> tuple[dict, int]:
-    # !! Unnecessary overcomplication. Eliminate
-    obj = self._rest_find(registry, key)
-    if obj is None: return {'success': False, 'error': 'no such object'}, 404
+    """POST: the method called with the body as its keyword arguments."""
     row = self._rest_rows(obj).get(name)
     if row is None or row['kind'] != 'method': return {'success': False, 'error': f'{name} is not a method'}, 405
     method, args = getattr(obj, name), dict(body)
