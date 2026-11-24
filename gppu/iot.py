@@ -47,34 +47,30 @@ type HttpBody = str | bytes
 
 
 class HTTPControl(SerializedControl):
-  """Serialized textual HTTP; returns ``None`` on request or response failure."""
+  """Serialized textual HTTP; a request or response that fails raises."""
 
   _http_timeout: float = 10
   _http_headers: Mapping[str, str] | None = None
   _http_ssl: ssl.SSLContext | bool | None = None
 
-  def _http_get(self, url: str, *, headers: Mapping[str, str] | None = None) -> str | None:
+  def _http_get(self, url: str, *, headers: Mapping[str, str] | None = None) -> str:
     return self._http_request('GET', url, headers=headers)
 
-  def _http_put(self, url: str, body: HttpBody | None = None, *, headers: Mapping[str, str] | None = None) -> str | None:
+  def _http_put(self, url: str, body: HttpBody | None = None, *, headers: Mapping[str, str] | None = None) -> str:
     return self._http_request('PUT', url, body, headers=headers)
 
-  def _http_post(self, url: str, body: HttpBody | None = None, *, headers: Mapping[str, str] | None = None) -> str | None:
+  def _http_post(self, url: str, body: HttpBody | None = None, *, headers: Mapping[str, str] | None = None) -> str:
     return self._http_request('POST', url, body, headers=headers)
 
-  def _http_request(self, method: str, url: str, body: HttpBody | None = None, *, headers: Mapping[str, str] | None = None) -> str | None:
+  def _http_request(self, method: str, url: str, body: HttpBody | None = None, *, headers: Mapping[str, str] | None = None) -> str:
     return self._control_call(self._http_request_async, method, url, body, headers)
 
-  async def _http_request_async(self, method: str, url: str, body: HttpBody | None = None, headers: Mapping[str, str] | None = None) -> str | None:
+  async def _http_request_async(self, method: str, url: str, body: HttpBody | None = None, headers: Mapping[str, str] | None = None) -> str:
     request_headers = {**(self._http_headers or {}), **(headers or {})} or None
-    try:
-      timeout = aiohttp.ClientTimeout(total=self._http_timeout)
-      async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.request(method, url, data=body, headers=request_headers, ssl=self._http_ssl) as response:
-          response.raise_for_status()
-          return await response.text()
-    except (aiohttp.ClientError, TimeoutError, OSError, UnicodeError):
-      return None
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self._http_timeout)) as session:
+      async with session.request(method, url, data=body, headers=request_headers, ssl=self._http_ssl) as response:
+        response.raise_for_status()
+        return await response.text()
 
 
 _NO_JSON_BODY = object()
@@ -101,7 +97,4 @@ class JSONHTTPControl(HTTPControl):
     if payload is not _NO_JSON_BODY:
       request_headers.setdefault('Content-Type', 'application/json')
       body = json.dumps(payload)
-    response = await self._http_request_async(method, url, body, request_headers)
-    if response is None: return None
-    try: return json.loads(response)
-    except json.JSONDecodeError: return None
+    return json.loads(await self._http_request_async(method, url, body, request_headers))

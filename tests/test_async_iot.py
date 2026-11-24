@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import aiohttp
 import asyncio
 import concurrent.futures
 import json
@@ -138,7 +139,7 @@ class HTTPControlTests(unittest.TestCase):
       control._http_post(f'{self.base_url}/echo', 'payload', headers={'Content-Type': 'text/custom'}),
       'payload',
     )
-    self.assertIsNone(control._http_get(f'{self.base_url}/error'))
+    with self.assertRaises(aiohttp.ClientResponseError): control._http_get(f'{self.base_url}/error')
 
   def test_explicit_json_layer(self) -> None:
     control = _JsonControl()
