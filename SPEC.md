@@ -1,7 +1,7 @@
 # gppu specification
 
 ## Env
-- Env is a global singleton app. It loads like any app and does not initialize from itself.
+- Env is a global system object, created once and hidden from everybody: no program initializes it, uses it or touches it. gppu's own methods use it to do things correctly, such as building paths.
 - `glob`, `glob_int`, `glob_list` and `glob_dict` are global variables, not properties of a class.
 - New configuration is the same event as reload, restart or reset. Configuration is never compared, and nothing listens for its changes.
 - The location of the configuration is invisible to an app. There are two environments: RAN, configured in `RAN/_config/config.yaml`, and Creekview, configured in `IoT/_Creekview/_creekview.yaml`. Each comes from its repository.
@@ -12,7 +12,7 @@
 - An environment is a single YAML file. Its path is constructed from the location of the repository.
 - Env's load is one YAML load of its file. Env reads no source code, and no other loader is needed.
 - There are no sections.
-- An app declares RAN or IoT; the rest is determined from that declaration.
+- An app does not deal with its environment: `environment=` on an app is the worst way to initialize code. The environment determines the app, never the other way around.
 - There is no topology file.
 - The command line overrides an application's behaviour, not the environment.
 - Configuration folders hold no Python code.
@@ -55,11 +55,11 @@
 - State is a shared object, a trivial `_DC`: a lookup from an entity's identity to the entity object, reached through the entity or through the runtime. gppu provides state and its persistence, and persistence works as it should. Y2's version of state, with its caching, stays in Y2 for now.
 
 ## Apps
-- App initialization takes its environment; the app already knows its name. An app loads its own configuration, which is independent from the environment.
+- An app already knows its name. An app loads its own configuration, which is independent from the environment.
 - App's functionality lives in one place, and configuration is read from MQTT in one place.
 - AsyncApp does its own init and does not rely on `_Base`.
 - App has no init of its own: it loads through `_DC`'s init.
-- Timers exist only in AsyncApp.
+- Timers are their own mixin, separate from AsyncApp's lifecycle, with two methods: `run_later` and `run_every`.
 - gppu holds what a command-line app needs: it starts, does something and terminates, with no parameters. `gppu.app` holds what is more than that: async apps, timers, UIs, fleet management and the runtime Y2 runs on, shared by every app.
 - Every app works with no parameters: it knows enough about itself to log its output and know what it does. A navigator over gppufs from a root is a few lines.
 - A trivial utility stays trivial: a launcher, a TUI or fleet management runs it with one click, and no sidecar file sits beside it.
