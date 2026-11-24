@@ -561,7 +561,7 @@ KEYS_DROP = ['api', 'context', 'hide_attributes']
 KEYS_FIRST = ['name', 'seid', 'path']
 
 
-def _dict_sanitize(data: dict | list, sort_keys: bool = False) -> dict | list:
+def dict_sanitize(data: dict | list, sort_keys: bool = False) -> dict | list:
   """Convert nested complex data types for json.dumps or yaml.dumps"""
   def _sanitize_list(o) -> list:
     result = []
@@ -660,7 +660,7 @@ def dict_to_yml(filename: str | Path, data=None, sort_keys=False):
 
   assert filename
   if not data: return
-  redata = _dict_sanitize(data, sort_keys=sort_keys)
+  redata = dict_sanitize(data, sort_keys=sort_keys)
 
   yaml.add_representer(defaultdict, SafeRepresenter.represent_dict)
   yaml.add_representer(UserDict, SafeRepresenter.represent_dict)
