@@ -13,7 +13,6 @@ import os
 import random
 from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
-from itertools import count
 from typing import Any, ClassVar
 
 import aiomqtt
@@ -52,145 +51,69 @@ def _callback_wrapper(callback: Callable[..., Any]) -> Callable[..., Any]:
 
 
 class AsyncApp(App, YStart):
-  """Application base for long-lived asyncio services, on the YMRO steps.
+  """An app on asyncio: ``asyncio.run(MyApp().run())``. Construction runs its init step; ``run()`` runs its load and
+  start steps on the loop, and it runs until ``stop()``. A class gives its part of a step as a private ``__init``,
+  ``__load``, ``__start`` or ``__stop``; every class's part runs, base first.
 
-  Construction runs init; ``run()`` runs init (light loading, with the configuration ready),
-  load (the heavy loading) and start, last, on the app's loop: ``asyncio.run(MyApp().run())``.
-  A class gives its part of a step as a private ``__init``, ``__load``, ``__start`` or ``__stop``, an ``async def``
-  one with ``@sync``, with no super: every class's part runs, base first.
-  A part adds concurrent work with ``self._spawn(coro)``. A started app runs until it is stopped: ``app.stop()`` cancels
-  its work and its timers, and ``run()`` returns. Another thread runs a coroutine on the app's loop with ``schedule``.
-
-  Its timers: ``run_later`` fires a callback once after a delay, and arming it again under the same key replaces it;
-  ``run_every`` fires it at an interval. ``timers`` holds every armed timer's row by its id (its callback's name, its
-  kind, its interval and its next run in epoch seconds), ``h_timeouts`` those armed under a key.
-
-  Its objects are the rows of the list at its ``key``, each made as ``cls(data=row, parent=self)``: ``cls`` is the class
-  the row names in ``class``, ``_default`` or one of its subclasses, and ``_default`` for a row that names none; its
-  steps start and stop them. With a ``poll_interval`` and objects, it refreshes them one at a
-  time, the one whose next poll comes first, from the moment it starts: their first polls are spread over one
-  interval, in shuffled order, and after a poll an object's next is ``poll_interval`` later, never more than an hour.
-  ``poll(obj, delay)`` sets an object's next poll, 0 putting it first in the queue. Each refresh gets the poller's
-  keywords.
+  Its timers are ``run_later`` and ``run_every``. ``timers`` holds every armed timer's row by its id (its callback's
+  name, its kind, its interval and its next run), ``h_timeouts`` those armed under a key.
   """
-  key: str
-  poll_interval: int
-
-  _task_group: asyncio.TaskGroup | None
-  _background_tasks: set[asyncio.Task[Any]]
-  _loop: asyncio.AbstractEventLoop | None
-  _timer_ids = count(1)
-  _default: ClassVar[type]   # .. the class of the objects it makes from the rows at its key
 
   def __init(self) -> None:
-    self._task_group = None
-    self._background_tasks = set()
-    self._loop = None
+    self._loop: asyncio.AbstractEventLoop | None = None
+    self._task_group: asyncio.TaskGroup | None = None
+    self._background_tasks: set[asyncio.Task] = set()
     self.timers: dict[int, dict] = {}
     self.h_timeouts: dict[str, dict] = {}
-    self._my_groups: list = []
-    self._next_poll: dict[int, float] = {}   # .. each object's next poll, epoch seconds, by its id
-    for data in glob_list(self.key): self._add_group(data)
 
-  def _add_group(self, data: dict) -> None:
-    cls = self._default
-    if 'class' in data:   # .. the class it names exactly, among the default class and its subclasses
-      family, classes = [self._default], {}
-      while family:
-        named = family.pop()
-        classes[named.__name__] = named
-        family += named.__subclasses__()
-      cls = classes[data['class']]
-    self._my_groups.append(cls(data=data, parent=self))
-
-  def __start(self) -> None:
-    for group in self._my_groups:
-      if isinstance(group, AsyncApp): self._spawn(group.run())   # .. a row that is an app runs as one, on this app's loop
-      else: group.start()
-    if self.poll_interval and self._my_groups:
-      gap = self.poll_interval / len(self._my_groups)
-      for i, group in enumerate(random.sample(self._my_groups, len(self._my_groups))): self._next_poll[id(group)] = now_ts() + i * gap
-      self._arm_poller()
-
-  def poll(self, obj: Any, delay: float = 0) -> None:
-    """``obj``, one of the objects this app polls, polled ``delay`` seconds from now; 0 puts it first in the queue. Any
-    thread calls it."""
-    if id(obj) not in self._next_poll: raise ValueError(f'{self!r} does not poll {obj!r}')
-    self._next_poll[id(obj)] = now_ts() + delay
-    self._arm_poller()
-
-  def _arm_poller(self) -> None:
-    self.run_later(self._cb_poller, delay=max(0.0, min(self._next_poll.values()) - now_ts()), key='_poller')
-
-  def _cb_poller(self, **data: Any) -> None:
-    group = min(self._my_groups, key=lambda group: self._next_poll[id(group)])
-    self._next_poll[id(group)] = now_ts() + min(self.poll_interval, 3600)   # .. every object polled at least once an hour (Alex's hour)
-    try: group.refresh(**data)
-    finally: self._arm_poller()   # .. the next poll is armed as this one ends: the queue is polled one object at a time
+  def __stop(self) -> None:
+    self.cancel_timers()
+    if self._loop is None: return   # .. not running: nothing it spawned is left to cancel
+    tasks = list(self._background_tasks)   # .. what it spawned before it stopped; a cleanup a later stop step spawns runs
+    self._loop.call_soon_threadsafe(lambda: [task.cancel() for task in tasks])
 
   def run_later(self, callback: Callable[..., Any], *, delay: int | float, key: str | None = None, **data: Any) -> Future:
-    """``callback`` once, ``delay`` seconds from now; armed again under ``key``, the timer armed under it before is
-    cancelled. Any thread arms it, and its handle's ``cancel()`` cancels it."""
-    return self._timer(callback, float(delay), None, key, data)
+    """``callback`` once, ``delay`` seconds from now; armed again under ``key``, the one armed under it before is
+    cancelled. Any thread arms it; its handle's ``cancel()`` cancels it."""
+    return self.schedule(self._timer(callback, float(delay), None, key, data))
 
   def run_every(self, callback: Callable[..., Any], *, start: int | float, interval: int | float, **data: Any) -> Future:
     """``callback`` ``start`` seconds from now, and again ``interval`` seconds after each run of it ends."""
-    return self._timer(callback, float(start), float(interval), None, data)
+    return self.schedule(self._timer(callback, float(start), float(interval), None, data))
 
-  def _timer(self, callback: Callable[..., Any], delay: float, interval: float | None, key: str | None, data: dict) -> Future:
-    # region - a timer is a coroutine on the app's loop
-    # .. It keeps the app's registries itself, on the loop: its row is in `timers`, and under its key in `h_timeouts`,
-    # .. while it is armed. Its callback runs on one of the loop's worker threads; one that raises is logged, and an
-    # .. interval timer runs it again the next time. A one-shot is spent as it fires, so its key is free while its
-    # .. callback runs.
-    # endregion
-    row = {'name': getattr(callback, '__name__', ''), 'kind': 'once' if interval is None else 'interval', 'interval': interval, 'next_run': now_ts() + delay}
+  async def _timer(self, callback: Callable[..., Any], delay: float, interval: float | None, key: str | None, data: dict) -> None:
+    # .. its row is in `timers`, and under its key in `h_timeouts`, while it is armed; its callback runs off the loop
+    row = {'name': getattr(callback, '__name__', ''), 'kind': 'once' if interval is None else 'interval', 'interval': interval,
+           'next_run': now_ts() + delay, 'task': asyncio.current_task()}
+    if key in self.h_timeouts: self.h_timeouts[key]['task'].cancel()
+    self.timers[id(row)] = row
+    if key is not None: self.h_timeouts[key] = row
     callback = _callback_wrapper(callback)
-
-    async def call() -> None:
-      try: await asyncio.to_thread(callback, **data)
-      except Exception as error: self.Error('timer', row['name'], 'raised:', error)
-
-    async def timer() -> None:
-      row['task'], tid = asyncio.current_task(), next(self._timer_ids)
-      if key in self.h_timeouts: self.h_timeouts[key]['task'].cancel()
-      self.timers[tid] = row
-      if key is not None: self.h_timeouts[key] = row
-      try:
-        await asyncio.sleep(delay)
-        while interval is not None:
-          await call()
-          row['next_run'] = now_ts() + interval
-          await asyncio.sleep(interval)
-      finally:
-        del self.timers[tid]
-        if self.h_timeouts.get(key) is row: del self.h_timeouts[key]
-      await call()
-
-    return asyncio.run_coroutine_threadsafe(timer(), self._get_loop())
+    try:
+      while True:
+        await asyncio.sleep(row['next_run'] - now_ts())
+        if interval is None:   # .. a one-shot is spent as it fires: its key is free while its callback runs
+          del self.timers[id(row)]
+          if self.h_timeouts.get(key) is row: del self.h_timeouts[key]
+        try: await asyncio.to_thread(callback, **data)
+        except Exception as error: self.Error('timer', row['name'], 'raised:', error)
+        if interval is None: return
+        row['next_run'] = now_ts() + interval
+    finally:
+      self.timers.pop(id(row), None)
+      if self.h_timeouts.get(key) is row: del self.h_timeouts[key]
 
   def cancel_timers(self) -> None:
     """Every timer this app armed, cancelled, from any thread."""
     for row in list(self.timers.values()): row['task'].get_loop().call_soon_threadsafe(row['task'].cancel)
-
-  def __stop(self) -> None:
-    for group in self._my_groups: group.stop()
-    self.cancel_timers()
-    loop = self._loop
-    if loop is None: return                    # .. not running: nothing it spawned is left to cancel
-    # .. the loop cancels what the app spawned before it stopped, from any thread and from inside its own tasks: an MQTT
-    # .. listener that stops its app ends the MQTT loop it runs in; what a later stop step spawns, as a cleanup, runs
-    tasks = list(self._background_tasks)
-    loop.call_soon_threadsafe(lambda: [task.cancel() for task in tasks])
 
   def schedule[T](self, coroutine: Coroutine[Any, Any, T], /) -> Future[T]:
     """``coroutine`` on the app's loop, from any thread; its standard future."""
     return asyncio.run_coroutine_threadsafe(coroutine, self._get_loop())
 
   def _get_loop(self) -> asyncio.AbstractEventLoop:
-    loop = self._loop
-    if loop is None: raise RuntimeError(f'{self!r} is not running')
-    return loop
+    if self._loop is None: raise RuntimeError(f'{self!r} is not running')
+    return self._loop
 
   async def run(self) -> None:
     """init, load and start on this loop; returns when the app is stopped."""
@@ -216,17 +139,52 @@ class AsyncApp(App, YStart):
 # endregion
 
 
+# region Groups: an app's objects, the rows at its key
+class mixin_Groups(YStart):
+  """An async app's objects are the rows at its ``key``, each made as the class the row names in ``class``, among
+  ``_default`` and its subclasses, or as ``_default``; a row that is an app runs as one. With a ``poll_interval``, each
+  is refreshed on it, at least once an hour, their first refreshes spread over one interval in shuffled order."""
+  key: str
+  poll_interval: int
+  _default: ClassVar[type]
+
+  def __init(self) -> None:
+    self._my_groups: list = []
+    for data in glob_list(self.key): self._add_group(data)
+
+  def _add_group(self, data: dict) -> None:
+    cls = self._default
+    if 'class' in data:   # .. the class it names exactly, among the default class and its subclasses
+      family, classes = [self._default], {}
+      while family:
+        named = family.pop()
+        classes[named.__name__] = named
+        family += named.__subclasses__()
+      cls = classes[data['class']]
+    self._my_groups.append(cls(data=data, parent=self))
+
+  def __start(self) -> None:
+    for group in self._my_groups:
+      if isinstance(group, AsyncApp): self._spawn(group.run())   # .. a row that is an app runs as one, on this app's loop
+      else: group.start()
+    if self.poll_interval:
+      for i, group in enumerate(random.sample(self._my_groups, len(self._my_groups))):
+        self.run_every(group.refresh, start=i * self.poll_interval / len(self._my_groups), interval=min(self.poll_interval, 3600))
+
+  def __stop(self) -> None:
+    for group in self._my_groups: group.stop()
+# endregion
+
+
 # region MQTT: an async app's broker, the `mqtt` of its configuration
 class mixin_Mqtt(YStart):
+    mqtt: dict   # .. its connection: its own, as the any2mqtt services have, or the environment's
 
     def __init(self) -> None:
         self._client: aiomqtt.Client | None = None
         self._callbacks: dict[y2topic, list[tuple[Callable[..., Any], Any, bool]]] = {}   # .. a topic's listeners: callback, payload, ignore_retained
         self._subscriptions: dict[y2topic, int] = {}                                    # .. a topic's QoS
         self._retained: dict[int, tuple[tuple, set[str]]] = {}   # .. a listener by id: it (held, so its id stays its own) and the topics whose retained message it got on this connection
-
-    def __load(self) -> None:   # .. after every class's init, so its own configuration is in
-        self.connstring = self.my_dict('mqtt') or glob_dict('mqtt')   # .. its connection: its own mqtt, as the any2mqtt services have, or the environment's
 
     def __start(self) -> None: self._spawn(self._mqtt_loop())
 
@@ -256,7 +214,7 @@ class mixin_Mqtt(YStart):
         await self._client.publish(str(topic), payload, qos=qos, retain=retain, properties=properties)
 
     async def _mqtt_loop(self) -> None:
-        mqtt = self.connstring
+        mqtt = self.mqtt or glob_dict('mqtt')
         will = aiomqtt.Will(mqtt['status_topic'], b'offline', qos=1, retain=True) if 'status_topic' in mqtt else None
         while True:
             try:
@@ -324,6 +282,7 @@ class AppService(mixin_Mqtt, AsyncApp):
 
 # region REST surface
 class mixin_Rest:
+  ## !! Deviated from simple class to provide rest (put/post/get etc
   """Deprecated: it does not work and gets in the way. Its one user is Y2's UI API, whose object pages and entity
   command buttons go through it, so it stays until they move off it.
 
@@ -356,6 +315,7 @@ class mixin_Rest:
     return os.path.dirname(self._born(type(self)))
 
   def rest_registries(self) -> dict[str, Mapping]:
+    # !! Unnecessary overcomplication. Eliminate
     """name -> roster of live objects (key -> object); the host names its own."""
     return {'app': {getattr(self, 'name', 'app'): self}}
 
@@ -395,6 +355,7 @@ class mixin_Rest:
     return self.rest_manifest['classes'].get(type(obj).__name__, {}).get('members', {})
 
   def rest_payload(self, obj) -> dict:
+    # !! Unnecessary overcomplication. Eliminate
     """What the object holds and what it can be asked to do. Values only are read
     here: calling a method to build a payload would run it for anyone listing the objects."""
     rows = self._rest_rows(obj)
@@ -403,12 +364,14 @@ class mixin_Rest:
             'methods': {n: r['args'] for n, r in rows.items() if r['kind'] == 'method'}}
 
   def rest_objects(self, kind: str | None = None, full: bool = False) -> tuple[dict, int]:
+    # !! Unnecessary overcomplication. Eliminate
     out = {f'{registry}/{key}': self.rest_payload(obj) if full else type(obj).__name__
            for registry, roster in self.rest_registries().items() for key, obj in roster.items()
            if not kind or type(obj).__name__ == kind}
     return {'objects': out}, 200
 
   def rest_read(self, registry: str, key: str, name: str | None = None) -> tuple[dict, int]:
+    # !! Unnecessary overcomplication. Eliminate
     obj = self._rest_find(registry, key)
     if obj is None: return {'success': False, 'error': 'no such object'}, 404
     if name is None: return self.rest_payload(obj), 200
@@ -419,6 +382,7 @@ class mixin_Rest:
     return {name: member() if row['kind'] == 'method' else member}, 200
 
   async def rest_call(self, registry: str, key: str, name: str, body: Mapping) -> tuple[dict, int]:
+    # !! Unnecessary overcomplication. Eliminate
     obj = self._rest_find(registry, key)
     if obj is None: return {'success': False, 'error': 'no such object'}, 404
     row = self._rest_rows(obj).get(name)

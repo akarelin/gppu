@@ -21,6 +21,7 @@ from .app import (
     AsyncApp,
     _callback_wrapper,
     mixin_Rest,
+    mixin_Groups,
     mixin_Mqtt,
     AppService,
 )
@@ -135,7 +136,7 @@ __all__ = [
     'y2list', 'y2path', 'Path', 'y2uri', 'y2topic',
 
     # .. mqtt library
-    'mixin_Mqtt', 'AppService',
+    'mixin_Groups', 'mixin_Mqtt', 'AppService',
 ]
 
 
