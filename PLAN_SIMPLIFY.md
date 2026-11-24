@@ -18,6 +18,8 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [x] AsyncApp's timers are `run_later` and `run_every`
 - [x] An app's objects, the rows at its `key`, are `mixin_Groups`', not AsyncApp's; `poll()` is gone
 - [ ] MQTT is initialized the same way as the other objects (waits on Alex's words: its connection is neither a field nor read in a step of its own)
+- [x] HomeKit is the homebridge compiler's: the entity base, rooms, blind groups and Sensibo no longer build Homebridge accessories
+- [ ] `has_actions` goes: it hides that a device and its group share one name, and so one action topic and one keypad LED (the AO AC pod and the AO AC group; a Tuya light and its group; a shade and its group), and that keypad buttons and LEDs are built as entities that answer presses (waits on Alex: the names are configuration)
 - [ ] Alex's `# !!!` marks: `App`, `Env` (Env waits on Alex: programs declare their environment, about 175 files)
 - [ ] Y2's apps read their configuration as fields, not copied from a section by hand: Kasa, UniFi, Z-Wave, Flume, Nest, Insteon (Kasa waits on Alex: its settings are at `power/kasa`, and no `kasa` section exists)
 - [x] `mixin_Config` is the four readers over the object's data, `my`, `my_int`, `my_list` and `my_dict`, each read by programs
