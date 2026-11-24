@@ -15,7 +15,7 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [x] Device controls run on their app's loop; `SerializedControl`'s own loop thread and `_control_submit` are gone
 - [x] MQTT reads its connection, the configuration's `mqtt`, in its init step
 - [x] `Env.reset()` as Alex wrote it: `Env.init()` after it reads the configuration again
-- [x] AsyncApp is the loop, its lifecycle and `run_later` and `run_every`; an app's objects, the rows at its `key`, are `mixin_Groups`'; each object is refreshed by a `run_every`, and `poll()` is gone
+- [x] AsyncApp runs an app on its loop through its lifecycle (init, load, start, stop); its timers, a separate thing, are `run_later` and `run_every`. An app's objects, the rows at its `key`, are `mixin_Groups`'; each object is refreshed by a `run_every`, and `poll()` is gone
 - [x] MQTT's connection is its `mqtt` field, read where it connects
 - [ ] Alex's `# !!!` marks: `App`, `Env` (Env waits on Alex: programs declare their environment, about 175 files)
 - [ ] Y2's apps read their configuration as fields, not copied from a section by hand: Kasa, UniFi, Z-Wave, Flume, Nest, Insteon (Kasa waits on Alex: its settings are at `power/kasa`, and no `kasa` section exists)
