@@ -93,6 +93,10 @@ def safe_list(o) -> list:
   elif isinstance(o, list): result = [element for element in o if element]
   elif isinstance(o, dict): result = list(o.keys())
   return result
+def safe_timedelta(o: object) -> float:
+  try: then = dt.fromisoformat(str(o)).timestamp()
+  except: then = 0.0
+  return now_ts() - then
 def _safe_datetime(o: object) -> dt | None:
   if isinstance(o, int | float): 
     try: result = dt.fromtimestamp(o, MY_TZ)
@@ -632,7 +636,7 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
     def _jinja_helpers() -> dict:
         """gppu's own filters, offered to every Jinja environment it builds."""
         return {
-            'safe_int': safe_int, 'safe_float': safe_float, 'safe_list': safe_list, 'pfy': pfy, 'slugify': slugify,
+            'safe_int': safe_int, 'safe_float': safe_float, 'safe_list': safe_list, 'safe_timedelta': safe_timedelta, 'pfy': pfy, 'slugify': slugify,
         }
 
     @pass_context
