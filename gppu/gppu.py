@@ -286,6 +286,12 @@ class y2list(UserList):
       elif '/' in ix and self.token != '/': ix = ix.replace('/',self.token)
       self.data = self._any2list(str(self).replace(ix, ''))
       return self.token.join(self._any2list(ix))
+  def popprefix(self, ix):
+    if self.startswith(ix):
+      if '_' in ix and self.token != '_': ix = ix.replace('_', self.token)
+      elif '/' in ix and self.token != '/': ix = ix.replace('/', self.token)
+      self.data = self._any2list(str(self).replace(ix, ''))
+      return self.token.join(self._any2list(ix))
 class y2path(y2list):
   """
     A slash-separated path held as a list. An element of the list can be called a segment,
