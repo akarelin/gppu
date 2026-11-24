@@ -1139,7 +1139,6 @@ class _DC(UserDict):
   def __init__(self, **kw):
     data = kw.pop('data', {})
     if isinstance(data, str): data = {'data': data}
-    if isinstance(data, os.PathLike): data = jinja.configuration(dict_from_yml(data))   # .. a YAML file it is made from is its configuration, loaded
     self.data = kw | data
     if hasattr(self, 'init') and callable(self.init): self.init()
 
@@ -1182,24 +1181,25 @@ class App(YInit, _Base, _DC):
 
 # region - Env: the configuration
 class _Env(YInit, _Base, _DC):
-    """The program's environment: a system object, made once as gppu is imported and hidden from programs. It is made from
-    its environment's file, as any object is made from the file it is given, and its init knows the machine it runs on."""
+    """The program's environment: a system object, made once as gppu is imported and hidden from programs. Its init knows
+    the machine it runs on and loads its environment's file, so a reset followed by init is a reload."""
     home: Path
     os: OSType
 
     def __init(self) -> None:
         self.os, self.home = detect_os(), Path.home()
         self.host, self.user = socket.gethostname().split('.')[0].lower(), getpass.getuser()
+        # .. the two environments' files, where the repositories are: apps share RAN, Y2's and IoT's programs share Creekview
+        root = Path('D:/Dev') if self.os == OSType.W11 else self.home
+        path = root / ('IoT/_Creekview/_creekview.yaml' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (root / 'RAN').exists() else 'RAN/_config/config.yaml')
+        self.data = jinja.configuration(dict_from_yml(path)) if path.exists() else {}   # .. a host without its repository has no file: MQTT gives it its configuration
         if 'trace_rules' in self.data: Logger.trace_rules = dict(self.data['trace_rules'])
 
     @staticmethod
     def reset() -> None: Env.data = {}; Env.initialized = False
 
 
-# .. the two environments' files, from where the repositories are: apps share RAN, Y2's and IoT's programs share Creekview
-_ROOT = Path('D:/Dev') if detect_os() == OSType.W11 else Path.home()
-_ENV_PATH = _ROOT / ('IoT/_Creekview/_creekview.yaml' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (_ROOT / 'RAN').exists() else 'RAN/_config/config.yaml')
-Env = _Env(data=_ENV_PATH if _ENV_PATH.exists() else {})   # .. a host without its repository has no file: MQTT gives it its configuration
+Env = _Env()
 
 
 # .. the configuration's readers are globals over Env's data
