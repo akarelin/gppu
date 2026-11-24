@@ -185,7 +185,6 @@ class mixin_Groups(mixin_Timers):
 
 # region MQTT: an async app's broker, the `mqtt` of its configuration
 class mixin_Mqtt(YStart):
-    mqtt: dict   # .. its connection: its own, as the any2mqtt services have, or the environment's
 
     def __init(self) -> None:
         self._client: aiomqtt.Client | None = None
@@ -221,7 +220,7 @@ class mixin_Mqtt(YStart):
         await self._client.publish(str(topic), payload, qos=qos, retain=retain, properties=properties)
 
     async def _mqtt_loop(self) -> None:
-        mqtt = self.mqtt or glob_dict('mqtt')
+        mqtt = self.my('mqtt') or glob_dict('mqtt')   # .. its connection: its own, as the any2mqtt services have, or the environment's
         will = aiomqtt.Will(mqtt['status_topic'], b'offline', qos=1, retain=True) if 'status_topic' in mqtt else None
         while True:
             try:
