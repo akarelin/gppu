@@ -85,18 +85,6 @@ Agents record what Alex instructed in [SPEC.md](SPEC.md), which is also agents' 
 - [x] mixin_Rest: the manifest, `rest_read` and `rest_call` on the object it is given; registries, the object list and the payload method are gone. The admin UI finds its lookups object itself
 - [ ] Y2's UI API finds its objects by id (entities, apps, Insteon devices) and lists them for `/objects`, for gppu's `rest_read` and `rest_call`; its object-surface test with it
 
-## Alex's marks taken out without their change
-Found on 11-24 by reading what stands today where each mark was. A mark comes off only when its change is made and the function under it still works.
-- [ ] Env: the Rewrite marks are gone and the lines they marked are not rewritten
-- [ ] App: its mark is gone and App still loads its configuration by hand in an init of its own
-- [ ] REST: the marks said to eliminate overcomplication; functions were moved out of gppu into Y2's UI and the admin UI instead, so they are now written twice
-- [ ] Sensibo: the marks asked to use the base class; the class was emptied, so a pod cannot be read or commanded
-- [ ] PowerView shade: the mark said to send a command as configured; a single shade's open, close and vanes were deleted
-- [ ] Hue: the mark said to eliminate the bypass of the action mechanism; the bypass was moved into the light class
-- [ ] Entity: the marks said unregistering and an entity's kept state belong to the State object; both were deleted and State does neither
-- [ ] Buttons: where two objects share one button path, a press now runs both; it used to run one
-- [ ] Marks still standing: 65 in `y2/y2entity.py`, 6 in `y2/covers.py`
-
 ## Independent, unscoped
 - Objects read their configuration as `self.name`
 - Hosts: one lookup in RAN and Creekview

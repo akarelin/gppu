@@ -2,8 +2,6 @@
 
 ## Env
 - Env is a global singleton app. It loads like any app and does not initialize from itself.
-- Env is a `_DC` with its parent classes, so its init and stop are part of the lifecycle; every object relies on that. It is not constructed from its own path, and nothing rewrites its data.
-- Env's reset is `Env.data = {}; Env.initialized = False`.
 - Env is a global system object, created once and hidden from everybody: no program initializes it, uses it or touches it. gppu's own methods use it to do things correctly, such as building paths.
 - `glob`, `glob_int`, `glob_list` and `glob_dict` are global variables, not properties of a class.
 - New configuration is the same event as reload, restart or reset. Configuration is never compared, and nothing listens for its changes.
@@ -82,32 +80,17 @@
 - An object reads its configuration as `self.name`, never as `self.my('name')`. No app parses YAML text or reads a configuration it declared for itself, and no YAML file beside the code duplicates or contradicts it.
 - A list of objects, such as the hosts, is created by a loader from the environment, where it already is.
 - Configuration is done natively by `_DC`. `_my`, an alternative dictionary on every object, is never used.
-- Configuration is read once. An object does not read again what has been read for it, a descendant class does not do what its base class did, and no entity reads its own settings.
-- Initialization happens in init. No other step initializes, and start does not set to null what init set.
-- MQTT is initialized the same way as everything else; its connection is not a field.
-- AsyncApp's lifecycle is async. Timers, groups and refresh are not AsyncApp's.
-- Basic things are done with basic code. REST is the example: a REST call is one call, general purpose, as it was. It does not take a hundred classes and methods.
 - An app does not figure out where its own configuration is. When none is passed to it, gppu finds where it should have been from the app's caller; none of that code is specific to any other code.
 
 ## Y2
 - Y2 only creates apps, and they share one State and one Env.
-- Y2's app is an async app. Y2's main does not do what the async app does.
+- Y2's app is an async app.
 - Y2 uses Env; it has no environment of its own.
 - Y2's entity is part of gppu.
 - Y2 was originally part of gppu. Only entity support, the Y2 entity and below, is specific to Y2; everything else is generic and is gppu's, so Y2's own code is slim.
 - Y2's runtime, Y2 entity and Y2 group are one step on top of gppu, and they are correct. There is no state manager: it is a kind of runtime, the async app, initialized from configuration, which knows what kinds of objects it makes and where it loads them from (its `key`), and kicks off their lifecycle. Only a manager that handles hardware, such as Hue's, has code of its own; GSM and ISM have very little. A class full of special cases, such as an AV device, stays a valid Y2 entity or group and never does what gppu does.
 - A device class builds on its base classes. What every entity shares is the base's, in one place, and a device class adds only its device's own calls.
 - A class that only says what kind of entity something is has `pass` for its body.
-- A button is an action. Buttons and actions take the same pathway, and nothing separate exists for buttons: no second class, no owner, nothing in the runtime. The callback is given its action when its topic is subscribed to, so a press resolves nothing and needs no state. No MQTT callback publishes to its own topic.
-- Actions are in one place and work as they always did. The runtime holds nothing that is not runtime.
-- Sequences and their ordering stay as they are.
-- Refresh reads an object's own state. Nothing is passed through refresh, state is not passed between objects, and a REST call does not depend on an MQTT payload. No class calls refresh by hand or carries a refresh of its own beside the base's.
-- The only status is the LWT, written by the base MQTT at the entity level. No descendant class has a status topic of its own.
-- Y2 is an app container, so it is an entity and publishes its own state.
-- A REST device such as Sensibo or Hue is its API calls and a state refresh, with more from configuration and fewer hardcodes; Hue and similar are under 10 lines. Pure REST devices such as Hue and PowerView need no connection; most other devices do, as AVMatrix and its descendants.
-- No device class bypasses actions and commands with calls of its own. `turn_on` on Sensibo never touches power.
-- `has_actions` does not exist.
-- A blinds group's double press sets the vanes.
 
 ## Library and periphery
 - No functionality has two implementations. It is either gppu's, and every app uses it, or an app's own. An app that does its own thing is named and known, to be refactored later.
@@ -124,14 +107,6 @@
 - Imports sit at the top of a module; no module is imported inside a function.
 - gppu is a class hierarchy of objects with all functionality in methods; it rarely exports standalone functions. A new standalone function needs significant justification.
 - Every new method or class is justified.
-- Simplifying is not removing. No function in use is removed: what a class that should not exist did is done by one line in the base class or in configuration. What is rejected is a second implementation of a feature, a poor one or an excessive one, never the feature.
-- Old code that works is not removed. A base class's virtual methods are not stubs.
-- A method Alex does not understand is removed or justified, and no method repeats an existing one under another name.
-- A rewrite eliminates the mark that asked for it; a mark is not moved between classes.
-- No monkey patching.
-- Existing code is reused. New files, classes and methods are tied to the functionality; nothing rolls its own.
-- Cleanup deletes more lines than it adds.
-- gppu changes first, and Y2 follows it. Code and the configuration it uses change together; code does not work around configuration.
 - gppufs can have its own uri where it needs to extend y2uri.
 
 ## Release
