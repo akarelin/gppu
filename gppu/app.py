@@ -220,11 +220,13 @@ class AsyncApp(App, YStart):
 class mixin_Mqtt(YStart):
 
     def __init(self) -> None:
-        self.connstring = glob_dict('mqtt')   # .. its connection, the configuration's mqtt, read by its key
         self._client: aiomqtt.Client | None = None
         self._callbacks: dict[y2topic, list[tuple[Callable[..., Any], Any, bool]]] = {}   # .. a topic's listeners: callback, payload, ignore_retained
         self._subscriptions: dict[y2topic, int] = {}                                    # .. a topic's QoS
         self._retained: dict[int, tuple[tuple, set[str]]] = {}   # .. a listener by id: it (held, so its id stays its own) and the topics whose retained message it got on this connection
+
+    def __load(self) -> None:   # .. after every class's init, so its own configuration is in
+        self.connstring = self.my_dict('mqtt') or glob_dict('mqtt')   # .. its connection: its own mqtt, as the any2mqtt services have, or the environment's
 
     def __start(self) -> None: self._spawn(self._mqtt_loop())
 
