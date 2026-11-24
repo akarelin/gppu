@@ -20,12 +20,12 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [ ] MQTT is initialized the same way as the other objects (waits on Alex's words: its connection is neither a field nor read in a step of its own)
 - [ ] Y2's State is a lookup of entities, not an app made at import that is Y2's MQTT client with its own publish and listen (waits on Alex: which app holds the MQTT connection)
 - [ ] Device classes build on their base classes, each keeping only its device's own calls (in progress: every device file checked against the bases)
-  - [x] PowerView is plain REST: a cover's command is one request to its hub; a device starts and stops its entities in YDevice
+  - [x] PowerView speaks its hub's API in covers.py: a group's command is its scene and its double press the vanes; a shade reports the position its hub reads and is not moved on its own; a device starts and stops its entities in YDevice
   - [x] Sensibo: no has_actions, host field, own repr or remembered unit
-  - [x] Sensibo's commands and state go through the base: turn_on and turn_off render its row's `command:` into requests, its state is its `compute_state:`; `set`, the hard-coded properties and validation are gone
-  - [ ] Sensibo's templates and one AO AC row in Creekview (waits on Alex: configuration)
-  - [ ] Hue, PowerView and Sensibo as one REST entity of the base: a refresh is the row's `read:`, a command the requests its `command:` renders; each device class under ten lines (in progress)
+  - [ ] Sensibo reads a `read:` field no Creekview row has, and its pods sit under `climate`, which no app's key reaches; one AO AC row (waits on Alex: configuration)
+  - [ ] Hue under ten lines
   - [ ] Kasa: a strip built and connected as AVMatrix connects, its outlets' commands through the base
+  - [ ] Kasa reads its settings as its own fields, from its own section (code ready; waits on Creekview's top-level `kasa` section)
 - [ ] Y2's `y2entity.py`, by Alex's marks, read and fixed in this order (in progress)
   - [x] One `command`: the entity's own method, then the row's calls or a group's members, then its MQTT payload; `entity_command`, `has_actions`, `_sequenced`, `incorrect_first` and YEntity's and YGroup's `command` are gone
   - [ ] `commands` and the color loop's `command` go; `command` is async
@@ -41,8 +41,9 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
   - [x] Device files keep no `__repr__` of their own; ZwjsSensor and HostEntity are `pass`; a row's `uid` is its own
   - [x] Sensibo's and Tuya's refresh read the device and hand the reading to the base, with no catch
   - [x] Nest posts its rooms' motion flavors through the base's `motion_posts`
-  - [ ] Hue, Tuya, Kasa, Z-Wave, Flume, UniFi, Nest and AV: state from the row's `compute_state:`, commands from its `command:`, each app's section and poll from the base, the device's id as its `uid` (waits on Alex: the templates are configuration)
-  - [ ] Rows name their class in `class`, as the architecture notes say; Creekview writes `kind` (waits on Alex: configuration)
+  - [ ] Hue, Tuya, Kasa, Z-Wave, Flume, UniFi, Nest and AV: each app's section and poll from the base, the device's id as its `uid`
+  - [x] Rows name their class in `class`, and Creekview writes it
+  - [x] A press on `btn/<path>` runs at the one entity that owns the action
 - [x] HomeKit is the homebridge compiler's: the entity base, rooms, blind groups and Sensibo no longer build Homebridge accessories
 - [ ] `has_actions` goes: it hides that a device and its group share one name, and so one action topic and one keypad LED (the AO AC pod and the AO AC group; a Tuya light and its group; a shade and its group), and that keypad buttons and LEDs are built as entities that answer presses (waits on Alex: the names are configuration)
 - [ ] Alex's `# !!!` marks: `App`, `Env` (Env waits on Alex: programs declare their environment, about 175 files)
