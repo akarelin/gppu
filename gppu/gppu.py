@@ -1100,6 +1100,21 @@ class _YMRO:
     return result
 
 
+  def print_ymro(self):
+    Debug('BY', self.__class__.__qualname__)
+    siblings = [c for c in reversed(self.__class__.__mro__) if c != _YMRO and issubclass(c, _YMRO)]
+    step = 'init'
+    for sibling in siblings:
+      Debug('DG', f"  {sibling.__qualname__}")
+      qname = f"{sibling.__qualname__}__{step}"
+      if qname[0] != '_': qname = '_' + qname
+      method = getattr(self, qname, None)
+      if method:
+        Debug('INFO', f"  {method.__qualname__}")
+        initers = getattr(sibling, '_initers', [])
+        for initer in initers: Debug('DIM', f"     {initer.__qualname__}")
+
+
   def _ymros(self):
     result = {}
     siblings = [c for c in reversed(self.__class__.__mro__) if c != _YMRO and issubclass(c, _YMRO)]
