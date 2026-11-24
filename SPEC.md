@@ -91,7 +91,8 @@
 
 ## Y2
 - Y2 only creates apps, and they share one State and one Env.
-- Y2's app is an async app.
+- Y2's app is an async app. Y2's main does not do by hand what the async app does: making its apps from their rows and running them is the async app's.
+- An app is an app: Y2 has no class of its own named `App` in place of gppu's.
 - Y2 uses Env; it has no environment of its own.
 - Y2's entity is part of gppu.
 - Y2 was originally part of gppu. Only entity support, the Y2 entity and below, is specific to Y2; everything else is generic and is gppu's, so Y2's own code is slim.
@@ -128,6 +129,7 @@
 - Old code that works is not removed. A base class's virtual methods are not stubs.
 - A method Alex does not understand is removed or justified, and no method repeats an existing one under another name.
 - A rewrite eliminates the mark that asked for it; a mark is not moved between classes.
+- No monkey patching: nothing replaces a method or member of a class or object from outside it, in a program, a test or a check.
 - Existing code is reused. A new file, class or method is tied to the functionality it serves and does not roll its own version of what a base class already does.
 - Cleanup deletes more lines than it adds.
 - gppu changes first, and Y2 follows it. Code and the configuration it uses change together; code does not work around configuration.
