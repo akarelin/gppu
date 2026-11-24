@@ -1085,9 +1085,20 @@ class mixin_Logger(_mixin):
 # endregion
 
 
+_trace_mro = False
+
+
 # region YMRO lifecycle
 class _YMRO:
   POSSIBLE_STEPS = ['init', 'load', 'start', 'stop']
+
+  @property
+  def _trace_mro(self) -> bool:
+    result = getattr(self, 'args', {}).get('trace_mro', False)
+    global _trace_mro
+    _trace_mro = result
+    return result
+
 
   def _ymros(self):
     result = {}
