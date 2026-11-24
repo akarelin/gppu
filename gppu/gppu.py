@@ -1294,15 +1294,17 @@ class _Env(YInit, _Base, _DC):
 # !!! Rewrute!
     """The program's environment: a system object, made once as gppu is imported and hidden from programs. Its init knows
     the machine it runs on and loads its environment's file, so a reset followed by init is a reload."""
+    _ENV_PATHS = {"RAN": "RAN/_config/config.yaml", "IoT": "IoT/_Creekview/_creekview.yaml"}   # .. the two environments, each in its repository
     home: Path
     os: OSType
+    path: Path   # .. the environment's YAML file; host, user and environment, RAN or IoT, are plain attributes too: the machine and the environment are no configuration
 
     def __init(self) -> None:
         self.os, self.home = detect_os(), Path.home() # !!!  Rewrite
         self.host, self.user = socket.gethostname().split('.')[0].lower(), getpass.getuser() # !!!  Rewrite
         root = Path('D:/Dev') if self.os == OSType.W11 else self.home # !!!  Rewrite
-        self.path = root / 'RAN/_config/config.yaml'   # .. apps share RAN
-        if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts): self.path = root / 'IoT/_Creekview/_creekview.yaml'   # .. Y2's apps share Creekview
+        self.environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) else 'RAN'
+        self.path = root / self._ENV_PATHS[self.environment]
         if self.path.exists(): self.data = jinja.configuration(dict_from_yml(self.path)) | self.data   # .. a host without its repository reads its environment from MQTT
         if 'trace_rules' in self.data: Logger.trace_rules = dict(self.data['trace_rules'])
 
