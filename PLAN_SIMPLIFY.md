@@ -15,7 +15,10 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [x] Device controls run on their app's loop; `SerializedControl`'s own loop thread and `_control_submit` are gone
 - [x] MQTT reads its connection, the configuration's `mqtt`, in its init step
 - [x] `Env.reset()` as Alex wrote it: `Env.init()` after it reads the configuration again
-- [ ] Alex's `# !!!` marks: `mixin_Config`, `App`, `Env`
+- [x] AsyncApp is the loop, its lifecycle and `run_later` and `run_every`; an app's objects, the rows at its `key`, are `mixin_Groups`'; each object is refreshed by a `run_every`, and `poll()` is gone
+- [x] MQTT's connection is its `mqtt` field, read where it connects
+- [ ] Alex's `# !!!` marks: `App`, `Env` (Env waits on Alex: programs declare their environment, about 175 files)
+- [ ] Y2's apps read their configuration as fields, not copied from a section by hand: Kasa, UniFi, Z-Wave, Flume, Nest, Insteon (Kasa waits on Alex: its settings are at `power/kasa`, and no `kasa` section exists)
 - [x] `mixin_Config` is the four readers over the object's data, `my`, `my_int`, `my_list` and `my_dict`, each read by programs
 - [ ] `App`: an app is not made by passing it its own name. Its name is its class's, and given no configuration it reads the section named as it is (Preservator); App still takes a name passed to it, and the lake's and the Linked Data API's servers pass one
 - [x] The Jinja region: each public method has a user (`render_template`, `apply_template` and `jinja_template` in programs, `configuration` in Env and App, `jinja_fill` in the catalog)
