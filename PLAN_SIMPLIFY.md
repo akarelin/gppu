@@ -22,7 +22,10 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [ ] Device classes build on their base classes, each keeping only its device's own calls (in progress: every device file checked against the bases)
   - [x] PowerView is plain REST: a cover's command is one request to its hub; a device starts and stops its entities in YDevice
   - [x] Sensibo: no has_actions, host field, own repr or remembered unit
-  - [ ] Sensibo's state and its requests are configuration templates, as PowerView's are, and `_cloud` and `_compute_state` go (waits on Alex: configuration)
+  - [x] Sensibo's commands and state go through the base: turn_on and turn_off render its row's `command:` into requests, its state is its `compute_state:`; `set`, the hard-coded properties and validation are gone
+  - [ ] Sensibo's templates and one AO AC row in Creekview (waits on Alex: configuration)
+  - [ ] Hue, PowerView and Sensibo as one REST entity of the base: a refresh is the row's `read:`, a command the requests its `command:` renders; each device class under ten lines (in progress)
+  - [ ] Kasa: a strip built and connected as AVMatrix connects, its outlets' commands through the base
   - [ ] A blinds group's double press sets the vanes through its row's `actions:`, which the cover_group template would carry (waits on Alex: configuration)
   - [x] Device files keep no `__repr__` of their own; ZwjsSensor and HostEntity are `pass`; a row's `uid` is its own
   - [x] Sensibo's and Tuya's refresh read the device and hand the reading to the base, with no catch
