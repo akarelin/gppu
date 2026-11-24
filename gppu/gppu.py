@@ -1184,10 +1184,10 @@ class _Env(YInit, _Base, _DC):
     def __init(self) -> None:
         self.os, self.home = detect_os(), Path.home()
         self.host, self.user = socket.gethostname().split('.')[0].lower(), getpass.getuser()
-        # .. the two environments' files, where the repositories are: apps share RAN, Y2's and IoT's programs share Creekview
         root = Path('D:/Dev') if self.os == OSType.W11 else self.home
-        self.path = root / ('IoT/_Creekview/_creekview.yaml' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (root / 'RAN').exists() else 'RAN/_config/config.yaml')
-        self.data = jinja.configuration(dict_from_yml(self.path)) if self.path.exists() else {}   # .. a host without its repository has no file: MQTT gives it its configuration
+        self.path = root / 'RAN/_config/config.yaml'   # .. apps share RAN
+        if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts): self.path = root / 'IoT/_Creekview/_creekview.yaml'   # .. Y2's apps share Creekview
+        self.data = jinja.configuration(dict_from_yml(self.path)) if self.path.exists() else {}   # .. a host without its repository reads its environment from MQTT
         if 'trace_rules' in self.data: Logger.trace_rules = dict(self.data['trace_rules'])
 
     @staticmethod
