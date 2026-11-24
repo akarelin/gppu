@@ -128,6 +128,7 @@
 - Old code that works is not removed. A base class's virtual methods are not stubs.
 - A method Alex does not understand is removed or justified, and no method repeats an existing one under another name.
 - A rewrite eliminates the mark that asked for it; a mark is not moved between classes.
+- Existing code is reused. A new file, class or method is tied to the functionality it serves and does not roll its own version of what a base class already does.
 - Cleanup deletes more lines than it adds.
 - gppu changes first, and Y2 follows it. Code and the configuration it uses change together; code does not work around configuration.
 - gppufs can have its own uri where it needs to extend y2uri.
