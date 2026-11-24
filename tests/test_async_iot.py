@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+pytest.importorskip('aiohttp')   # .. the iot extra
 import aiohttp
 import asyncio
 import concurrent.futures

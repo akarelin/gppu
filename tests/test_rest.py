@@ -5,6 +5,8 @@ import asyncio
 import unittest
 from pathlib import Path
 
+import pytest
+pytest.importorskip('uvicorn')   # .. the ld extra, which gppu.api serves with
 from gppu import AsyncApp, mixin_Rest
 from gppu.api import APIApp
 from gppu.gppu import _DC

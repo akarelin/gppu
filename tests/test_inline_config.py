@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from gppu import Env
+pytest.importorskip('textual')   # .. the tui extra, which gppu.tui.launcher is built on
 from gppu.tui.launcher import read_manifest
 
 MANIFEST = """
