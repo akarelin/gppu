@@ -606,7 +606,9 @@ def dict_from_yml(filename: str | Path) -> dict:
 
   Loader.add_constructor("!include", yml_include)
 
-  with filename.open() as f: return dict(yaml.load(f, Loader=Loader))
+  with filename.open() as f:
+    if filename.suffix == '.py': return dict(yaml.load(re.search(r'^MANIFEST = r?"""(.*?)"""', f.read(4096), re.M | re.S)[1], Loader=Loader))   # .. a script's YAML is its MANIFEST, in its first 4 KB
+    return dict(yaml.load(f, Loader=Loader))
 
 # endregion
 
@@ -1147,7 +1149,6 @@ class _DC(UserDict):
 
 # region Configuration mixins
 class mixin_Config(_mixin):
-# !!!  """ Very sus. Looks like slop. It DOES not read the configuration. Claude cannot understand this code and thinks its some "loader". self.my waws initialized somewhere and needs a place, but not this complexity. """
     """An object's configuration, its data, read back with my."""
     def my(self, path: str | y2path) -> Any: return deepget(path, self.data)
     def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self.data, default=default)
@@ -1160,17 +1161,13 @@ class _Base(mixin_Logger, mixin_Config): pass
 
 # region App
 class App(YInit, _Base, _DC):
-# !!! Rewrote. folowing the architecture, not beside it
     """An app: named as its class unless made with a name. What it is made with goes over its configuration, the one it
     is given or else its section of the environment, and the command line goes over both."""
     name: str
 
     def __init(self) -> None:
         if not self.name: self.name = type(self).__name__.lower()
-        configuration = self.data['config'] if 'config' in self.data else glob_dict(self.name)   # .. a dict, a YAML file or a script's MANIFEST text
-        if isinstance(configuration, os.PathLike): configuration = dict_from_yml(configuration)
-        if isinstance(configuration, str): configuration = yaml.load(configuration, Loader=YmlLoader)
-        self.data = jinja.configuration(deepcopy(dict(configuration))) | self.data
+        self.data = jinja.configuration(dict_from_yml(self.data['config']) if 'config' in self.data else deepcopy(glob_dict(self.name))) | self.data   # .. its file, a YAML file or a script, or else its section of the environment
         # .. --key value sets a key, a slash path a nested one, to the value read as YAML; --flag sets it to True
         argv, i = sys.argv[1:], 0
         while i < len(argv):
@@ -1183,29 +1180,23 @@ class App(YInit, _Base, _DC):
 
 
 # region - Env: the configuration
-class _Env:
-# !!! Rewrute!
-    """The program's environment: a global system object, made once as gppu is imported and hidden from programs. Its
-    data is the environment's configuration, which glob reads; the rest is the machine, which is no configuration."""
-    os, home = detect_os(), Path.home() # !!!  Rewrite
-    host, user = socket.gethostname().split('.')[0].lower(), getpass.getuser() # !!!  Rewrite
-    data: dict[str, Any] = {}
-    initialized: bool = False
+class _Env(_Base, _DC):
+    """The program's environment: a global singleton app, made once as gppu is imported and hidden from programs. It
+    loads as any app does, from the data it is made with: its environment's one YAML file, which glob reads. Y2's and
+    IoT's programs share Creekview, and so does a host without RAN's repository; every other app shares RAN; a host with
+    neither is given its configuration over MQTT. It also knows the machine it runs on."""
+    os, home = detect_os(), Path.home()
+    host, user = socket.gethostname().split('.')[0].lower(), getpass.getuser()
+    root = Path('D:/Dev') if os == OSType.W11 else home   # .. where the repositories are
+    environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (root / 'RAN').exists() else 'RAN'
+    path = root / {'RAN': 'RAN/_config/config.yaml', 'IoT': 'IoT/_Creekview/_creekview.yaml'}[environment]
+    initialized = path.exists()
 
     @staticmethod
     def reset() -> None: Env.data = {}; Env.initialized = False
 
 
-Env = _Env()
-# region - the environment, and one YAML load of its file
-# .. apps share RAN; Y2's and IoT's programs share Creekview, and so does a host without RAN's repository, as Y2's
-# .. containers are; a host with neither, as PC Control's, has no file and is given its configuration over MQTT
-# endregion
-_ENV_PATHS = {"RAN": "RAN/_config/config.yaml", "IoT": "IoT/_Creekview/_creekview.yaml"}
-_ENV_ROOT = Path('D:/Dev') if Env.os == OSType.W11 else Env.home # !!!  Rewrite
-Env.environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (_ENV_ROOT / _ENV_PATHS['RAN']).exists() else 'RAN' # !!!  Rewrite
-Env.path = _ENV_ROOT / _ENV_PATHS[Env.environment] # !!!  Rewrite
-if Env.path.exists(): Env.data = dict_from_yml(Env.path) # !!!  Rewrite
+Env = _Env(data=dict_from_yml(_Env.path) if _Env.initialized else {})
 
 # .. the configuration's readers are globals over Env's data
 def glob(path: str | y2path, default=None) -> Any: return deepget(path, Env.data, default=default)
@@ -1218,5 +1209,4 @@ def glob_dict(path: str | y2path, default: dict = {}) -> dict: return deepget_di
 # endregion
 Env.data = jinja.configuration(Env.data)
 if 'trace_rules' in Env.data: Logger.trace_rules = dict(Env.data['trace_rules'])
-Env.initialized = True
 # endregion

@@ -134,4 +134,4 @@ class SessionsClean(App):
 
 
 if __name__ == '__main__':
-    SessionsClean(config=MANIFEST).main()
+    SessionsClean(config=__file__).main()
