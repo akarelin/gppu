@@ -116,6 +116,7 @@ def _safe_datetime(o: object) -> dt | None:
 
 
 # region Time helpers
+def now_str(): return dt.now().strftime("%Y%m%d.%H%M%S")
 def now_ts(): return dt.now().timestamp()
 
 def format_size(size: int | float) -> str:
