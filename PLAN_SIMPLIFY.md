@@ -43,7 +43,9 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
   - [x] Nest posts its rooms' motion flavors through the base's `motion_posts`
   - [ ] Hue, Tuya, Kasa, Z-Wave, Flume, UniFi, Nest and AV: each app's section and poll from the base, the device's id as its `uid`
   - [x] Rows name their class in `class`, and Creekview writes it
-  - [x] A press on `btn/<path>` runs at the one entity that owns the action
+  - [ ] Buttons and actions take one pathway: an entity registers its actions and subscribes its button in one loop; `_cb_press`, AM's button branch and `Runtime.buttons` go (ready in y2's working tree; waits on Alex: one owner in Creekview for each of the 21 buttons two objects share)
+  - [ ] One async command, the core's, reaches an HTTP device as configured; Hue's and PowerView's own commands go (waits on Alex: the name of the device's own call, where its request is configured, a group's one request or its members', and how async reaches the device)
+  - [ ] PowerViewHub builds no shades and groups from lists of its own (waits on Alex: how a YDevice is given its entities)
 - [x] HomeKit is the homebridge compiler's: the entity base, rooms, blind groups and Sensibo no longer build Homebridge accessories
 - [ ] `has_actions` goes: it hides that a device and its group share one name, and so one action topic and one keypad LED (the AO AC pod and the AO AC group; a Tuya light and its group; a shade and its group), and that keypad buttons and LEDs are built as entities that answer presses (waits on Alex: the names are configuration)
 - [ ] Alex's `# !!!` marks: `App`, `Env` (Env waits on Alex: programs declare their environment, about 175 files)
