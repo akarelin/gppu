@@ -680,10 +680,10 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
 
     def configuration(self, node: dict) -> dict:
         """A configuration as loaded: its macros and named templates added, its Jinja that reads only the configuration
-        filled (``glob`` reads the value it fills, filled), and its `template:` rows merged over their templates. Env's
-        configuration and an app's own both load through it."""
+        filled (``glob`` reads the value it fills in that configuration, filled), and its `template:` rows merged over their
+        templates. Env's configuration and an app's own both load through it."""
         self._jinja_configuration(node)
-        def read(path: str) -> Any: return self.jinja_fill(glob(path), **readers)
+        def read(path: str) -> Any: return self.jinja_fill(deepget(path, node), **readers)
         readers = {'glob': read,
                    'glob_int': lambda path: _ if isinstance(_ := read(path), int) else 0,
                    'glob_list': lambda path: _ if isinstance(_ := read(path), list) else [],
@@ -1139,6 +1139,7 @@ class _DC(UserDict):
   def __init__(self, **kw):
     data = kw.pop('data', {})
     if isinstance(data, str): data = {'data': data}
+    if isinstance(data, os.PathLike): data = jinja.configuration(dict_from_yml(data))   # .. a YAML file it is made from is its configuration, loaded
     self.data = kw | data
     if hasattr(self, 'init') and callable(self.init): self.init()
 
@@ -1151,8 +1152,6 @@ class mixin_Config(_mixin):
     def my(self, path: str | y2path) -> Any: return deepget(path, self.data)
     def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self.data, default=default)
     def my_float(self, path, default: float = float('nan')) -> float: return deepget_float(path, self.data, default=default)
-    def my_list(self, path: str | y2path, default: list = []) -> list: return deepget_list(path, self.data, default=default or [])
-    def my_dict(self, path: str | y2path, default: dict = {}) -> dict: return deepget_dict(path, self.data, default=default or {})
 
 
 class _Base(mixin_Logger, mixin_Config): pass
@@ -1182,34 +1181,30 @@ class App(YInit, _Base, _DC):
 
 
 # region - Env: the configuration
-class _Env(YLoad, _Base, _DC):
-    """The program's environment: a system object, made once as gppu is imported and hidden from programs. Its my is glob"""
+class _Env(YInit, _Base, _DC):
+    """The program's environment: a system object, made once as gppu is imported and hidden from programs. It is made from
+    its environment's file, as any object is made from the file it is given, and its init knows the machine it runs on."""
     home: Path
     os: OSType
-    path: Path   # .. the environment's YAML file
 
     def __init(self) -> None:
-        """The machine it runs on, and its environment's file: apps share RAN, Y2's and IoT's programs share Creekview."""
         self.os, self.home = detect_os(), Path.home()
         self.host, self.user = socket.gethostname().split('.')[0].lower(), getpass.getuser()
-        root = Path('D:/Dev') if self.os == OSType.W11 else self.home   # .. where the repositories are
-        self.environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (root / 'RAN').exists() else 'RAN'
-        self.path = root / {'RAN': 'RAN/_config/config.yaml', 'IoT': 'IoT/_Creekview/_creekview.yaml'}[self.environment]
-
-    def __load(self) -> None:
-        """One YAML load of its file, then its Jinja that reads only the configuration filled: that Jinja reads glob, which
-        reads the file as loaded."""
-        self.data = dict_from_yml(self.path)
-        self.data = jinja.configuration(self.data)
         if 'trace_rules' in self.data: Logger.trace_rules = dict(self.data['trace_rules'])
 
     @staticmethod
     def reset() -> None: Env.data = {}; Env.initialized = False
 
 
-Env = _Env()
+# .. the two environments' files, from where the repositories are: apps share RAN, Y2's and IoT's programs share Creekview
+_ROOT = Path('D:/Dev') if detect_os() == OSType.W11 else Path.home()
+_ENV_PATH = _ROOT / ('IoT/_Creekview/_creekview.yaml' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (_ROOT / 'RAN').exists() else 'RAN/_config/config.yaml')
+Env = _Env(data=_ENV_PATH if _ENV_PATH.exists() else {})   # .. a host without its repository has no file: MQTT gives it its configuration
 
-# .. the configuration's readers are globals: Env's my readers
-glob, glob_int, glob_list, glob_dict = Env.my, Env.my_int, Env.my_list, Env.my_dict
-if Env.path.exists(): Env.load()   # .. a host without its repository has no file: MQTT gives it its configuration
+
+# .. the configuration's readers are globals over Env's data
+def glob(path: str | y2path) -> Any: return deepget(path, Env.data)
+def glob_int(path: str | y2path, default: int = 0) -> int: return deepget_int(path, Env.data, default=default)
+def glob_list(path: str | y2path) -> list: return deepget_list(path, Env.data, default=[])
+def glob_dict(path: str | y2path) -> dict: return deepget_dict(path, Env.data, default={})
 # endregion
