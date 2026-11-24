@@ -54,23 +54,60 @@ class AsyncApp(App, YStart):
   """An app on asyncio: ``asyncio.run(MyApp().run())``. Construction runs its init step; ``run()`` runs its load and
   start steps on the loop, and it runs until ``stop()``. A class gives its part of a step as a private ``__init``,
   ``__load``, ``__start`` or ``__stop``; every class's part runs, base first.
-
-  Its timers are ``run_later`` and ``run_every``. ``timers`` holds every armed timer's row by its id (its callback's
-  name, its kind, its interval and its next run), ``h_timeouts`` those armed under a key.
   """
 
   def __init(self) -> None:
     self._loop: asyncio.AbstractEventLoop | None = None
     self._task_group: asyncio.TaskGroup | None = None
     self._background_tasks: set[asyncio.Task] = set()
-    self.timers: dict[int, dict] = {}
-    self.h_timeouts: dict[str, dict] = {}
 
   def __stop(self) -> None:
-    self.cancel_timers()
     if self._loop is None: return   # .. not running: nothing it spawned is left to cancel
     tasks = list(self._background_tasks)   # .. what it spawned before it stopped; a cleanup a later stop step spawns runs
     self._loop.call_soon_threadsafe(lambda: [task.cancel() for task in tasks])
+
+  def schedule[T](self, coroutine: Coroutine[Any, Any, T], /) -> Future[T]:
+    """``coroutine`` on the app's loop, from any thread; its standard future."""
+    return asyncio.run_coroutine_threadsafe(coroutine, self._get_loop())
+
+  def _get_loop(self) -> asyncio.AbstractEventLoop:
+    if self._loop is None: raise RuntimeError(f'{self!r} is not running')
+    return self._loop
+
+  async def run(self) -> None:
+    """init, load and start on this loop; returns when the app is stopped."""
+    if self._task_group is not None: raise RuntimeError(f'{self!r} is already running')
+    try:
+      self._loop = asyncio.get_running_loop()
+      async with asyncio.TaskGroup() as tasks:
+        self._task_group = tasks
+        for step in (self.init, self.load, self.start):
+          if result := step(): await result
+        if not self.stopped: self._spawn(asyncio.Event().wait())   # .. started, it runs until its stop step cancels what it spawned
+    finally:
+      self._task_group = None
+      self._loop = None
+      self._background_tasks.clear()
+
+  def _spawn[T](self, coroutine: Coroutine[Any, Any, T], /) -> asyncio.Task[T]:
+    if self._task_group is None: raise RuntimeError(f'{self!r} is not running')
+    task = self._task_group.create_task(coroutine)
+    self._background_tasks.add(task)
+    task.add_done_callback(self._background_tasks.discard)
+    return task
+# endregion
+
+
+# region Timers: an async app's run_later and run_every
+class mixin_Timers(YStart):
+  """``run_later`` and ``run_every`` on its async app's loop. ``timers`` holds every armed timer's row by its id (its
+  callback's name, its kind, its interval and its next run), ``h_timeouts`` those armed under a key."""
+
+  def __init(self) -> None:
+    self.timers: dict[int, dict] = {}
+    self.h_timeouts: dict[str, dict] = {}
+
+  def __stop(self) -> None: self.cancel_timers()
 
   def run_later(self, callback: Callable[..., Any], *, delay: int | float, key: str | None = None, **data: Any) -> Future:
     """``callback`` once, ``delay`` seconds from now; armed again under ``key``, the one armed under it before is
@@ -106,41 +143,11 @@ class AsyncApp(App, YStart):
   def cancel_timers(self) -> None:
     """Every timer this app armed, cancelled, from any thread."""
     for row in list(self.timers.values()): row['task'].get_loop().call_soon_threadsafe(row['task'].cancel)
-
-  def schedule[T](self, coroutine: Coroutine[Any, Any, T], /) -> Future[T]:
-    """``coroutine`` on the app's loop, from any thread; its standard future."""
-    return asyncio.run_coroutine_threadsafe(coroutine, self._get_loop())
-
-  def _get_loop(self) -> asyncio.AbstractEventLoop:
-    if self._loop is None: raise RuntimeError(f'{self!r} is not running')
-    return self._loop
-
-  async def run(self) -> None:
-    """init, load and start on this loop; returns when the app is stopped."""
-    if self._task_group is not None: raise RuntimeError(f'{self!r} is already running')
-    try:
-      self._loop = asyncio.get_running_loop()
-      async with asyncio.TaskGroup() as tasks:
-        self._task_group = tasks
-        for step in (self.init, self.load, self.start):
-          if result := step(): await result
-        if not self.stopped: self._spawn(asyncio.Event().wait())   # .. started, it runs until its stop step cancels what it spawned
-    finally:
-      self._task_group = None
-      self._loop = None
-      self._background_tasks.clear()
-
-  def _spawn[T](self, coroutine: Coroutine[Any, Any, T], /) -> asyncio.Task[T]:
-    if self._task_group is None: raise RuntimeError(f'{self!r} is not running')
-    task = self._task_group.create_task(coroutine)
-    self._background_tasks.add(task)
-    task.add_done_callback(self._background_tasks.discard)
-    return task
 # endregion
 
 
 # region Groups: an app's objects, the rows at its key
-class mixin_Groups(YStart):
+class mixin_Groups(mixin_Timers):
   """An async app's objects are the rows at its ``key``, each made as the class the row names in ``class``, among
   ``_default`` and its subclasses, or as ``_default``; a row that is an app runs as one. With a ``poll_interval``, each
   is refreshed on it, at least once an hour, their first refreshes spread over one interval in shuffled order."""
