@@ -10,6 +10,7 @@ import logging
 import sys
 import platform
 import asyncio
+import inspect
 import builtins
 import json
 import getpass
@@ -1008,7 +1009,14 @@ class _YMRO:
 
   def _ymro(self, method: str) -> list: return self._ymros().get(method, [])
 
-  def _callall(self, method, *a, **kw): [m(*a, **kw) for m in self._ymro(method)]   # .. an async step takes @sync
+  def _callall(self, method, *a, **kw):
+    if any(inspect.iscoroutinefunction(m) for m in self._ymro(method)): return self._acallall(method, *a, **kw)   # .. an async app awaits each step
+    [m(*a, **kw) for m in self._ymro(method)]
+
+  async def _acallall(self, method: str, *a, **kw) -> None:
+    for m in self._ymro(method):
+      result = m(*a, **kw)
+      if asyncio.iscoroutine(result): await result
 
 
 class YInit(_YMRO):

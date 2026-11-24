@@ -15,10 +15,10 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [x] Logging is as it was in March: `Debug`, `Info`, `Warn` and `Error` call the log, and `mixin_Logger` gives a class a log under its own name; the caller's frame is no longer read
 - [x] Device controls run on their app's loop; `SerializedControl`'s own loop thread and `_control_submit` are gone
 - [x] `Env.reset()` as Alex wrote it
-- [ ] AsyncApp's lifecycle is async; today it runs the sync steps, and an `async def` step part runs through `@sync` without being awaited (waits on Alex)
+- [x] AsyncApp's lifecycle is async: a step with an `async def` part is awaited, each part in turn, before the next step starts; AppService's, brul2mqtt's and the neo-mqtt bridge's async steps are no longer wrapped in `@sync`
+- [x] MQTT reads its connection by its key where it connects, the app's own `mqtt` or the environment's; it is no field
 - [x] Timers are `mixin_Timers`, `run_later` and `run_every`, separate from AsyncApp's loop and lifecycle; `mixin_Groups` refreshes its objects through it
 - [x] An app's objects, the rows at its `key`, are `mixin_Groups`', not AsyncApp's; `poll()` is gone
-- [ ] MQTT is initialized the same way as the other objects (waits on Alex's words: its connection is neither a field nor read in a step of its own)
 - [ ] Y2's State is a lookup of entities, not an app made at import that is Y2's MQTT client with its own publish and listen (waits on Alex: which app holds the MQTT connection)
 - [ ] Device classes build on their base classes, each keeping only its device's own calls (in progress: every device file checked against the bases)
   - [x] PowerView speaks its hub's API in covers.py: a group's command is its scene and its double press the vanes; a shade reports the position its hub reads and is not moved on its own; a device starts and stops its entities in YDevice

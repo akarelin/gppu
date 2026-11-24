@@ -269,7 +269,6 @@ class AppService(mixin_Mqtt, AsyncApp):
         self.until_loaded = set(self.my('config_mqtt/topics'))
         await self.run()
 
-    @sync
     async def __load(self) -> None:
         for topic in self.my('config_mqtt/topics'): await self.mqtt_listen(self._receive_config, topic, qos=1)
 
