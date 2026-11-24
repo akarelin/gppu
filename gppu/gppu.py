@@ -1090,7 +1090,7 @@ _trace_mro = False
 
 # region YMRO lifecycle
 class _YMRO:
-  POSSIBLE_STEPS = ['init', 'load', 'start', 'refresh', 'publish', 'stop']
+  POSSIBLE_STEPS = ['init', 'load', 'start', 'stop']
 
   @property
   def _trace_mro(self) -> bool:
@@ -1177,10 +1177,6 @@ class YLoad(YInit):
 class YStart(YLoad):
   @abstractmethod
   def __start(self): pass
-  @abstractmethod
-  def __refresh(self): pass
-  @abstractmethod
-  def __publish(self): pass
 
   @final
   def start(self):
