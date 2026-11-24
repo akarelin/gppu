@@ -1260,7 +1260,6 @@ class _DC(UserDict):
 
 # region Configuration mixins
 class mixin_Config(_mixin):
-# !!!  """ Very sus. Looks like slop. It DOES not read the configuration. Claude cannot understand this code and thinks its some "loader". self.my waws initialized somewhere and needs a place, but not this complexity. """
     """An object's configuration, its data, read back with my."""
     def my(self, path: str | y2path) -> Any: return deepget(path, self.data)
     def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self.data, default=default)
