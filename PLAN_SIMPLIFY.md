@@ -11,7 +11,7 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 
 ## Step 1: gppu reduced statically (in progress)
 - [x] Logging is one `Logger`: the console, its colours and filter, and the trace rules; `init_logger` is gone
-- [ ] File logging: RAN's `log_file` was commented out when the file handler was removed on 11-21; judged against Alex's words, it comes back as one line or is shown to be a hack
+- [x] File logging stays out: Alex's docstring on it asked for a justification, and the only one was a copy of the console in a file no program reads; RAN's `log_file` stays commented out
 - [x] Logging is as it was in March: `Debug`, `Info`, `Warn` and `Error` call the log, and `mixin_Logger` gives a class a log under its own name; the caller's frame is no longer read
 - [x] Device controls run on their app's loop; `SerializedControl`'s own loop thread and `_control_submit` are gone
 - [x] `Env.reset()` as Alex wrote it
@@ -113,7 +113,7 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [ ] Y2's UI API on gppu's `rest_read` and `rest_call`
 - [ ] y2entity.py's marks, in file order: `_Runtime` and `state_changed` (state, not runtime), App (own state), the unapproved global functions, YObject's construction, mixin_Attributes, the entity's own `_compute_state`, `commands`, `brightness`, actions, `_send_command` and the one async `command`, `_publish_indicator`, groups' `_calls` and `_resolve_members`, mixin_Occupancy, Z2Light, GSM's `_helpers` and `construct`, the sampler, `_State`'s MQTT overrides, `tagged`, `schedule_state_check` and `check_states`
 - [ ] covers.py's marks: PowerView's `powerview` field, the cover group with no function and its `_call`, the hub's own `covers` and `groups` lists
-- [ ] mqtt2pg reads `my_list`, which gppu no longer has
+- [x] mqtt2pg reads its lists with `my`
 
 ## Y2 (the gppu-3.8.0 session)
 - Y2's objects load natively by `_DC`, with no constructors of their own
