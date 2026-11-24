@@ -1151,6 +1151,8 @@ class mixin_Config(_mixin):
     def my(self, path: str | y2path) -> Any: return deepget(path, self.data)
     def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self.data, default=default)
     def my_float(self, path, default: float = float('nan')) -> float: return deepget_float(path, self.data, default=default)
+    def my_list(self, path: str | y2path, default: list = []) -> list: return deepget_list(path, self.data, default=default or [])
+    def my_dict(self, path: str | y2path, default: dict = {}) -> dict: return deepget_dict(path, self.data, default=default or {})
 
 
 class _Base(mixin_Logger, mixin_Config): pass
@@ -1180,36 +1182,34 @@ class App(YInit, _Base, _DC):
 
 
 # region - Env: the configuration
-class Env:
-    """The program's environment: one global, loaded as gppu is imported and hidden from programs. Its data is its
-    environment's one YAML file, which glob reads: Y2's and IoT's programs share Creekview, and so does a host without
-    RAN's repository; every other app shares RAN; a host with neither has no file and is given its configuration over
-    MQTT. It also knows the machine it runs on."""
-    os, home = detect_os(), Path.home()
-    host, user = socket.gethostname().split('.')[0].lower(), getpass.getuser()
-    root = Path('D:/Dev') if os == OSType.W11 else home   # .. where the repositories are
-    environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (root / 'RAN').exists() else 'RAN'
-    path = root / {'RAN': 'RAN/_config/config.yaml', 'IoT': 'IoT/_Creekview/_creekview.yaml'}[environment]
-    data: dict[str, Any] = {}
-    initialized: bool = False
+class _Env(YLoad, _Base, _DC):
+    """The program's environment: a system object, made once as gppu is imported and hidden from programs. Its my is glob"""
+    home: Path
+    os: OSType
+    path: Path   # .. the environment's YAML file
 
-    @staticmethod
-    def init() -> None:
-        """One YAML load of its file, then the Jinja in it that reads only the configuration filled: that Jinja reads glob,
-        which reads the file as loaded."""
-        Env.data = dict_from_yml(Env.path)
-        Env.data = jinja.configuration(Env.data)
-        if 'trace_rules' in Env.data: Logger.trace_rules = dict(Env.data['trace_rules'])
-        Env.initialized = True
+    def __init(self) -> None:
+        """The machine it runs on, and its environment's file: apps share RAN, Y2's and IoT's programs share Creekview."""
+        self.os, self.home = detect_os(), Path.home()
+        self.host, self.user = socket.gethostname().split('.')[0].lower(), getpass.getuser()
+        root = Path('D:/Dev') if self.os == OSType.W11 else self.home   # .. where the repositories are
+        self.environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (root / 'RAN').exists() else 'RAN'
+        self.path = root / {'RAN': 'RAN/_config/config.yaml', 'IoT': 'IoT/_Creekview/_creekview.yaml'}[self.environment]
+
+    def __load(self) -> None:
+        """One YAML load of its file, then its Jinja that reads only the configuration filled: that Jinja reads glob, which
+        reads the file as loaded."""
+        self.data = dict_from_yml(self.path)
+        self.data = jinja.configuration(self.data)
+        if 'trace_rules' in self.data: Logger.trace_rules = dict(self.data['trace_rules'])
 
     @staticmethod
     def reset() -> None: Env.data = {}; Env.initialized = False
 
 
-# .. the configuration's readers are globals over Env's data
-def glob(path: str | y2path, default=None) -> Any: return deepget(path, Env.data, default=default)
-def glob_int(path: str | y2path, default: int = 0) -> int: return deepget_int(path, Env.data, default=default)
-def glob_list(path: str | y2path, default: list = []) -> list: return deepget_list(path, Env.data, default=default or [])
-def glob_dict(path: str | y2path, default: dict = {}) -> dict: return deepget_dict(path, Env.data, default=default or {})
-if Env.path.exists(): Env.init()   # .. a host without the repository has no file: MQTT gives it its configuration
+Env = _Env()
+
+# .. the configuration's readers are globals: Env's my readers
+glob, glob_int, glob_list, glob_dict = Env.my, Env.my_int, Env.my_list, Env.my_dict
+if Env.path.exists(): Env.load()   # .. a host without its repository has no file: MQTT gives it its configuration
 # endregion
