@@ -128,6 +128,12 @@ def prepend_datestamp(path, separator=" ") -> Path:
   _ = Path(path)
   return _.parent / f"{datestamp_str}{separator}{_.name}"
 
+
+def append_timestamp(path, separator=" ") -> Path:
+  timestamp_str = timestamp()
+  _ = Path(path)
+  return _.parent / f"{_.stem}{separator}{timestamp_str}{_.suffix}"
+
 def format_size(size: int | float) -> str:
   """Format byte count as '0 B', '1.5 KB', '2.3 MB', '4.5 GB', '7.8 TB'.
 
