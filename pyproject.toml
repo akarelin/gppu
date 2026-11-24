@@ -14,6 +14,7 @@ dependencies = [
     "fsspec",
     "Jinja2",
     "aiomqtt",   # .. an async app's MQTT
+    "aiohttp",   # .. REST, which any app calls
 ]
 
 [project.urls]

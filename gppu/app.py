@@ -11,10 +11,12 @@ import inspect
 import json
 import os
 import random
+import ssl
 from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
 from typing import Any, ClassVar
 
+import aiohttp
 import aiomqtt
 import yaml
 from paho.mqtt.packettypes import PacketTypes
@@ -286,13 +288,32 @@ class AppService(mixin_Mqtt, AsyncApp):
 
 
 # region REST surface
+_NO_JSON_BODY = object()
+
+
 class mixin_Rest:
-  ## !! Deviated from simple class to provide rest (put/post/get etc
-  """Every public member of the application's own classes over HTTP, and nothing declared. A GET reads an object, a
-  field or property, or a method that needs nothing; a POST calls a method with the JSON body as its keyword arguments.
-  A name is the application's when a class born in the application's folder, the folder of the file that defines the
-  app, defines it, a base may define it too; the private names and the lifecycle steps are the only exclusion. The app
-  that serves it finds the object by its id and answers with the ``(payload, status)`` these return."""
+  """REST, which any app calls and serves. A call is a request carried over HTTP, with the timeout, headers and SSL its
+  class sets, its JSON in and out; a request or response that fails raises. Served, ``rest_manifest`` lists the members
+  of the application's own classes, ``rest_read`` reads one and ``rest_call`` calls one."""
+  _http_timeout: float = 10
+  _http_headers: Mapping[str, str] | None = None
+  _http_ssl: ssl.SSLContext | bool | None = None
+
+  async def _http_request_async(self, method: str, url: str, body: str | bytes | None = None, headers: Mapping[str, str] | None = None) -> str:
+    request_headers = {**(self._http_headers or {}), **(headers or {})} or None
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self._http_timeout)) as session:
+      async with session.request(method, url, data=body, headers=request_headers, ssl=self._http_ssl) as response:
+        response.raise_for_status()
+        return await response.text()
+
+  async def _json_request_async(self, method: str, url: str, payload: Any = _NO_JSON_BODY, headers: Mapping[str, str] | None = None) -> Any:
+    request_headers = {'Accept': 'application/json', **(headers or {})}
+    body = None
+    if payload is not _NO_JSON_BODY:
+      request_headers.setdefault('Content-Type', 'application/json')
+      body = json.dumps(payload)
+    return json.loads(await self._http_request_async(method, url, body, request_headers))
+
   REST_RESERVED = (*_YMRO.POSSIBLE_STEPS, 'initialize', 'terminate', 'setup', 'run')
 
   @staticmethod
@@ -335,27 +356,16 @@ class mixin_Rest:
       self._rest_manifest = {'classes': {n: c for n, c in classes.items() if c['members']}}
     return self._rest_manifest
 
-  def _rest_rows(self, obj) -> dict[str, dict]:
-    return self.rest_manifest['classes'].get(type(obj).__name__, {}).get('members', {})
-
   def rest_read(self, obj, name: str | None = None) -> tuple[dict, int]:
-    # !! Unnecessary overcomplication. Eliminate
-    """GET: the object, what it holds and what it can be asked to do, or one of its members. Values only are read for the
-    object: calling a method to build it would run it for anyone listing the objects."""
-    rows = self._rest_rows(obj)
-    if name is None: return {'class': type(obj).__name__, 'members': {n: getattr(obj, n) for n, r in rows.items() if r['kind'] == 'value'},
-                             'methods': {n: r['args'] for n, r in rows.items() if r['kind'] == 'method'}}, 200
-    if name not in rows: return {'success': False, 'error': f'{type(obj).__name__} has no {name!r}'}, 404
-    if rows[name]['kind'] == 'method' and not rows[name]['read']: return {'success': False, 'error': f'{name} takes arguments; POST it'}, 405
-    return {name: getattr(obj, name)() if rows[name]['kind'] == 'method' else getattr(obj, name)}, 200
+    """GET: the object's values its manifest lists, or one member, a method that needs nothing called; a member it lacks
+    raises."""
+    if name is None: return {'class': type(obj).__name__, 'members': {n: getattr(obj, n) for n, r in self.rest_manifest['classes'].get(type(obj).__name__, {}).get('members', {}).items() if r['kind'] == 'value'}}, 200
+    member = getattr(obj, name)
+    return {name: member() if callable(member) else member}, 200
 
   async def rest_call(self, obj, name: str, body: Mapping) -> tuple[dict, int]:
-    # !! Unnecessary overcomplication. Eliminate
-    """POST: the method called with the body as its keyword arguments."""
-    row = self._rest_rows(obj).get(name)
-    if row is None or row['kind'] != 'method': return {'success': False, 'error': f'{name} is not a method'}, 405
-    method, args = getattr(obj, name), dict(body)
-    if row['async']: result = await method(**args)
-    else: result = await asyncio.get_running_loop().run_in_executor(None, lambda: method(**args))
+    """POST: the method called with the body as its keyword arguments, off the loop, which a control waits on."""
+    result = await asyncio.to_thread(getattr(obj, name), **body)
+    if asyncio.iscoroutine(result): result = await result
     return {'success': True, 'result': result}, 200
 # endregion
