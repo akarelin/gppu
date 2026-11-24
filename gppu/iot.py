@@ -1,14 +1,16 @@
-"""Serialized async controls: synchronous callers wait on the app's loop, and each device instance is serialized; their
-HTTP is mixin_Rest's.
+"""Serialized async controls: synchronous callers wait on the app's loop, and each device instance is serialized.
 """
 from __future__ import annotations
 
 import asyncio
+import json
+import ssl
 
 from collections.abc import Callable, Coroutine, Mapping
 from typing import Any
 
-from .app import _NO_JSON_BODY, mixin_Rest
+import aiohttp
+
 from .gppu import _mixin
 
 
@@ -43,8 +45,21 @@ class SerializedControl(_mixin):
 type HttpBody = str | bytes
 
 
-class HTTPControl(SerializedControl, mixin_Rest):
-  """Serialized textual HTTP, mixin_Rest's request; a request or response that fails raises."""
+_NO_JSON_BODY = object()
+
+
+class HTTPControl(SerializedControl):
+  """Serialized textual HTTP, with the timeout, headers and SSL its class sets; a request or response that fails raises."""
+  _http_timeout: float = 10
+  _http_headers: Mapping[str, str] | None = None
+  _http_ssl: ssl.SSLContext | bool | None = None
+
+  async def _http_request_async(self, method: str, url: str, body: str | bytes | None = None, headers: Mapping[str, str] | None = None) -> str:
+    request_headers = {**(self._http_headers or {}), **(headers or {})} or None
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self._http_timeout)) as session:
+      async with session.request(method, url, data=body, headers=request_headers, ssl=self._http_ssl) as response:
+        response.raise_for_status()
+        return await response.text()
 
   def _http_get(self, url: str, *, headers: Mapping[str, str] | None = None) -> str:
     return self._http_request('GET', url, headers=headers)
@@ -60,7 +75,15 @@ class HTTPControl(SerializedControl, mixin_Rest):
 
 
 class JSONHTTPControl(HTTPControl):
-  """Explicit JSON request/response layer over ``HTTPControl``, mixin_Rest's JSON request."""
+  """Explicit JSON request/response layer over ``HTTPControl``."""
+
+  async def _json_request_async(self, method: str, url: str, payload: Any = _NO_JSON_BODY, headers: Mapping[str, str] | None = None) -> Any:
+    request_headers = {'Accept': 'application/json', **(headers or {})}
+    body = None
+    if payload is not _NO_JSON_BODY:
+      request_headers.setdefault('Content-Type', 'application/json')
+      body = json.dumps(payload)
+    return json.loads(await self._http_request_async(method, url, body, request_headers))
 
   def _json_get(self, url: str, *, headers: Mapping[str, str] | None = None) -> JsonValue:
     return self._json_request('GET', url, headers=headers)

@@ -11,12 +11,10 @@ import inspect
 import json
 import os
 import random
-import ssl
 from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
 from typing import Any, ClassVar
 
-import aiohttp
 import aiomqtt
 import yaml
 from paho.mqtt.packettypes import PacketTypes
@@ -288,33 +286,12 @@ class AppService(mixin_Mqtt, AsyncApp):
 
 
 # region REST surface
-_NO_JSON_BODY = object()
 
 
 class mixin_Rest:
   ## !! Deviated from simple class to provide rest (put/post/get etc
-  """REST, which any app calls and serves. A call is a request carried over HTTP, with the timeout, headers and SSL its
-  class sets, its JSON in and out; a request or response that fails raises. Served, ``rest_manifest`` lists the members
-  of the application's own classes, ``rest_read`` reads one and ``rest_call`` calls one."""
-  _http_timeout: float = 10
-  _http_headers: Mapping[str, str] | None = None
-  _http_ssl: ssl.SSLContext | bool | None = None
-
-  async def _http_request_async(self, method: str, url: str, body: str | bytes | None = None, headers: Mapping[str, str] | None = None) -> str:
-    request_headers = {**(self._http_headers or {}), **(headers or {})} or None
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self._http_timeout)) as session:
-      async with session.request(method, url, data=body, headers=request_headers, ssl=self._http_ssl) as response:
-        response.raise_for_status()
-        return await response.text()
-
-  async def _json_request_async(self, method: str, url: str, payload: Any = _NO_JSON_BODY, headers: Mapping[str, str] | None = None) -> Any:
-    request_headers = {'Accept': 'application/json', **(headers or {})}
-    body = None
-    if payload is not _NO_JSON_BODY:
-      request_headers.setdefault('Content-Type', 'application/json')
-      body = json.dumps(payload)
-    return json.loads(await self._http_request_async(method, url, body, request_headers))
-
+  """REST an app serves: ``rest_manifest`` lists the members of the application's own classes, ``rest_read`` reads one
+  and ``rest_call`` calls one."""
   REST_RESERVED = (*_YMRO.POSSIBLE_STEPS, 'initialize', 'terminate', 'setup', 'run')
 
   @staticmethod
