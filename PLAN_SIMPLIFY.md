@@ -24,6 +24,11 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
   - [x] Sensibo: no has_actions, host field, own repr or remembered unit
   - [ ] Sensibo's state and its requests are configuration templates, as PowerView's are, and `_cloud` and `_compute_state` go (waits on Alex: configuration)
   - [ ] A blinds group's double press sets the vanes through its row's `actions:`, which the cover_group template would carry (waits on Alex: configuration)
+  - [x] Device files keep no `__repr__` of their own; ZwjsSensor and HostEntity are `pass`; a row's `uid` is its own
+  - [x] Sensibo's and Tuya's refresh read the device and hand the reading to the base, with no catch
+  - [x] Nest posts its rooms' motion flavors through the base's `motion_posts`
+  - [ ] Hue, Tuya, Kasa, Z-Wave, Flume, UniFi, Nest and AV: state from the row's `compute_state:`, commands from its `command:`, each app's section and poll from the base, the device's id as its `uid` (waits on Alex: the templates are configuration)
+  - [ ] Rows name their class in `class`, as the architecture notes say; Creekview writes `kind` (waits on Alex: configuration)
 - [x] HomeKit is the homebridge compiler's: the entity base, rooms, blind groups and Sensibo no longer build Homebridge accessories
 - [ ] `has_actions` goes: it hides that a device and its group share one name, and so one action topic and one keypad LED (the AO AC pod and the AO AC group; a Tuya light and its group; a shade and its group), and that keypad buttons and LEDs are built as entities that answer presses (waits on Alex: the names are configuration)
 - [ ] Alex's `# !!!` marks: `App`, `Env` (Env waits on Alex: programs declare their environment, about 175 files)
