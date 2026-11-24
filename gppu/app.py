@@ -260,12 +260,12 @@ class AppService(mixin_Mqtt, AsyncApp):
 
     async def from_mqtt(self) -> None:
         """Each of its topics read once, then the app stopped."""
-        self.until_loaded = set(self.my_dict('config_mqtt/topics'))
+        self.until_loaded = set(self.my('config_mqtt/topics'))
         await self.run()
 
     @sync
     async def __load(self) -> None:
-        for topic in self.my_dict('config_mqtt/topics'): await self.mqtt_listen(self._receive_config, topic, qos=1)
+        for topic in self.my('config_mqtt/topics'): await self.mqtt_listen(self._receive_config, topic, qos=1)
 
     def _receive_config(self, topic: y2topic, payload: Any) -> None:
         deepset(self.my('config_mqtt/topics')[str(topic)], Env.data, yaml.load(payload, Loader=YmlLoader) if isinstance(payload, str) else payload)

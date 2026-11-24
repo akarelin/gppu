@@ -306,7 +306,7 @@ def load_app_registry(app_dir: Path, launcher: App) -> dict[str, dict]:
     under: which submenu an item appears in is the launcher's business, so a manifest never has to know.
     """
     apps: dict[str, dict] = {}
-    for key, entry in launcher.my_dict('apps').items():
+    for key, entry in launcher.my('apps').items():
         group = entry if isinstance(entry, dict) else {key: entry}
         for item_key, config_file in group.items():
             if manifest := read_manifest(app_dir, config_file, key if isinstance(entry, dict) else None):
@@ -658,7 +658,7 @@ class TUIApp(AsyncApp, TextualApp, metaclass=_TUIAppMeta):
     sections: list[tuple[str, str]] = [
       ('Env', f'initialized={Env.initialized}'),
     ]
-    if own := self.my_dict(''):
+    if own := self.data:
       sections.append(('Instance config', pprint.pformat(own)))
     self.push_screen(InfoScreen(sections))
 

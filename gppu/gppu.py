@@ -1138,44 +1138,21 @@ class _DC(UserDict):
 
 
 # region Configuration mixins
-class mixin_Config(_mixin):
+class mixin_Config(YInit):
 # !!!  """ Very sus. Looks like slop. It DOES not read the configuration. Claude cannot understand this code and thinks its some "loader". self.my waws initialized somewhere and needs a place, but not this complexity. """
-
-  """ Very sus. Looks like slop. It DOES not read the configuration. Claude cannot understand this code and thinks its some "loader". self.my waws initialized somewhere and needs a place, but not this complexity. """
-  def my(self, path: str | y2path, default=None) -> Any: return deepget(path, self.data, default=default)
-  def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self.data, default=default)
-  def my_list(self, path: str | y2path, default: list = []) -> list: return deepget_list(path, self.data, default=default or [])
-  def my_dict(self, path: str | y2path, default: dict = {}) -> dict: return deepget_dict(path, self.data, default=default or {})
-
-
-class _Base(mixin_Logger, mixin_Config): pass
-# endregion
-
-
-# region App
-class App(YInit, _Base, _DC):
-# !!! Rewrote. folowing the architecture, not beside it
-    """ Not human reviewed """
-    # region - ^^ why App exists
-    # ^^ SPEC: every app is a `_DC`, takes its environment, knows its own name and loads its own configuration.
-    # ^^ It is code about configuration, used by everything downstream: Fleet and the Hosts tools, the TUI apps and Y2's
-    # ^^ apps are Apps. It adds one init step, which loads the configuration into the object's data.
-    # endregion
+    """An object's configuration: read as it is made, and read back with my."""
     name: str
 
     def __init(self) -> None:
         if not self.name: self.name = type(self).__name__.lower()   # .. named as its class, unless made with a name
         if 'parent' in self.data: return   # .. a runtime made it from its row: the row is its configuration
-        # region - the program's app: its section of the environment, the one named as it is, or the configuration it was
-        # .. given (a YAML file, or a script's MANIFEST text), goes in under what it was made with. The data it was made
-        # .. with is kept: no value in it is replaced, and the data itself is never replaced
-        # endregion
+        # .. its section of the environment, the one named as it is, or the configuration it was given (a YAML file, or a
+        # .. script's MANIFEST text), under what it was made with, then the command line over both
         own = self.data.pop('config') if 'config' in self.data else glob_dict(self.name)
         if isinstance(own, os.PathLike): own = dict_from_yml(own)
         elif isinstance(own, str): own = yaml.load(own, Loader=YmlLoader)
         self.data |= {key: value for key, value in jinja.configuration(deepcopy(dict(own))).items() if key not in self.data}
-        # .. the command line over both: --key value sets a key, a slash path a nested one, to the value read as YAML, as
-        # .. configuration is (--days 30 is a number, --logs [System, Security] a list); --flag sets it to True
+        # .. --key value sets a key, a slash path a nested one, to the value read as YAML; --flag sets it to True
         argv, i = sys.argv[1:], 0
         while i < len(argv):
             arg, i = argv[i], i + 1
@@ -1183,13 +1160,26 @@ class App(YInit, _Base, _DC):
             value = True
             if i < len(argv) and not argv[i].startswith('--'): value, i = yaml.load(argv[i], Loader=YmlLoader), i + 1
             deepset(arg[2:], self.data, value)
+
+    def my(self, path: str | y2path) -> Any: return deepget(path, self.data)
+    def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self.data, default=default)
+    def my_float(self, path, default: float = float('nan')) -> float: return deepget_float(path, self.data, default=default)
+
+
+class _Base(mixin_Logger, mixin_Config): pass
+# endregion
+
+
+# region App
+class App(_Base, _DC): pass
+# !!! Rewrote. folowing the architecture, not beside it
 # endregion
 
 
 # region - Env: the configuration
-class _Env(YInit, _Base, _DC):
+class _Env(YInit, mixin_Logger, _DC):
 # !!! Rewrute!
-    """The program's environment: a system object, made once as gppu is imported and hidden from programs. Its my is glob"""
+    """The program's environment: a system object, made once as gppu is imported and hidden from programs; glob reads it"""
     home: Path
     os: OSType
     path: Path   # .. the environment's YAML file
@@ -1219,8 +1209,11 @@ class _Env(YInit, _Base, _DC):
 
 Env = _Env()
 
-# .. the configuration's readers are globals: Env's my readers
-glob, glob_int, glob_list, glob_dict = Env.my, Env.my_int, Env.my_list, Env.my_dict
+# .. the configuration's readers are globals over Env's data
+def glob(path: str | y2path, default=None) -> Any: return deepget(path, Env.data, default=default)
+def glob_int(path: str | y2path, default: int = 0) -> int: return deepget_int(path, Env.data, default=default)
+def glob_list(path: str | y2path, default: list = []) -> list: return deepget_list(path, Env.data, default=default or [])
+def glob_dict(path: str | y2path, default: dict = {}) -> dict: return deepget_dict(path, Env.data, default=default or {})
 # region - the configuration's macros, named templates, `template:` rows and the Jinja that reads only the configuration
 # .. Creekview and RAN use all four: _creekview.yaml's macros, the *_templates and templates blocks of groups, Insteon,
 # .. covers and the devices, and RAN config.yaml's mounts. Its Jinja reads glob, so it is filled once, as glob reads Env;

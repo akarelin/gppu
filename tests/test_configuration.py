@@ -91,7 +91,7 @@ def test_own_configuration_is_independent_from_the_environment(home):
     assert app.my('enabled') is True
     assert app.my('names') is None
     assert glob('example') == {'enabled': False, 'names': ['seven']}
-    app.my_dict('').update(added=1)
+    app.data.update(added=1)
     assert glob('example/added') is None
 
 
