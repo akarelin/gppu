@@ -1293,7 +1293,7 @@ class App(YInit, _Base, _DC):
     is given or else its section of the environment, and the command line goes over both."""
     name: str
 
-    def __init(self) -> None:
+    def _init_config(self, **kw) -> None:
         if not self.name: self.name = type(self).__name__.lower()
         script = vars(sys.modules[type(self).__module__])   # .. a script assigns its own configuration to its MANIFEST global
         configuration = yaml.load(script['MANIFEST'], Loader=YmlLoader) if 'MANIFEST' in script else dict_from_yml(self.data['config']) if 'config' in self.data else glob_dict(self.name)
@@ -1301,6 +1301,8 @@ class App(YInit, _Base, _DC):
         argv = sys.argv[1:]   # .. --key value sets a key, a slash path a nested one, to the value read as YAML; --flag sets it to True
         for i, arg in enumerate(argv):
             if arg.startswith('--') and len(arg) > 2: deepset(arg[2:], self.data, yaml.load(argv[i + 1], Loader=YmlLoader) if i + 1 < len(argv) and not argv[i + 1].startswith('--') else True)
+
+    _INIT_STEPS = _DC._INIT_STEPS + [_init_config]
 # endregion
 
 
