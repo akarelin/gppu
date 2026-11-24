@@ -651,6 +651,8 @@ def template_populate(o, data: dict = {}, excludes:list = []) -> Any:
   if isinstance(o, dict): _ = o.get('data', {}) | o
   else: _ = str(o)
   return __tp(_, data)
+
+
 def dict_to_yml(filename: str | Path, data=None, sort_keys=False):
   class IndentedListDumper(yaml.Dumper):
     def increase_indent(self, flow=False, indentless=False):
