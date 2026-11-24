@@ -1161,18 +1161,16 @@ class _Base(mixin_Logger, mixin_Config): pass
 # region App
 class App(YInit, _Base, _DC):
 # !!! Rewrote. folowing the architecture, not beside it
-    """An app: named as its class unless made with a name. Its configuration is its section of the environment, or the
-    configuration it was given, under what it was made with, with the command line over both."""
+    """An app: named as its class unless made with a name. What it is made with goes over its configuration, the one it
+    is given or else its section of the environment, and the command line goes over both."""
     name: str
 
     def __init(self) -> None:
         if not self.name: self.name = type(self).__name__.lower()
-        if 'parent' in self.data: return   # .. a runtime made it from its row: the row is its configuration
-        # .. its section of the environment, or the configuration it was given: a YAML file, or a script's MANIFEST text
-        own = self.data.pop('config') if 'config' in self.data else glob_dict(self.name)
-        if isinstance(own, os.PathLike): own = dict_from_yml(own)
-        elif isinstance(own, str): own = yaml.load(own, Loader=YmlLoader)
-        self.data |= {key: value for key, value in jinja.configuration(deepcopy(dict(own))).items() if key not in self.data}
+        configuration = self.data['config'] if 'config' in self.data else glob_dict(self.name)   # .. a dict, a YAML file or a script's MANIFEST text
+        if isinstance(configuration, os.PathLike): configuration = dict_from_yml(configuration)
+        if isinstance(configuration, str): configuration = yaml.load(configuration, Loader=YmlLoader)
+        self.data = jinja.configuration(deepcopy(dict(configuration))) | self.data
         # .. --key value sets a key, a slash path a nested one, to the value read as YAML; --flag sets it to True
         argv, i = sys.argv[1:], 0
         while i < len(argv):
