@@ -1273,14 +1273,14 @@ class _Base(mixin_Logger, mixin_Config): pass
 # region App
 class App(YInit, _Base, _DC):
 # !!! Rewrote. folowing the architecture, not beside it
-    """An app: named as its class unless made with a name. What it is made with goes over its configuration, the one it
-    is given or else its section of the environment, and the command line goes over both."""
+    """An app: named as its class unless made with a name. Its configuration is its section of the environment with its
+    script's MANIFEST or the file it is given over it; what it is made with goes over that, and the command line over all."""
     name: str
 
     def __init(self) -> None:
         if not self.name: self.name = type(self).__name__.lower()
         script = vars(sys.modules[type(self).__module__])   # .. a script assigns its own configuration to its MANIFEST global
-        configuration = yaml.load(script['MANIFEST'], Loader=YmlLoader) if 'MANIFEST' in script else dict_from_yml(self.data['config']) if 'config' in self.data else glob_dict(self.name)
+        configuration = glob_dict(self.name) | (yaml.load(script['MANIFEST'], Loader=YmlLoader) if 'MANIFEST' in script else dict_from_yml(self.data['config']) if 'config' in self.data else {})
         self.data = jinja.configuration(deepcopy(configuration)) | self.data
         argv = sys.argv[1:]   # .. --key value sets a key, a slash path a nested one, to the value read as YAML; --flag sets it to True
         for i, arg in enumerate(argv):

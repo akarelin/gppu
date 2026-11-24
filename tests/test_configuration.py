@@ -1,4 +1,4 @@
-"""An app given its own configuration file reads that, independent from the environment; one given none reads its own section of the environment. The command line goes over both."""
+"""An app reads its own section of the environment, with its own configuration file over it when it is given one; the app's copy is its own. The command line goes over both."""
 import sys
 
 import pytest
@@ -82,15 +82,15 @@ def test_app_loads_its_own_configuration_without_an_environment(home):
     app = Example(config=own)
     assert app.my('mount_point') == 'G:'
     assert app.my('sources/Lake') == '//s1/Lake'
-    assert app.my('names') is None   # .. not the environment's section
+    assert app.my('names') == ['seven']   # .. its section of the environment, under its own file
 
 
 def test_own_configuration_is_independent_from_the_environment(home):
     own = home / 'example.yaml'
     own.write_text('enabled: true\n', encoding='utf-8')
     app = Example(config=own)
-    assert app.my('enabled') is True
-    assert app.my('names') is None
+    assert app.my('enabled') is True   # .. its own file over its section
+    assert app.my('names') == ['seven']
     assert glob('example') == {'enabled': False, 'names': ['seven']}
     app.data.update(added=1)
     assert glob('example/added') is None
