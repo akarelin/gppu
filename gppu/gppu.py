@@ -1310,7 +1310,7 @@ class _Env(YInit, _Base, _DC):
         root = Path('D:/Dev') if self.os == OSType.W11 else self.home # !!!  Rewrite
         self.path = root / 'RAN/_config/config.yaml'   # .. apps share RAN
         if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts): self.path = root / 'IoT/_Creekview/_creekview.yaml'   # .. Y2's apps share Creekview
-        self.data = jinja.configuration(dict_from_yml(self.path)) if self.path.exists() else {}   # .. a host without its repository reads its environment from MQTT
+        if self.path.exists(): self.data = jinja.configuration(dict_from_yml(self.path)) | self.data   # .. a host without its repository reads its environment from MQTT
         if 'trace_rules' in self.data: Logger.trace_rules = dict(self.data['trace_rules'])
 
     @staticmethod
