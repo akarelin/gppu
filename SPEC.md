@@ -88,6 +88,7 @@
 - Y2's entity is part of gppu.
 - Y2 was originally part of gppu. Only entity support, the Y2 entity and below, is specific to Y2; everything else is generic and is gppu's, so Y2's own code is slim.
 - Y2's runtime, Y2 entity and Y2 group are one step on top of gppu, and they are correct. There is no state manager: it is a kind of runtime, the async app, initialized from configuration, which knows what kinds of objects it makes and where it loads them from (its `key`), and kicks off their lifecycle. Only a manager that handles hardware, such as Hue's, has code of its own; GSM and ISM have very little. A class full of special cases, such as an AV device, stays a valid Y2 entity or group and never does what gppu does.
+- A device class builds on its base classes. What every entity shares is the base's, in one place, and a device class adds only its device's own calls.
 
 ## Library and periphery
 - No functionality has two implementations. It is either gppu's, and every app uses it, or an app's own. An app that does its own thing is named and known, to be refactored later.

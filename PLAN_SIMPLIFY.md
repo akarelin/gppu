@@ -18,6 +18,12 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [x] AsyncApp's timers are `run_later` and `run_every`
 - [x] An app's objects, the rows at its `key`, are `mixin_Groups`', not AsyncApp's; `poll()` is gone
 - [ ] MQTT is initialized the same way as the other objects (waits on Alex's words: its connection is neither a field nor read in a step of its own)
+- [ ] Y2's State is a lookup of entities, not an app made at import that is Y2's MQTT client with its own publish and listen (waits on Alex: which app holds the MQTT connection)
+- [ ] Device classes build on their base classes, each keeping only its device's own calls (in progress: every device file checked against the bases)
+  - [x] PowerView is plain REST: a cover's command is one request to its hub; a device starts and stops its entities in YDevice
+  - [x] Sensibo: no has_actions, host field, own repr or remembered unit
+  - [ ] Sensibo's state and its requests are configuration templates, as PowerView's are, and `_cloud` and `_compute_state` go (waits on Alex: configuration)
+  - [ ] A blinds group's double press sets the vanes through its row's `actions:`, which the cover_group template would carry (waits on Alex: configuration)
 - [x] HomeKit is the homebridge compiler's: the entity base, rooms, blind groups and Sensibo no longer build Homebridge accessories
 - [ ] `has_actions` goes: it hides that a device and its group share one name, and so one action topic and one keypad LED (the AO AC pod and the AO AC group; a Tuya light and its group; a shade and its group), and that keypad buttons and LEDs are built as entities that answer presses (waits on Alex: the names are configuration)
 - [ ] Alex's `# !!!` marks: `App`, `Env` (Env waits on Alex: programs declare their environment, about 175 files)
