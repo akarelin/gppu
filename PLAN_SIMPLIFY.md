@@ -13,10 +13,11 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 - [x] Logging is one `Logger`: the console, its colours and filter, and the trace rules; the file logging and `init_logger` are gone
 - [x] Logging is as it was in March: `Debug`, `Info`, `Warn` and `Error` call the log, and `mixin_Logger` gives a class a log under its own name; the caller's frame is no longer read
 - [x] Device controls run on their app's loop; `SerializedControl`'s own loop thread and `_control_submit` are gone
-- [x] MQTT reads its connection, the configuration's `mqtt`, in its init step
 - [x] `Env.reset()` as Alex wrote it: `Env.init()` after it reads the configuration again
-- [x] AsyncApp runs an app on its loop through its lifecycle (init, load, start, stop); its timers, a separate thing, are `run_later` and `run_every`. An app's objects, the rows at its `key`, are `mixin_Groups`'; each object is refreshed by a `run_every`, and `poll()` is gone
-- [x] MQTT's connection is its `mqtt` field, read where it connects
+- [ ] AsyncApp's lifecycle is async; today it runs the sync steps, and an `async def` step part runs through `@sync` without being awaited (waits on Alex)
+- [x] AsyncApp's timers are `run_later` and `run_every`
+- [x] An app's objects, the rows at its `key`, are `mixin_Groups`', not AsyncApp's; `poll()` is gone
+- [ ] MQTT is initialized the same way as the other objects (waits on Alex's words: its connection is neither a field nor read in a step of its own)
 - [ ] Alex's `# !!!` marks: `App`, `Env` (Env waits on Alex: programs declare their environment, about 175 files)
 - [ ] Y2's apps read their configuration as fields, not copied from a section by hand: Kasa, UniFi, Z-Wave, Flume, Nest, Insteon (Kasa waits on Alex: its settings are at `power/kasa`, and no `kasa` section exists)
 - [x] `mixin_Config` is the four readers over the object's data, `my`, `my_int`, `my_list` and `my_dict`, each read by programs
@@ -39,7 +40,8 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
   - gppu's examples use the TUI pieces and `gppu.fs.vfs`
 - [x] gppu's tests run on the environment gppu has and pass whole; those of removed behaviour are archived
 - [x] MQTT 5 on gppu's own MQTT: a listener knows whether a message is retained and when it was sent, and each listener gets a topic's retained state, however many listeners came before it (architecture notes, State)
-- [x] The poller: no startup delay, each object polled by its own next poll time, at least once an hour, and `poll(obj, delay)` puts a device first or soon when its state, an event or a command calls for it (architecture notes, State and Presses and indicators)
+- [x] The poller: no startup delay, each object refreshed at least once an hour
+- [ ] A device is refreshed again soon after a command to it, and one whose change did not arrive is first (architecture notes, State); `poll(obj, delay)` did it and had no caller
 - [x] `poll_delay` is gone from AsyncApp: there is no startup delay, and Y2's UI no longer shows it
 - [x] MQTT connects with Creekview's `mqtt` as it is: the client takes the connection, the block's other keys are the app's, and the will and online status come only where a `status_topic` is named
 - [x] A row names its class in `class`, exactly, among the app's default class and its subclasses; a row without it gets the default class (architecture notes, the model breaks, item 2)
