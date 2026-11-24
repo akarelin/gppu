@@ -921,7 +921,7 @@ class _LogColorizer(logging.Formatter):
   no_prefix = False
 
   def format(self, record: logging.LogRecord) -> str:
-    args = list(record.msg) if isinstance(record.msg, tuple) else [record.getMessage()]
+    args = list(record.gppu_args) if hasattr(record, 'gppu_args') else [record.getMessage()]
     if not self.no_prefix:
       function = _remove_prefixes(record.funcName or '', _SHORTEN_BY_PREFIX)
       class_name = record.name.removeprefix('gppu.') if record.name.startswith('gppu.') else ''
@@ -943,7 +943,7 @@ class _EmptyMessageFilter(logging.Filter):
       names = [function, record.module, f'{record.module}.{function}']
       if record.name.startswith('gppu.'): names += [class_name := record.name.removeprefix('gppu.'), f'{class_name}.{function}']
       if not all(Logger.trace_rules[name] if name in Logger.trace_rules else Logger.trace_rules.get('all', False) for name in names): return False
-    return bool(_LogColorizer.ANSI.sub('', pcp(*record.msg) if isinstance(record.msg, tuple) else record.getMessage()).strip() or record.exc_info)
+    return bool(record.getMessage().strip() or record.exc_info)
 # endregion
 
 class _mixin: pass
@@ -964,10 +964,12 @@ class Logger:
   _root.addHandler(_console)
 
 
-def Debug(*a, logger=Logger._root, **kw): logger.debug(a, stacklevel=2, **kw)
-def Info(*a, logger=Logger._root, **kw): logger.info(a, stacklevel=2, **kw)
-def Warn(*a, logger=Logger._root, **kw): logger.warning(a, stacklevel=2, **kw)
-def Error(*a, logger=Logger._root, **kw): logger.error(a, stacklevel=2, **kw)
+def _log(logger: logging.Logger, level: int, a: tuple, kw: dict) -> None:   # .. a record's message is plain text; its arguments colour the console
+  logger.log(level, _LogColorizer.ANSI.sub('', pcp(*a)), extra={'gppu_args': a}, stacklevel=3, **kw)
+def Debug(*a, logger=Logger._root, **kw): _log(logger, logging.DEBUG, a, kw)
+def Info(*a, logger=Logger._root, **kw): _log(logger, logging.INFO, a, kw)
+def Warn(*a, logger=Logger._root, **kw): _log(logger, logging.WARNING, a, kw)
+def Error(*a, logger=Logger._root, **kw): _log(logger, logging.ERROR, a, kw)
 @sync
 async def Dump(filename: str, data: dict = {}, **kw) -> None:
   """ Saves data object to yml file in trace folder """
