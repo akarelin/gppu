@@ -10,17 +10,16 @@ import asyncio
 import inspect
 import json
 import os
-import random
 from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
-from typing import Any, ClassVar
+from typing import Any
 
 import aiomqtt
 import yaml
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.properties import Properties
 
-from .gppu import App, Env, YmlLoader, _Base, _DC, _mixin, deepset, glob_dict, glob_list, jinja, now_ts, sync, y2topic
+from .gppu import App, Env, YmlLoader, _Base, _DC, _mixin, deepset, glob_dict, jinja, now_ts, sync, y2topic
 from .gppu import _YMRO, YStart
 
 
@@ -143,43 +142,6 @@ class mixin_Timers(YStart):
   def cancel_timers(self) -> None:
     """Every timer this app armed, cancelled, from any thread."""
     for row in list(self.timers.values()): row['task'].get_loop().call_soon_threadsafe(row['task'].cancel)
-# endregion
-
-
-# region Groups: an app's objects, the rows at its key
-class mixin_Groups(mixin_Timers):
-  """An async app's objects are the rows at its ``key``, each made as the class the row names in ``class``, among
-  ``_default`` and its subclasses, or as ``_default``; a row that is an app runs as one. With a ``poll_interval``, each
-  is refreshed on it, at least once an hour, their first refreshes spread over one interval in shuffled order."""
-  key: str
-  poll_interval: int
-  _default: ClassVar[type]
-
-  def __init(self) -> None:
-    self._my_groups: list = []
-    for data in glob_list(self.key): self._add_group(data)
-
-  def _add_group(self, data: dict) -> None:
-    cls = self._default
-    if 'class' in data:   # .. the class it names exactly, among the default class and its subclasses
-      family, classes = [self._default], {}
-      while family:
-        named = family.pop()
-        classes[named.__name__] = named
-        family += named.__subclasses__()
-      cls = classes[data['class']]
-    self._my_groups.append(cls(data=data, parent=self))
-
-  def __start(self) -> None:
-    for group in self._my_groups:
-      if isinstance(group, AsyncApp): self._spawn(group.run())   # .. a row that is an app runs as one, on this app's loop
-      else: group.start()
-    if self.poll_interval:
-      for i, group in enumerate(random.sample(self._my_groups, len(self._my_groups))):
-        self.run_every(group.refresh, start=i * self.poll_interval / len(self._my_groups), interval=min(self.poll_interval, 3600))
-
-  def __stop(self) -> None:
-    for group in self._my_groups: group.stop()
 # endregion
 
 
