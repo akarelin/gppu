@@ -141,7 +141,7 @@ class AsyncApp(App, YStart):
 
 # region Groups: an app's objects, the rows at its key
 class mixin_Groups(YStart):
-  """An async app's objects are the rows at its ``key``, each made as the class the row names in ``kind``, among
+  """An async app's objects are the rows at its ``key``, each made as the class the row names in ``class``, among
   ``_default`` and its subclasses, or as ``_default``; a row that is an app runs as one. With a ``poll_interval``, each
   is refreshed on it, at least once an hour, their first refreshes spread over one interval in shuffled order."""
   key: str
@@ -154,13 +154,13 @@ class mixin_Groups(YStart):
 
   def _add_group(self, data: dict) -> None:
     cls = self._default
-    if 'kind' in data:   # .. the class it names exactly, among the default class and its subclasses
+    if 'class' in data:   # .. the class it names exactly, among the default class and its subclasses
       family, classes = [self._default], {}
       while family:
         named = family.pop()
         classes[named.__name__] = named
         family += named.__subclasses__()
-      cls = classes[data['kind']]
+      cls = classes[data['class']]
     self._my_groups.append(cls(data=data, parent=self))
 
   def __start(self) -> None:
