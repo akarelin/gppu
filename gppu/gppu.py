@@ -612,6 +612,45 @@ def _dict_sanitize(data: dict | list, sort_keys: bool = False) -> dict | list:
   else: raise ValueError(f"Unable to sanitize {data}")
 
 
+def template_populate(o, data: dict = {}, excludes:list = []) -> Any:
+  """ templates are simple inline functtions that return lists, dicts or scalars to be merged into dicts."""
+  def __tp(o: dict | str, data: dict) -> Any:
+    result: Any = None
+    if not data: data = {}
+
+    if not o: return None
+    if isinstance(o, dict):
+      result = {}
+      for k, old in o.items():
+        if k in excludes or inspect.isfunction(old): new = old
+        else: new = __tp(old, o | data)
+        result[k] = new
+    elif isinstance(o, list):
+      result = []
+      for old in o:
+        new = __tp(old, data)
+        result.append(new)
+    elif isinstance(o, (int, bool, float)): result = o
+    elif inspect.isfunction(o): result = o
+    else:
+      if str(o) == 'DEL': result = None
+      elif '$' in str(o): 
+        _ = str(Template(str(o)).safe_substitute(data))
+        if _[0] == '[' and _[-1] == ']':
+          result = []
+          _ = _[1:-1]
+          for element in _.split(','):
+            element = element.strip()
+            if element.isdecimal(): element = int(element)
+            elif element.isnumeric(): element = float(element)
+            result.append(element)
+        else: result = _
+      else: result = o
+    return result
+
+  if isinstance(o, dict): _ = o.get('data', {}) | o
+  else: _ = str(o)
+  return __tp(_, data)
 def dict_to_yml(filename: str | Path, data=None, sort_keys=False):
   class IndentedListDumper(yaml.Dumper):
     def increase_indent(self, flow=False, indentless=False):
