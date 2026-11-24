@@ -37,7 +37,7 @@ Documentation from the code's docstrings, with this README and the documents bes
 | [`gppu.api`](gppu/api.py) | `APIApp`, an async app serving FastAPI apps on uvicorn. Requires the `ld` extra |
 | [`gppu.fs.handlers`](https://kb.karel.in/gppu/v3/handlers.html) | Generated handler API and supported-format reference. |
 | [`gppu.data`](DATA.md) | `Cache` unified caching (JSON/pickle/sqlite/diskcache/DB backends), <br>database base classes: `_PGBase` (psycopg2) and `_SQABase` (SQLAlchemy),<br>`_PersistentDC` persisted pseudo-dataclasses with `Persistence` multi-backend storage (json/pickle/sqlite/postgres) |
-| [`gppu.iot`](gppu/iot.py) | `SerializedControl`, `HTTPControl`, `JSONHTTPControl`: device controls serialized on one event-loop thread. Requires the `iot` extra |
+| [`gppu.iot`](gppu/iot.py) | `SerializedControl`, `HTTPControl`, `JSONHTTPControl`: device controls serialized on their app's loop. Requires the `iot` extra |
 | [`gppu.tui`](TUI.md) | `TUIApp`, `TUILauncher`, `ConfigEditorApp`, `ui_select`, `ui_select_rows`<br> Textual-based TUI framework with web mode (`--serve`), CLI fallback, app embedding. Requires `tui` extra |
 | [`gppu.chrome`](CHROME.md) | `prepare_driver`, `switch_to_mobile`, `switch_to_desktop`<br>Selenium Chrome driver setup with profile management, crash recovery, mobile/desktop emulation |
 

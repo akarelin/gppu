@@ -1,16 +1,14 @@
-"""Serialized async controls: they bridge synchronous callers to one dedicated event-loop thread and serialize each
-device instance; HTTP over aiohttp, the ``iot`` extra.
+"""Serialized async controls: synchronous callers wait on the app's loop, and each device instance is serialized; HTTP
+over aiohttp, the ``iot`` extra.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import ssl
-import threading
 
 from collections.abc import Callable, Coroutine, Mapping
-from concurrent.futures import Future
-from typing import Any, ClassVar
+from typing import Any
 
 import aiohttp
 
@@ -24,45 +22,17 @@ type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, J
 # $$        Serialized controls
 # $$
 class SerializedControl(_mixin):
-  """Runs controls on one daemon loop, serialized by a per-instance lock."""
+  """Runs controls on the loop ``_get_loop`` gives, its app's, serialized by a per-instance lock."""
 
-  _control_loop: ClassVar[asyncio.AbstractEventLoop | None] = None
-  _control_loop_start_lock: ClassVar[threading.Lock] = threading.Lock()
   _control_lock: asyncio.Lock | None = None
 
-  def _get_loop(self) -> asyncio.AbstractEventLoop:
-    loop = SerializedControl._control_loop
-    if loop is not None: return loop
-
-    with SerializedControl._control_loop_start_lock:
-      loop = SerializedControl._control_loop
-      if loop is None:
-        ready = Future[asyncio.AbstractEventLoop]()
-        threading.Thread(target=SerializedControl._run_loop, args=(ready,), daemon=True, name='gppu-controls').start()
-        SerializedControl._control_loop = loop = ready.result()
-    return loop
-
-  @staticmethod
-  def _run_loop(ready: Future[asyncio.AbstractEventLoop]) -> None:
-    async def main() -> None:
-      ready.set_result(asyncio.get_running_loop())
-      await asyncio.Event().wait()
-
-    try: asyncio.run(main())
-    except BaseException as error:
-      if ready.done(): raise
-      ready.set_exception(error)
-
   def _control_call[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> T:
-    """The control run on the controls' loop, waited for: a caller on that loop's own thread would block it."""
+    """The control run on the app's loop, waited for: a caller on that loop's own thread would block it."""
     loop = self._get_loop()
     try: on_loop = asyncio.get_running_loop() is loop
     except RuntimeError: on_loop = False   # .. no loop runs on this thread
     if on_loop: raise RuntimeError('cannot block the target event-loop thread')
     return asyncio.run_coroutine_threadsafe(self._control_run(function, *args, **kwargs), loop).result()
-
-  def _control_submit[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> Future[T]:
-    return asyncio.run_coroutine_threadsafe(self._control_run(function, *args, **kwargs), self._get_loop())
 
   async def _control_run[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> T:
     lock = self._control_lock

@@ -13,6 +13,10 @@ from gppu import AsyncApp
 from gppu.iot import HTTPControl, JSONHTTPControl, SerializedControl
 
 
+LOOP = asyncio.new_event_loop()   # .. the app's loop the controls run on
+threading.Thread(target=LOOP.run_forever, daemon=True).start()
+
+
 class _FiniteApp(AsyncApp):
   def __init(self) -> None:
     self.seen = list(self.my('values'))
@@ -41,6 +45,8 @@ class AsyncAppTests(unittest.IsolatedAsyncioTestCase):
 
 
 class _Control(SerializedControl):
+  def _get_loop(self) -> asyncio.AbstractEventLoop: return LOOP
+
   def __init__(self, shared: dict[str, Any]):
     self.active = 0
     self.max_active = 0
@@ -107,8 +113,8 @@ class _Handler(BaseHTTPRequestHandler):
     else: self._write(404, b'not found')
 
 
-class _TextControl(HTTPControl): pass
-class _JsonControl(JSONHTTPControl): pass
+class _TextControl(HTTPControl): _get_loop = _Control._get_loop
+class _JsonControl(JSONHTTPControl): _get_loop = _Control._get_loop
 
 
 class HTTPControlTests(unittest.TestCase):

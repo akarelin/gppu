@@ -331,3 +331,35 @@ class _Runtime:
     for expected_path, callback, data in tuple(self.topic_listeners.values()):
       if expected_path is not None and expected_path != path: continue
       callback(path=path, old=old, new=new, **data)
+
+
+# .. from 842f9cb: SerializedControl's own loop, a daemon thread beside the app's loop, and _control_submit, which is the app's schedule
+class SerializedControl(_mixin):
+  _control_loop: ClassVar[asyncio.AbstractEventLoop | None] = None
+  _control_loop_start_lock: ClassVar[threading.Lock] = threading.Lock()
+  def _get_loop(self) -> asyncio.AbstractEventLoop:
+    loop = SerializedControl._control_loop
+    if loop is not None: return loop
+
+    with SerializedControl._control_loop_start_lock:
+      loop = SerializedControl._control_loop
+      if loop is None:
+        ready = Future[asyncio.AbstractEventLoop]()
+        threading.Thread(target=SerializedControl._run_loop, args=(ready,), daemon=True, name='gppu-controls').start()
+        SerializedControl._control_loop = loop = ready.result()
+    return loop
+
+  @staticmethod
+  def _run_loop(ready: Future[asyncio.AbstractEventLoop]) -> None:
+    async def main() -> None:
+      ready.set_result(asyncio.get_running_loop())
+      await asyncio.Event().wait()
+
+    try: asyncio.run(main())
+    except BaseException as error:
+      if ready.done(): raise
+      ready.set_exception(error)
+
+  def _control_submit[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> Future[T]:
+    return asyncio.run_coroutine_threadsafe(self._control_run(function, *args, **kwargs), self._get_loop())
+
