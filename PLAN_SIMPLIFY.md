@@ -11,6 +11,11 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
 
 ## Step 1: gppu reduced statically (in progress)
 - [x] Logging is one `Logger`: the console, its colours and filter, and the trace rules; the file logging and `init_logger` are gone
+- [x] Logging is as it was in March: `Debug`, `Info`, `Warn` and `Error` call the log, and `mixin_Logger` gives a class a log under its own name; the caller's frame is no longer read
+- [x] Device controls run on their app's loop; `SerializedControl`'s own loop thread and `_control_submit` are gone
+- [x] MQTT reads its connection, the configuration's `mqtt`, in its init step
+- [x] `Env.reset()` as Alex wrote it: `Env.init()` after it reads the configuration again
+- [ ] Alex's `# !!!` marks: `mixin_Config`, `App`, `Env`
 - [x] `mixin_Config` is the four readers over the object's data, `my`, `my_int`, `my_list` and `my_dict`, each read by programs
 - [ ] `App`: an app is not made by passing it its own name. Its name is its class's, and given no configuration it reads the section named as it is (Preservator); App still takes a name passed to it, and the lake's and the Linked Data API's servers pass one
 - [x] The Jinja region: each public method has a user (`render_template`, `apply_template` and `jinja_template` in programs, `configuration` in Env and App, `jinja_fill` in the catalog)
