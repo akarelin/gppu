@@ -134,6 +134,18 @@ def append_timestamp(path, separator=" ") -> Path:
   _ = Path(path)
   return _.parent / f"{_.stem}{separator}{timestamp_str}{_.suffix}"
 
+
+def pretty_timedelta(ts) -> str:
+  delta = now_ts() - ts
+  seconds = int(delta)
+  days, seconds = divmod(seconds, 86400)
+  hours, seconds = divmod(seconds, 3600)
+  minutes, seconds = divmod(seconds, 60)
+  if days > 0: return '%dd %dh %dm %ds' % (days, hours, minutes, seconds)
+  elif hours > 0: return '%dh %dm %ds' % (hours, minutes, seconds)
+  elif minutes > 0: return '%dm %ds' % (minutes, seconds)
+  else: return '%ds' % (seconds,)
+
 def format_size(size: int | float) -> str:
   """Format byte count as '0 B', '1.5 KB', '2.3 MB', '4.5 GB', '7.8 TB'.
 
@@ -652,7 +664,7 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
     def _jinja_helpers() -> dict:
         """gppu's own filters, offered to every Jinja environment it builds."""
         return {
-            'safe_int': safe_int, 'safe_float': safe_float, 'safe_list': safe_list, 'safe_timedelta': safe_timedelta, 'pfy': pfy, 'slugify': slugify,
+            'safe_int': safe_int, 'safe_float': safe_float, 'safe_list': safe_list, 'safe_timedelta': safe_timedelta, 'pretty_timedelta': pretty_timedelta, 'pfy': pfy, 'slugify': slugify,
         }
 
     @pass_context
