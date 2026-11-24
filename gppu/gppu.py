@@ -1227,18 +1227,6 @@ class _DC(UserDict):
   _DC_EXCLUDE_NAMES: list[str] = []
 
 
-  def _init_from_kw(self, **kw) -> None:
-    data = kw.pop('data', {})
-    if isinstance(data, str): data = {'data': data}
-    self.data = kw | data
-
-
-  # _INIT_STEPS: list[Callable] = [_init_from_kw]
-  # _INIT_STEPS: list[Callable[Concatenate["_DC", ...], None]] = [_init_from_kw]
-  # _INIT_STEPS: ClassVar[tuple[InitStep, ...]] = (_init_from_kw,)
-  _INIT_STEPS: list[Callable[Concatenate[Any, ...], None]] = [_init_from_kw]
-
-
   def __init_subclass__(cls, **kw) -> None:
     def _simple_type(typ: type | str) -> str:
       typ = str(typ)
@@ -1267,9 +1255,11 @@ class _DC(UserDict):
       setattr(cls, aname, property(getter, setter))
 
 
+  @final
   def __init__(self, **kw):
-    self.data = {}
-    for step in self._INIT_STEPS: step(self, **kw)
+    data = kw.pop('data', {})
+    if isinstance(data, str): data = {'data': data}
+    self.data = kw | data
     if hasattr(self, 'init') and callable(self.init): self.init()
 
 # endregion
@@ -1293,7 +1283,7 @@ class App(YInit, _Base, _DC):
     is given or else its section of the environment, and the command line goes over both."""
     name: str
 
-    def _init_config(self, **kw) -> None:
+    def __init(self) -> None:
         if not self.name: self.name = type(self).__name__.lower()
         script = vars(sys.modules[type(self).__module__])   # .. a script assigns its own configuration to its MANIFEST global
         configuration = yaml.load(script['MANIFEST'], Loader=YmlLoader) if 'MANIFEST' in script else dict_from_yml(self.data['config']) if 'config' in self.data else glob_dict(self.name)
@@ -1301,8 +1291,6 @@ class App(YInit, _Base, _DC):
         argv = sys.argv[1:]   # .. --key value sets a key, a slash path a nested one, to the value read as YAML; --flag sets it to True
         for i, arg in enumerate(argv):
             if arg.startswith('--') and len(arg) > 2: deepset(arg[2:], self.data, yaml.load(argv[i + 1], Loader=YmlLoader) if i + 1 < len(argv) and not argv[i + 1].startswith('--') else True)
-
-    _INIT_STEPS = _DC._INIT_STEPS + [_init_config]
 # endregion
 
 
