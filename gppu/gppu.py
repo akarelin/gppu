@@ -680,7 +680,7 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
     def _jinja_helpers() -> dict:
         """gppu's own filters, offered to every Jinja environment it builds."""
         return {
-            'safe_int': safe_int, 'safe_float': safe_float, 'safe_list': safe_list, 'safe_timedelta': safe_timedelta, 'pretty_timedelta': pretty_timedelta, 'pfy': pfy, 'slugify': slugify,
+            'safe_int': safe_int, 'safe_float': safe_float, 'pfy': pfy, 'slugify': slugify,
         }
 
     @pass_context
