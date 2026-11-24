@@ -119,6 +119,8 @@ def _safe_datetime(o: object) -> dt | None:
 def now_str(): return dt.now().strftime("%Y%m%d.%H%M%S")
 def now_ts(): return dt.now().timestamp()
 
+def timestamp(): return dt.now().strftime("%y%m%d-%H%M")
+
 def format_size(size: int | float) -> str:
   """Format byte count as '0 B', '1.5 KB', '2.3 MB', '4.5 GB', '7.8 TB'.
 
