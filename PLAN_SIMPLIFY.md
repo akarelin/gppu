@@ -27,9 +27,11 @@ Alex's instructions are in [SPEC.md](SPEC.md). The earlier, longer version of th
   - [ ] Hue, PowerView and Sensibo as one REST entity of the base: a refresh is the row's `read:`, a command the requests its `command:` renders; each device class under ten lines (in progress)
   - [ ] Kasa: a strip built and connected as AVMatrix connects, its outlets' commands through the base
 - [ ] Y2's `y2entity.py`, by Alex's marks, read and fixed in this order (in progress)
-  - [ ] One `command`: it calls the entity's method of that name; the base `turn_on`, `turn_off`, `open` and `close` send what the row says, its sequence or its MQTT payload; `entity_command`, `commands`, YEntity's and YGroup's `command` and the color loop's go
-  - [ ] A press on `btn/<path>` reaches the entity at the path; the Buttons app and `Runtime.buttons` go
-  - [ ] An entity holds no listener handles of its own (`_listen`), does not unregister itself, has no `listen_state` and does not listen to its own state topic
+  - [x] One `command`: the entity's own method, then the row's calls or a group's members, then its MQTT payload; `entity_command`, `has_actions`, `_sequenced`, `incorrect_first` and YEntity's and YGroup's `command` are gone
+  - [ ] `commands` and the color loop's `command` go; `command` is async
+  - [x] A press on `btn/<path>` reaches the entity at the path; the Buttons app is gone
+  - [ ] `Runtime.buttons` goes
+  - [x] An entity holds no listener handles of its own (`_listen`), does not unregister itself, has no `listen_state` and does not listen to its own state topic
   - [ ] No state saved to YAML and no hand tracing of calls
   - [ ] Runtime is State's: `state_changed`, the listeners and the registries; App keeps no state of its own
   - [ ] Unapproved global functions go into the class that uses them or go: `motion_topic`, `base_object`, `answers_actions`, `object_from_base`, `from_name`, `host_addr`, `runs_colour`
