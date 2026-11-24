@@ -48,6 +48,8 @@ from .gppu import (
     # .. Configuration loading
     dict_from_yml,
     dict_to_yml,
+    dict_sanitize,
+    template_populate,
     jinja_template,
     jinja,
     render_template,
@@ -60,9 +62,15 @@ from .gppu import (
     # .. Type safety and coercion
     safe_int,
     safe_float,
+    safe_list,
+    safe_timedelta,
 
     # .. Time utilities
+    now_str,
     now_ts,
+    pretty_timedelta,
+    prepend_datestamp,
+    append_timestamp,
 
     # .. String utilities
     pfy,
@@ -94,17 +102,17 @@ __all__ = [
     'sync',
 
     # .. Configuration
-    'dict_from_yml', 'dict_to_yml',
-    'jinja_template', 'jinja', 'render_template', 'apply_template',
+    'dict_from_yml', 'dict_to_yml', 'dict_sanitize',
+    'template_populate', 'jinja_template', 'jinja', 'render_template', 'apply_template',
 
     # .. Dictionary utilities
     'deepget', 'deepget_list',
 
     # .. Type utilities
-    'safe_int', 'safe_float',
+    'safe_int', 'safe_float', 'safe_list', 'safe_timedelta',
 
     # .. Time utilities
-    'now_ts',
+    'now_str', 'now_ts', 'pretty_timedelta', 'prepend_datestamp', 'append_timestamp',
 
     # .. String utilities
     'pfy',
