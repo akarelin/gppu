@@ -1,6 +1,7 @@
 # gppu specification
 
 ## Env
+- Env is a global singleton app. It loads like any app and does not initialize from itself.
 - Env is a global system object, created once and hidden from everybody: no program initializes it, uses it or touches it. gppu's own methods use it to do things correctly, such as building paths.
 - `glob`, `glob_int`, `glob_list` and `glob_dict` are global variables, not properties of a class.
 - New configuration is the same event as reload, restart or reset. Configuration is never compared, and nothing listens for its changes.

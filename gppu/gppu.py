@@ -606,9 +606,7 @@ def dict_from_yml(filename: str | Path) -> dict:
 
   Loader.add_constructor("!include", yml_include)
 
-  with filename.open() as f:
-    if filename.suffix == '.py': return dict(yaml.load(re.search(r'^MANIFEST = r?"""(.*?)"""', f.read(4096), re.M | re.S)[1], Loader=Loader))   # .. a script's YAML is its MANIFEST, in its first 4 KB
-    return dict(yaml.load(f, Loader=Loader))
+  with filename.open() as f: return dict(yaml.load(f, Loader=Loader))
 
 # endregion
 
@@ -1167,7 +1165,9 @@ class App(YInit, _Base, _DC):
 
     def __init(self) -> None:
         if not self.name: self.name = type(self).__name__.lower()
-        self.data = jinja.configuration(dict_from_yml(self.data['config']) if 'config' in self.data else deepcopy(glob_dict(self.name))) | self.data   # .. its file, a YAML file or a script, or else its section of the environment
+        script = vars(sys.modules[type(self).__module__])   # .. a script assigns its own configuration to its MANIFEST global
+        configuration = yaml.load(script['MANIFEST'], Loader=YmlLoader) if 'MANIFEST' in script else dict_from_yml(self.data['config']) if 'config' in self.data else glob_dict(self.name)
+        self.data = jinja.configuration(deepcopy(configuration)) | self.data
         # .. --key value sets a key, a slash path a nested one, to the value read as YAML; --flag sets it to True
         argv, i = sys.argv[1:], 0
         while i < len(argv):
@@ -1180,33 +1180,36 @@ class App(YInit, _Base, _DC):
 
 
 # region - Env: the configuration
-class _Env(_Base, _DC):
-    """The program's environment: a global singleton app, made once as gppu is imported and hidden from programs. It
-    loads as any app does, from the data it is made with: its environment's one YAML file, which glob reads. Y2's and
-    IoT's programs share Creekview, and so does a host without RAN's repository; every other app shares RAN; a host with
-    neither is given its configuration over MQTT. It also knows the machine it runs on."""
+class Env:
+    """The program's environment: one global, loaded as gppu is imported and hidden from programs. Its data is its
+    environment's one YAML file, which glob reads: Y2's and IoT's programs share Creekview, and so does a host without
+    RAN's repository; every other app shares RAN; a host with neither has no file and is given its configuration over
+    MQTT. It also knows the machine it runs on."""
     os, home = detect_os(), Path.home()
     host, user = socket.gethostname().split('.')[0].lower(), getpass.getuser()
     root = Path('D:/Dev') if os == OSType.W11 else home   # .. where the repositories are
     environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (root / 'RAN').exists() else 'RAN'
     path = root / {'RAN': 'RAN/_config/config.yaml', 'IoT': 'IoT/_Creekview/_creekview.yaml'}[environment]
-    initialized = path.exists()
+    data: dict[str, Any] = {}
+    initialized: bool = False
+
+    @staticmethod
+    def init() -> None:
+        """One YAML load of its file, then the Jinja in it that reads only the configuration filled: that Jinja reads glob,
+        which reads the file as loaded."""
+        Env.data = dict_from_yml(Env.path)
+        Env.data = jinja.configuration(Env.data)
+        if 'trace_rules' in Env.data: Logger.trace_rules = dict(Env.data['trace_rules'])
+        Env.initialized = True
 
     @staticmethod
     def reset() -> None: Env.data = {}; Env.initialized = False
 
-
-Env = _Env(data=dict_from_yml(_Env.path) if _Env.initialized else {})
 
 # .. the configuration's readers are globals over Env's data
 def glob(path: str | y2path, default=None) -> Any: return deepget(path, Env.data, default=default)
 def glob_int(path: str | y2path, default: int = 0) -> int: return deepget_int(path, Env.data, default=default)
 def glob_list(path: str | y2path, default: list = []) -> list: return deepget_list(path, Env.data, default=default or [])
 def glob_dict(path: str | y2path, default: dict = {}) -> dict: return deepget_dict(path, Env.data, default=default or {})
-# region - the configuration's macros, named templates, `template:` rows and the Jinja that reads only the configuration
-# .. Creekview and RAN use all four: _creekview.yaml's macros, the *_templates and templates blocks of groups, Insteon,
-# .. covers and the devices, and RAN config.yaml's mounts. Its Jinja reads glob, so it is filled once Env holds the file
-# endregion
-Env.data = jinja.configuration(Env.data)
-if 'trace_rules' in Env.data: Logger.trace_rules = dict(Env.data['trace_rules'])
+if Env.path.exists(): Env.init()   # .. a host without the repository has no file: MQTT gives it its configuration
 # endregion

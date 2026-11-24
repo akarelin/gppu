@@ -27,4 +27,4 @@ class HandlerLs(App):
 
 
 if __name__ == '__main__':
-  HandlerLs(config=__file__).main()
+  HandlerLs().main()
