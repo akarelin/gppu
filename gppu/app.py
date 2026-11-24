@@ -7,11 +7,13 @@ Env, ``_Base`` and ``App``, the regular app with no steps, are in gppu.gppu. Her
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import inspect
 import json
 import os
 from collections.abc import Callable, Coroutine, Mapping
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
+from functools import partial
 from typing import Any
 
 import aiomqtt
@@ -105,8 +107,12 @@ class mixin_Timers(YStart):
   def __init(self) -> None:
     self.timers: dict[int, dict] = {}
     self.h_timeouts: dict[str, dict] = {}
+    self._executor = ThreadPoolExecutor()   # .. its callbacks' own threads: on the loop's default pool they would wait for the very lookups their device calls need
 
-  def __stop(self) -> None: self.cancel_timers()
+  def __stop(self) -> None:
+    self.cancel_timers()
+    self._executor.shutdown(wait=False)
+    self._executor = ThreadPoolExecutor()   # .. a second run gets its own; a pool starts no thread until it is used
 
   def run_later(self, callback: Callable[..., Any], *, delay: int | float, key: str | None = None, **data: Any) -> Future:
     """``callback`` once, ``delay`` seconds from now; armed again under ``key``, the one armed under it before is
@@ -131,7 +137,7 @@ class mixin_Timers(YStart):
         if interval is None:   # .. a one-shot is spent as it fires: its key is free while its callback runs
           del self.timers[id(row)]
           if self.h_timeouts.get(key) is row: del self.h_timeouts[key]
-        try: await asyncio.to_thread(callback, **data)
+        try: await asyncio.get_running_loop().run_in_executor(self._executor, partial(contextvars.copy_context().run, callback, **data))
         except Exception as error: self.Error('timer', row['name'], 'raised:', error)
         if interval is None: return
         row['next_run'] = now_ts() + interval
