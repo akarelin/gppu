@@ -22,7 +22,7 @@ from pathlib import PurePath, PureWindowsPath
 
 from enum import Enum
 from abc import abstractmethod
-from typing import Union, Any, List, Optional, Tuple, Dict, DefaultDict, Callable, Concatenate, final
+from typing import Union, Any, List, Optional, Tuple, Dict, DefaultDict, Callable, Concatenate, final, Coroutine
 from collections import defaultdict, UserDict, UserList
 from collections.abc import Mapping
 
@@ -156,8 +156,6 @@ def format_size(size: int | float) -> str:
   if size < 1024 ** 3:             return f"{size / 1024 ** 2:.1f} MB"
   if size < 1024 ** 4:             return f"{size / 1024 ** 3:.1f} GB"
   return f"{size / 1024 ** 4:.2f} TB"
-
-
 # endregion
 
 
@@ -337,7 +335,7 @@ class Path(y2path, pathlib.Path):
     # .. a path given as text is the user's: its variables, its leading ~, and on Windows a WSL drive (/mnt/d/x) are expanded, the two things pathlib does not do
     if args and isinstance(args[0], (str, os.PathLike)) and not isinstance(args[0], y2path):
       raw = os.path.expandvars(os.fspath(args[0]))
-      if detect_os() == OSType.W11 and re.match(r'/mnt/[a-zA-Z]/', raw): raw = f'{raw[5].upper()}:/{raw[7:]}'
+      if detect_os() == OSType.W11 and re.match(r'/mnt/([a-zA-Z])(?:/|$)', raw): raw = f'{raw[5].upper()}:/{raw[7:]}'
       args = (os.path.expanduser(raw) if raw == '~' or raw.startswith(('~/', '~\\')) else raw, *args[1:])
     y2path.__init__(self, *args)
 
@@ -510,41 +508,6 @@ def deepset(path: str | y2path, d: dict, value) -> None:
     if parent not in node: node[parent] = {}
     node = node[parent]
   node[key] = value
-
-
-
-
-
-
-# def dict_sort_keylen(d, reverse: bool = True) -> dict:
-#   if not isinstance(d,dict): return {}
-#   return dict(sorted(d.items(), key=lambda key: len(key[0]), reverse=reverse))
-
-
-# def dict_element_append(d: dict, key: str, value, unique=False) -> None:
-#   """ coerces key value in dict to list, than appends value to it
-#       Replaces safe_add_unique """
-#   key = str(key)
-#   if isinstance(value, list):
-#     for v in value: dict_element_append(d, key, v, unique)
-#   elif not d.get(key): d[key] = [value]
-#   elif isinstance(d[key], str): d[key] = [d[key], value]
-#   elif isinstance(d[key], list):
-#     if unique and value in d[key]: pass
-#     else: d[key] += [value]
-#   else: raise Exception(f"Unrecognized type: {type(d[key])}")
-
-
-# def dict_all_paths(d: dict) -> list:
-#   """Returns all paths in a dict as a list of strings"""
-#   result: list = []
-#   for key, value in d.items():
-#     if isinstance(value, dict):
-#       new_keys: list = dict_all_paths(value)
-#       result.append(key)
-#       for innerkey in new_keys: result.append(f'{key}/{innerkey}')
-#     else: result.append(key)
-#   return result
 # endregion
 
 
@@ -1078,20 +1041,16 @@ class mixin_Logger(_mixin):
 # endregion
 
 
-_trace_mro = False
-
-
 # region YMRO lifecycle
+
+# region YMRO lifecycle - Sync
 class _YMRO:
   POSSIBLE_STEPS = ['init', 'load', 'start', 'stop']
 
   @property
   def _trace_mro(self) -> bool:
-    result = getattr(self, 'args', {}).get('trace_mro', False)
-    global _trace_mro
-    _trace_mro = result
-    return result
-
+    return getattr(self, 'args', {}).get('trace_mro', False)
+    
 
   def print_ymro(self):
     Debug('BY', self.__class__.__qualname__)
@@ -1116,97 +1075,123 @@ class _YMRO:
       for sibling in siblings:
         qname = f"{sibling.__qualname__}__{step}"
         if qname[0] != '_': qname = '_' + qname
-        method = vars(sibling).get(qname)   # .. the sibling's own step: two classes of one name, as gppu's App and Y2's App, each keep theirs
+        method = vars(sibling).get(qname)
         if method: result[step].append(method.__get__(self))
     return result
-
   def _ymro(self, method: str) -> list: return self._ymros().get(method, [])
 
-  def _callall(self, method, *a, **kw):
-    if any(inspect.iscoroutinefunction(m) for m in self._ymro(method)): return self._acallall(method, *a, **kw)   # .. an async app awaits each step
-    [m(*a, **kw) for m in self._ymro(method)]
+  
+  def _callall(self, method: str, *a, **kw) -> None:
+    for m in self._ymro(method): m(*a, **kw)
 
-  async def _acallall(self, method: str, *a, **kw) -> None:
-    for m in self._ymro(method):
-      result = m(*a, **kw)
-      if asyncio.iscoroutine(result): await result
-
-
-class YInit(_YMRO):
-  @abstractmethod
-  def __init(self): pass
 
   @final
-  def init(self):
+  def init(self) -> None:
     if self.initialized: return
-    result = self._callall('init')
+    self._callall('init')
     self.initialized = True
-    return result
-
   @property
   def initialized(self) -> bool: return getattr(self, '_initialized', False)
   @initialized.setter
   def initialized(self, value: bool): self._initialized = value
 
 
-class YLoad(YInit):
-  @abstractmethod
-  def __load(self): pass
-
-  @final
-  def load(self):
+  def load(self) -> None:
     if self.loaded: return
     assert self.initialized
-    result = self._callall('load')
+    self._callall('load')
     self.loaded = True
-    return result
-
   @property
   def loaded(self) -> bool: return getattr(self, '_loaded', False)
   @loaded.setter
   def loaded(self, value: bool): self._loaded = value
 
 
-class YStart(YLoad):
-  @abstractmethod
-  def __start(self): pass
-
-  @final
-  def start(self):
+  def start(self) -> None:
     if self.started: return
-    result = self._callall('start')
+    self._callall('start')
     self.started = True
-    return result
-
   @property
   def started(self) -> bool: return getattr(self, '_started', False)
   @started.setter
   def started(self, value: bool): self._started = value
 
 
-  @final
-  def stop(self):
-    if self.stopped: return
-    result = self._callall('stop')
+  def stop(self) -> None:
+    self._callall('stop')
     self.started = False
-    self.stopped = True
     self.loaded = False
-    return result
 
 
-  @property
-  def stopped(self) -> bool: return getattr(self, '_stopped', False)
-  @stopped.setter
-  def stopped(self, value: bool): self._stopped = value
+YStart = _YMRO
+# endregion
 
+
+# region Async
+class YAsync(_YMRO):
+  _loop: asyncio.AbstractEventLoop | None = None
+  _background_tasks: set[asyncio.Task]
+
+
+  async def _acallall(self, method: str, *a, **kw) -> None:
+    for m in self._ymro(method):
+      result = m(*a, **kw)
+      if inspect.isawaitable(result): await result
+
+
+  def __init(self) -> None:
+    self._loop: asyncio.AbstractEventLoop | None = None
+    self._background_tasks: set[asyncio.Task] = set()
+
+
+  @final
+  async def load(self) -> None:   # type: ignore[override]
+    if self.loaded: return
+    assert self.initialized
+    await self._acallall('load')
+    self.loaded = True
+
+
+  @final
+  async def start(self) -> None:  # type: ignore[override]
+    if self.started: return
+    await self._acallall('start')
+    self.started = True
+  async def __start(self) -> None:
+    self._loop = asyncio.get_running_loop()
+
+
+  @final
+  async def stop(self) -> None:   # type: ignore[override]
+    await self._acallall('stop')
+    self.started = False
+    self.loaded = False
+
+  def __stop(self) -> None:
+    if self._loop is None: return
+    tasks = list(self._background_tasks)
+    self._loop.call_soon_threadsafe(lambda: [t.cancel() for t in tasks])
+    self._loop = None
+
+
+  def _spawn[T](self, coro: Coroutine[Any, Any, T], /) -> asyncio.Task[T]:
+    if self._loop is None: raise RuntimeError(f'{self!r} is not running')
+    task = self._loop.create_task(coro)
+    self._background_tasks.add(task)
+    task.add_done_callback(self._background_tasks.discard)
+    return task
+
+
+  def schedule[T](self, coro: Coroutine[Any, Any, T], /) -> Future[T]:
+    if self._loop is None: raise RuntimeError(f'{self!r} is not running')
+    return asyncio.run_coroutine_threadsafe(coro, self._loop)
+# endregion
 # endregion
 
 
 # region DC - pseudo DataClass
 _DC_BASE_TYPE_MAP = {'str': str, 'list': list, 'dict': dict, 'set': set, 'int': int, 'float': float, 'bool': bool, 'None': type(None),
-                      'y2path': y2path, 'y2topic': y2topic, 'y2uri': y2uri}
-# from typing import Callable, Concatenate
-# .. A program's own types register themselves in _DC._DC_TYPE_MAP (Y2 adds y2eid)
+                      'y2path': y2path, 'Path': Path, 'y2topic': y2topic, 'y2uri': y2uri}
 
 
 class _DC(UserDict):
@@ -1254,7 +1239,6 @@ class _DC(UserDict):
     if isinstance(data, str): data = {'data': data}
     self.data = kw | data
     if hasattr(self, 'init') and callable(self.init): self.init()
-
 # endregion
 
 
@@ -1266,12 +1250,13 @@ class mixin_Config(_mixin):
     def my_float(self, path, default: float = float('nan')) -> float: return deepget_float(path, self.data, default=default)
 
 
-class _Base(mixin_Logger, mixin_Config): pass
 # endregion
+
+class _BaseApp(YAsync, mixin_Logger, mixin_Config, _DC): pass
 
 
 # region App
-class App(YInit, _Base, _DC):
+class App(_BaseApp):
 # !!! Rewrote. folowing the architecture, not beside it
     """An app: named as its class unless made with a name. Its configuration is its section of the environment with its
     script's MANIFEST or the file it is given over it; what it is made with goes over that, and the command line over all."""
@@ -1289,23 +1274,31 @@ class App(YInit, _Base, _DC):
 
 
 # region - Env: the configuration
-class _Env(YInit, _Base, _DC):
+class _Env(_BaseApp):
 # !!! Rewrute!
     """The program's environment: a system object, made once as gppu is imported and hidden from programs. Its init knows
     the machine it runs on and loads its environment's file, so a reset followed by init is a reload."""
-    _ENV_PATHS = {"RAN": "RAN/_config/config.yaml", "IoT": "IoT/_Creekview/_creekview.yaml"}   # .. the two environments, each in its repository
+    
     home: Path
     os: OSType
-    path: Path   # .. the environment's YAML file; host, user and environment, RAN or IoT, are plain attributes too: the machine and the environment are no configuration
+    host: str
+    user: str
 
     def __init(self) -> None:
-        self.os, self.home = detect_os(), Path.home() # !!!  Rewrite
-        self.host, self.user = socket.gethostname().split('.')[0].lower(), getpass.getuser() # !!!  Rewrite
-        root = Path('D:/Dev') if self.os == OSType.W11 else self.home # !!!  Rewrite
-        self.environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (root / self._ENV_PATHS['RAN']).exists() else 'RAN'
-        self.path = root / self._ENV_PATHS[self.environment]
-        if self.path.exists(): self.data = jinja.configuration(dict_from_yml(self.path)) | self.data   # .. a host without its repository reads its environment from MQTT
-        if 'trace_rules' in self.data: Logger.trace_rules = dict(self.data['trace_rules'])
+      _ENV_PATHS = {"RAN": "RAN/_config/config.yaml", "IoT": "IoT/_Creekview/_creekview.yaml"}   # .. the two environments, each in its repository
+
+      self.os = detect_os() # !!!  Rewrite
+      self.host, self.user = socket.gethostname().split('.')[0].lower(), getpass.getuser() # !!!  Rewrite
+
+      self.home = Path('D:/Dev') if self.os == OSType.W11 else Path.home()
+
+      environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (self.home / _ENV_PATHS['RAN']).exists() else 'RAN'  # !!! Rewrite
+
+      config = self.home / _ENV_PATHS[environment]
+
+      if config.exists(): self.data = jinja.configuration(dict_from_yml(config)) | self.data   # .. a host without its repository reads its environment from MQTT
+      if 'trace_rules' in self.data: Logger.trace_rules = dict(self.data['trace_rules'])
+
 
     @staticmethod
     def reset() -> None: Env.data = {}; Env.initialized = False
