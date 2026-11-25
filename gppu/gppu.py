@@ -22,7 +22,8 @@ from pathlib import PurePath, PureWindowsPath
 
 from enum import Enum
 from abc import abstractmethod
-from typing import Union, Any, List, Optional, Tuple, Dict, DefaultDict, Callable, Concatenate, final, Coroutine
+from concurrent.futures import Future
+from typing import Union, Any, List, Optional, Tuple, Dict, DefaultDict, Callable, Concatenate, Self, final, Coroutine
 from collections import defaultdict, UserDict, UserList
 from collections.abc import Mapping
 
@@ -1118,12 +1119,13 @@ class _YMRO:
 
 
   def stop(self) -> None:
+    if not (self.started or self.loaded): return
     self._callall('stop')
     self.started = False
     self.loaded = False
 
 
-YStart = _YMRO
+YInit = YLoad = YStart = _YMRO
 # endregion
 
 
@@ -1161,9 +1163,17 @@ class YAsync(_YMRO):
     self._loop = asyncio.get_running_loop()
 
 
+  # region - ^^ stop and stopped
+  # ^^ Live callers of stop() are all synchronous (api.py uvicorn done-callback, app.py AppService.from_mqtt,
+  # ^^ tui/launcher.py finally, y2entity.py restart_app and App.__stop); none define async def __stop.
+  # ^^ Making YAsync.stop async leaves unawaited coroutines in those callers until either stop() stays sync on _YMRO or callers are updated.
+  # ^^ The dropped stopped flag is still read by app.py AsyncApp.run() (to detect stop() called during start()) and tests (test_ymro.py, test_configuration.py).
+  # endregion
   @final
   async def stop(self) -> None:   # type: ignore[override]
+    if not (self.started or self.loaded): return
     await self._acallall('stop')
+    self._loop = None
     self.started = False
     self.loaded = False
 
@@ -1171,20 +1181,22 @@ class YAsync(_YMRO):
     if self._loop is None: return
     tasks = list(self._background_tasks)
     self._loop.call_soon_threadsafe(lambda: [t.cancel() for t in tasks])
-    self._loop = None
+
+
+  def _get_loop(self) -> asyncio.AbstractEventLoop:
+    if self._loop is None: raise RuntimeError(f'{self!r} is not running')
+    return self._loop
 
 
   def _spawn[T](self, coro: Coroutine[Any, Any, T], /) -> asyncio.Task[T]:
-    if self._loop is None: raise RuntimeError(f'{self!r} is not running')
-    task = self._loop.create_task(coro)
+    task = self._get_loop().create_task(coro)
     self._background_tasks.add(task)
     task.add_done_callback(self._background_tasks.discard)
     return task
 
 
   def schedule[T](self, coro: Coroutine[Any, Any, T], /) -> Future[T]:
-    if self._loop is None: raise RuntimeError(f'{self!r} is not running')
-    return asyncio.run_coroutine_threadsafe(coro, self._loop)
+    return asyncio.run_coroutine_threadsafe(coro, self._get_loop())
 # endregion
 # endregion
 
@@ -1203,6 +1215,19 @@ class _DC(UserDict):
   """
   _DC_TYPE_MAP: dict[str, type] = _DC_BASE_TYPE_MAP.copy()
   _DC_EXCLUDE_NAMES: list[str] = []
+
+
+  def _init_from_kw(self, **kw) -> None:
+    data = kw.pop('data', {})
+    if isinstance(data, str): data = {'data': data}
+    self.data = kw | data
+
+
+  def _init_ymro(self, **kw) -> None:
+    if isinstance(self, _YMRO): self.init()
+
+
+  _INIT_STEPS: list[Callable] = [_init_from_kw, _init_ymro]
 
 
   def __init_subclass__(cls, **kw) -> None:
@@ -1235,73 +1260,100 @@ class _DC(UserDict):
 
   @final
   def __init__(self, **kw):
-    data = kw.pop('data', {})
-    if isinstance(data, str): data = {'data': data}
-    self.data = kw | data
-    if hasattr(self, 'init') and callable(self.init): self.init()
+    self.data = {}
+    for step in self._INIT_STEPS: step(self, **kw)
 # endregion
 
 
 # region Configuration mixins
 class mixin_Config(_mixin):
-    """An object's configuration, its data, read back with my."""
-    def my(self, path: str | y2path) -> Any: return deepget(path, self.data)
-    def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self.data, default=default)
-    def my_float(self, path, default: float = float('nan')) -> float: return deepget_float(path, self.data, default=default)
+  """An object's configuration, its data, read back with my."""
+  def my(self, path: str | y2path) -> Any: return deepget(path, self.data)
+  def my_int(self, path: str | y2path, default: int = 0) -> int: return deepget_int(path, self.data, default=default)
+  def my_float(self, path, default: float = float('nan')) -> float: return deepget_float(path, self.data, default=default)
 
 
+class _Base(mixin_Logger, mixin_Config): pass
 # endregion
 
-class _BaseApp(YAsync, mixin_Logger, mixin_Config, _DC): pass
+
+class _BaseApp(YAsync, _Base, _DC):
+  name: str
+
+  def __init(self) -> None:
+    if not self.name: self.name = type(self).__name__.lstrip('_').lower()
+
+  def from_dict(self, d: Mapping, *, override: bool = True) -> Self:
+    """Load config from a dict. A ``topology`` key (a yaml path) is loaded as base data;
+    ``tunables`` and remaining keys override it."""
+    config = dict(d)
+    topology = config.pop('topology', None)
+    tunables = config.pop('tunables', None)
+    data = dict_from_yml(topology) if topology else {}
+    if isinstance(tunables, dict): data.update(tunables)
+    data.update(config)
+    rendered = jinja.configuration(deepcopy(data))
+    self.data = (self.data | rendered) if override else (rendered | self.data)
+    return self
+
+  def from_file(self, path: str | Path, *, override: bool = True) -> Self:
+    """Load config from a YAML file, applying ``topology`` / ``tunables`` and Jinja."""
+    return self.from_dict(dict_from_yml(path), override=override)
+
+  def reset(self) -> None:
+    self.data = {}
+    self.initialized = False
+    self.loaded = False
+    self.started = False
 
 
 # region App
 class App(_BaseApp):
-# !!! Rewrote. folowing the architecture, not beside it
-    """An app: named as its class unless made with a name. Its configuration is its section of the environment with its
-    script's MANIFEST or the file it is given over it; what it is made with goes over that, and the command line over all."""
-    name: str
+  """An app: named as its class unless made with a name. Its configuration is its section of the environment with its
+  script's MANIFEST or the file it is given over it; what it is made with goes over that, and the command line over all."""
 
-    def __init(self) -> None:
-        if not self.name: self.name = type(self).__name__.lower()
-        script = vars(sys.modules[type(self).__module__])   # .. a script assigns its own configuration to its MANIFEST global
-        configuration = glob_dict(self.name) | (yaml.load(script['MANIFEST'], Loader=YmlLoader) if 'MANIFEST' in script else dict_from_yml(self.data['config']) if 'config' in self.data else {})
-        self.data = jinja.configuration(deepcopy(configuration)) | self.data
-        argv = sys.argv[1:]   # .. --key value sets a key, a slash path a nested one, to the value read as YAML; --flag sets it to True
-        for i, arg in enumerate(argv):
-            if arg.startswith('--') and len(arg) > 2: deepset(arg[2:], self.data, yaml.load(argv[i + 1], Loader=YmlLoader) if i + 1 < len(argv) and not argv[i + 1].startswith('--') else True)
+  def __init(self) -> None:
+    script = vars(sys.modules[type(self).__module__])   # .. a script assigns its own configuration to its MANIFEST global
+    if 'MANIFEST' in script: override = yaml.load(script['MANIFEST'], Loader=YmlLoader) or {}
+    elif 'config' in self.data:
+      cfg = self.data['config']
+      override = cfg if isinstance(cfg, Mapping) else dict_from_yml(cfg)
+    else: override = {}
+    self.from_dict(glob_dict(self.name) | override, override=False)
+    argv = sys.argv[1:]   # .. --key value sets a key, a slash path a nested one, to the value read as YAML; --flag sets it to True
+    for i, arg in enumerate(argv):
+      if arg.startswith('--') and len(arg) > 2:
+        deepset(arg[2:], self.data, yaml.load(argv[i + 1], Loader=YmlLoader) if i + 1 < len(argv) and not argv[i + 1].startswith('--') else True)
 # endregion
 
 
 # region - Env: the configuration
 class _Env(_BaseApp):
-# !!! Rewrute!
-    """The program's environment: a system object, made once as gppu is imported and hidden from programs. Its init knows
-    the machine it runs on and loads its environment's file, so a reset followed by init is a reload."""
-    
-    home: Path
-    os: OSType
-    host: str
-    user: str
+  """The program's environment: a system object, made once as gppu is imported and hidden from programs. Its init knows
+  the machine it runs on and loads its environment's file, so a reset followed by init is a reload."""
+  _ENV_PATHS = {"RAN": "RAN/_config/config.yaml", "IoT": "IoT/_Creekview/_creekview.yaml"}   # .. the two environments, each in its repository
 
-    def __init(self) -> None:
-      _ENV_PATHS = {"RAN": "RAN/_config/config.yaml", "IoT": "IoT/_Creekview/_creekview.yaml"}   # .. the two environments, each in its repository
+  home: Path
+  os: OSType
+  host: str
+  user: str
 
-      self.os = detect_os() # !!!  Rewrite
-      self.host, self.user = socket.gethostname().split('.')[0].lower(), getpass.getuser() # !!!  Rewrite
+  def __init(self) -> None:
+    self.os = detect_os()
+    self.host, self.user = socket.gethostname().split('.')[0].lower(), getpass.getuser()
+    self.home = Path('D:/Dev') if self.os == OSType.W11 else Path.home()
+    environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (self.home / self._ENV_PATHS['RAN']).exists() else 'RAN'
+    config = self.home / self._ENV_PATHS[environment]
+    if config.exists(): self.from_file(config, override=False)   # .. a host without its repository reads its environment from MQTT
 
-      self.home = Path('D:/Dev') if self.os == OSType.W11 else Path.home()
+  def from_dict(self, d: Mapping, *, override: bool = True) -> Self:
+    super().from_dict(d, override=override)
+    if 'trace_rules' in self.data: Logger.trace_rules = dict(self.data['trace_rules'])
+    return self
 
-      environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (self.home / _ENV_PATHS['RAN']).exists() else 'RAN'  # !!! Rewrite
-
-      config = self.home / _ENV_PATHS[environment]
-
-      if config.exists(): self.data = jinja.configuration(dict_from_yml(config)) | self.data   # .. a host without its repository reads its environment from MQTT
-      if 'trace_rules' in self.data: Logger.trace_rules = dict(self.data['trace_rules'])
-
-
-    @staticmethod
-    def reset() -> None: Env.data = {}; Env.initialized = False
+  def reset(self) -> None:
+    super().reset()
+    Logger.trace_rules = {}
 
 
 Env = _Env()
