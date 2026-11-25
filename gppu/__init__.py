@@ -6,7 +6,7 @@ data manipulation, and type safety utilities.
 """
 
 from .gppu import (
-    # .. Env, its configuration readers and the regular apps
+    # .. Env, configuration readers and apps
     Env,
     glob,
     glob_int,
@@ -17,7 +17,8 @@ from .gppu import (
 )
 
 from .app import (
-    # .. apps with steps
+    # .. Runtime and apps with steps
+    Runtime,
     AsyncApp,
     _callback_wrapper,
     mixin_Rest,

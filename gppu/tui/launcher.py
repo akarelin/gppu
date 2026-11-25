@@ -628,11 +628,13 @@ class TUIApp(AsyncApp, TextualApp, metaclass=_TUIAppMeta):
     if console_attached: Logger._root.removeHandler(Logger._console)
     try:
       async with asyncio.TaskGroup() as tasks:
+        from ..app import Runtime
+        Runtime._loop = asyncio.get_running_loop()
         self._task_group = tasks
         for step in (AsyncApp.load, AsyncApp.start):
           if result := step(self): await result
         try: return await super()._process_messages(*args, **kwargs)
-        finally: AsyncApp.stop(self)
+        finally: await AsyncApp.stop(self)
     finally:
       self._task_group = None
       self._background_tasks.clear()

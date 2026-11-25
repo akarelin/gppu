@@ -21,8 +21,8 @@ import yaml
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.properties import Properties
 
-from .gppu import App, Env, YmlLoader, _Base, _DC, _mixin, deepset, glob_dict, jinja, now_ts, sync, y2topic
-from .gppu import _YMRO, YStart
+from .gppu import App, Env, YmlLoader, _Base, _BaseObject, _DC, _mixin, deepset, glob_dict, jinja, now_ts, sync, y2topic
+from .gppu import _YMRO, YAsync, YStart
 
 
 
@@ -51,40 +51,23 @@ def _callback_wrapper(callback: Callable[..., Any]) -> Callable[..., Any]:
 
 
 
-class AsyncApp(App, YStart):
+class AsyncApp(App):
   """An app on asyncio: ``asyncio.run(MyApp().run())``. Construction runs its init step; ``run()`` runs its load and
-  start steps on the loop, and it runs until ``stop()``. A class gives its part of a step as a private ``__init``,
-  ``__load``, ``__start`` or ``__stop``; every class's part runs, base first.
-  """
+  start steps on the loop, and it runs until ``stop()``. Loop/task primitives are inherited from ``YAsync``."""
 
   def __init(self) -> None:
-    self._loop: asyncio.AbstractEventLoop | None = None
     self._task_group: asyncio.TaskGroup | None = None
-    self._background_tasks: set[asyncio.Task] = set()
 
-  def __stop(self) -> None:
-    if self._loop is None: return   # .. not running: nothing it spawned is left to cancel
-    tasks = list(self._background_tasks)   # .. what it spawned before it stopped; a cleanup a later stop step spawns runs
-    self._loop.call_soon_threadsafe(lambda: [task.cancel() for task in tasks])
-
-  def schedule[T](self, coroutine: Coroutine[Any, Any, T], /) -> Future[T]:
-    """``coroutine`` on the app's loop, from any thread; its standard future."""
-    return asyncio.run_coroutine_threadsafe(coroutine, self._get_loop())
-
-  def _get_loop(self) -> asyncio.AbstractEventLoop:
-    if self._loop is None: raise RuntimeError(f'{self!r} is not running')
-    return self._loop
-
-  async def run(self) -> None:
+  async def run(self) -> None:   # type: ignore[override]
     """init, load and start on this loop; returns when the app is stopped."""
     if self._task_group is not None: raise RuntimeError(f'{self!r} is already running')
     try:
-      self._loop = asyncio.get_running_loop()
+      self._loop = Runtime._loop = asyncio.get_running_loop()
       async with asyncio.TaskGroup() as tasks:
         self._task_group = tasks
         for step in (self.init, self.load, self.start):
           if result := step(): await result
-        if not self.stopped: self._spawn(asyncio.Event().wait())   # .. started, it runs until its stop step cancels what it spawned
+        if not self.stopped: self._spawn(asyncio.Event().wait())
     finally:
       self._task_group = None
       self._loop = None
@@ -148,6 +131,28 @@ class mixin_Timers(YStart):
   def cancel_timers(self) -> None:
     """Every timer this app armed, cancelled, from any thread."""
     for row in list(self.timers.values()): row['task'].get_loop().call_soon_threadsafe(row['task'].cancel)
+# endregion
+
+
+# region Runtime: the process's single async loop and timers
+class _Runtime(mixin_Timers, YAsync, _BaseObject):
+  """The process's single async runtime: one event loop (`schedule`, `_spawn`) and timers (`run_later`, `run_every`, `cancel_timers`)."""
+
+  async def run(self, app: YAsync, *, forever: bool = False) -> None:
+    self._loop = asyncio.get_running_loop()
+    try:
+      await app.load()
+      await app.start()
+      if forever:
+        try: await asyncio.Event().wait()
+        except (KeyboardInterrupt, asyncio.CancelledError): pass
+        finally: await app.stop()
+    finally:
+      self.cancel_timers()
+      self._loop = None
+
+
+Runtime = _Runtime()
 # endregion
 
 
@@ -245,7 +250,7 @@ class AppService(mixin_Mqtt, AsyncApp):
         Env.data = jinja.configuration(Env.data)   # .. the section that arrived is filled as Env's file was, with what Env holds
         if self.until_loaded is not None:
             self.until_loaded.discard(str(topic))
-            if not self.until_loaded: self.stop()
+            if not self.until_loaded: self._spawn(self.stop())
 # endregion
 
 
