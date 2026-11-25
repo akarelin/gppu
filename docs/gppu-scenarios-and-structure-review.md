@@ -1,138 +1,129 @@
-# gppu Architecture — Iteration 2 (Integrating Comments #1–#10)
+# gppu Architecture Review — Iteration 2: Shared Core, App Categories, and Base-Class Design
 
-Scope: **RAN `tui.ps1`** (mount SMB, mount S2, `tray-control`, `rewrite-commits`, server/workstation/Pi update/preserve/maintain) and **IoT / `y2`** (including PC Control as a standard consumer; Web UI / `UI_API` parked until 1–4 are solid).
-Reference codebases: live `gppu` ([gppu.py](file:///D:/Dev/gppu/gppu/gppu.py), [app.py](file:///D:/Dev/gppu/gppu/app.py), [iot.py](file:///D:/Dev/gppu/gppu/iot.py)), [deleted_by_fable.py](file:///D:/Dev/gppu/gppu/deleted_by_fable.py), AppDaemon-era `gppu` at [gppu-v3.4.6](file:///D:/Work/11/24/gppu-appdaemon/gppu-v3.4.6/gppu/), and AppDaemon-era Y2 at [ad.deprecated/_adev/Y2](file:///D:/Dev/IoT/archive/ad.deprecated/_adev/Y2/).
+Scope: **RAN `tui.ps1`** ([tui.ps1](file:///D:/Dev/RAN/Hosts/tui.ps1)) and **IoT / `y2`** (Web UI and its API parked until the core is on a solid path).
+Prepared clean reference codebase: [gppu-appdaemon](file:///D:/Work/11/24/gppu-appdaemon/) (`gppu-v3.4.6`, `gppu-ad-v3.2`, `gppu-v3.5.4`), AppDaemon Y2 reference at [ad.deprecated/_adev/Y2](file:///D:/Dev/IoT/archive/ad.deprecated/_adev/Y2/), and deleted code archive at [deleted_by_fable.py](file:///D:/Dev/gppu/gppu/deleted_by_fable.py).
 
----
+## 1. Integrated Requirements (From Your 10 Points)
 
-## 1. Core Architectural Principle: Environment, Runtime, State
-
-The three most important objects in `gppu` are **Environment**, **Runtime**, and **State** — all three are shared, each in a different way:
-
-| Core Object | Owns | How It Is Shared | Must NOT Own |
-|---|---|---|---|
-| **Environment** (`Env`) | Static configuration (YAML + includes + Jinja, ~~`topology`~~/~~`tunables`~~, shared lists like mountable SMB shares) and host facts (`os`, `host`, `user`, `home`, `path`). Environment does not provide any functionality except for helpers. | **Process-wide read-only singleton** loaded once; every script, app, and `DataObject` reads it via `glob*` or its own config section (mutated only on explicit reload or remote MQTT config feed). | Event loops, live entity state, MQTT clients, app registries. |
-|                         |                                                                                                                                                                              |                                                                                                                                                                                                    |                                                               |
-| **Runtime** | Execution engine: asyncio event loop, background tasks (`_spawn`, `schedule`), timers (`run_every`, `run_later`), parallel process runner (`launch`, `run_parallel`), app lifecycle registry (start/stop/restart), and shared IO/MQTT transport when hosted by a supervisor. | **Shared downward by ownership (`parent` / `runtime` / `api`)** — one process or `SupervisorApp` owns one `Runtime`, and every child `App` or `DataObject` delegates to it instead of creating its own loop. Standalone apps use the process default runtime transparently. | Static YAML topology, domain entity state/groups. |
-| **State** | Live mutable domain registries and values (e.g., Y2 `entities`/`eids`, `groups`, `sensors`, `actions`, `indicators`) plus state-change observation (`get_state`, `set_state`, `listen_state`). | **Shared peer-to-peer across cooperating apps and `DataObject`s** in a domain (e.g., `room.ao@yala`, `Insteon`, `HueSM`, `TOD`, `GSM`, `AM` all read/write the same `State`, and cross-process consumers see published state over MQTT). | Its own event loop, `AsyncApp` overrides, or MQTT client wrapper overrides (the exact `# !!` violations in [y2entity.py](file:///D:/Dev/y2/y2/y2entity.py#L1796-L1926)). |
+1. **Three central shared objects:** `Environment`, `Runtime`, and `State` are the most important objects in `gppu`; all three are shared, each differently.
+2. **Five app categories + `DataObject`:** (1) One-off scripts/ETLs (cron), (2) interactive user scripts (CLI/TUI), (3) always-on living-object apps (`mqtt2pg`), (4) services managing child apps or `DataObject`s (`SupervisorApp` / `StateManager`), (5) Web UI / UI API (parked for now) — plus **`DataObject`** (`_DC` + lifecycle, NOT an App, never owns a loop).
+3. **One code path across CLI, TUI, and Python import:** The simplest utilities (e.g. [synology-mount.py](file:///D:/Dev/RAN/Hosts/synology-mount.py), SMB mount, sync/apply/clean scripts, [preservator.py](file:///D:/Dev/RAN/Hosts/preservator/preservator.py)) run identically via CLI, TUI, or importing the file and calling a function — pulling shared paths and lists (such as mountable SMB shares from [locations.yaml](file:///D:/Dev/RAN/_config/topology/locations.yaml) / [config.yaml](file:///D:/Dev/RAN/_config/config.yaml)) from `Environment` with zero hardcodes.
+4. **No `CliApp` and no per-script `argparse`:** Every app runs its configured default action with zero arguments; CLI flags only override values in config/manifest, replacing ad-hoc CLI parsing with one declarative layer.
+5. **Sync vs async does not split simple apps:** Simple apps should not care whether they are sync or async; TUI apps are always async, and some simple CLI utilities need parallel task execution.
+6. **Supervisor and StateManager orchestration:** A `SupervisorApp` orchestrates smaller child apps inside one shared `Runtime` (e.g. `Y2` running `Insteon`, `ISM`/state managers, `TOD`, `GSM`, `AM`); a `StateManager` manages `DataObject` instances (`room.ao@yala`, devices, entities) and provides their `api` (MQTT, timers, loop) via parent chain so 10,000 objects share one loop.
+7. **PC Control does not dictate design:** [pc-control.py](file:///D:/Dev/IoT/PCC/src/pc-control.py) is one-of-a-kind; it adapts to the standard `gppu` MQTT and configuration mechanism rather than driving special-case base classes.
+8. **Active `tui.ps1` utilities:** Mount SMB ([mapper.cmd](file:///D:/Dev/RAN/Hosts/mapper.cmd)), mount S2 ([synology-mount.py](file:///D:/Dev/RAN/Hosts/synology-mount.py)), [tray-control.ps1](file:///D:/Dev/RAN/Hosts/tray-control.ps1), [rewrite_commits.py](file:///D:/Dev/RAN/Hosts/rewrite-commits/rewrite_commits.py), and update/preserve/maintain for Servers/Workstations/Pis ([fleet-tui.py](file:///D:/Dev/RAN/Hosts/configure-all/fleet-tui.py), [preservator.py](file:///D:/Dev/RAN/Hosts/preservator/preservator.py), [configure-all.py](file:///D:/Dev/RAN/Hosts/configure-all/configure-all.py), [configs.py](file:///D:/Dev/RAN/Hosts/configure-all/configs.py)).
 
 ---
 
-## 2. Clean 5+1 Category Model (Replacing the 9-Scenario Fragmentation)
+## 2. Open Questions for This Iteration
 
-Integrating comments #1–#10 collapses all in-scope programs into **five app categories plus `DataObject`** (not an app):
+Please answer these **6 concrete design questions** so we can lock the exact base-class APIs and start aligning `gppu`, `tui.ps1`, and `IoT`/`y2`:
 
-| Category | Role & Entry Points | Examples in Scope | Proposed Base / Composition |
-|---|---|---|---|
-| **0. `DataObject`** *(not an App)* | Config-driven `_DC` + lifecycle object; **never owns an event loop**. Reaches MQTT, timers, and loop via `parent` / `Runtime`, and shares `Environment` + `State`. | `room.ao@yala` (`YGroup`), `YObject`, `YEntity`, `YDevice`, `HueLight`, `KasaStrip`, `PowerViewHub`, `AVMatrix`, `IDBRecord` | `DataObject(_YMRO, _Base, _DC)` + optional device-control mixin (`HTTPControl`, `JSONHTTPControl`, `SerializedControl`) |
-| **1. One-off scripts (ETLs / cron)** | Zero-arg default action from config/manifest; CLI flags are **overrides only**; no separate `CliApp`. Sync or async transparently; can run tasks in parallel. | [preservator.py](file:///D:/Dev/RAN/Hosts/preservator/preservator.py), [configure-all.py](file:///D:/Dev/RAN/Hosts/configure-all/configure-all.py), [configs.py](file:///D:/Dev/RAN/Hosts/configure-all/configs.py), [i-tod-update.py](file:///D:/Dev/IoT/i-tod-update.py), [wled-clock.py](file:///D:/Dev/IoT/wled-clock.py), [homebridge/compile.py](file:///D:/Dev/IoT/homebridge/compile.py), [list-sessions.py](file:///D:/Dev/RAN/Hosts/tui/list-sessions.py) | **`App`** (one unified base; `App.cli()` applies CLI overrides and runs default action; importing & calling in Python never touches `sys.argv`) |
-| **2. Interactive scripts (CLI / TUI / Python import)** | User-run tools where the **exact same code** runs via CLI (default action + `--overrides`), TUI menu, or Python import + function call. Shared `Environment` removes hardcodes (e.g., mountable SMB shares in [shares.yaml](file:///D:/Dev/RAN/_config/file_indexer/shares.yaml)). Textual TUIs are always async. | **Scripts:** [synology-mount.py](file:///D:/Dev/RAN/Hosts/synology-mount.py), [mapper.cmd](file:///D:/Dev/RAN/Hosts/mapper.cmd) (→ config-driven SMB mount), [tray-control.ps1](file:///D:/Dev/RAN/Hosts/tray-control.ps1)<br>**Textual TUIs:** [tui.py](file:///D:/Dev/RAN/Hosts/tui/tui.py), [fleet-tui.py](file:///D:/Dev/RAN/Hosts/configure-all/fleet-tui.py), [rewrite_commits.py](file:///D:/Dev/RAN/Hosts/rewrite-commits/rewrite_commits.py), [tui/configs.py](file:///D:/Dev/RAN/Hosts/tui/configs.py) | **`App`** (uniform manifest/config + CLI/TUI/import dispatch) + **`TUIApp`** (Textual async adapter over `App` — attaches to Textual's loop instead of fighting `AsyncApp.run()`) |
-| **3. Living-object apps (always-on)** | Always-running standalone daemons on `Runtime`'s asyncio loop (`init` → `load` → `start` → stays alive until `stop`). Uniform MQTT + config — PC Control adapts to this without dictating special base classes. | [mqtt2pg.py](file:///D:/Dev/y2/mqtt2pg/mqtt2pg.py), [y2trace.py](file:///D:/Dev/y2/trace/y2trace.py), [news.py](file:///D:/Dev/y2/news/news.py), [lastfile2mqtt.py](file:///D:/Dev/IoT/any2mqtt/lastfile2mqtt.py), [xmqtt2mqtt.py](file:///D:/Dev/IoT/Projects/neo-mqtt/mesh/engine/xmqtt2mqtt.py), [pc-control.py](file:///D:/Dev/IoT/PCC/src/pc-control.py) | **`ServiceApp`** *(or `App` with `stay_alive`)* + `mixin_Mqtt` + `mixin_Timers` (plus optional remote-config listener for MQTT-fed hosts like PC Control) |
-| **4. Services managing `App`s or `DataObject`s** | Two clean orchestrator patterns: **(a) `SupervisorApp`** hosts a shared `Runtime` and orchestrates child `App`s (load/start/stop/restart on one shared loop & transport); **(b) `StateManager`** manages a config-driven set of `DataObject`s (`parent=self`, cascading lifecycle, optional polling). | **Supervisor:** [y2/__main__.py](file:///D:/Dev/y2/y2/__main__.py) (`Y2` hosting `Insteon`, `ISM`/SMs, `TOD`, `GSM`, `AM`, `Supervisor`), [brul2mqtt.py](file:///D:/Dev/IoT/any2mqtt/brul2mqtt.py) (hosting multiple `Transformer`s)<br>**Managers:** `Insteon`, `GSM`, `HueSM`, `AVSM`, `KasaSM`, `PowerViewSM`, `TuyaSM`, `SensiboSM`, `ZwjsSM`, `HostSM`, `EcobeeSM`, `NestSM`, `FlumeSM` | **`SupervisorApp`** (owns shared `Runtime`, orchestrates child `App`s) and **`StateManager`** (an `App` managing `DataObject`s from a config key, like AppDaemon-era [Y2_services.py](file:///D:/Dev/IoT/archive/ad.deprecated/_adev/Y2/Y2_services.py#L158-L255)) |
-| **5. UI / UI_API** *(parked)* | Web UIs and REST/API servers. | [y2/ui/ui.py](file:///D:/Dev/y2/ui/ui.py) (`iot.karel.in` / `creekview.karel.in`), [y2/y2/ui.py](file:///D:/Dev/y2/y2/ui.py) (`API`, `UI`) | *Deferred until Categories 0–4 are aligned* (preserve `Env.path` so `y2/ui/creekview.py` stays intact). |
+1. **`Environment` / `Runtime` / `State` sharing + Y2's MQTT broker:** Does the sharing split in Section 3 match your model (`Environment` = process-global read-only config/paths, `Runtime` = one per process owning the single loop + app lifecycle, `State` = shared live mutable state + change listeners) — and in Y2, should the single shared MQTT broker live on **`SupervisorApp` / `Runtime`** (leaving `State` pure state, fixing your `# ! Ovrides MQTTT` mark), or should each Y2 child app own its own `mixin_Mqtt` connection?
+2. **One `App` class vs separate `AsyncApp`:** Since simple apps shouldn't split sync vs async (#4), TUIs are always async (#5), and CLIs need parallel execution (#5), should we **collapse `AsyncApp` into one `App` class** (backed by `Runtime`'s loop whenever async is used, eliminating the duplicate `AsyncApp` in [app.py](file:///D:/Dev/gppu/gppu/app.py)), or keep a thin `AsyncApp(App)` marker for always-on Category 3/4 services?
+3. **Declarative CLI / TUI / import contract (`MANIFEST` vs signatures):** To kill per-script `argparse` while keeping import-safe Python calls, zero-arg defaults, CLI overrides, and TUI modes, should **`MANIFEST`** (YAML block declaring name, icon, platform, default action, and modes) + typed `_DC` fields be the one declarative definition — with `sys.argv` parsed only by an explicit entry point (`App.cli()` / `main()`) instead of inside `__init__` — or do you also want method-signature parameter binding (Windmill-style)?
+4. **`StateManager` and `SupervisorApp` boundary (`gppu` vs `y2`):** Should **`gppu`** provide all three — `DataObject`, `StateManager` (builds/starts/polls/stops a keyed collection of `DataObject`s from config and acts as their `parent`/`api`), and `SupervisorApp` (runs/stops/restarts child `App`s on one shared `Runtime`) — or should `StateManager` stay in `y2` while `gppu` provides `DataObject` + `SupervisorApp`?
+5. **Sync `stop()` and timers/device-control threading:** Every live `stop()` caller is synchronous (`launcher.py`, `AppService`, `api.py`, `y2`), whereas `YAsync.stop()` is `async def`; and `mixin_Timers` only needs a `ThreadPoolExecutor` because Y2's `refresh()`/commands are synchronous and call blocking `SerializedControl._control_call()`. Should **`stop()` stay synchronous** (cancelling safely on `Runtime`'s loop) and should we move Y2's `refresh()`/controls toward **native async** (letting `mixin_Timers` return to `v3.4.6`'s clean 42-line pure-asyncio design), or keep a sync-thread bridge in `gppu`?
+6. **Defaults and items from `deleted_by_fable.py`:**
+   - Keep **`Env.path`** on `_Env` (needed later by `y2/ui/creekview.py` and config-relative paths) and confirm whether **`Env.home`** on W11 should be `Path.home()` (`C:\Users\Alex`) or `D:/Dev`?
+   - From [deleted_by_fable.py](file:///D:/Dev/gppu/gppu/deleted_by_fable.py), which removed items belong **back** in core `gppu` (`y2eid`/`y2slug`, `my_list`/`my_dict`, `format_duration`/`format_since`, `enable_file_logging`, `_PersistentDC`) vs **stay deleted**?
 
 ---
 
-## 3. Proposed Minimal Base-Class Structure (Draft for Review)
+## 3. Proposed Architecture: The Three Shared Objects + Minimal Class Hierarchy
+
+### A. How `Environment`, `Runtime`, and `State` Are Shared Differently
+
+| Object | Scope of Sharing | Mutability | What It Owns | What It Never Owns |
+|---|---|---|---|---|
+| **`Environment` (`Env`)** | **Global across process** (and shared conceptually across all hosts via RAN / Creekview YAML) | Read-mostly after load (reloadable via `reset()` + `init()`) | Machine facts (`os`, `host`, `user`, `home`, `path`), loaded YAML + `topology`/`tunables` + Jinja, `glob*` readers, shared paths/tables (`locations`, `hosts`, `server_mounts`, `trace_rules`). | Mutable runtime state, event loop, MQTT sockets, app instances. |
+| **`Runtime`** | **Shared across every `App` and `DataObject` in one process** (1 process = 1 loop) | Live execution state (apps, tasks, handles) | The **one asyncio event loop** + `TaskGroup`, `_spawn()`, `schedule()`, child `App` registry (`apps`), lifecycle orchestration (`init`/`load`/`start`/`stop`/`restart_app`), parallel subprocess runner (`launch`/`run_parallel`), and timer scheduler. | Static config files, domain entity schemas/values. |
+| **`State`** | **Shared across apps/objects in a runtime** (and optionally mirrored across processes via MQTT/DB) | Continuously mutated live domain values | Live registries & current values (`get`/`set`/`listen` change notifications; in Y2: `entities`, `groups`, `sensors`, `actions`, `indicators`). | Config loading, event loop ownership, direct MQTT client overrides. |
+
+### B. Minimal Base-Class Hierarchy
 
 ```mermaid
 flowchart TD
-    subgraph Shared["Three Shared Core Objects (shared differently)"]
-        ENV["Environment (Env)\nProcess-wide read-only config + host facts"]
-        RT["Runtime\nShared downward: loop, tasks, timers,\nparallel runner, app registry, transport"]
-        ST["State\nShared peer-to-peer: live mutable\nregistries + state listeners"]
-    end
+    DC["_DC (UserDict + typed properties + _INIT_STEPS)"]
+    YMRO["_YMRO (stepped lifecycle: init, load, start, stop; sync or async via Runtime)"]
+    Base["_Base (mixin_Logger + mixin_Config on self.data)"]
 
-    subgraph Foundation["Foundation (gppu.py)"]
-        YMRO["_YMRO / YAsync\nCooperative steps: init, load, start, stop"]
-        DC["_DC\nUserDict + typed fields + _INIT_STEPS"]
-        BASE["_Base\nmixin_Logger + mixin_Config"]
-        DO["DataObject\n_YMRO + _Base + _DC\n(NO loop; delegates to parent/Runtime)"]
-        YMRO --> DO
-        DC --> DO
-        BASE --> DO
-    end
+    DataObj["DataObject (_YMRO, _Base, _DC)<br/>Not an App; NO own loop<br/>Holds parent + api -> reaches shared Runtime / State / Env<br/>(YObject, YEntity, YGroup/room.ao@yala, YDevice, IDBRecord)"]
 
-    subgraph Apps["Unified App Hierarchy (no separate CliApp)"]
-        APP["App (DataObject + YAsync)\nUniform config/MANIFEST + zero-arg default\n+ CLI overrides only in .cli()\n+ sync or async + launch/run_parallel"]
-        TUI["TUIApp\nTextual async adapter over App\n(uses Textual loop, Ctrl-O logs)"]
-        SVC["ServiceApp / Living App\nStays alive on Runtime loop\n+ mixin_Mqtt + mixin_Timers"]
-        SUP["SupervisorApp\nHosts shared Runtime, orchestrates\nchild Apps (start/stop/restart)"]
-        SM["StateManager\nApp managing DataObjects from config key\n(cascades lifecycle + optional polling)"]
-        DO --> APP
-        APP --> TUI
-        APP --> SVC
-        SVC --> SUP
-        SVC --> SM
-    end
+    App["App (DataObject)<br/>Uniform base for Categories 1, 2, 3<br/>from_dict / from_file / MANIFEST / zero-arg default / CLI overrides<br/>Runs sync OR async via Runtime; import-safe; launch/run_parallel"]
 
-    ENV -. "glob / config section" .-> DO
-    ENV -. "glob / config section" .-> APP
-    RT -. "parent / runtime" .-> DO
-    RT -. "one shared loop" .-> SUP
-    SM -. "manages (parent=self)" .-> DO
-    ST -. "shared live state" .-> SM
-    ST -. "shared live state" .-> DO
+    TUI["TUIApp / TUILauncher (gppu.tui)<br/>Category 2 interactive TUIs<br/>Always async; binds Runtime to Textual's loop"]
+
+    SM["StateManager (App)<br/>Category 4a: manages keyed DataObjects from config<br/>Constructs, starts, polls/refreshes, stops children; acts as their api"]
+
+    Sup["SupervisorApp (App)<br/>Category 4b: hosts Runtime + orchestrates child Apps<br/>Starts, monitors, stops, restarts Apps on one shared loop (Y2)"]
+
+    Mixins["Opt-in Capability Mixins<br/>mixin_Mqtt (gppu.app/iot) | mixin_Timers | SerializedControl / HTTPControl / JSONHTTPControl (gppu.iot) | _PGBase / _SQABase (gppu.data)"]
+
+    DC --> DataObj
+    YMRO --> DataObj
+    Base --> DataObj
+    DataObj --> App
+    App --> TUI
+    App --> SM
+    App --> Sup
+    Mixins -.-> App
+    Mixins -.-> SM
+    Mixins -.-> Sup
+    Mixins -.-> DataObj
 ```
 
-### How Each Entry Point Works on the Exact Same `App` Code
+### C. Why This Eliminates the Friction from Iteration 1
 
-Taking [synology-mount.py](file:///D:/Dev/RAN/Hosts/synology-mount.py) or [preservator.py](file:///D:/Dev/RAN/Hosts/preservator/preservator.py) as the canonical simple-app example:
-
-- **Import & call in Python:** `app = SynologyMount(server='s2'); app.mount('Archive*')` — construction loads `Env` section + optional `config=` + passed kwargs, and **never reads `sys.argv`** and **never has import-time side effects**.
-- **Zero-arg CLI:** `python preservator.py` or `python list-sessions.py` — `App.cli()` parses `--key value` / `--flag` as overrides over config/manifest, then runs the configured **default action** (`main()` or configured `default_action`).
-- **CLI with overrides:** `python list-sessions.py --action clean` or `python synology-mount.py --action mount --pattern "Archive*"` — same `App.cli()`, zero `argparse` boilerplate per script.
-- **TUI launcher (`tui.ps1`):** reads the app's `MANIFEST` (name, description, icon, platform, modes/actions) and invokes the same app/modes without duplicating definitions between `MANIFEST`, `ACTIONS`, and `argparse`.
-- **Parallel tasks in CLI or TUI:** `App` exposes `launch` and `run_parallel` (via `Runtime`) so both `fleet-tui.py` and headless CLI utilities (`preservator`, `configure-all`, `configs`) run concurrent host tasks identically.
-
----
-
-## 4. Open Questions Before Locking the Base-Class Design
-
-Please answer these **6 targeted questions** so we can lock the exact class signatures and start aligning `gppu`, `tui.ps1`, and `IoT`/`y2`:
-
-1. **`Environment`, `Runtime`, `State` ownership & sharing boundaries:**
-   - Does **Environment = process-wide static config**, **Runtime = execution engine shared downward from host/supervisor (`loop`, tasks, timers, parallel runner, app registry, optional shared MQTT)**, and **State = peer-shared mutable domain registries (`entities`, `groups`, `sensors`, `actions`, listeners — no loop, no MQTT overrides)** match how you want the three separated?
-   - Specifically for **`State`**: should `gppu` provide a minimal generic `State` base/singleton (key/value + registries + listeners, like [deleted_by_fable.py](file:///D:/Dev/gppu/gppu/deleted_by_fable.py#L4461-L4504)) that `y2` extends, or does `State` stay domain-defined per app family while `gppu` provides the base class/mixin?
-
-2. **Declarative CLI/TUI/Python contract (`MANIFEST` vs Python annotations/methods):**
-   - To eliminate ad-hoc `argparse` across every utility while keeping `tui.ps1` fast (able to build menus without importing heavy scripts, and still supporting `.ps1`/`.cmd` like `mapper.cmd` and `tray-control.ps1`):
-   - **Option A (Recommended):** Keep lightweight **`MANIFEST` YAML** (name, description, icon, platform, default action, named modes/presets) + **`_DC` typed fields / `App` methods** for the actual parameters and execution — `App.cli()` maps `--field value` / `--flag` / `--action` onto `_DC` data and invokes the action (default action when no args are given).
-   - **Option B:** Derive CLI options and TUI prompts purely from Python method signatures (like deleted `CliApp` in [deleted_by_fable.py](file:///D:/Dev/gppu/gppu/deleted_by_fable.py#L3934-L3966)) and use `MANIFEST` only for launcher listing.
-   - Also: when a script has **both** a launcher `MANIFEST` and an `Env` section (like `preservator.py`) and is passed an explicit `config=path`, confirm precedence: **`Env` section < `MANIFEST` (app config, not `manifest:` launcher block) < explicit `config=` < passed `**kw` < CLI `argv` (only inside `.cli()`)**?
-
-3. **One `App` class vs `App` + `ServiceApp`:**
-   - With sync/async unified in `App` (using `YAsync`), do you prefer:
-     - **Option A:** One `App` base (runs `init` → `load` → `start` → default action and exits, unless marked long-running / given background tasks via `_spawn`), plus `SupervisorApp` and `StateManager` subclasses; OR
-     - **Option B:** Explicit **`App`** (one-off & interactive — runs action and exits) and **`ServiceApp`** (always-on living object — stays alive on `Runtime` loop until `stop()`), with `SupervisorApp` and `StateManager` under `ServiceApp`?
-
-4. **`SupervisorApp` and `StateManager` placement (`gppu` vs `y2`):**
-   - Should **`SupervisorApp`** (loads/starts/stops/restarts child `App`s on one shared `Runtime`) AND **`StateManager`** (manages a config-driven collection of `DataObject`s with `parent=self`, cascading lifecycle, and optional polling — modeled on AppDaemon-era [StateManager](file:///D:/Dev/IoT/archive/ad.deprecated/_adev/Y2/Y2_services.py#L158-L255)) **both live in `gppu`** so `y2` drops `y2entity.App` + `_Runtime` and only adds Y2 entity/domain logic?
-   - Or should only `SupervisorApp` live in `gppu` and `StateManager` live in `y2`?
-
-5. **MQTT connection ownership & config key (`mqtt` vs `connection`):**
-   - In Y2 (`SupervisorApp`), should the **supervisor / `Runtime`** hold the one shared MQTT connection (so `State` is pure state and child apps/entities call `self.runtime.mqtt_publish` / `mqtt_listen`), while standalone living apps (`brul2mqtt`, `lastfile2mqtt`, `mqtt2pg`, `y2trace`, `news`, `pc-control`) mix in `mixin_Mqtt` with their own connection?
-   - Confirm unifying on **`mqtt:`** (replacing `connection:` in `y2trace`/`news`/`pc-control`) and adding an optional raw-bytes/wire hook on `mixin_Mqtt` so `mqtt2pg` and `y2trace` drop their hand-rolled `aiomqtt` loops?
-
-6. **`stop()` contract and Y2 sync device calls (`SerializedControl` + `mixin_Timers`):**
-   - **Lifecycle `stop()`:** Every live `stop()` caller today is synchronous (`launcher.py`, `AppService`, `api.py`, `y2entity.py`), whereas `YAsync.stop` in [gppu.py](file:///D:/Dev/gppu/gppu/gppu.py#L1173) is `async def`. Should `stop()` stay **synchronous** (scheduling cancellation onto `Runtime`'s loop via `call_soon_threadsafe`) or move to **`async def stop()`** and update callers?
-   - **Timers & Controls:** In [gppu-v3.4.6/app.py](file:///D:/Work/11/24/gppu-appdaemon/gppu-v3.4.6/gppu/app.py#L284-L326), `mixin_Timers` was 42 lines of pure asyncio; today it allocates a `ThreadPoolExecutor` only because Y2 entities call blocking sync `SerializedControl._control_call()` inside `refresh()`. Do you want to **keep a clean thread-bridge (`EventLoopBridge` + `SerializedControl`) for sync Y2 drivers during this refactor**, or **convert Y2 device refreshes/commands to native `async`** now so `mixin_Timers` returns to pure asyncio?
+- **One `DataObject` foundation (AppDaemon-era [y2api.py](file:///D:/Dev/IoT/archive/ad.deprecated/_adev/Y2/y2api.py#L456-L473)):** `DataObject` is `_DC` + `_YMRO` + `_Base` + `parent`/`api`. `YObject`, `YEntity`, `YGroup` (`room.ao@yala`), and `YDevice` inherit `DataObject` directly — fixing the `YObject(YStart, DataObject)` MRO crash and guaranteeing 10,000 managed objects never spawn 10,000 loops.
+- **One `App` for Categories 1–3 (no `CliApp`, no duplicate `AsyncApp`):** `App` extends `DataObject` with unified config loading (`Env` section < `MANIFEST` < explicit `config=` < kwargs < CLI overrides), `from_dict`/`from_file` (keeping your `topology`/`tunables` from `v3.4.6` and `5ba4471`), zero-arg default execution, and seamless sync/async execution via `Runtime`.
+- **Import-safe by construction:** `__init__` never touches `sys.argv`; CLI entry (`App.cli()` / `main()`) applies `sys.argv` overrides and invokes the default action (or mode), so the exact same class/function runs from CLI, TUI launcher, or `import synology_mount; synology_mount.run(...)`.
+- **Clean TUI integration:** `TUIApp` binds `Runtime` to Textual's active loop instead of fighting `AsyncApp.run()`, `@final _DC.__init__`, or sync `AsyncApp.stop()`.
+- **Clean `SupervisorApp` + `StateManager`:** Replaces `y2entity.App` (marked `# !! Eradicate`) and `y2entity._Runtime` (marked `# !!! This is not runtime`) with real `gppu` orchestration: `Y2(SupervisorApp)` owns the process `Runtime`, `State`, and shared MQTT transport; `Insteon`, `HueSM`, `AVSM`, `GSM`, `TOD`, etc. are child `App`s / `StateManager`s running on that one loop.
+- **One `mixin_Mqtt` across every MQTT app:** Supports broker config from one consistent key (`mqtt`), optional raw-bytes callback (replacing the hand-rolled `aiomqtt` loops in `mqtt2pg`, `y2trace`, `news`), and optional one-shot publish/config-fetch (so `pc-control` and `dc` work without custom `MqttApp` / `AppService` hacks).
 
 ---
 
-## 5. Reference: Prepared AppDaemon Codebase & Key Junk Replacements
+## 4. Mapping All In-Scope Programs to the 5 Categories + `DataObject`
 
-Prepared clean snapshots at `D:\Work\11\24\gppu-appdaemon\` (all verified syntax-clean on Python 3.14):
+| Category | Role & Base Class | Concrete Programs in Scope | How They Run Under This Design |
+|---|---|---|---|
+| **1. One-off Scripts / ETLs (Cron)** | `App` (zero-arg default; CLI = override; optional parallel tasks via `Runtime`) | **RAN:** [preservator.py](file:///D:/Dev/RAN/Hosts/preservator/preservator.py), [configure-all.py](file:///D:/Dev/RAN/Hosts/configure-all/configure-all.py), [configs.py](file:///D:/Dev/RAN/Hosts/configure-all/configs.py), [render-config.py](file:///D:/Dev/RAN/Hosts/render-config.py), [list-sessions.py](file:///D:/Dev/RAN/Hosts/tui/list-sessions.py), [sessions-clean.py](file:///D:/Dev/RAN/Hosts/tui/sessions-clean.py)<br>**IoT:** [i-tod-update.py](file:///D:/Dev/IoT/i-tod-update.py), [wled-clock.py](file:///D:/Dev/IoT/wled-clock.py), [homebridge/compile.py](file:///D:/Dev/IoT/homebridge/compile.py), [homebridge/layout.py](file:///D:/Dev/IoT/homebridge/layout.py), [gen_rules.py](file:///D:/Dev/IoT/Projects/neo-mqtt/emqx/gen_rules.py) | `python preservator.py` runs default action from `Env` (`preservator` section); `--host H --step S` overrides fields; `Preservator(config=...)` works in tests/imports without `MANIFEST` shadowing `config=` or reading `sys.argv`. |
+| **2. Interactive Scripts (CLI / TUI)** | `App` (simple interactive scripts) or `TUIApp` / `TUILauncher` (full-screen Textual, always async) | **RAN (`tui.ps1` active list):** [tui.py](file:///D:/Dev/RAN/Hosts/tui/tui.py) (`TUILauncher`), [synology-mount.py](file:///D:/Dev/RAN/Hosts/synology-mount.py), [mapper.cmd](file:///D:/Dev/RAN/Hosts/mapper.cmd) (convertible to tiny `App` reading mountable SMB shares from [locations.yaml](file:///D:/Dev/RAN/_config/topology/locations.yaml)), [tray-control.ps1](file:///D:/Dev/RAN/Hosts/tray-control.ps1), [rewrite_commits.py](file:///D:/Dev/RAN/Hosts/rewrite-commits/rewrite_commits.py), [fleet-tui.py](file:///D:/Dev/RAN/Hosts/configure-all/fleet-tui.py), [tui/configs.py](file:///D:/Dev/RAN/Hosts/tui/configs.py) | [synology-mount.py](file:///D:/Dev/RAN/Hosts/synology-mount.py) drops `argparse` and hardcoded `SERVER`/`ACTIONS`, reading server/share rules from `Env` + `MANIFEST` modes; runnable as CLI, TUI menu item, or `import` call. Textual apps (`Fleet`, `RewriteCommitsApp`, `ConfigsApp`) run natively on Textual's loop without `_DC` or `stop()` conflicts. |
+| **3. Living-Object Apps (Always-On)** | `App` + `mixin_Mqtt` (+ `mixin_Timers` if polling) | **y2:** [mqtt2pg.py](file:///D:/Dev/y2/mqtt2pg/mqtt2pg.py), [y2trace.py](file:///D:/Dev/y2/trace/y2trace.py), [news.py](file:///D:/Dev/y2/news/news.py)<br>**IoT:** [lastfile2mqtt.py](file:///D:/Dev/IoT/any2mqtt/lastfile2mqtt.py), [xmqtt2mqtt.py](file:///D:/Dev/IoT/Projects/neo-mqtt/mesh/engine/xmqtt2mqtt.py), [pc-control.py](file:///D:/Dev/IoT/PCC/src/pc-control.py) / [dc.py](file:///D:/Dev/IoT/PCC/src/dc.py) | Each runs `app.run()` on `Runtime`'s loop with `mixin_Mqtt` handling reconnect/replay/LWT (eliminating duplicate `aiomqtt` loops in `mqtt2pg`, `y2trace`, `news`). `pc-control` uses the same `mixin_Mqtt` + config loading (retained MQTT topics merged into app/Env config) without dictating special classes. |
+| **4. Services Managing AppObjects / DataObjects** | `SupervisorApp` (child `App`s on shared `Runtime`) & `StateManager` (managed `DataObject`s + polling + `api`) | **y2 Supervisor:** [__main__.py](file:///D:/Dev/y2/y2/__main__.py) (`Y2(SupervisorApp)`)<br>**y2 Child Apps / StateManagers:** `Insteon`, `AVSM`, `HueSM`, `PowerViewSM`, `KasaSM`, `TuyaSM`, `SensiboSM`, `ZwjsSM`, `EcobeeSM`, `NestSM`, `FlumeSM`, `HostSM`, `GSM`, `AM`, `TOD`, `Supervisor`<br>**IoT multi-instance:** [brul2mqtt.py](file:///D:/Dev/IoT/any2mqtt/brul2mqtt.py) (`SupervisorApp` or `StateManager` over `Transformer` rows) | `Y2` owns one `Runtime` (one loop), shared `State`, and shared broker; starts/restarts each configured child app in Creekview order. Each `StateManager` builds its `DataObject`s from config and exposes MQTT/timers/loop to them via `parent`/`api`. |
+| **DataObjects (Not Apps)** | `DataObject` (+ `SerializedControl` / `HTTPControl` / `JSONHTTPControl` where talking to hardware) | **y2:** `YObject`, `YBasicEntity`, `YEntity`, `YGroup` (`room.ao@yala`), `YRoom`, `YDevice`, `YColorLoop`, `IDBRecord`, `HueLight`, `HueBridge`, `PowerViewHub`, `KasaStrip`, `AVMatrix`, `LGTV`, `DenonReceiver`, `AppleTV`, `SensiboAC`, `TuyaLight`, `HostEntity`, `ZwjsFan`, `IIndicator`, `IButton`, `IDevice`, `IScene` | `_DC` + lifecycle only; zero own event loops; reads shared `Environment`/`State`, reaches MQTT/timers/loop through `parent`/`api` (`StateManager` → `Runtime`). |
+| **5. Web UI / UI API (Parked)** | Deferred until Categories 1–4 are aligned | [y2/ui/ui.py](file:///D:/Dev/y2/ui/ui.py) (`iot.karel.in`, `creekview.karel.in`), [y2/y2/ui.py](file:///D:/Dev/y2/y2/ui.py) (`API`, `UI`), `mixin_Rest` | Keep working minimally (`Env.path` for [creekview.py](file:///D:/Dev/y2/ui/creekview.py)), revisit REST/UI design after core settles. |
 
-- [gppu-v3.4.6](file:///D:/Work/11/24/gppu-appdaemon/gppu-v3.4.6/gppu/) — final AppDaemon-era `gppu` (`Env.from_dict` with `topology`/`tunables`, `_DC._INIT_STEPS`, clean separate sync `_YMRO` & async `aYMRO`, 42-line pure-asyncio `mixin_Timers`, `mixin_Mqtt`, `_HTTPControl`, `_PersistentDC`/`Persistence`).
-- [gppu-ad-v3.2](file:///D:/Work/11/24/gppu-appdaemon/gppu-ad-v3.2/gppu/) — last snapshot with `ad.py` and standalone `ymro.py`.
-- [gppu-v3.5.4](file:///D:/Work/11/24/gppu-appdaemon/gppu-v3.5.4/gppu/) — minimal 202-line post-AppDaemon `app.py` + `iot.py` (`MqttApp`, `EventLoopBridge`, `SerializedControl`, `HTTPControl`, `JSONHTTPControl`).
-- [ad.deprecated/_adev/Y2](file:///D:/Dev/IoT/archive/ad.deprecated/_adev/Y2/) — AppDaemon-era Y2 (`DataObject`, `Y2App`, `StateManager`, `Environment`, `State`).
+---
 
-Summary of junk replacements / breaks to clean up once Questions 1–6 are answered (from live code + [deleted_by_fable.py](file:///D:/Dev/gppu/gppu/deleted_by_fable.py)):
+## 5. Concrete Walkthrough: Simplest App (`synology-mount` / SMB Mount) vs `Y2` (`room.ao@yala`)
 
-- **Duplicate async lifecycle:** `AsyncApp` in [app.py](file:///D:/Dev/gppu/gppu/app.py#L54-L99) duplicates `YAsync` in [gppu.py](file:///D:/Dev/gppu/gppu/gppu.py#L1133-L1200) and crashes on dropped `self.stopped`; collapsing `YInit = YLoad = YStart = _YMRO` breaks `YObject(YStart, DataObject)` MRO in [y2entity.py](file:///D:/Dev/y2/y2/y2entity.py#L589).
-- **Config / `MANIFEST` / `Env`:** `App.__init` checks `MANIFEST` before `config=` (breaking `Preservator(config=...)`) and unconditionally reads `sys.argv[1:]` (breaking Python import usage); `Env.path` was dropped (breaking [creekview.py](file:///D:/Dev/y2/ui/creekview.py#L35-L41)); `Env.home` changed on W11 to `D:/Dev`; `_DC.__init__` `@final` clashes with all 5 `TUIApp` subclasses and `_State`.
-- **Fragmented MQTT & deleted bridge:** `MqttApp` and `EventLoopBridge` (`submit`/`call`) were deleted ([deleted_by_fable.py](file:///D:/Dev/gppu/gppu/deleted_by_fable.py#L1067-L1105), [L1861](file:///D:/Dev/gppu/gppu/deleted_by_fable.py#L1861)); 4 IoT services hand-roll duplicate `aiomqtt` reconnect loops; `_State` in [y2entity.py](file:///D:/Dev/y2/y2/y2entity.py#L1820-L1846) overrides `mixin_Mqtt`.
-- **Bloated / unreviewed code:** `mixin_Rest` in [app.py](file:///D:/Dev/gppu/gppu/app.py#L259-L349) (marked `# !!`); `y2entity.App`, `_Runtime`, `_State` in [y2entity.py](file:///D:/Dev/y2/y2/y2entity.py) (marked `# !! Eradicate`); 109-line `JinjaEnvironment` (`# region Jinja (AI, not human reviewed)`).
-- **Deleted utilities worth confirming keep vs drop:** `Logger.enable_file_logging`/`file_log`/`_PlainFormatter`/`dpcp`, `format_duration`/`format_since`, `dict_to_json`/`dict_from_json`, `_PersistentDC`/`Persistence`/`Cache.skip`, `y2eid`/`y2slug`, `my_list`/`my_dict`.
+- **Simplest App (`synology-mount.py` or config-driven SMB mount):**
+  - Config lives in `Environment` (e.g. `mountable: true` on shares in [locations.yaml](file:///D:/Dev/RAN/_config/topology/locations.yaml) or `synology_mount:` section) + tiny inline `MANIFEST` for TUI name/modes.
+  - Subclasses `App` with typed fields (`server: str`, `action: str = 'mount'`, `pattern: str = '*'`) and a single `main()` / action method — zero `argparse`.
+  - **CLI (zero-arg default):** `python synology-mount.py` runs default action from config/manifest; `python synology-mount.py --action unmount --pattern '*'` overrides fields.
+  - **TUI (`tui.ps1`):** Reads `MANIFEST` modes directly and invokes the same app with mode overrides.
+  - **Python import:** `from synology_mount import SynologyMount; SynologyMount(action='mount', pattern='Archive*').main()` — never touches `sys.argv`, uses the same `Env` paths/config.
+- **Y2 Multi-App Runtime (`Y2` → `GSM` → `room.ao@yala`):**
+  - `Y2(SupervisorApp)` starts the one process `Runtime`, loads Creekview `Environment`, initializes shared `State`, connects MQTT once, and spawns each child app (`GSM`, `Insteon`, `HueSM`, `AVSM`, ...) on `Runtime`'s loop.
+  - `GSM(StateManager)` constructs `room.ao@yala` (`YRoom(YGroup)` → `DataObject(parent=self)`), starts it, and hands it `api` (timers, MQTT, `State`, `Runtime`).
+  - `room.ao@yala` has zero event loops of its own, shares `Environment`, `Runtime`, and `State` with every other object in Y2, and restarts cleanly when `Runtime.restart_app('gsm')` recycles `GSM`.
+
+---
+
+## 6. Key Clean-vs-Junk Reference Summary (What We Keep vs Cut from Current Code)
+
+- **Keep from AppDaemon-era [gppu-v3.4.6](file:///D:/Work/11/24/gppu-appdaemon/gppu-v3.4.6/gppu/) & Alex + AGY (`5ba4471`):**
+  - `_DC` with extensible `_INIT_STEPS` (and drop `@final` on `__init__` or make `TUIApp`/subclasses use `__init` cleanly).
+  - Shared `from_dict` / `from_file` supporting `topology` + `tunables` + Jinja.
+  - Clean separation between pure `_YMRO` steps and async execution (`YAsync` / `Runtime`).
+  - `DataObject` (`_DC` + lifecycle + `parent`/`api`, as in AppDaemon [y2api.py](file:///D:/Dev/IoT/archive/ad.deprecated/_adev/Y2/y2api.py#L456)).
+  - Clean 42-line asyncio `mixin_Timers` (from `v3.4.6`) if Y2 goes native async.
+- **Cut / Replace from Nov 21–24 junk:**
+  - Duplicate loop/task/stop machinery split across `gppu.py:YAsync` and `app.py:AsyncApp` (and broken `self.stopped` check in `app.py:87`).
+  - `App.__init` unconditionally parsing `sys.argv` and letting launcher `MANIFEST` shadow explicit `config=`.
+  - Four hand-rolled `aiomqtt` reconnect loops in `mqtt2pg`, `y2trace`, `news`, and `y2/ui/data.py`.
+  - `_State` overriding `mixin_Mqtt` and `AsyncApp` in [y2entity.py](file:///D:/Dev/y2/y2/y2entity.py), plus `y2entity.App` / `_Runtime` workarounds marked `# !! Eradicate`.
+  - Bloated `mixin_Rest` reflection code in [app.py](file:///D:/Dev/gppu/gppu/app.py#L259-L349) (parked with Web UI for later).
