@@ -53,12 +53,27 @@ def _callback_wrapper(callback: Callable[..., Any]) -> Callable[..., Any]:
 
 class AsyncApp(App):
   """An app on asyncio: ``asyncio.run(MyApp().run())``. Construction runs its init step; ``run()`` runs its load and
-  start steps on the loop, and it runs until ``stop()``. Loop/task primitives are inherited from ``YAsync``."""
+  start steps on the loop, and it runs until ``stop()``."""
 
   def __init(self) -> None:
+    self._loop: asyncio.AbstractEventLoop | None = None
     self._task_group: asyncio.TaskGroup | None = None
+    self._background_tasks: set[asyncio.Task] = set()
 
-  async def run(self) -> None:   # type: ignore[override]
+  def __stop(self) -> None:
+    if self._loop is None: return
+    tasks = list(self._background_tasks)
+    self._loop.call_soon_threadsafe(lambda: [task.cancel() for task in tasks])
+
+  def schedule[T](self, coroutine: Coroutine[Any, Any, T], /) -> Future[T]:
+    """``coroutine`` on the app's loop, from any thread; its standard future."""
+    return asyncio.run_coroutine_threadsafe(coroutine, self._get_loop())
+
+  def _get_loop(self) -> asyncio.AbstractEventLoop:
+    if self._loop is None: raise RuntimeError(f'{self!r} is not running')
+    return self._loop
+
+  async def run(self) -> None:
     """init, load and start on this loop; returns when the app is stopped."""
     if self._task_group is not None: raise RuntimeError(f'{self!r} is already running')
     try:
@@ -138,15 +153,16 @@ class mixin_Timers(YStart):
 class _Runtime(mixin_Timers, YAsync, _BaseObject):
   """The process's single async runtime: one event loop (`schedule`, `_spawn`) and timers (`run_later`, `run_every`, `cancel_timers`)."""
 
-  async def run(self, app: YAsync, *, forever: bool = False) -> None:
+  async def run(self, app: _YMRO, *, forever: bool = False) -> None:
     self._loop = asyncio.get_running_loop()
     try:
-      await app.load()
-      await app.start()
+      for step in (app.load, app.start):
+        if inspect.isawaitable(r := step()): await r
       if forever:
         try: await asyncio.Event().wait()
         except (KeyboardInterrupt, asyncio.CancelledError): pass
-        finally: await app.stop()
+        finally:
+          if inspect.isawaitable(r := app.stop()): await r
     finally:
       self.cancel_timers()
       self._loop = None
@@ -250,7 +266,7 @@ class AppService(mixin_Mqtt, AsyncApp):
         Env.data = jinja.configuration(Env.data)   # .. the section that arrived is filled as Env's file was, with what Env holds
         if self.until_loaded is not None:
             self.until_loaded.discard(str(topic))
-            if not self.until_loaded: self._spawn(self.stop())
+            if not self.until_loaded: self.stop()
 # endregion
 
 

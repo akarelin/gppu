@@ -634,7 +634,7 @@ class TUIApp(AsyncApp, TextualApp, metaclass=_TUIAppMeta):
         for step in (AsyncApp.load, AsyncApp.start):
           if result := step(self): await result
         try: return await super()._process_messages(*args, **kwargs)
-        finally: await AsyncApp.stop(self)
+        finally: AsyncApp.stop(self)
     finally:
       self._task_group = None
       self._background_tasks.clear()

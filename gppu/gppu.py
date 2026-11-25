@@ -1291,8 +1291,8 @@ class _BaseObject(YInit, _Base, _DC):
     if not self.name: self.name = type(self).__name__.lstrip('_').lower()
 
   def _from_dict(self, d: Mapping, *, override: bool = True) -> Self:
-    rendered = jinja.configuration(deepcopy(dict(d)))
-    self.data = (self.data | rendered) if override else (rendered | self.data)
+    self.data = (self.data | deepcopy(dict(d))) if override else (deepcopy(dict(d)) | self.data)
+    self.data = jinja.configuration(self.data)
     return self
 
   def _from_file(self, path: str | Path, *, override: bool = True) -> Self:
@@ -1307,7 +1307,7 @@ class _BaseObject(YInit, _Base, _DC):
 
 
 # region App
-class App(YAsync, _BaseObject):
+class App(_BaseObject):
   """An app: named as its class unless made with a name. Its configuration is its section of the environment with
   explicit ``config`` or its script's MANIFEST over it; what it is made with goes over that, and the command line over all."""
 
@@ -1353,6 +1353,7 @@ class _Env(_BaseObject):
   def reset(self) -> None:
     super().reset()
     Logger.trace_rules = {}
+    self.init()
 
 
 Env = _Env()
