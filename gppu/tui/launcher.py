@@ -34,7 +34,7 @@ import sys
 import webbrowser
 from typing import ClassVar
 
-from gppu import Env, App, AsyncApp, dict_from_yml, glob, glob_dict, glob_list
+from gppu import Env, App, Runtime, dict_from_yml, glob, glob_dict, glob_list
 from gppu.gppu import Logger, _EmptyMessageFilter, _LogColorizer
 from gppu.gppu import OSType, Path, YmlLoader, full_path, jinja
 import yaml
@@ -566,13 +566,13 @@ class _DebugScreen(Screen):
     self._shown = len(self._lines)
 
 
-class _TUIAppMeta(type(TextualApp), type(AsyncApp)):
+class _TUIAppMeta(type(TextualApp), type(App)):
   """Textual's metaclass with gppu App's: an App is a _DC, a UserDict, and so an abstract base."""
 
 
-class TUIApp(AsyncApp, TextualApp, metaclass=_TUIAppMeta):
-  """Textual application base, imported from ``gppu.tui``. A TUIApp is an AsyncApp: it has an app's data, its steps
-  and its methods, and its TaskGroup is open while Textual runs it.
+class TUIApp(App, TextualApp, metaclass=_TUIAppMeta):
+  """Textual application base, imported from ``gppu.tui``. A TUIApp is an App: it has an app's data, its steps
+  and its methods, and attaches ``Runtime`` to Textual's loop while it runs.
 
   Subclass and define ``compose()`` for widgets and ``on_mount()`` for startup
   work; Textual owns the event loop. The environment is the one an App declares
@@ -604,10 +604,12 @@ class TUIApp(AsyncApp, TextualApp, metaclass=_TUIAppMeta):
 
   _screen_wrapper: Screen | None = None
   # .. _DC makes a property over its data of each annotated name; the ones Textual annotates stay Textual's.
-  _DC_EXCLUDE_NAMES = [*AsyncApp._DC_EXCLUDE_NAMES,
+  _DC_EXCLUDE_NAMES = [*App._DC_EXCLUDE_NAMES,
                        *(name for c in TextualApp.__mro__ if hasattr(c, '__annotations__') for name in c.__annotations__)]
-  # .. Textual runs the app, shows it and keys it by identity.
+  # .. Textual runs the app, owns its DOM tree, shows it and keys it by identity.
   run = TextualApp.run
+  parent = TextualApp.parent
+  children = TextualApp.children
   __repr__ = TextualApp.__repr__
   __hash__ = object.__hash__
   __eq__ = object.__eq__
@@ -623,20 +625,23 @@ class TUIApp(AsyncApp, TextualApp, metaclass=_TUIAppMeta):
     logging.getLogger().addHandler(self._log_handler)
 
   async def _process_messages(self, *args, **kwargs):
-    # .. The debug panel is the console while Textual owns the terminal. Every way Textual runs an app passes here, so the app's TaskGroup opens here, its load and start steps run in it, and stopping the app cancels what it spawned. The steps are AsyncApp's, whatever a TUI calls its own.
+    # .. The debug panel is the console while Textual owns the terminal. Every way Textual runs an app passes here, so the app's TaskGroup opens here, its load and start steps run in it, and stopping the app cancels what it spawned. The steps are App's, whatever a TUI calls its own.
     console_attached = Logger._console in Logger._root.handlers
     if console_attached: Logger._root.removeHandler(Logger._console)
+    owns_runtime = Runtime._loop is None
     try:
       async with asyncio.TaskGroup() as tasks:
-        from ..app import Runtime
-        Runtime._loop = asyncio.get_running_loop()
+        self._loop = asyncio.get_running_loop()
+        if owns_runtime: Runtime.attach(self._loop)
         self._task_group = tasks
-        for step in (AsyncApp.load, AsyncApp.start):
+        for step in (App.load, App.start):
           if result := step(self): await result
         try: return await super()._process_messages(*args, **kwargs)
-        finally: AsyncApp.stop(self)
+        finally: App.stop(self)
     finally:
       self._task_group = None
+      self._loop = None
+      if owns_runtime: Runtime._loop = None
       self._background_tasks.clear()
       logging.getLogger().removeHandler(self._log_handler)
       if console_attached: Logger._root.addHandler(Logger._console)

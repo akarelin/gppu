@@ -1,19 +1,15 @@
-"""gppu.app — the apps with steps. See docs/app.md.
+"""gppu.app — MQTT services and REST surface over gppu's App and Runtime.
 
-Env, ``_Base`` and ``App``, the regular app with no steps, are in gppu.gppu. Here is ``AsyncApp``, which composes
-``App`` with ``YStart``, the YMRO (Y2 Method Resolution Order) init, load and start steps. For Textual, use
-``gppu.tui.TUIApp``; an async app with MQTT mixes in ``mixin_Mqtt``; ``gppu.api.APIApp`` serves HTTP.
+Env, State, Runtime, DataObject, App, and mixin_Timers live in gppu.gppu. Here are ``mixin_Mqtt`` and ``ServiceApp``
+(an App with MQTT transport and optional MQTT-delivered Env sections), plus the deprecated ``mixin_Rest``.
 """
 from __future__ import annotations
 
 import asyncio
-import contextvars
 import inspect
 import json
 import os
-from collections.abc import Callable, Coroutine, Mapping
-from concurrent.futures import Future, ThreadPoolExecutor
-from functools import partial
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import aiomqtt
@@ -21,158 +17,35 @@ import yaml
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.properties import Properties
 
-from .gppu import App, Env, YmlLoader, _Base, _BaseObject, _DC, _mixin, deepset, glob_dict, jinja, now_ts, sync, y2topic
-from .gppu import _YMRO, YAsync, YStart
+from .gppu import (
+  App,
+  DataObject,
+  Env,
+  Runtime,
+  State,
+  YAsync,
+  YStart,
+  YmlLoader,
+  _Base,
+  _DC,
+  _YMRO,
+  _callback_wrapper,
+  _mixin,
+  deepset,
+  glob,
+  glob_dict,
+  jinja,
+  mixin_Timers,
+  now_ts,
+  sync,
+  y2topic,
+)
+
+# .. App is already async on Runtime; keep AsyncApp as an alias during migration
+AsyncApp = App
 
 
-
-
-
-# region async application
-# region - a callback, called with only the keywords it takes
-def _callback_wrapper(callback: Callable[..., Any]) -> Callable[..., Any]:
-  """The callback called with only the keywords it takes."""
-  signature = inspect.signature(callback)
-
-  def wrapped(*args: Any, **data: Any) -> Any:
-    if not signature.parameters: return callback()
-    if any(p.kind == p.VAR_KEYWORD for p in signature.parameters.values()):
-      return callback(*args, **data)
-    allowed = {
-      name for name, param in signature.parameters.items()
-      if param.kind in (param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY)
-    }
-    return callback(*args, **{k: v for k, v in data.items() if k in allowed})
-
-  return wrapped
-
-
-# endregion
-
-
-
-class AsyncApp(App):
-  """An app on asyncio: ``asyncio.run(MyApp().run())``. Construction runs its init step; ``run()`` runs its load and
-  start steps on the loop, and it runs until ``stop()``."""
-
-  def __init(self) -> None:
-    self._loop: asyncio.AbstractEventLoop | None = None
-    self._task_group: asyncio.TaskGroup | None = None
-    self._background_tasks: set[asyncio.Task] = set()
-
-  def __stop(self) -> None:
-    if self._loop is None: return
-    tasks = list(self._background_tasks)
-    self._loop.call_soon_threadsafe(lambda: [task.cancel() for task in tasks])
-
-  def schedule[T](self, coroutine: Coroutine[Any, Any, T], /) -> Future[T]:
-    """``coroutine`` on the app's loop, from any thread; its standard future."""
-    return asyncio.run_coroutine_threadsafe(coroutine, self._get_loop())
-
-  def _get_loop(self) -> asyncio.AbstractEventLoop:
-    if self._loop is None: raise RuntimeError(f'{self!r} is not running')
-    return self._loop
-
-  async def run(self) -> None:
-    """init, load and start on this loop; returns when the app is stopped."""
-    if self._task_group is not None: raise RuntimeError(f'{self!r} is already running')
-    try:
-      self._loop = Runtime._loop = asyncio.get_running_loop()
-      async with asyncio.TaskGroup() as tasks:
-        self._task_group = tasks
-        for step in (self.init, self.load, self.start):
-          if result := step(): await result
-        if not self.stopped: self._spawn(asyncio.Event().wait())
-    finally:
-      self._task_group = None
-      self._loop = None
-      self._background_tasks.clear()
-
-  def _spawn[T](self, coroutine: Coroutine[Any, Any, T], /) -> asyncio.Task[T]:
-    if self._task_group is None: raise RuntimeError(f'{self!r} is not running')
-    task = self._task_group.create_task(coroutine)
-    self._background_tasks.add(task)
-    task.add_done_callback(self._background_tasks.discard)
-    return task
-# endregion
-
-
-# region Timers: an async app's run_later and run_every
-class mixin_Timers(YStart):
-  """``run_later`` and ``run_every`` on its async app's loop. ``timers`` holds every armed timer's row by its id (its
-  callback's name, its kind, its interval and its next run), ``h_timeouts`` those armed under a key."""
-
-  def __init(self) -> None:
-    self.timers: dict[int, dict] = {}
-    self.h_timeouts: dict[str, dict] = {}
-    self._executor = ThreadPoolExecutor()   # .. its callbacks' own threads: on the loop's default pool they would wait for the very lookups their device calls need
-
-  def __stop(self) -> None:
-    self.cancel_timers()
-    self._executor.shutdown(wait=False)
-    self._executor = ThreadPoolExecutor()   # .. a second run gets its own; a pool starts no thread until it is used
-
-  def run_later(self, callback: Callable[..., Any], *, delay: int | float, key: str | None = None, **data: Any) -> Future:
-    """``callback`` once, ``delay`` seconds from now; armed again under ``key``, the one armed under it before is
-    cancelled. Any thread arms it; its handle's ``cancel()`` cancels it."""
-    return self.schedule(self._timer(callback, float(delay), None, key, data))
-
-  def run_every(self, callback: Callable[..., Any], *, start: int | float, interval: int | float, **data: Any) -> Future:
-    """``callback`` ``start`` seconds from now, and again ``interval`` seconds after each run of it ends."""
-    return self.schedule(self._timer(callback, float(start), float(interval), None, data))
-
-  async def _timer(self, callback: Callable[..., Any], delay: float, interval: float | None, key: str | None, data: dict) -> None:
-    # .. its row is in `timers`, and under its key in `h_timeouts`, while it is armed; its callback runs off the loop
-    row = {'name': getattr(callback, '__name__', ''), 'kind': 'once' if interval is None else 'interval', 'interval': interval,
-           'next_run': now_ts() + delay, 'task': asyncio.current_task()}
-    if key in self.h_timeouts: self.h_timeouts[key]['task'].cancel()
-    self.timers[id(row)] = row
-    if key is not None: self.h_timeouts[key] = row
-    callback = _callback_wrapper(callback)
-    try:
-      while True:
-        await asyncio.sleep(row['next_run'] - now_ts())
-        if interval is None:   # .. a one-shot is spent as it fires: its key is free while its callback runs
-          del self.timers[id(row)]
-          if self.h_timeouts.get(key) is row: del self.h_timeouts[key]
-        try: await asyncio.get_running_loop().run_in_executor(self._executor, partial(contextvars.copy_context().run, callback, **data))
-        except Exception as error: self.Error('timer', row['name'], 'raised:', error)
-        if interval is None: return
-        row['next_run'] = now_ts() + interval
-    finally:
-      self.timers.pop(id(row), None)
-      if self.h_timeouts.get(key) is row: del self.h_timeouts[key]
-
-  def cancel_timers(self) -> None:
-    """Every timer this app armed, cancelled, from any thread."""
-    for row in list(self.timers.values()): row['task'].get_loop().call_soon_threadsafe(row['task'].cancel)
-# endregion
-
-
-# region Runtime: the process's single async loop and timers
-class _Runtime(mixin_Timers, YAsync, _BaseObject):
-  """The process's single async runtime: one event loop (`schedule`, `_spawn`) and timers (`run_later`, `run_every`, `cancel_timers`)."""
-
-  async def run(self, app: _YMRO, *, forever: bool = False) -> None:
-    self._loop = asyncio.get_running_loop()
-    try:
-      for step in (app.load, app.start):
-        if inspect.isawaitable(r := step()): await r
-      if forever:
-        try: await asyncio.Event().wait()
-        except (KeyboardInterrupt, asyncio.CancelledError): pass
-        finally:
-          if inspect.isawaitable(r := app.stop()): await r
-    finally:
-      self.cancel_timers()
-      self._loop = None
-
-
-Runtime = _Runtime()
-# endregion
-
-
-# region MQTT: an async app's broker, the `mqtt` of its configuration
+# region MQTT: an app's broker, the `mqtt` of its configuration
 class mixin_Mqtt(YStart):
 
     def __init(self) -> None:
@@ -182,6 +55,9 @@ class mixin_Mqtt(YStart):
         self._retained: dict[int, tuple[tuple, set[str]]] = {}   # .. a listener by id: it (held, so its id stays its own) and the topics whose retained message it got on this connection
 
     def __start(self) -> None: self._spawn(self._mqtt_loop())
+
+    def _is_dry_run(self) -> bool:
+        return bool(self.my('dry_run') or glob('dry_run'))
 
     async def mqtt_listen(self, callback: Callable[..., Any], topic: y2topic | str, payload: Any = None, *, ignore_retained: bool = False, qos: int = 0) -> None:
         """``callback(topic, payload)``, sync or async, on each message at ``topic`` (MQTT's wildcards match), or only on
@@ -201,6 +77,9 @@ class mixin_Mqtt(YStart):
     async def mqtt_publish(self, topic: y2topic | str, payload: Any = '', *, retain: bool = False, qos: int = 0, expiry: int | None = None, **data: Any) -> None:
         """``payload`` at ``topic``, a dict or a list as JSON; ``expiry`` is MQTT 5's message expiry in seconds, and the
         other keywords its user properties, after ``sent``, the time it is sent. While the broker is lost, nothing is sent."""
+        if self._is_dry_run():
+            self.Debug('BY', '[DRY_RUN] mqtt_publish', 'NONE', topic, payload)
+            return
         if self._client is None: return
         properties = Properties(PacketTypes.PUBLISH)
         properties.UserProperty = [('sent', str(now_ts())), *((key, str(value)) for key, value in data.items())]
@@ -209,12 +88,18 @@ class mixin_Mqtt(YStart):
         await self._client.publish(str(topic), payload, qos=qos, retain=retain, properties=properties)
 
     async def _mqtt_loop(self) -> None:
-        mqtt = self.my('mqtt') or glob_dict('mqtt')   # .. its connection: its own, as the any2mqtt services have, or the environment's
-        will = aiomqtt.Will(mqtt['status_topic'], b'offline', qos=1, retain=True) if 'status_topic' in mqtt else None
+        mqtt = dict(self.my('mqtt') or glob_dict('mqtt'))   # .. its connection: its own, as the any2mqtt services have, or the environment's
+        dry_run = self._is_dry_run()
+        if dry_run:
+            base_id = mqtt.get('identifier') or getattr(self, 'name', 'gppu')
+            mqtt['identifier'] = f'{base_id}-dryrun'
+            will = None
+        else:
+            will = aiomqtt.Will(mqtt['status_topic'], b'offline', qos=1, retain=True) if 'status_topic' in mqtt else None
         while True:
             try:
                 async with aiomqtt.Client(**{key: mqtt[key] for key in ('hostname', 'port', 'username', 'password', 'identifier') if key in mqtt}, protocol=aiomqtt.ProtocolVersion.V5, will=will) as self._client:
-                    self.Info('connected to the broker')
+                    self.Info('connected to the broker' + (' (dry_run)' if dry_run else ''))
                     self._retained.clear()   # .. a new connection sends every listener the retained messages again
                     for topic, qos in list(self._subscriptions.items()): await self._client.subscribe(str(topic), qos=qos)
                     if will: await self._client.publish(will.topic, 'online', qos=1, retain=True)
@@ -244,11 +129,8 @@ class mixin_Mqtt(YStart):
                 except Exception as error: self.Error('listener failed:', message.topic, error)   # .. one listener's failure stops neither the others nor the app
 
 
-class AppService(mixin_Mqtt, AsyncApp):
-    """An app whose part of Env arrives over MQTT: ``config_mqtt/topics`` in its own configuration maps each retained topic
-    to the path in Env that its payload replaces, filled as Env's file is, so ``glob`` reads it as it reads the rest of
-    Env. An app that acts on new configuration listens to the same topic: its listener runs after the section is loaded.
-    ``await app.from_mqtt()`` reads every topic once, then stops."""
+class ServiceApp(mixin_Mqtt, App):
+    """Always-running MQTT service App, with optional ``config_mqtt/topics`` for reading Env sections over MQTT."""
 
     def __init(self) -> None:
         self.until_loaded: set[str] | None = None   # .. from_mqtt: the topics still to arrive
@@ -259,7 +141,7 @@ class AppService(mixin_Mqtt, AsyncApp):
         await self.run()
 
     async def __load(self) -> None:
-        for topic in self.my('config_mqtt/topics'): await self.mqtt_listen(self._receive_config, topic, qos=1)
+        for topic in (self.my('config_mqtt/topics') or ()): await self.mqtt_listen(self._receive_config, topic, qos=1)
 
     def _receive_config(self, topic: y2topic, payload: Any) -> None:
         deepset(self.my('config_mqtt/topics')[str(topic)], Env.data, yaml.load(payload, Loader=YmlLoader) if isinstance(payload, str) else payload)
@@ -267,6 +149,9 @@ class AppService(mixin_Mqtt, AsyncApp):
         if self.until_loaded is not None:
             self.until_loaded.discard(str(topic))
             if not self.until_loaded: self.stop()
+
+
+AppService = ServiceApp
 # endregion
 
 

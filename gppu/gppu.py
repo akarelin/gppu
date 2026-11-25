@@ -10,6 +10,7 @@ import logging
 import sys
 import platform
 import asyncio
+import contextvars
 import inspect
 import builtins
 import json
@@ -22,7 +23,7 @@ from pathlib import PurePath, PureWindowsPath
 
 from enum import Enum
 from abc import abstractmethod
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Union, Any, List, Optional, Tuple, Dict, DefaultDict, Callable, Concatenate, Self, final, Coroutine
 from collections import defaultdict, UserDict, UserList
 from collections.abc import Mapping
@@ -1136,6 +1137,7 @@ YInit = YLoad = YStart = _YMRO
 # region Async
 class YAsync(_YMRO):
   _loop: asyncio.AbstractEventLoop | None = None
+  _task_group: asyncio.TaskGroup | None = None
   _background_tasks: set[asyncio.Task]
 
 
@@ -1147,6 +1149,7 @@ class YAsync(_YMRO):
 
   def __init(self) -> None:
     self._loop: asyncio.AbstractEventLoop | None = None
+    self._task_group: asyncio.TaskGroup | None = None
     self._background_tasks: set[asyncio.Task] = set()
     self._stopped: bool = False
 
@@ -1157,24 +1160,31 @@ class YAsync(_YMRO):
     assert self.initialized
     self._stopped = False
     await self._acallall('load')
+    for child in getattr(self, '_children', ()):
+      if isinstance(child, YAsync): await child.load()
+      elif isinstance(child, _YMRO): child.load()
     self.loaded = True
 
 
   @final
   async def start(self) -> None:  # type: ignore[override]
     if self.started: return
-    self._stopped = False
     await self._acallall('start')
+    for child in getattr(self, '_children', ()):
+      if isinstance(child, YAsync): await child.start()
+      elif isinstance(child, _YMRO): child.start()
     self.started = True
   async def __start(self) -> None:
     self._loop = asyncio.get_running_loop()
 
 
   @final
-  async def stop(self) -> None:   # type: ignore[override]
+  def stop(self) -> None:
     if not (self.started or self.loaded): return
     self._stopped = True
-    await self._acallall('stop')
+    for child in reversed(getattr(self, '_children', ())):
+      if isinstance(child, _YMRO): child.stop()
+    self._callall('stop')
     self._loop = None
     self.started = False
     self.loaded = False
@@ -1186,12 +1196,13 @@ class YAsync(_YMRO):
 
 
   def _get_loop(self) -> asyncio.AbstractEventLoop:
-    if self._loop is None: raise RuntimeError(f'{self!r} is not running')
-    return self._loop
+    if self._loop is not None: return self._loop
+    if 'Runtime' in globals() and Runtime._loop is not None: return Runtime._loop
+    raise RuntimeError(f'{self!r} is not running')
 
 
   def _spawn[T](self, coro: Coroutine[Any, Any, T], /) -> asyncio.Task[T]:
-    task = self._get_loop().create_task(coro)
+    task = self._task_group.create_task(coro) if self._task_group is not None else self._get_loop().create_task(coro)
     self._background_tasks.add(task)
     task.add_done_callback(self._background_tasks.discard)
     return task
@@ -1283,15 +1294,36 @@ class _Base(mixin_Logger, mixin_Config): pass
 # endregion
 
 
-class _BaseObject(YInit, _Base, _DC):
-  """Shared foundation for Env, State, Runtime, and App: name, config loader, and reset (no event loop)."""
+# region DataObject
+class DataObject(YInit, _Base, _DC):
+  """Passive data + config + logging + parent/children tree. No loop, no CLI."""
   name: str
 
   def __init(self) -> None:
+    self._parent: DataObject | None = self.data.pop('parent', None)
+    self._children: list[DataObject] = []
     if not self.name: self.name = type(self).__name__.lstrip('_').lower()
+    if isinstance(self._parent, DataObject): self._parent._children.append(self)
+
+  @property
+  def parent(self) -> DataObject | None: return self._parent
+  @parent.setter
+  def parent(self, value: DataObject | None) -> None: self._parent = value
+
+  @property
+  def children(self) -> list[DataObject]: return self._children
+
+  def child(self, name: str) -> DataObject | None:
+    return next((c for c in self._children if c.name == name), None)
 
   def _from_dict(self, d: Mapping, *, override: bool = True) -> Self:
-    self.data = (self.data | deepcopy(dict(d))) if override else (deepcopy(dict(d)) | self.data)
+    config = dict(d)
+    topology = config.pop('topology', None)
+    tunables = config.pop('tunables', None)
+    data = dict_from_yml(topology) if topology else {}
+    if isinstance(tunables, dict): data.update(tunables)
+    data.update(config)
+    self.data = (self.data | deepcopy(data)) if override else (deepcopy(data) | self.data)
     self.data = jinja.configuration(self.data)
     return self
 
@@ -1306,8 +1338,12 @@ class _BaseObject(YInit, _Base, _DC):
     self.started = False
 
 
+_BaseObject = DataObject
+# endregion
+
+
 # region App
-class App(_BaseObject):
+class App(YAsync, DataObject):
   """An app: named as its class unless made with a name. Its configuration is its section of the environment with
   explicit ``config`` or its script's MANIFEST over it; what it is made with goes over that, and the command line over all."""
 
@@ -1323,11 +1359,106 @@ class App(_BaseObject):
     for i, arg in enumerate(argv):
       if arg.startswith('--') and len(arg) > 2:
         deepset(arg[2:], self.data, yaml.load(argv[i + 1], Loader=YmlLoader) if i + 1 < len(argv) and not argv[i + 1].startswith('--') else True)
+
+  async def run(self, *, forever: bool = True) -> None:
+    """init, load and start on this loop; returns when stopped (or after start if forever=False)."""
+    if self._task_group is not None: raise RuntimeError(f'{self!r} is already running')
+    owns_runtime = Runtime._loop is None
+    try:
+      self._loop = asyncio.get_running_loop()
+      if owns_runtime: Runtime._loop = self._loop
+      async with asyncio.TaskGroup() as tasks:
+        self._task_group = tasks
+        for step in (self.init, self.load, self.start):
+          if inspect.isawaitable(result := step()): await result
+        if forever and not self.stopped: self._spawn(asyncio.Event().wait())
+    finally:
+      self._task_group = None
+      self._loop = None
+      if owns_runtime: Runtime._loop = None
+      self._background_tasks.clear()
+
+  def run_sync(self, *, forever: bool = False) -> None:
+    """Run this app synchronously on asyncio (SelectorEventLoop on Windows)."""
+    factory = asyncio.SelectorEventLoop if sys.platform == 'win32' else None
+    asyncio.run(self.run(forever=forever), loop_factory=factory)
 # endregion
 
 
-# region - Env: the configuration
-class _Env(_BaseObject):
+# region Callbacks & Timers
+def _callback_wrapper(callback: Callable[..., Any]) -> Callable[..., Any]:
+  """The callback called with only the keywords it takes."""
+  signature = inspect.signature(callback)
+
+  def wrapped(*args: Any, **data: Any) -> Any:
+    if not signature.parameters: return callback()
+    if any(p.kind == p.VAR_KEYWORD for p in signature.parameters.values()):
+      return callback(*args, **data)
+    allowed = {
+      name for name, param in signature.parameters.items()
+      if param.kind in (param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY)
+    }
+    return callback(*args, **{k: v for k, v in data.items() if k in allowed})
+
+  return wrapped
+
+
+class mixin_Timers(YStart):
+  """``run_later`` and ``run_every`` on its async app's or Runtime's loop. ``timers`` holds every armed timer's row by
+  its id (its callback's name, its kind, its interval and its next run), ``h_timeouts`` those armed under a key."""
+
+  def __init(self) -> None:
+    self.timers: dict[int, dict] = {}
+    self.h_timeouts: dict[str, dict] = {}
+    self._executor = ThreadPoolExecutor()   # .. its callbacks' own threads: on the loop's default pool they would wait for the very lookups their device calls need
+
+  def __stop(self) -> None:
+    self.cancel_timers()
+    self._executor.shutdown(wait=False)
+    self._executor = ThreadPoolExecutor()   # .. a second run gets its own; a pool starts no thread until it is used
+
+  def run_later(self, callback: Callable[..., Any], *, delay: int | float, key: str | None = None, **data: Any) -> Future:
+    """``callback`` once, ``delay`` seconds from now; armed again under ``key``, the one armed under it before is
+    cancelled. Any thread arms it; its handle's ``cancel()`` cancels it."""
+    return self.schedule(self._timer(callback, float(delay), None, key, data))
+
+  def run_every(self, callback: Callable[..., Any], *, start: int | float, interval: int | float, **data: Any) -> Future:
+    """``callback`` ``start`` seconds from now, and again ``interval`` seconds after each run of it ends."""
+    return self.schedule(self._timer(callback, float(start), float(interval), None, data))
+
+  async def _timer(self, callback: Callable[..., Any], delay: float, interval: float | None, key: str | None, data: dict) -> None:
+    # .. its row is in `timers`, and under its key in `h_timeouts`, while it is armed; sync callbacks run off the loop
+    row = {'name': getattr(callback, '__name__', ''), 'kind': 'once' if interval is None else 'interval', 'interval': interval,
+           'next_run': now_ts() + delay, 'task': asyncio.current_task()}
+    if key in self.h_timeouts: self.h_timeouts[key]['task'].cancel()
+    self.timers[id(row)] = row
+    if key is not None: self.h_timeouts[key] = row
+    is_async = inspect.iscoroutinefunction(callback)
+    wrapped = _callback_wrapper(callback)
+    try:
+      while True:
+        await asyncio.sleep(max(0.0, row['next_run'] - now_ts()))
+        if interval is None:   # .. a one-shot is spent as it fires: its key is free while its callback runs
+          del self.timers[id(row)]
+          if self.h_timeouts.get(key) is row: del self.h_timeouts[key]
+        try:
+          if is_async: await wrapped(**data)
+          else: await asyncio.get_running_loop().run_in_executor(self._executor, partial(contextvars.copy_context().run, wrapped, **data))
+        except Exception as error: self.Error('timer', row['name'], 'raised:', error)
+        if interval is None: return
+        row['next_run'] = now_ts() + interval
+    finally:
+      self.timers.pop(id(row), None)
+      if self.h_timeouts.get(key) is row: del self.h_timeouts[key]
+
+  def cancel_timers(self) -> None:
+    """Every timer this app armed, cancelled, from any thread."""
+    for row in list(self.timers.values()): row['task'].get_loop().call_soon_threadsafe(row['task'].cancel)
+# endregion
+
+
+# region - Env, State, Runtime
+class _Env(DataObject):
   """The program's environment: a read-only system object, made once as gppu is imported and hidden from programs. Its
   init knows the machine it runs on and loads its environment's file, so a reset followed by init is a reload."""
   _ENV_PATHS = {"RAN": "RAN/_config/config.yaml", "IoT": "IoT/_Creekview/_creekview.yaml"}   # .. the two environments, each in its repository
@@ -1336,13 +1467,15 @@ class _Env(_BaseObject):
   os: OSType
   host: str
   user: str
+  environment: str
 
   def __init(self) -> None:
     self.os = detect_os()
     self.host, self.user = socket.gethostname().split('.')[0].lower(), getpass.getuser()
     self.home = Path('D:/Dev') if self.os == OSType.W11 else Path.home()
-    environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (self.home / self._ENV_PATHS['RAN']).exists() else 'RAN'
-    config = self.home / self._ENV_PATHS[environment]
+    if not self.environment:
+      self.environment = 'IoT' if {'IoT', 'y2'} & set(Path(sys.argv[0]).resolve().parts) or not (self.home / self._ENV_PATHS['RAN']).exists() else 'RAN'
+    config = self.home / self._ENV_PATHS[self.environment]
     if config.exists(): self._from_file(config, override=False)   # .. a host without its repository reads its environment from MQTT
 
   def _from_dict(self, d: Mapping, *, override: bool = True) -> Self:
@@ -1364,4 +1497,127 @@ def glob(path: str | y2path) -> Any: return deepget(path, Env.data)
 def glob_int(path: str | y2path, default: int = 0) -> int: return deepget_int(path, Env.data, default=default)
 def glob_list(path: str | y2path) -> list: return deepget_list(path, Env.data, default=[])
 def glob_dict(path: str | y2path) -> dict: return deepget_dict(path, Env.data, default={})
+
+
+class _State(DataObject):
+  """Shared mutable runtime state + object registry (deduplicated by key), optionally backed by gppu.data.Cache."""
+
+  def __init(self) -> None:
+    self._objects: dict[str, Any] = {}
+    self._store: Any = None
+
+  @property
+  def objects(self) -> dict[str, Any]: return self._objects
+
+  def register(self, key: str, obj: Any) -> Any:
+    if not key: raise ValueError(f'Cannot register {obj!r} with empty key')
+    if key in self._objects: raise ValueError(f'Duplicate object registration: {key}')
+    self._objects[key] = obj
+    return obj
+
+  def unregister(self, key: str) -> None:
+    self._objects.pop(key, None)
+
+  def get_object(self, key: str) -> Any:
+    if key not in self._objects: raise KeyError(f'Unknown object: {key}')
+    return self._objects[key]
+
+  def bind(self, path: str | Path, *, backend: str = 'sqlite') -> Self:
+    """Attach a gppu.data.Cache backend for transparent persistence."""
+    from .data import Cache
+    self._store = Cache(str(path), ttl=0, backend=backend)
+    return self
+
+  def set_state(self, key: str, value: Any) -> None:
+    self.data[key] = value
+    if self._store is not None: self._store.set(key, value, ttl=0)
+
+  def get_state(self, key: str, default: Any = None) -> Any:
+    if key in self.data: return self.data[key]
+    if self._store is not None:
+      val = self._store.get(key, default)
+      if val is not None: self.data[key] = val
+      return val
+    return default
+
+  def reset(self) -> None:
+    super().reset()
+    self._objects = {}
+    if self._store is not None: self._store.close(); self._store = None
+
+
+State = _State()
+
+
+class _Runtime(mixin_Timers, YAsync, DataObject):
+  """The process's single async runtime: one event loop, timers, process launching, parallel execution, and app runner."""
+
+  def attach(self, loop: asyncio.AbstractEventLoop | None = None) -> asyncio.AbstractEventLoop:
+    self._loop = loop or asyncio.get_running_loop()
+    return self._loop
+
+  async def call(self, target: str, method: str, *args: Any, **kwargs: Any) -> Any:
+    """Find a registered object in State by key and invoke its method (sync or async)."""
+    obj = State.get_object(target)
+    result = getattr(obj, method)(*args, **kwargs)
+    return await result if inspect.isawaitable(result) else result
+
+  async def run_app(self, app: _YMRO, *, forever: bool = False) -> None:
+    self.attach()
+    try:
+      for step in (app.load, app.start):
+        if inspect.isawaitable(r := step()): await r
+      if forever and not app.stopped:
+        try: await asyncio.Event().wait()
+        except (KeyboardInterrupt, asyncio.CancelledError): pass
+        finally:
+          if inspect.isawaitable(r := app.stop()): await r
+    finally:
+      self.cancel_timers()
+      self._loop = None
+
+  run = run_app
+
+  async def launch(self, command: list[str], line: Callable[[str], Any], cwd: str | Path, env: Mapping[str, str] | None = None) -> str | None:
+    """Start a process and hand `line` each line of its output; the error, or None when it exits with 0."""
+    try:
+      process = await asyncio.create_subprocess_exec(
+        *command, cwd=str(cwd), env=dict(env) if env is not None else None,
+        stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+      )
+      assert process.stdout is not None
+      async for raw in process.stdout:
+        line(raw.decode('utf-8', errors='replace').rstrip())
+      if code := await process.wait():
+        return f'process exited with {code}'
+    except OSError as failure:
+      return str(failure)
+    return None
+
+  async def run_parallel(
+    self,
+    units: list[Any],
+    run: Callable[[Any], Coroutine[Any, Any, Any]] | None = None,
+    conflicts: Callable[[Any, list[Any]], bool] | None = None,
+    failed: Callable[[Any, BaseException], Any] | None = None,
+  ) -> list[Any] | None:
+    """Run coroutines (when ``run`` is None) or scheduled units in parallel, respecting optional ``conflicts`` and ``failed``."""
+    if run is None:
+      return list(await asyncio.gather(*units))
+    pending, running = list(units), {}
+    while pending or running:
+      for unit in pending[:]:
+        if conflicts is not None and conflicts(unit, list(running.values())): continue
+        running[asyncio.create_task(run(unit))] = unit
+        pending.remove(unit)
+      finished, _ = await asyncio.wait(running, return_when=asyncio.FIRST_COMPLETED)
+      for task in finished:
+        unit = running.pop(task)
+        if (exc := task.exception()) is not None:
+          if failed is not None: failed(unit, exc)
+          else: raise exc
+    return None
+
+
+Runtime = _Runtime()
 # endregion

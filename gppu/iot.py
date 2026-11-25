@@ -11,7 +11,7 @@ from typing import Any
 
 import aiohttp
 
-from .gppu import _mixin
+from .gppu import Runtime, _mixin
 
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
@@ -21,13 +21,13 @@ type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, J
 # $$        Serialized controls
 # $$
 class SerializedControl(_mixin):
-  """Runs controls on the loop ``_get_loop`` gives, its app's, serialized by a per-instance lock."""
+  """Runs controls on the loop ``_get_loop`` gives, or Runtime's loop, serialized by a per-instance lock."""
 
   _control_lock: asyncio.Lock | None = None
 
   def _control_call[T, **P](self, function: Callable[P, Coroutine[Any, Any, T]], /, *args: P.args, **kwargs: P.kwargs) -> T:
     """The control run on the app's loop, waited for: a caller on that loop's own thread would block it."""
-    loop = self._get_loop()
+    loop = self._get_loop() if hasattr(self, '_get_loop') else Runtime._get_loop()
     try: on_loop = asyncio.get_running_loop() is loop
     except RuntimeError: on_loop = False   # .. no loop runs on this thread
     if on_loop: raise RuntimeError('cannot block the target event-loop thread')

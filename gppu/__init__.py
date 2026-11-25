@@ -6,24 +6,27 @@ data manipulation, and type safety utilities.
 """
 
 from .gppu import (
-    # .. Env, configuration readers and apps
+    # .. Env, State, Runtime, configuration readers and apps
     Env,
+    State,
+    Runtime,
     glob,
     glob_int,
     glob_list,
     glob_dict,
     _Base,
+    DataObject,
     App,
+    _callback_wrapper,
+    mixin_Timers,
 )
 
 from .app import (
-    # .. Runtime and apps with steps
-    Runtime,
+    # .. MQTT services and REST surface
     AsyncApp,
-    _callback_wrapper,
     mixin_Rest,
-    mixin_Timers,
     mixin_Mqtt,
+    ServiceApp,
     AppService,
 )
 
@@ -132,20 +135,20 @@ __all__ = [
     # .. Human-readable formatters
     'format_size',
 
-    # .. Env
-    'Env',
+    # .. Env, State, Runtime
+    'Env', 'State', 'Runtime',
 
     # .. Config access
     'glob', 'glob_int', 'glob_list', 'glob_dict',
 
     # .. Foundation classes
-    '_Base', 'App', '_callback_wrapper', 'AsyncApp', 'mixin_Rest',
+    '_Base', 'DataObject', 'App', '_callback_wrapper', 'AsyncApp', 'mixin_Rest',
 
     # .. y2xxx classes
     'y2list', 'y2path', 'Path', 'y2uri', 'y2topic',
 
     # .. mqtt library
-    'mixin_Timers', 'mixin_Mqtt', 'AppService',
+    'mixin_Timers', 'mixin_Mqtt', 'ServiceApp', 'AppService',
 ]
 
 
