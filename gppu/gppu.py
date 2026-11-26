@@ -693,14 +693,10 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
         return self._jinja_compile(template).render(values)
 
     def _jinja_configuration(self, node: Any) -> None:
-        """Every `macros:` block and every named template (a `*_templates` block) of a configuration,
-        wherever it sits, added to this environment: a macro is then callable by its name from any template."""
+        """Every named template (a `*_templates` block) of a configuration, wherever it sits, added to this environment."""
         if not isinstance(node, dict): return
         for key, value in node.items():
-            if key == 'macros' and isinstance(value, str):
-                module = self.from_string(value).make_module()
-                self.globals.update({name: getattr(module, name) for name in dir(module) if not name.startswith('_')})
-            elif str(key).endswith('_templates') and isinstance(value, dict):
+            if str(key).endswith('_templates') and isinstance(value, dict):
                 self.loader.mapping.update(value)
                 self.cache.clear()
             else: self._jinja_configuration(value)
@@ -731,16 +727,10 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
         return node
 
     def configuration(self, node: dict) -> dict:
-        """A configuration as loaded: its macros and named templates added, its Jinja that reads only the configuration
-        filled (``glob`` reads the value it fills in that configuration, filled), and its `template:` rows merged over their
-        templates. Env's configuration and an app's own both load through it."""
+        """A configuration as loaded: its named templates registered and its `template:` rows merged over their
+        templates. Env's configuration and an app's own both load through it without evaluating Jinja."""
         self._jinja_configuration(node)
-        def read(path: str) -> Any: return self.jinja_fill(deepget(path, node), **readers)
-        readers = {'glob': read,
-                   'glob_int': lambda path: _ if isinstance(_ := read(path), int) else 0,
-                   'glob_list': lambda path: _ if isinstance(_ := read(path), list) else [],
-                   'glob_dict': lambda path: _ if isinstance(_ := read(path), dict) else {}}
-        return self.apply_template(self.jinja_fill(node, **readers), self._templates_of(node))
+        return self.apply_template(node, self._templates_of(node))
 
     @cache
     def _jinja_compile(self, template: str):

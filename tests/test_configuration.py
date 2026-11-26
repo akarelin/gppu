@@ -110,50 +110,23 @@ def test_loading_keeps_literal_strings(home):
     assert app.my('empty') == ''
 
 
-def test_loading_fills_the_jinja_that_reads_only_glob(home):
+def test_loading_leaves_jinja_untouched_and_applies_templates(home):
     (home / 'RAN' / '_config' / 'config.yaml').write_text('''
-globals: {url: "https://otel", port: 4318, mount: /mnt/S1}
-shares: [Public, Lake]
+globals: {url: "https://otel", port: 4318}
 endpoint: "{{ glob('globals/url') }}/v1/logs"
-port: "{{ glob('globals/port') }}"
-mounts: >-
-  {%- set mounts = {} -%}
-  {%- for share in glob('shares') -%}{%- set _ = mounts.update({glob('globals/mount') ~ '/' ~ share: '//s1/' ~ share}) -%}{%- endfor -%}
-  {{- mounts -}}
-copied: "{{ glob('mounts') }}"
 bin: "{{ glob('globals/mount') }}/{{ platform }}"
-"{{ 'windows' if platform == 'W11' }}": true
 shell: 'export PATH="$HOME/.cargo/bin:$PATH"'
+templates:
+  ssh: {user: alex, port: 22}
+hosts:
+  seven: {template: ssh, hostname: 7.c.karel.in}
 example: {enabled: false}
 ''', encoding='utf-8')
     environment(home / 'RAN' / '_config' / 'config.yaml')
-    assert glob('endpoint') == 'https://otel/v1/logs'
-    assert glob('port') == 4318
-    assert glob('mounts') == {'/mnt/S1/Public': '//s1/Public', '/mnt/S1/Lake': '//s1/Lake'}
-    assert glob('copied') == glob('mounts')
+    assert glob('endpoint') == "{{ glob('globals/url') }}/v1/logs"
     assert glob('bin') == "{{ glob('globals/mount') }}/{{ platform }}"
-    assert glob("{{ 'windows' if platform == 'W11' }}") is True
     assert glob('shell') == 'export PATH="$HOME/.cargo/bin:$PATH"'
-
-
-def test_loading_fills_the_jinja_that_reads_the_typed_globs(home):
-    (home / 'RAN' / '_config' / 'config.yaml').write_text('''
-shares: [Public, Lake]
-port: 4318
-server_mounts: >-
-  {%- set mounts = {} -%}
-  {%- for share in glob_list('shares') -%}{%- set _ = mounts.update({'/mnt/S1/' ~ share: '//s1/' ~ share}) -%}{%- endfor -%}
-  {{- mounts -}}
-seven: "{{ glob_dict('server_mounts') }}"
-trix: >-
-  {{ dict(glob_dict('server_mounts'), **{'/mnt/S9/TulaCo-M365': '//s9/TulaCo\\\\040-\\\\040M365'}) }}
-next_port: "{{ glob_int('port') + 1 }}"
-''', encoding='utf-8')
-    environment(home / 'RAN' / '_config' / 'config.yaml')
-    mounts = {'/mnt/S1/Public': '//s1/Public', '/mnt/S1/Lake': '//s1/Lake'}
-    assert glob('seven') == mounts
-    assert glob('trix') == {**mounts, '/mnt/S9/TulaCo-M365': '//s9/TulaCo\\040-\\040M365'}
-    assert glob('next_port') == 4319
+    assert glob('hosts/seven') == {'template': 'ssh', 'user': 'alex', 'port': 22, 'hostname': '7.c.karel.in'}
 
 
 def test_async_app_keeps_its_steps():
