@@ -1459,9 +1459,28 @@ class _Env(DataObject):
     config = self.home / self._ENV_PATHS[self.environment]
     if config.exists(): self._from_file(config, override=False)   # .. a host without its repository reads its environment from MQTT
 
+  _DOLLAR_RE = re.compile(r'\$(?:\{[a-zA-Z_]\w*\}|[a-zA-Z_]\w*)')
+
+  def unresolved_dollars(self, node: Any = None, path: str = '') -> list[tuple[str, str]]:
+    """Return [(path, value), ...] for any string with an unresolved $ token outside templates/runbooks."""
+    found: list[tuple[str, str]] = []
+    def walk(cur: Any, p: str) -> None:
+      if isinstance(cur, dict):
+        for k, v in cur.items():
+          if k == 'templates' or str(k).endswith('_templates') or k == 'runbooks': continue
+          walk(v, f'{p}/{k}' if p else str(k))
+      elif isinstance(cur, list):
+        for i, item in enumerate(cur): walk(item, f'{p}[{i}]')
+      elif isinstance(cur, str) and self._DOLLAR_RE.search(cur):
+        found.append((p, cur))
+    walk(self.data if node is None else node, path)
+    return found
+
   def _from_dict(self, d: Mapping, *, override: bool = True) -> Self:
     super()._from_dict(d, override=override)
     if 'trace_rules' in self.data: Logger.trace_rules = dict(self.data['trace_rules'])
+    if unresolved := self.unresolved_dollars():
+      self.Warn(f'Env [{self.environment}]: {len(unresolved)} unresolved $ token(s)', unresolved[0][0], unresolved[0][1])
     return self
 
   def reset(self) -> None:
