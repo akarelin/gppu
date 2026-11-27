@@ -23,8 +23,11 @@ def test_validate_iot_env():
     assert res.environment == 'IoT'
     assert 'groups' in res.data
     ao = next(r for r in res.data['groups']['ao'] if r.get('slug') == 'ao_desklamp')
-    assert ao['listen_topic'] == 'devices/esp/ao-desklamp'
-    assert ao['command_topic'] == 'devices/esp/ao-desklamp/set'
+    assert ao['listen_topic'] == 'devices/esp/$dashed'
+    assert ao['command_topic'] == 'devices/esp/$dashed/set'
+    from gppu import render_template
+    assert render_template(ao['listen_topic'], ao) == 'devices/esp/ao-desklamp'
+    assert render_template(ao['command_topic'], ao) == 'devices/esp/ao-desklamp/set'
 
 
 @pytest.mark.asyncio

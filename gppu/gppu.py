@@ -687,9 +687,11 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
         return self.get_template(name).render(context.get_all() | values)
 
     def render_template(self, template: str, values: Mapping = {}, /, **more) -> Any:
-        """template, the name of a template in a `*_templates` block or Jinja text, rendered with values and more."""
+        """template, the name of a template in a `*_templates` block, a `$` template, or Jinja text, rendered with values and more."""
         values = {**values, **more}
         if template in self.loader.mapping: return self.get_template(template).render(values)
+        if '{{' not in template and '{%' not in template and '$' in template:
+            return Template(template).safe_substitute(values)
         return self._jinja_compile(template).render(values)
 
     def _jinja_configuration(self, node: Any) -> None:
@@ -748,22 +750,6 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
         if isinstance(value, Undefined): return str(value)
         return value
 
-    @staticmethod
-    @cache
-    def _jinja_inputs(template: str) -> frozenset[str]:
-        """The names a Jinja string reads beyond gppu's own Jinja globals."""
-        environment = JinjaEnvironment()
-        return frozenset(meta.find_undeclared_variables(environment.parse(template))) - set(environment.globals)
-
-    def jinja_fill(self, node: Any, /, **data) -> Any:
-        """Render the Jinja strings of a configuration node, keys included, that read only the given names. Jinja that
-        reads any other name stays as written, for the app that renders it later."""
-        if isinstance(node, dict): return {self.jinja_fill(key, **data): self.jinja_fill(value, **data) for key, value in node.items()}
-        if isinstance(node, list): return [self.jinja_fill(value, **data) for value in node]
-        if isinstance(node, str) and ('{{' in node or '{%' in node) and (inputs := self._jinja_inputs(node)) and inputs <= data.keys():
-            return self.jinja_template(node, **data)
-        return node
-
 
 jinja =JinjaEnvironment(loader=DictLoader({}))
 jinja.globals.update({name: getattr(builtins, name) for name in
@@ -772,7 +758,7 @@ jinja.globals.update({name: getattr(builtins, name) for name in
 
 # .. the template functions are globals: the one environment's methods
 render_template = jinja.render_template
-apply_template, jinja_template, jinja_fill = jinja.apply_template, jinja.jinja_template, jinja.jinja_fill
+apply_template, jinja_template = jinja.apply_template, jinja.jinja_template
 # endregion
 
 
