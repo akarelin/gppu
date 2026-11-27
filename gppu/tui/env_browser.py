@@ -11,6 +11,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -149,6 +150,22 @@ class ValidationResult:
         return ''
 
 
+_DOLLAR_RE = re.compile(r'\$(?:\{[a-zA-Z_]\w*\}|[a-zA-Z_]\w*)')
+
+
+def _check_unresolved_dollars(node: Any, warnings: list[str], path: str = '') -> None:
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == 'templates' or str(key).endswith('_templates') or key == 'runbooks':
+                continue
+            _check_unresolved_dollars(value, warnings, f'{path}/{key}' if path else str(key))
+    elif isinstance(node, list):
+        for i, item in enumerate(node):
+            _check_unresolved_dollars(item, warnings, f'{path}[{i}]')
+    elif isinstance(node, str) and _DOLLAR_RE.search(node):
+        warnings.append(f'{path}: unresolved $ token in {node!r}')
+
+
 def _check_templates(raw: Any, declared: set[str], warnings: list[str], path: str = '') -> None:
     if isinstance(raw, dict):
         tpl = raw.get('template')
@@ -213,6 +230,8 @@ def validate_env(environment: str | None = None) -> ValidationResult:
     result.data = Env.data
     if not result.data:
         result.errors.append('Env.data is empty after load')
+    else:
+        _check_unresolved_dollars(result.data, result.warnings)
     return result
 
 
