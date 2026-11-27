@@ -747,13 +747,17 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
 
     def apply_template(self, node: Any, templates: dict) -> Any:
         """Every row of node whose `template:` names one of templates, merged over that template: the row wins.
-        Any `$` templates on the merged row are substituted from the row's keys (plus slug/dashed/path from `name`)."""
+        Any `$` templates on a row (whether from `template:` or YAML anchors) are substituted from its keys
+        plus slug/dashed/path derived from `name`."""
         if isinstance(node, list): return [self.apply_template(value, templates) for value in node]
         if not isinstance(node, dict): return node
-        node = {key: value if key == 'templates' else self.apply_template(value, templates) for key, value in node.items()}
+        node = {
+            key: value if (key == 'templates' or str(key).endswith('_templates') or key == 'runbooks') else self.apply_template(value, templates)
+            for key, value in node.items()
+        }
         if isinstance(name := node.get('template'), str) and name in templates:
-            return self._populate_row(self.apply_template(templates[name], templates) | node)
-        return node
+            node = self.apply_template(templates[name], templates) | node
+        return self._populate_row(node)
 
     def configuration(self, node: dict) -> dict:
         """A configuration as loaded: its named templates registered and its `template:` rows merged over their
