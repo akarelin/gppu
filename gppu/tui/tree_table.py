@@ -227,6 +227,7 @@ class TreeTable(Widget):
 
     def _rebuild(self, *, preferred_id: str | None = None) -> None:
         table = self.query_one(DataTable)
+        prev_scroll_x, prev_scroll_y = table.scroll_x, table.scroll_y
         previous_index = table.cursor_row if self._visible else 0
         selected = self._selected_node()
         selected_id = preferred_id or (selected.entry.id if selected is not None else None)
@@ -246,7 +247,8 @@ class TreeTable(Widget):
             ),
             min(previous_index, len(self._visible) - 1),
         )
-        table.move_cursor(row=target)
+        table.move_cursor(row=target, animate=False, scroll=False)
+        table.scroll_to(prev_scroll_x, prev_scroll_y, animate=False, immediate=True)
 
     def _selected_node(self) -> _Node | None:
         if not self._visible:
