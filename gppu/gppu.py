@@ -719,8 +719,8 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
         return found
 
     @staticmethod
-    def _populate_row(row: dict) -> dict:
-        ctx: dict[str, Any] = {}
+    def _row_ctx(row: dict, parent_ctx: Mapping[str, Any] = ()) -> dict[str, Any]:
+        ctx: dict[str, Any] = dict(parent_ctx)
         name = row.get('name')
         if isinstance(name, str) and name and '$' not in name and '{{' not in name:
             for form, mark in (('slug', '_'), ('dashed', '-'), ('path', '/')):
@@ -728,6 +728,11 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
         for k, v in row.items():
             if isinstance(v, (str, int, float, bool)):
                 ctx[k] = v
+        return ctx
+
+    @classmethod
+    def _populate_row(cls, row: dict, parent_ctx: Mapping[str, Any] = ()) -> dict:
+        ctx = cls._row_ctx(row, parent_ctx)
         for _ in range(2):
             changed = False
             out = {}
@@ -745,19 +750,20 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
                 break
         return row
 
-    def apply_template(self, node: Any, templates: dict) -> Any:
+    def apply_template(self, node: Any, templates: dict, parent_ctx: Mapping[str, Any] = ()) -> Any:
         """Every row of node whose `template:` names one of templates, merged over that template: the row wins.
         Any `$` templates on a row (whether from `template:` or YAML anchors) are substituted from its keys
-        plus slug/dashed/path derived from `name`."""
-        if isinstance(node, list): return [self.apply_template(value, templates) for value in node]
+        plus inherited parent scalars and slug/dashed/path derived from `name`."""
+        if isinstance(node, list): return [self.apply_template(value, templates, parent_ctx) for value in node]
         if not isinstance(node, dict): return node
-        node = {
-            key: value if (key == 'templates' or str(key).endswith('_templates') or key == 'runbooks') else self.apply_template(value, templates)
-            for key, value in node.items()
-        }
         if isinstance(name := node.get('template'), str) and name in templates:
             node = self.apply_template(templates[name], templates) | node
-        return self._populate_row(node)
+        node = self._populate_row(node, parent_ctx)
+        child_ctx = self._row_ctx(node, parent_ctx)
+        return {
+            key: value if (key == 'templates' or str(key).endswith('_templates') or key == 'runbooks') else self.apply_template(value, templates, child_ctx)
+            for key, value in node.items()
+        }
 
     def configuration(self, node: dict) -> dict:
         """A configuration as loaded: its named templates registered and its `template:` rows merged over their
