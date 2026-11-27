@@ -1212,7 +1212,11 @@ class _DC(UserDict):
     self.data = kw | data
 
 
-  _INIT_STEPS: list[Callable[Concatenate[Any, ...], None]] = [_init_from_kw]
+  def _init_ymro(self, **kw) -> None:
+    if isinstance(self, _YMRO): self.init()
+
+
+  _INIT_STEPS: list[Callable[Concatenate[Any, ...], None]] = [_init_from_kw, _init_ymro]
 
 
   def __init_subclass__(cls, **kw) -> None:
@@ -1315,22 +1319,50 @@ _BaseObject = DataObject
 
 
 # region App
-class App(_Base, _DC):
-  """ Not human reviewed """
-  def _init_config(self, environment: str | None = None, config: str | Path | None = None, argv: list[str] = [], **kw) -> None:
-    if not self.name: self.name = type(self).__name__.lower()
-    Env.init(environment=environment)
-    self._config_load(glob_dict(self.name) if config is None else config, argv)
+class App(YAsync, DataObject):
+  """An app: named as its class unless made with a name. Its configuration is its section of the environment with
+  explicit ``config`` or its script's MANIFEST over it; what it is made with goes over that, and the command line over all."""
 
-  _INIT_STEPS = _DC._INIT_STEPS + [_init_config]
+  def __init(self) -> None:
+    script = vars(sys.modules[type(self).__module__])   # .. a script assigns its own configuration to its MANIFEST global
+    if 'config' in self.data:
+      cfg = self.data['config']
+      override = cfg if isinstance(cfg, Mapping) else dict_from_yml(cfg)
+    elif 'MANIFEST' in script: override = yaml.load(script['MANIFEST'], Loader=YmlLoader) or {}
+    else: override = {}
+    self._from_dict(glob_dict(self.name) | dict(override), override=False)
+    argv = sys.argv[1:]   # .. --key value sets a key, a slash path a nested one, to the value read as YAML; --flag sets it to True
+    for i, arg in enumerate(argv):
+      if arg.startswith('--') and len(arg) > 2:
+        deepset(arg[2:], self.data, yaml.load(argv[i + 1], Loader=YmlLoader) if i + 1 < len(argv) and not argv[i + 1].startswith('--') else True)
 
-
-  # !!! Does not work beacause of thee rest of the class is messed up
   def _from_manifest(self):
     frame = inspect.currentframe().f_back
     data = yaml.safe_load(frame.f_globals["MANIFEST"])["manifest"]
     if data: self.data |= data
 
+  async def run(self, *, forever: bool = True) -> None:
+    """init, load and start on this loop; returns when stopped (or after start if forever=False)."""
+    if self._task_group is not None: raise RuntimeError(f'{self!r} is already running')
+    owns_runtime = Runtime._loop is None
+    try:
+      self._loop = asyncio.get_running_loop()
+      if owns_runtime: Runtime._loop = self._loop
+      async with asyncio.TaskGroup() as tasks:
+        self._task_group = tasks
+        for step in (self.init, self.load, self.start):
+          if inspect.isawaitable(result := step()): await result
+        if forever and not self.stopped: self._spawn(asyncio.Event().wait())
+    finally:
+      self._task_group = None
+      self._loop = None
+      if owns_runtime: Runtime._loop = None
+      self._background_tasks.clear()
+
+  def run_sync(self, *, forever: bool = False) -> None:
+    """Run this app synchronously on asyncio (SelectorEventLoop on Windows)."""
+    factory = asyncio.SelectorEventLoop if sys.platform == 'win32' else None
+    asyncio.run(self.run(forever=forever), loop_factory=factory)
 # endregion
 
 
