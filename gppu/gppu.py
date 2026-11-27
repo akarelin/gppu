@@ -718,14 +718,41 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
             self._templates_of(value, found)
         return found
 
+    @staticmethod
+    def _populate_row(row: dict) -> dict:
+        ctx: dict[str, Any] = {}
+        name = row.get('name')
+        if isinstance(name, str) and name and '$' not in name and '{{' not in name:
+            for form, mark in (('slug', '_'), ('dashed', '-'), ('path', '/')):
+                ctx[form] = re.sub('[ /_-]+', mark, name.lower()).strip(mark)
+        for k, v in row.items():
+            if isinstance(v, (str, int, float, bool)):
+                ctx[k] = v
+        for _ in range(2):
+            changed = False
+            out = {}
+            for k, v in row.items():
+                if isinstance(v, str) and '$' in v and '{{' not in v and '{%' not in v:
+                    nv = Template(v).safe_substitute(ctx)
+                    if nv != v:
+                        changed = True
+                        ctx[k] = nv
+                    out[k] = nv
+                else:
+                    out[k] = v
+            row = out
+            if not changed:
+                break
+        return row
+
     def apply_template(self, node: Any, templates: dict) -> Any:
-        """Every row of node whose `template:` names one of templates, merged over that template: the row wins. The
-        template's Jinja that reads the row stays as written, for the app that renders it."""
+        """Every row of node whose `template:` names one of templates, merged over that template: the row wins.
+        Any `$` templates on the merged row are substituted from the row's keys (plus slug/dashed/path from `name`)."""
         if isinstance(node, list): return [self.apply_template(value, templates) for value in node]
         if not isinstance(node, dict): return node
-        node = {key: self.apply_template(value, templates) for key, value in node.items()}
+        node = {key: value if key == 'templates' else self.apply_template(value, templates) for key, value in node.items()}
         if isinstance(name := node.get('template'), str) and name in templates:
-            return self.apply_template(templates[name], templates) | node
+            return self._populate_row(self.apply_template(templates[name], templates) | node)
         return node
 
     def configuration(self, node: dict) -> dict:
