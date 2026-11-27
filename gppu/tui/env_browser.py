@@ -49,6 +49,67 @@ def _walk_active_includes(root_yaml: Path) -> list[Path]:
     return ordered
 
 
+def _collect_sources(root_yaml: Path) -> tuple[dict[str, str], dict[str, str]]:
+    """Walk YAML AST across !include files to map logical path -> 'relfile:line' and template name -> path."""
+    root_dir = Path(root_yaml).resolve().parent
+    sources: dict[str, str] = {}
+    template_paths: dict[str, str] = {}
+
+    def rel(p: Path) -> str:
+        try:
+            return str(Path(p).resolve().relative_to(root_dir)).replace('\\', '/')
+        except Exception:
+            return Path(p).name
+
+    def walk_node(node: yaml.Node | None, cur_file: Path, prefix: str) -> None:
+        if node is None:
+            return
+        if isinstance(node, yaml.ScalarNode) and node.tag == '!include':
+            target = full_path(node.value.strip(), cur_file.parent)
+            if target.exists() and target.is_file():
+                load_file(target, prefix)
+            return
+        if isinstance(node, yaml.MappingNode):
+            for k_node, v_node in node.value:
+                if k_node.tag == 'tag:yaml.org,2002:merge':
+                    # YAML merge key (<<: *anchor): record inherited keys if not overridden
+                    targets = v_node.value if isinstance(v_node, yaml.SequenceNode) else [v_node]
+                    for t in targets:
+                        if isinstance(t, yaml.MappingNode):
+                            for mk, mv in t.value:
+                                mkey = str(mk.value)
+                                mpath = f'{prefix}/{mkey}' if prefix else mkey
+                                if mpath not in sources:
+                                    sources[mpath] = f'{rel(cur_file)}:{mk.start_mark.line + 1} (anchor)'
+                                    walk_node(mv, cur_file, mpath)
+                    continue
+                key = str(k_node.value)
+                child_path = f'{prefix}/{key}' if prefix else key
+                sources[child_path] = f'{rel(cur_file)}:{k_node.start_mark.line + 1}'
+                if key == 'templates' and isinstance(v_node, yaml.MappingNode):
+                    for tk, _ in v_node.value:
+                        tname = str(tk.value)
+                        template_paths[tname] = f'{child_path}/{tname}'
+                walk_node(v_node, cur_file, child_path)
+        elif isinstance(node, yaml.SequenceNode):
+            for i, item in enumerate(node.value):
+                child_path = f'{prefix}[{i}]'
+                sources[child_path] = f'{rel(cur_file)}:{item.start_mark.line + 1}'
+                walk_node(item, cur_file, child_path)
+
+    def load_file(fpath: Path, prefix: str) -> None:
+        try:
+            node = yaml.compose(fpath.read_text(encoding='utf-8'), Loader=yaml.SafeLoader)
+        except Exception:
+            return
+        if prefix not in sources:
+            sources[prefix] = rel(fpath)
+        walk_node(node, fpath, prefix)
+
+    load_file(Path(root_yaml).resolve(), '')
+    return sources, template_paths
+
+
 @dataclass
 class ValidationResult:
     environment: str
@@ -57,10 +118,35 @@ class ValidationResult:
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     data: dict[str, Any] = field(default_factory=dict)
+    sources: dict[str, str] = field(default_factory=dict)
+    template_paths: dict[str, str] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
         return not self.errors
+
+    def resolve_source(self, path: str, values: dict[str, Any]) -> str:
+        """Where the value at `path` came from: file:line, template:<name>, or Env."""
+        if not path:
+            return self.sources.get('', str(self.config_path.name))
+        if path in self.sources:
+            return self.sources[path]
+        # Walk up ancestors to check if inherited from a `template:` merge
+        parts = path.split('/')
+        for i in range(len(parts) - 1, 0, -1):
+            parent_path = '/'.join(parts[:i])
+            parent_val = values.get(parent_path)
+            if isinstance(parent_val, dict) and isinstance(tpl := parent_val.get('template'), str):
+                tail = '/'.join(parts[i:])
+                tpl_root = self.template_paths.get(tpl)
+                if tpl_root:
+                    tpl_src = self.sources.get(f'{tpl_root}/{tail}') or self.sources.get(tpl_root)
+                    if tpl_src:
+                        return f'tpl:{tpl} ({tpl_src})'
+                return f'tpl:{tpl}'
+        if '/' not in path and path in ('os', 'host', 'user', 'home', 'environment', 'name'):
+            return 'Env (machine)'
+        return ''
 
 
 def _check_templates(raw: Any, declared: set[str], warnings: list[str], path: str = '') -> None:
@@ -123,6 +209,7 @@ def validate_env(environment: str | None = None) -> ValidationResult:
         declared = set()
 
     _check_templates(raw, declared, result.warnings)
+    result.sources, result.template_paths = _collect_sources(config_path)
     result.data = Env.data
     if not result.data:
         result.errors.append('Env.data is empty after load')
@@ -133,7 +220,7 @@ def _scalar_preview(value: Any) -> str:
     if isinstance(value, (dict, list)):
         return ''
     text = str(value)
-    return text if len(text) <= 48 else text[:45] + '...'
+    return text if len(text) <= 44 else text[:41] + '...'
 
 
 def _count_cell(value: Any) -> Text | str:
@@ -142,30 +229,51 @@ def _count_cell(value: Any) -> Text | str:
     return ''
 
 
-def _format_detail(path: str, value: Any) -> str:
-    header = f'# {path}\n' if path else ''
+def _short_source(source: str) -> Text | str:
+    if not source:
+        return ''
+    if source.startswith('tpl:'):
+        return Text(source.split(' ', 1)[0], style='cyan')
+    if source.startswith('Env'):
+        return Text('Env', style='magenta')
+    return Text(source.rsplit('/', 1)[-1], style='dim')
+
+
+def _format_detail(path: str, value: Any, source: str = '') -> str:
+    lines: list[str] = []
+    if path:
+        lines.append(f'# {path}')
+    if source:
+        lines.append(f'# source: {source}')
+    header = ('\n'.join(lines) + '\n\n') if lines else ''
     try:
         body = yaml.safe_dump(value, sort_keys=False, allow_unicode=True, width=100)
     except Exception:
         body = repr(value)
-    return (header + '\n' + body) if header else body
+    return header + body
 
 
 class _EnvTreeAdapter:
-    """TreeAdapter over Env.data: clean keys, right-aligned item counts, scalar previews."""
+    """TreeAdapter over Env.data: clean keys, right-aligned item counts, scalar previews, and source provenance."""
 
-    def __init__(self, result: ValidationResult, needle: str = '') -> None:
+    def __init__(self, result: ValidationResult, needle: str = '', hide_templates: bool = False) -> None:
         self._result = result
         self._needle = needle.casefold()
+        self._hide_templates = hide_templates
         self._values: dict[str, Any] = {'': result.data}
 
-    def set_data(self, result: ValidationResult, needle: str = '') -> None:
+    def set_data(self, result: ValidationResult, needle: str = '', hide_templates: bool | None = None) -> None:
         self._result = result
         self._needle = needle.casefold()
+        if hide_templates is not None:
+            self._hide_templates = hide_templates
         self._values = {'': result.data}
 
     def value_of(self, entry_id: str) -> Any:
         return self._values.get(entry_id)
+
+    def source_of(self, entry_id: str) -> str:
+        return self._result.resolve_source(entry_id, self._values)
 
     def root(self) -> TreeEntry:
         data = self._result.data
@@ -173,8 +281,17 @@ class _EnvTreeAdapter:
             id='',
             label=self._result.environment,
             is_container=True,
-            meta={'count': _count_cell(data), 'value': ''},
+            meta={'count': _count_cell(data), 'value': '', 'source': _short_source(self.source_of(''))},
         )
+
+    def _is_hidden_template(self, key: str, value: Any) -> bool:
+        if not self._hide_templates:
+            return False
+        if key == 'templates' and isinstance(value, dict):
+            return True
+        if key == 'template' and isinstance(value, str):
+            return True
+        return False
 
     def children(self, entry: TreeEntry) -> list[TreeEntry]:
         value = self._values.get(entry.id)
@@ -182,6 +299,8 @@ class _EnvTreeAdapter:
         if isinstance(value, dict):
             for k, v in value.items():
                 key = str(k)
+                if self._is_hidden_template(key, v):
+                    continue
                 if self._needle and not entry.id and self._needle not in key.casefold():
                     continue
                 child_id = f'{entry.id}/{key}' if entry.id else key
@@ -190,7 +309,11 @@ class _EnvTreeAdapter:
                     id=child_id,
                     label=key,
                     is_container=isinstance(v, (dict, list)) and bool(v),
-                    meta={'count': _count_cell(v), 'value': _scalar_preview(v)},
+                    meta={
+                        'count': _count_cell(v),
+                        'value': _scalar_preview(v),
+                        'source': _short_source(self.source_of(child_id)),
+                    },
                 ))
         elif isinstance(value, list):
             for i, v in enumerate(value):
@@ -201,33 +324,39 @@ class _EnvTreeAdapter:
                     id=child_id,
                     label=label,
                     is_container=isinstance(v, (dict, list)) and bool(v),
-                    meta={'count': _count_cell(v), 'value': _scalar_preview(v)},
+                    meta={
+                        'count': _count_cell(v),
+                        'value': _scalar_preview(v),
+                        'source': _short_source(self.source_of(child_id)),
+                    },
                 ))
         return rows
 
 
 class EnvBrowser(TextualApp):
-    """Validate Env and display Env.data in gppu.tui.TreeTable."""
+    """Validate Env and display Env.data in gppu.tui.TreeTable with source provenance."""
 
     CSS = """
     #status { height: 3; padding: 0 1; background: $panel; content-align: left middle; }
     #filter { dock: top; margin: 0 1; }
     #body { height: 1fr; }
-    #tree { width: 55%; border: round $primary; }
-    #detail { width: 45%; border: round $secondary; padding: 0 1; }
+    #tree { width: 60%; border: round $primary; }
+    #detail { width: 40%; border: round $secondary; padding: 0 1; }
     """
 
     BINDINGS = [
         ('q', 'quit', 'Quit'),
         ('r', 'reload', 'Reload'),
         ('e', 'switch_env', 'Switch RAN/IoT'),
+        ('t', 'toggle_templates', 'Hide/Show templates'),
         ('/', 'focus_filter', 'Filter'),
     ]
 
     def __init__(self, environment: str | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._result = validate_env(environment)
-        self._adapter = _EnvTreeAdapter(self._result)
+        self._hide_templates = False
+        self._adapter = _EnvTreeAdapter(self._result, hide_templates=self._hide_templates)
 
     def compose(self):
         from textual.containers import Horizontal
@@ -241,6 +370,7 @@ class EnvBrowser(TextualApp):
                 self._adapter,
                 columns=(
                     TreeTableColumn('count', '#', width=6),
+                    TreeTableColumn('source', 'Source', width=20),
                     TreeTableColumn('value', 'Value'),
                 ),
                 tree_label='Key',
@@ -260,8 +390,9 @@ class EnvBrowser(TextualApp):
         res = self._result
         state = 'OK' if res.ok else f'{len(res.errors)} error(s)'
         warn = f', {len(res.warnings)} warning(s)' if res.warnings else ''
+        tpl_mode = 'hidden' if self._hide_templates else 'shown'
         self.query_one('#status', Static).update(
-            f'Env: {res.environment}  |  {res.config_path}  |  {len(res.files)} files  |  {state}{warn}'
+            f'Env: {res.environment}  |  {res.config_path}  |  {len(res.files)} files  |  {state}{warn}  |  templates: {tpl_mode}'
         )
         lines = [f'Environment: {res.environment}', f'Config: {res.config_path}', f'Files: {len(res.files)}']
         if res.errors:
@@ -273,7 +404,7 @@ class EnvBrowser(TextualApp):
         self.query_one('#detail', TextArea).text = '\n'.join(lines)
 
     def _reload_tree(self, needle: str = '') -> None:
-        self._adapter.set_data(self._result, needle=needle)
+        self._adapter.set_data(self._result, needle=needle, hide_templates=self._hide_templates)
         self.query_one('#tree', TreeTable).reset()
         self._refresh_status()
 
@@ -281,7 +412,8 @@ class EnvBrowser(TextualApp):
         from textual.widgets import TextArea
 
         val = self._adapter.value_of(event.entry.id)
-        self.query_one('#detail', TextArea).text = _format_detail(event.entry.id, val)
+        src = self._adapter.source_of(event.entry.id)
+        self.query_one('#detail', TextArea).text = _format_detail(event.entry.id, val, src)
 
     def on_input_changed(self, event) -> None:
         if event.input.id == 'filter':
@@ -291,6 +423,10 @@ class EnvBrowser(TextualApp):
         from textual.widgets import Input
 
         self.query_one('#filter', Input).focus()
+
+    def action_toggle_templates(self) -> None:
+        self._hide_templates = not self._hide_templates
+        self._reload_tree()
 
     def action_reload(self) -> None:
         self._result = validate_env(self._result.environment)

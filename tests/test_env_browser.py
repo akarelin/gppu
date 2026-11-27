@@ -31,7 +31,7 @@ def test_validate_iot_env():
 
 
 @pytest.mark.asyncio
-async def test_env_browser_tui_mounts_and_switches():
+async def test_env_browser_tui_mounts_switches_hides_templates_and_shows_source():
     from gppu.tui.tree_table import TreeTable
     app = EnvBrowser(environment='RAN')
     async with app.run_test() as pilot:
@@ -39,7 +39,19 @@ async def test_env_browser_tui_mounts_and_switches():
         tree = app.query_one('#tree', TreeTable)
         assert len(tree._visible) > 1
         assert all('dict (' not in node.entry.label for node in tree._visible)
+        assert 'config.yaml:' in app._adapter.source_of('server_mounts')
+        assert app._adapter.source_of('host') == 'Env (machine)'
         await pilot.press('e')
         await pilot.pause()
         assert app._result.environment == 'IoT'
-        assert len(tree._visible) > 1
+        tree.expand('groups')
+        await pilot.pause()
+        labels_before = {node.entry.label for node in tree._visible}
+        assert 'templates' in labels_before
+        await pilot.press('t')
+        await pilot.pause()
+        assert app._hide_templates is True
+        tree.expand('groups')
+        await pilot.pause()
+        labels_after = {node.entry.label for node in tree._visible}
+        assert 'templates' not in labels_after
