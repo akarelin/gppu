@@ -32,13 +32,14 @@ def test_validate_iot_env():
 
 @pytest.mark.asyncio
 async def test_env_browser_tui_mounts_and_switches():
+    from gppu.tui.tree_table import TreeTable
     app = EnvBrowser(environment='RAN')
     async with app.run_test() as pilot:
         await pilot.pause()
-        from textual.widgets import Tree
-        tree = app.query_one('#tree', Tree)
-        assert len(tree.root.children) > 0
+        tree = app.query_one('#tree', TreeTable)
+        assert len(tree._visible) > 1
+        assert all('dict (' not in node.entry.label for node in tree._visible)
         await pilot.press('e')
         await pilot.pause()
         assert app._result.environment == 'IoT'
-        assert len(tree.root.children) > 0
+        assert len(tree._visible) > 1

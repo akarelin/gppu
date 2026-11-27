@@ -1,4 +1,4 @@
-"""Load gppu Env, validate its YAML tree, and browse Env.data as a navigable dict.
+"""Load gppu Env, validate its YAML tree, and browse Env.data with gppu.tui.TreeTable.
 
 Usage::
 
@@ -11,14 +11,17 @@ Usage::
 from __future__ import annotations
 
 import argparse
-import sys
 from dataclasses import dataclass, field
 from typing import Any
 
 import yaml
+from rich.text import Text
+from textual.app import App as TextualApp
 
-from gppu.gppu import Env, Path, YmlLoader, dict_from_yml, full_path, jinja
+from gppu.gppu import Env, Path, dict_from_yml, full_path, jinja
 from gppu.tui.config_editor import INCLUDE_RE, _LoaderWithInclude
+from gppu.tui.tree import TreeEntry
+from gppu.tui.tree_table import TreeTable, TreeTableColumn
 
 
 def _walk_active_includes(root_yaml: Path) -> list[Path]:
@@ -126,36 +129,92 @@ def validate_env(environment: str | None = None) -> ValidationResult:
     return result
 
 
-def _preview(value: Any) -> str:
-    if isinstance(value, dict):
-        return f'dict ({len(value)})'
-    if isinstance(value, list):
-        return f'list ({len(value)})'
-    text = repr(value)
-    return text if len(text) <= 60 else text[:57] + '...'
+def _scalar_preview(value: Any) -> str:
+    if isinstance(value, (dict, list)):
+        return ''
+    text = str(value)
+    return text if len(text) <= 48 else text[:45] + '...'
+
+
+def _count_cell(value: Any) -> Text | str:
+    if isinstance(value, (dict, list)):
+        return Text(str(len(value)), style='dim', justify='right')
+    return ''
 
 
 def _format_detail(path: str, value: Any) -> str:
-    header = f'# {path or "<root>"}  ({type(value).__name__})\n'
+    header = f'# {path}\n' if path else ''
     try:
         body = yaml.safe_dump(value, sort_keys=False, allow_unicode=True, width=100)
     except Exception:
         body = repr(value)
-    return header + '\n' + body
+    return (header + '\n' + body) if header else body
 
 
-from textual.app import App as TextualApp
+class _EnvTreeAdapter:
+    """TreeAdapter over Env.data: clean keys, right-aligned item counts, scalar previews."""
+
+    def __init__(self, result: ValidationResult, needle: str = '') -> None:
+        self._result = result
+        self._needle = needle.casefold()
+        self._values: dict[str, Any] = {'': result.data}
+
+    def set_data(self, result: ValidationResult, needle: str = '') -> None:
+        self._result = result
+        self._needle = needle.casefold()
+        self._values = {'': result.data}
+
+    def value_of(self, entry_id: str) -> Any:
+        return self._values.get(entry_id)
+
+    def root(self) -> TreeEntry:
+        data = self._result.data
+        return TreeEntry(
+            id='',
+            label=self._result.environment,
+            is_container=True,
+            meta={'count': _count_cell(data), 'value': ''},
+        )
+
+    def children(self, entry: TreeEntry) -> list[TreeEntry]:
+        value = self._values.get(entry.id)
+        rows: list[TreeEntry] = []
+        if isinstance(value, dict):
+            for k, v in value.items():
+                key = str(k)
+                if self._needle and not entry.id and self._needle not in key.casefold():
+                    continue
+                child_id = f'{entry.id}/{key}' if entry.id else key
+                self._values[child_id] = v
+                rows.append(TreeEntry(
+                    id=child_id,
+                    label=key,
+                    is_container=isinstance(v, (dict, list)) and bool(v),
+                    meta={'count': _count_cell(v), 'value': _scalar_preview(v)},
+                ))
+        elif isinstance(value, list):
+            for i, v in enumerate(value):
+                child_id = f'{entry.id}[{i}]'
+                self._values[child_id] = v
+                label = str(v['name']) if isinstance(v, dict) and v.get('name') else f'[{i}]'
+                rows.append(TreeEntry(
+                    id=child_id,
+                    label=label,
+                    is_container=isinstance(v, (dict, list)) and bool(v),
+                    meta={'count': _count_cell(v), 'value': _scalar_preview(v)},
+                ))
+        return rows
 
 
 class EnvBrowser(TextualApp):
-    """Validate Env and display Env.data as a lazy-loaded navigable dict tree."""
+    """Validate Env and display Env.data in gppu.tui.TreeTable."""
 
     CSS = """
     #status { height: 3; padding: 0 1; background: $panel; content-align: left middle; }
     #filter { dock: top; margin: 0 1; }
     #body { height: 1fr; }
-    #tree { width: 45%; border: round $primary; }
-    #detail { width: 55%; border: round $secondary; padding: 0 1; }
+    #tree { width: 55%; border: round $primary; }
+    #detail { width: 45%; border: round $secondary; padding: 0 1; }
     """
 
     BINDINGS = [
@@ -167,28 +226,36 @@ class EnvBrowser(TextualApp):
 
     def __init__(self, environment: str | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._target_env = environment
         self._result = validate_env(environment)
+        self._adapter = _EnvTreeAdapter(self._result)
 
     def compose(self):
         from textual.containers import Horizontal
-        from textual.widgets import Footer, Header, Input, Static, TextArea, Tree
+        from textual.widgets import Footer, Header, Input, Static, TextArea
 
         yield Header()
         yield Static('', id='status')
-        yield Input(placeholder='Filter top-level keys (/ to focus, Esc to clear)...', id='filter')
+        yield Input(placeholder='Filter top-level keys (/ to focus)...', id='filter')
         with Horizontal(id='body'):
-            yield Tree(f'Env [{self._result.environment}]', id='tree')
+            yield TreeTable(
+                self._adapter,
+                columns=(
+                    TreeTableColumn('count', '#', width=6),
+                    TreeTableColumn('value', 'Value'),
+                ),
+                tree_label='Key',
+                id='tree',
+            )
             yield TextArea('', read_only=True, id='detail')
         yield Footer()
 
     def on_mount(self) -> None:
-        from textual.widgets import Tree
-        self._populate_tree()
-        self.query_one('#tree', Tree).focus()
+        from textual.widgets import DataTable
+        self._refresh_status()
+        self.query_one('#tree', TreeTable).query_one(DataTable).focus()
 
-    def _populate_tree(self, needle: str = '') -> None:
-        from textual.widgets import Static, TextArea, Tree
+    def _refresh_status(self) -> None:
+        from textual.widgets import Static, TextArea
 
         res = self._result
         state = 'OK' if res.ok else f'{len(res.errors)} error(s)'
@@ -196,14 +263,6 @@ class EnvBrowser(TextualApp):
         self.query_one('#status', Static).update(
             f'Env: {res.environment}  |  {res.config_path}  |  {len(res.files)} files  |  {state}{warn}'
         )
-
-        tree = self.query_one('#tree', Tree)
-        tree.clear()
-        tree.root.set_label(f'Env [{res.environment}] ({len(res.data)} keys)')
-        tree.root.data = ('', res.data, True)
-        self._add_children(tree.root, res.data, '', needle=needle.casefold())
-        tree.root.expand()
-
         lines = [f'Environment: {res.environment}', f'Config: {res.config_path}', f'Files: {len(res.files)}']
         if res.errors:
             lines.append('\nErrors:')
@@ -213,50 +272,20 @@ class EnvBrowser(TextualApp):
             lines.extend(f'  - {w}' for w in res.warnings)
         self.query_one('#detail', TextArea).text = '\n'.join(lines)
 
-    def _add_children(self, node, value: Any, prefix: str, needle: str = '') -> None:
-        if isinstance(value, dict):
-            for k, v in value.items():
-                key = str(k)
-                if needle and not prefix and needle not in key.casefold():
-                    continue
-                child_path = f'{prefix}/{key}' if prefix else key
-                is_branch = isinstance(v, (dict, list)) and bool(v)
-                label = f'{key}: {_preview(v)}'
-                if is_branch:
-                    node.add(label, data=(child_path, v, False))
-                else:
-                    node.add_leaf(label, data=(child_path, v, True))
-        elif isinstance(value, list):
-            for i, v in enumerate(value):
-                child_path = f'{prefix}[{i}]'
-                is_branch = isinstance(v, (dict, list)) and bool(v)
-                label = f'[{i}]: {_preview(v)}'
-                if is_branch:
-                    node.add(label, data=(child_path, v, False))
-                else:
-                    node.add_leaf(label, data=(child_path, v, True))
+    def _reload_tree(self, needle: str = '') -> None:
+        self._adapter.set_data(self._result, needle=needle)
+        self.query_one('#tree', TreeTable).reset()
+        self._refresh_status()
 
-    def on_tree_node_expanded(self, event) -> None:
-        data = event.node.data
-        if not data:
-            return
-        path, value, loaded = data
-        if not loaded:
-            self._add_children(event.node, value, path)
-            event.node.data = (path, value, True)
-
-    def on_tree_node_highlighted(self, event) -> None:
+    def on_tree_table_entry_highlighted(self, event: TreeTable.EntryHighlighted) -> None:
         from textual.widgets import TextArea
 
-        data = event.node.data
-        if not data:
-            return
-        path, value, _ = data
-        self.query_one('#detail', TextArea).text = _format_detail(path, value)
+        val = self._adapter.value_of(event.entry.id)
+        self.query_one('#detail', TextArea).text = _format_detail(event.entry.id, val)
 
     def on_input_changed(self, event) -> None:
         if event.input.id == 'filter':
-            self._populate_tree(needle=event.value.strip())
+            self._reload_tree(needle=event.value.strip())
 
     def action_focus_filter(self) -> None:
         from textual.widgets import Input
@@ -265,13 +294,13 @@ class EnvBrowser(TextualApp):
 
     def action_reload(self) -> None:
         self._result = validate_env(self._result.environment)
-        self._populate_tree()
+        self._reload_tree()
 
     def action_switch_env(self) -> None:
         envs = sorted(Env._ENV_PATHS)
         nxt = envs[(envs.index(self._result.environment) + 1) % len(envs)]
         self._result = validate_env(nxt)
-        self._populate_tree()
+        self._reload_tree()
 
 
 def main(argv: list[str] | None = None) -> int:
