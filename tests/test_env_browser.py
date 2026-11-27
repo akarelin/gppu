@@ -55,3 +55,8 @@ async def test_env_browser_tui_mounts_switches_hides_templates_and_shows_source(
         await pilot.pause()
         labels_after = {node.entry.label for node in tree._visible}
         assert 'templates' not in labels_after
+        from textual.widgets import TextArea
+        tree.select('groups')
+        await pilot.pause()
+        detail = app.query_one('#detail', TextArea).text
+        assert '\ntemplates:' not in detail and not detail.startswith('templates:')

@@ -242,17 +242,30 @@ def _short_source(source: str) -> Text | str:
     return Text(source.rsplit('/', 1)[-1], style='dim')
 
 
-def _format_detail(path: str, value: Any, source: str = '') -> str:
+def _strip_templates(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            k: _strip_templates(v)
+            for k, v in value.items()
+            if not (k == 'templates' and isinstance(v, dict)) and not (k == 'template' and isinstance(v, str))
+        }
+    if isinstance(value, list):
+        return [_strip_templates(v) for v in value]
+    return value
+
+
+def _format_detail(path: str, value: Any, source: str = '', *, hide_templates: bool = False) -> str:
     lines: list[str] = []
     if path:
         lines.append(f'# {path}')
     if source:
         lines.append(f'# source: {source}')
     header = ('\n'.join(lines) + '\n\n') if lines else ''
+    shown = _strip_templates(value) if hide_templates else value
     try:
-        body = yaml.safe_dump(value, sort_keys=False, allow_unicode=True, width=100)
+        body = yaml.safe_dump(shown, sort_keys=False, allow_unicode=True, width=100)
     except Exception:
-        body = repr(value)
+        body = repr(shown)
     return header + body
 
 
@@ -416,7 +429,9 @@ class EnvBrowser(TextualApp):
 
         val = self._adapter.value_of(event.entry.id)
         src = self._adapter.source_of(event.entry.id)
-        self.query_one('#detail', TextArea).text = _format_detail(event.entry.id, val, src)
+        self.query_one('#detail', TextArea).text = _format_detail(
+            event.entry.id, val, src, hide_templates=self._hide_templates,
+        )
 
     def on_input_changed(self, event) -> None:
         if event.input.id == 'filter':
