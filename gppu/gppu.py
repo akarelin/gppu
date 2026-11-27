@@ -750,16 +750,19 @@ class JinjaEnvironment(SandboxedEnvironment, NativeEnvironment):
                 break
         return row
 
-    def apply_template(self, node: Any, templates: dict, parent_ctx: Mapping[str, Any] = ()) -> Any:
+    def apply_template(self, node: Any, templates: dict, parent_ctx: Mapping[str, Any] | None = None) -> Any:
         """Every row of node whose `template:` names one of templates, merged over that template: the row wins.
         Any `$` templates on a row (whether from `template:` or YAML anchors) are substituted from its keys
         plus inherited parent scalars and slug/dashed/path derived from `name`."""
-        if isinstance(node, list): return [self.apply_template(value, templates, parent_ctx) for value in node]
+        if isinstance(node, list): return [self.apply_template(value, templates, parent_ctx or {}) for value in node]
         if not isinstance(node, dict): return node
+        is_root = parent_ctx is None
+        ctx_in = {} if is_root else parent_ctx
         if isinstance(name := node.get('template'), str) and name in templates:
-            node = self.apply_template(templates[name], templates) | node
-        node = self._populate_row(node, parent_ctx)
-        child_ctx = self._row_ctx(node, parent_ctx)
+            node = self.apply_template(templates[name], templates, {}) | node
+        if not is_root:
+            node = self._populate_row(node, ctx_in)
+        child_ctx = {} if is_root else self._row_ctx(node, ctx_in)
         return {
             key: value if (key == 'templates' or str(key).endswith('_templates') or key == 'runbooks') else self.apply_template(value, templates, child_ctx)
             for key, value in node.items()
